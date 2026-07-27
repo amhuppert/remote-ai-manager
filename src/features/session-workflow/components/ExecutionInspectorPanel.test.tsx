@@ -1483,7 +1483,7 @@ describe("ExecutionInspectorPanel — Config tab + overview header", () => {
     const tab = screen.getByTestId("context-config-tab");
     // context-plan's resolved implementer is claude opus.
     const impl = within(tab).getByTestId("config-block-implementer");
-    expect(within(impl).getByText("Opus")).toBeInTheDocument();
+    expect(within(impl).getByText("Opus 5")).toBeInTheDocument();
     // Runtime facts render for the selected context.
     expect(within(tab).getByTestId("runtime-isolation")).toHaveTextContent(
       "session",

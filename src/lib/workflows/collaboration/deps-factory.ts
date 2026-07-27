@@ -41,6 +41,7 @@ import {
 import { collaborationArtifactSchema } from "./types";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
+import { recordSeenAlignmentVersion } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
 
 export interface CreateCollaborationDepsInput {
   projectPath: string;
@@ -229,6 +230,19 @@ export function createCollaborationDeps(
         });
       }
     },
+    // Routed through the alignment gate's existing seen-version helper so a
+    // collaboration run and an ordinary turn write `lastSeenAlignmentVersion`
+    // the exact same way — one mutation shape, no second write path.
+    recordAlignmentSeen: (conversationId, alignmentVersion) =>
+      recordSeenAlignmentVersion(
+        { mutateConversation },
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId,
+          seenAlignmentVersion: alignmentVersion,
+        },
+      ),
     updateConversationBackendRef: (conversationId, ref) =>
       mutateConversation(
         input.projectPath,

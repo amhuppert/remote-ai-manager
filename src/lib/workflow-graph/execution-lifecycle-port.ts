@@ -48,6 +48,12 @@ export interface GraphExecutionLifecycleCallbacks {
     workflowExecutionId: string,
     definitionId: string,
   ): Promise<DefinitionApprovalGateDecision>;
+  /**
+   * Reports an execution that was aborted, so a registered consumer can
+   * terminalize work it pinned to the run (e.g. abandon a spec execution)
+   * without waiting for a read-path reconcile.
+   */
+  executionAborted?(workflowExecutionId: string): Promise<void>;
 }
 
 interface GraphExecutionLifecyclePortState {
@@ -104,6 +110,9 @@ export function createRegisteredGraphExecutionLifecycleCallbacks(): GraphExecuti
         workflowExecutionId,
         definitionId,
       );
+    },
+    async executionAborted(workflowExecutionId) {
+      await state().callbacks?.executionAborted?.(workflowExecutionId);
     },
   };
 }

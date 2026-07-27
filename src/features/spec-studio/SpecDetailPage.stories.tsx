@@ -1,3 +1,4 @@
+import { useState, type ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
@@ -7,6 +8,23 @@ import {
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
 import { SpecDetailContent } from "./SpecDetailPage";
+
+type SpecDetailContentProps = ComponentProps<typeof SpecDetailContent>;
+
+/**
+ * Stands in for the address bar the real page navigates: the `view` arg seeds
+ * the surface and tab selections move it, so stories stay interactive without
+ * a router.
+ */
+function AddressBarHarness(props: SpecDetailContentProps): React.JSX.Element {
+  const [view, setView] = useState(props.view);
+  const [seededView, setSeededView] = useState(props.view);
+  if (props.view !== seededView) {
+    setSeededView(props.view);
+    setView(props.view);
+  }
+  return <SpecDetailContent {...props} view={view} onViewChange={setView} />;
+}
 
 function withProse(detail: SpecDetailView): SpecDetailView {
   const snapshot = detail.currentRevision;
@@ -146,11 +164,13 @@ const meta = {
       </main>
     ),
   ],
+  render: (args) => <AddressBarHarness {...args} />,
   args: {
     detail: detailFor("approved"),
     projectName: "command-center",
     requestedSlug: "native-sdd",
-    initialView: "overview",
+    view: "overview",
+    onViewChange: () => undefined,
   },
 } satisfies Meta<typeof SpecDetailContent>;
 
@@ -212,5 +232,5 @@ export const Abandoned: Story = {
 };
 
 export const History: Story = {
-  args: { initialView: "history" },
+  args: { view: "history" },
 };

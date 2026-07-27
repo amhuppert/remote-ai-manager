@@ -55,7 +55,9 @@ export function CompactionSection({
     throw new Error(`Unknown agent backend: ${backend}`);
   }
 
-  const modelOptions = entry.models.map((m) => m.id);
+  const modelOptions = entry.models.map((model) => model.id);
+  const modelLabel = (model: string) =>
+    entry.models.find((option) => option.id === model)?.label ?? model;
   // A single effort applies to both models, so its options follow the primary
   // conversation model. The backend clamps per-model, so an effort the message
   // model doesn't support is safe.
@@ -116,6 +118,7 @@ export function CompactionSection({
           <ConfigPillGroup
             value={conversationModel}
             options={modelOptions}
+            getOptionLabel={modelLabel}
             onChange={(value) =>
               handleChange("compaction.conversationModel", value)
             }
@@ -130,6 +133,7 @@ export function CompactionSection({
           <ConfigPillGroup
             value={messageModel}
             options={modelOptions}
+            getOptionLabel={modelLabel}
             onChange={(value) => handleChange("compaction.messageModel", value)}
           />
         </ConfigField>

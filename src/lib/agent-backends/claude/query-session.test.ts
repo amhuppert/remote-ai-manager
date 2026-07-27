@@ -1357,6 +1357,155 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
     session.close();
   });
 
+  it.each([
+    [
+      "rate_limit_event",
+      {
+        type: "rate_limit_event",
+        uuid: "amb-1",
+        session_id: "sess-1",
+        rate_limit_info: { status: "allowed" },
+      },
+    ],
+    [
+      "system/commands_changed",
+      {
+        type: "system",
+        subtype: "commands_changed",
+        uuid: "amb-2",
+        session_id: "sess-1",
+        commands: [],
+      },
+    ],
+    [
+      "system/task_notification",
+      {
+        type: "system",
+        subtype: "task_notification",
+        uuid: "amb-3",
+        session_id: "sess-1",
+      },
+    ],
+  ])(
+    "does not start a virtual turn for a between-turns %s notification",
+    async (_label, ambient) => {
+      const mock = createControllableMockQuery();
+      queryMock.mockReturnValue(mock.query);
+
+      const externalEmit = vi.fn();
+      const externalOnComplete = vi.fn();
+
+      const session = createQuerySession(
+        makeDefaultOptions({
+          externalTurnHandler: {
+            emit: externalEmit,
+            onComplete: externalOnComplete,
+          },
+        }),
+      );
+
+      const turn1 = session.sendPrompt("First", vi.fn());
+      mock.pushMessage({
+        type: "result",
+        subtype: "success",
+        session_id: "sess-1",
+        uuid: "u1",
+        total_cost_usd: 0,
+        duration_ms: 0,
+        num_turns: 0,
+        result: "",
+        is_error: false,
+      } as unknown as SDKMessage);
+      await turn1;
+      externalEmit.mockClear();
+
+      mock.pushMessage(ambient as unknown as SDKMessage);
+      await new Promise((r) => setTimeout(r, 10));
+
+      // No virtual turn opened: nothing forwarded, so the conversation machine
+      // never sees EXTERNAL_TURN_STARTED and cannot wedge in `running`.
+      expect(externalEmit).not.toHaveBeenCalled();
+      expect(externalOnComplete).not.toHaveBeenCalled();
+      expect(session.status).toBe("alive");
+
+      session.close();
+    },
+  );
+
+  it("still opens a virtual turn when a genuine turn message follows an ambient notification", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const externalEmit = vi.fn();
+    const externalOnComplete = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: {
+          emit: externalEmit,
+          onComplete: externalOnComplete,
+        },
+      }),
+    );
+
+    const turn1 = session.sendPrompt("First", vi.fn());
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+    externalEmit.mockClear();
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      uuid: "amb-4",
+      session_id: "sess-1",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      uuid: "init-1",
+      session_id: "sess-1",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "a1",
+      message: { content: [{ type: "text", text: "Auto continuation" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "r2",
+      total_cost_usd: 0.02,
+      duration_ms: 200,
+      num_turns: 1,
+      result: "Auto continuation",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(externalOnComplete).toHaveBeenCalledTimes(1);
+    expect(
+      externalOnComplete.mock.calls[0]![0].contentBlocks.some(
+        (b: { type: string; text?: string }) =>
+          b.type === "text" && b.text === "Auto continuation",
+      ),
+    ).toBe(true);
+
+    session.close();
+  });
+
   it("invokes handler.onComplete with the error when the pump dies mid-virtual-turn", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

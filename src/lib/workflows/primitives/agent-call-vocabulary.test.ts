@@ -49,6 +49,23 @@ describe("agentCallRequestSchema", () => {
     }
   });
 
+  it("carries governing systemInstructions on both request kinds", () => {
+    const conversation = agentCallRequestSchema.parse({
+      kind: "conversation_turn",
+      prompt: "hello",
+      systemInstructions: "the governing charter",
+    });
+    expect(conversation.systemInstructions).toBe("the governing charter");
+
+    const task = agentCallRequestSchema.parse({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "do the thing",
+      systemInstructions: "the governing charter",
+    });
+    expect(task.systemInstructions).toBe("the governing charter");
+  });
+
   it("accepts a task_run request and requires an explicit backend", () => {
     const parsed = agentCallRequestSchema.parse({
       kind: "task_run",

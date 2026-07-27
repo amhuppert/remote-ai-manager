@@ -10,14 +10,18 @@
  *
  * No `vi.mock`. All deps are injected via `createCollaborationManager`.
  */
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { _resetLoggerForTesting } from "@/lib/logging/logger";
 
 import {
+  buildStandaloneCollaborationCallerInput,
   createCollaborationStartPersister,
   createCollaborationManager,
+  createCollaborationSessionContextResolver,
   resolveCollaborationBackendModelConfig,
   prepareCollaborationInitialImages,
   createInMemoryCollaborationStopRegistry,
@@ -33,6 +37,14 @@ import {
   type CollaborationStopRegistry,
 } from "./manager";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import {
+  CollaborationCharterCaptureError,
+  EMPTY_COLLABORATION_SESSION_CONTEXT,
+  MalformedCollaborationSessionContextError,
+  MissingCollaborationSessionContextError,
+  type CollaborationSessionContext,
+  type CollaborationSessionContextDegradation,
+} from "./session-context";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { CollaborationArtifact } from "./types";
@@ -53,7 +65,7 @@ import { buildCollaborationUserTranscriptEntry } from "./transcript";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createStateStore } from "@/lib/state-store/store";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
-import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
 import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 
 describe("resolveCollaborationBackendModelConfig", () => {
@@ -206,7 +218,13 @@ describe("collaboration start persistence", () => {
 });
 
 interface ScriptedDepsOptions {
-  resolveSessionResult?: { worktreePath: string } | null | "throw";
+  resolveSessionResult?:
+    | {
+        worktreePath: string;
+        creationMode?: SessionState["creationMode"] | undefined;
+      }
+    | null
+    | "throw";
   resolveConversationResult?:
     | {
         agentBackend: AgentBackendId;
@@ -235,6 +253,8 @@ interface ScriptedDepsOptions {
     stallTimeoutMs?: number;
   };
   persistStartError?: Error;
+  resolveSessionContextResult?: CollaborationSessionContext | Error;
+  resolveSessionContextDegraded?: CollaborationSessionContextDegradation;
   /**
    * In-memory stand-in for the durable artifacts sidecar keyed by workflowId.
    * The manager's `getEnvelope`/`listActive`/`listAll` read from here to
@@ -278,6 +298,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   persistedStarts: Array<
     Parameters<CollaborationManagerDeps["persistStart"]>[0]
   >;
+  resolveSessionContextCalls: Array<
+    Parameters<CollaborationManagerDeps["resolveSessionContext"]>[0]
+  >;
   envelopeStore: ReturnType<typeof createInMemoryWorkflowEnvelopeStore>;
   runSliceCompletion: Promise<void>;
   stopRegistry: CollaborationStopRegistry;
@@ -313,6 +336,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   > = [];
   const persistedStarts: Array<
     Parameters<CollaborationManagerDeps["persistStart"]>[0]
+  > = [];
+  const resolveSessionContextCalls: Array<
+    Parameters<CollaborationManagerDeps["resolveSessionContext"]>[0]
   > = [];
   let resolveCompletion: () => void = () => undefined;
   const runSliceCompletion = new Promise<void>((resolve) => {
@@ -374,6 +400,18 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
             base64Data: image.base64Data,
           };
         }),
+      };
+    },
+    resolveSessionContext: async (input) => {
+      resolveSessionContextCalls.push(input);
+      if (options.resolveSessionContextResult instanceof Error) {
+        throw options.resolveSessionContextResult;
+      }
+      return {
+        context:
+          options.resolveSessionContextResult ??
+          EMPTY_COLLABORATION_SESSION_CONTEXT,
+        degraded: options.resolveSessionContextDegraded ?? null,
       };
     },
     persistStart: async (input) => {
@@ -452,6 +490,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     publishedStatuses,
     dispatchedPushes,
     persistedStarts,
+    resolveSessionContextCalls,
     envelopeStore,
     runSliceCompletion,
     stopRegistry,
@@ -1305,6 +1344,471 @@ describe("createCollaborationManager.start", () => {
   });
 });
 
+describe("createCollaborationManager.start — session context capture", () => {
+  const CAPTURED: CollaborationSessionContext = {
+    alignment: {
+      version: 4,
+      contentHash: "hash-4",
+      text: "## Charter\n\nShip the thing.",
+      snapshotPath: ".cc/session-alignment/snapshots/hash-4.md",
+    },
+    activeTicketBlock: "<active-ticket>\nidentifier: p#7\n</active-ticket>",
+  };
+
+  function recordingStopRegistry(): {
+    registry: CollaborationStopRegistry;
+    registered: string[];
+  } {
+    const inner = createInMemoryCollaborationStopRegistry();
+    const registered: string[] = [];
+    return {
+      registered,
+      registry: {
+        register(workflowId) {
+          registered.push(workflowId);
+          return inner.register(workflowId);
+        },
+        signal: (workflowId) => inner.signal(workflowId),
+        signalFor: (workflowId) => inner.signalFor(workflowId),
+        release: (workflowId) => inner.release(workflowId),
+      },
+    };
+  }
+
+  it("resolves the context for the session's worktree and creation mode", async () => {
+    const { deps, resolveSessionContextCalls } = buildScriptedDeps({
+      resolveSessionResult: {
+        worktreePath: "/tmp/example/.worktrees/sess-1",
+        creationMode: "normal",
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    expect(resolveSessionContextCalls).toEqual([
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        worktreePath: "/tmp/example/.worktrees/sess-1",
+        creationMode: "normal",
+        workflowId: "wf-1",
+        conversationId: "conv-1",
+      },
+    ]);
+  });
+
+  it("threads the captured snapshot into the slice input verbatim", async () => {
+    const { deps, runSliceCalls, runSliceCompletion } = buildScriptedDeps({
+      resolveSessionContextResult: CAPTURED,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+    await runSliceCompletion;
+
+    expect(runSliceCalls).toHaveLength(1);
+    expect(runSliceCalls[0]!.input.sessionContext).toBe(CAPTURED);
+  });
+
+  it("fails closed without claiming the conversation when charter capture fails", async () => {
+    const { registry, registered } = recordingStopRegistry();
+    const { deps, persistedStarts, runSliceCalls } = buildScriptedDeps({
+      resolveSessionContextResult: new Error("charter read failed"),
+      stopRegistryOverride: registry,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toThrow("charter read failed");
+
+    expect(persistedStarts).toEqual([]);
+    expect(runSliceCalls).toEqual([]);
+    expect(registered).toEqual([]);
+  });
+});
+
+/**
+ * Uses the REAL logger against a temp config dir rather than a fake sink, so
+ * the no-bodies-no-secrets assertion covers the bytes an operator can actually
+ * read — a stubbed logger could not prove the charter never reaches disk.
+ */
+describe("collaboration manager session-context logging", () => {
+  const CHARTER_TEXT =
+    "## Alignment charter\n\nNEVER-LOG-CHARTER-BODY: prefer boring technology.";
+  const TICKET_BLOCK =
+    "<active-ticket>\nidentifier: p#42\ntitle: NEVER-LOG-TICKET-TITLE\n</active-ticket>";
+  const CAPTURED: CollaborationSessionContext = {
+    alignment: {
+      version: 8,
+      contentHash: "hash-8",
+      text: CHARTER_TEXT,
+      snapshotPath: ".cc/session-alignment/snapshots/hash-8.md",
+    },
+    activeTicketBlock: TICKET_BLOCK,
+  };
+
+  let tmpRoot: string;
+  let savedConfigDir: string | undefined;
+  let savedSilent: string | undefined;
+  let savedLevel: string | undefined;
+  let savedLogFile: string | undefined;
+
+  function logLines(): Record<string, unknown>[] {
+    const file = path.join(tmpRoot, "logs", "global.log");
+    if (!existsSync(file)) return [];
+    const content = readFileSync(file, "utf-8").trim();
+    if (!content) return [];
+    return content
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  function eventNamed(message: string): Record<string, unknown> | undefined {
+    return logLines().find((entry) => entry["message"] === message);
+  }
+
+  function rawLogText(): string {
+    const file = path.join(tmpRoot, "logs", "global.log");
+    return existsSync(file) ? readFileSync(file, "utf-8") : "";
+  }
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(path.join(tmpdir(), "cc-collab-manager-log-"));
+    savedConfigDir = process.env["CC_CONFIG_DIR"];
+    savedSilent = process.env["CC_LOG_SILENT"];
+    savedLevel = process.env["CC_LOG_LEVEL"];
+    savedLogFile = process.env["CC_LOG_FILE"];
+    _resetLoggerForTesting();
+    delete process.env["CC_LOG_FILE"];
+    delete process.env["CC_LOG_SCOPED"];
+    // CC_LOG_SILENT=1 suppresses every level, not just the stderr mirror.
+    delete process.env["CC_LOG_SILENT"];
+    process.env["CC_CONFIG_DIR"] = tmpRoot;
+    process.env["CC_LOG_LEVEL"] = "info";
+  });
+
+  afterEach(() => {
+    _resetLoggerForTesting();
+    if (savedSilent === undefined) delete process.env["CC_LOG_SILENT"];
+    else process.env["CC_LOG_SILENT"] = savedSilent;
+    if (savedLevel === undefined) delete process.env["CC_LOG_LEVEL"];
+    else process.env["CC_LOG_LEVEL"] = savedLevel;
+    if (savedConfigDir === undefined) delete process.env["CC_CONFIG_DIR"];
+    else process.env["CC_CONFIG_DIR"] = savedConfigDir;
+    if (savedLogFile === undefined) delete process.env["CC_LOG_FILE"];
+    else process.env["CC_LOG_FILE"] = savedLogFile;
+    try {
+      rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {
+      // best effort
+    }
+  });
+
+  it("emits session_context_resolved with metadata only", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionContextResult: CAPTURED,
+      resolveSessionResult: {
+        worktreePath: "/tmp/example/.worktrees/sess-1",
+        creationMode: "normal",
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    const resolved = eventNamed(
+      "collaboration.manager.session_context_resolved",
+    );
+    expect(resolved).toBeDefined();
+    expect(resolved).toMatchObject({
+      projectPath: "/p",
+      sessionName: "s",
+      conversationId: "conv-1",
+      workflowId: "wf-1",
+      alignmentPresent: true,
+      eligible: true,
+      alignmentVersion: 8,
+      alignmentContentHash: "hash-8",
+      activeTicketPresent: true,
+      alignmentChars: CHARTER_TEXT.length,
+      ticketBlockChars: TICKET_BLOCK.length,
+    });
+    expect(typeof resolved?.["durationMs"]).toBe("number");
+  });
+
+  it("reports an ineligible session as alignment-absent without a version", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionResult: {
+        worktreePath: "/tmp/example/.worktrees/sess-1",
+        creationMode: "optimistic",
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    expect(
+      eventNamed("collaboration.manager.session_context_resolved"),
+    ).toMatchObject({
+      alignmentPresent: false,
+      eligible: false,
+      alignmentVersion: null,
+      alignmentContentHash: null,
+      activeTicketPresent: false,
+      alignmentChars: 0,
+      ticketBlockChars: 0,
+    });
+  });
+
+  it("extends the start event with the captured charter version and ticket presence", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionContextResult: CAPTURED,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    expect(eventNamed("collaboration.manager.start")).toMatchObject({
+      workflowId: "wf-1",
+      alignmentVersion: 8,
+      activeTicketPresent: true,
+    });
+  });
+
+  it("records the failed source and normalized error when capture fails", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionContextResult: new CollaborationCharterCaptureError(
+        new Error("db locked"),
+      ),
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 3,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+      }),
+    ).rejects.toBeInstanceOf(CollaborationCharterCaptureError);
+
+    const failed = eventNamed(
+      "collaboration.manager.session_context_resolution_failed",
+    );
+    expect(failed).toMatchObject({
+      projectPath: "/p",
+      sessionName: "s",
+      conversationId: "conv-1",
+      workflowId: "wf-1",
+      failedSource: "alignment",
+    });
+    expect(typeof failed?.["error"]).toBe("string");
+    expect(failed).toMatchObject({ fatal: true });
+    expect(
+      eventNamed("collaboration.manager.session_context_resolved"),
+    ).toBeUndefined();
+  });
+
+  it("attributes a degraded ticket read to the ticket source without failing the run", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionContextResult: {
+        alignment: CAPTURED.alignment,
+        activeTicketBlock: null,
+      },
+      resolveSessionContextDegraded: {
+        source: "ticket",
+        error: "ticket store offline",
+      },
+    });
+    const manager = createCollaborationManager(deps);
+
+    const result = await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+    expect(result.workflowId).toBe("wf-1");
+
+    expect(
+      eventNamed("collaboration.manager.session_context_resolution_failed"),
+    ).toMatchObject({
+      projectPath: "/p",
+      sessionName: "s",
+      conversationId: "conv-1",
+      workflowId: "wf-1",
+      failedSource: "ticket",
+      error: "ticket store offline",
+      fatal: false,
+    });
+    // The charter still governs, so the capture resolved and the run proceeds.
+    expect(
+      eventNamed("collaboration.manager.session_context_resolved"),
+    ).toMatchObject({
+      alignmentPresent: true,
+      activeTicketPresent: false,
+      ticketBlockChars: 0,
+    });
+  });
+
+  it("never writes charter or ticket bodies into the log", async () => {
+    const { deps } = buildScriptedDeps({
+      resolveSessionContextResult: CAPTURED,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await manager.start({
+      projectPath: "/p",
+      sessionName: "s",
+      brief: "design X",
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "major",
+      conversationId: "conv-1",
+    });
+
+    const text = rawLogText();
+    expect(text).not.toContain("NEVER-LOG-CHARTER-BODY");
+    expect(text).not.toContain("NEVER-LOG-TICKET-TITLE");
+    expect(text).not.toContain("<active-ticket>");
+    expect(text).not.toContain("snapshots/hash-8.md");
+  });
+});
+
+describe("createCollaborationSessionContextResolver", () => {
+  it("captures the charter for the run's worktree and pairs it with the ticket block", async () => {
+    const captureCalls: Array<{
+      projectPath: string;
+      sessionName: string;
+      worktreePath: string;
+    }> = [];
+    const resolve = createCollaborationSessionContextResolver({
+      captureActiveCharterForRun: async (input) => {
+        captureCalls.push(input);
+        return { version: 2, contentHash: "hash-2", text: "## Charter" };
+      },
+      getLiveTicketBlock: async () => "<active-ticket>\n</active-ticket>",
+    });
+
+    const capture = await resolve({
+      projectPath: "/p",
+      sessionName: "s",
+      worktreePath: "/wt/s",
+      creationMode: "normal",
+      workflowId: "wf-1",
+      conversationId: "conv-1",
+    });
+
+    expect(captureCalls).toEqual([
+      { projectPath: "/p", sessionName: "s", worktreePath: "/wt/s" },
+    ]);
+    expect(capture.context).toEqual({
+      alignment: { version: 2, contentHash: "hash-2", text: "## Charter" },
+      activeTicketBlock: "<active-ticket>\n</active-ticket>",
+    });
+    expect(capture.degraded).toBeNull();
+  });
+
+  it("skips charter capture for an alignment-ineligible session but still reads the ticket", async () => {
+    let captureCount = 0;
+    const resolve = createCollaborationSessionContextResolver({
+      captureActiveCharterForRun: async () => {
+        captureCount += 1;
+        return { version: 2, contentHash: "hash-2", text: "## Charter" };
+      },
+      getLiveTicketBlock: async () => "<active-ticket>\n</active-ticket>",
+    });
+
+    const capture = await resolve({
+      projectPath: "/p",
+      sessionName: "s",
+      worktreePath: "/wt/s",
+      creationMode: "optimistic",
+      workflowId: "wf-1",
+      conversationId: "conv-1",
+    });
+
+    expect(captureCount).toBe(0);
+    expect(capture.context).toEqual({
+      alignment: null,
+      activeTicketBlock: "<active-ticket>\n</active-ticket>",
+    });
+  });
+
+  it("degrades to a null ticket block when the ticket read fails", async () => {
+    const resolve = createCollaborationSessionContextResolver({
+      captureActiveCharterForRun: async () => null,
+      getLiveTicketBlock: async () => {
+        throw new Error("ticket repo unavailable");
+      },
+    });
+
+    const capture = await resolve({
+      projectPath: "/p",
+      sessionName: "s",
+      worktreePath: "/wt/s",
+      creationMode: "normal",
+      workflowId: "wf-1",
+      conversationId: "conv-1",
+    });
+
+    expect(capture.context).toEqual(EMPTY_COLLABORATION_SESSION_CONTEXT);
+    // The production-wired resolver is what the manager's failure telemetry
+    // reads its source from, so the attribution has to survive this composition.
+    expect(capture.degraded).toEqual({
+      source: "ticket",
+      error: "ticket repo unavailable",
+    });
+  });
+});
+
 describe("createCollaborationManager.getEnvelope / listActive", () => {
   it("returns the envelope from the repository", async () => {
     const envelopeStore = createInMemoryWorkflowEnvelopeStore();
@@ -1597,6 +2101,119 @@ describe("createCollaborationManager.resume", () => {
     ).rejects.toBeInstanceOf(CollaborationResumeTokenMismatchError);
   });
 
+  const PERSISTED_CONTEXT: CollaborationSessionContext = {
+    alignment: {
+      version: 6,
+      contentHash: "hash-6",
+      text: "## Charter\n\nKeep the seams narrow.",
+      snapshotPath: ".cc/session-alignment/snapshots/hash-6.md",
+    },
+    activeTicketBlock: "<active-ticket>\nidentifier: p#3\n</active-ticket>",
+  };
+
+  async function seedPausedEnvelope(
+    sessionContext: unknown,
+  ): Promise<ReturnType<typeof createInMemoryWorkflowEnvelopeStore>> {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-paused",
+        status: "running",
+        featureSnapshot: {
+          brief: "design X",
+          negotiationRounds: 5,
+          negotiationRoundsCompleted: 2,
+          conversationId: "conv-1",
+          primaryAgentBackend: "claude",
+          autonomousResolutionThreshold: "major",
+          ...(sessionContext === undefined ? {} : { sessionContext }),
+        },
+      }),
+    );
+    await repo.markPaused("wf-paused", {
+      pauseKind: "post_turn",
+      gateKind: "human_approval",
+      resumeToken: "good-token",
+    });
+    return envelopeStore;
+  }
+
+  it("refuses to resume a run with no captured session context, leaving it paused", async () => {
+    const envelopeStore = await seedPausedEnvelope(undefined);
+    const { deps, runSliceCalls, resolveSessionContextCalls } =
+      buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.resume({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-paused",
+        resumeToken: "good-token",
+        conversationId: "conv-1",
+        userAnswers: { q1: "yes" },
+      }),
+    ).rejects.toBeInstanceOf(MissingCollaborationSessionContextError);
+
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    const reread = await repo.get("wf-paused");
+    expect(reread?.status).toBe("paused");
+    expect(runSliceCalls).toEqual([]);
+    // Live re-resolution would give the two peers different premises than the
+    // ones they negotiated under before the pause.
+    expect(resolveSessionContextCalls).toEqual([]);
+  });
+
+  it("refuses to resume a run whose captured session context is malformed", async () => {
+    const envelopeStore = await seedPausedEnvelope({
+      alignment: { version: "six" },
+    });
+    const { deps, runSliceCalls } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
+    const manager = createCollaborationManager(deps);
+
+    await expect(
+      manager.resume({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-paused",
+        resumeToken: "good-token",
+        conversationId: "conv-1",
+        userAnswers: {},
+      }),
+    ).rejects.toBeInstanceOf(MalformedCollaborationSessionContextError);
+
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    expect((await repo.get("wf-paused"))?.status).toBe("paused");
+    expect(runSliceCalls).toEqual([]);
+  });
+
+  it("reuses the persisted session context verbatim instead of re-resolving it", async () => {
+    const envelopeStore = await seedPausedEnvelope(PERSISTED_CONTEXT);
+    const {
+      deps,
+      runSliceCalls,
+      runSliceCompletion,
+      resolveSessionContextCalls,
+    } = buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const manager = createCollaborationManager(deps);
+
+    await manager.resume({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-paused",
+      resumeToken: "good-token",
+      conversationId: "conv-1",
+      userAnswers: {},
+    });
+    await runSliceCompletion;
+
+    expect(runSliceCalls[0]?.input.sessionContext).toEqual(PERSISTED_CONTEXT);
+    expect(resolveSessionContextCalls).toEqual([]);
+  });
+
   it("marks the envelope running and records userAnswers when the token matches", async () => {
     const envelopeStore = createInMemoryWorkflowEnvelopeStore();
     const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
@@ -1611,6 +2228,7 @@ describe("createCollaborationManager.resume", () => {
           conversationId: "conv-1",
           primaryAgentBackend: "claude",
           autonomousResolutionThreshold: "major",
+          sessionContext: PERSISTED_CONTEXT,
         },
       }),
     );
@@ -1897,5 +2515,31 @@ describe("createCollaborationManager.stop", () => {
         reason: "user_stopped",
       },
     ]);
+  });
+});
+
+describe("buildStandaloneCollaborationCallerInput", () => {
+  const managerFacts = {
+    projectPath: "/projects/example",
+    sessionName: "sess-1",
+    worktreePath: "/worktrees/sess-1",
+    workflowId: "wf-scope",
+    conversationId: "conv-originating",
+    laneService: createLaneService({ store: createInMemoryLaneStore() }),
+    codexModel: "gpt-5.2",
+    codexTimeoutMs: 0,
+    codexStallTimeoutMs: 0,
+    claudeModel: "opus",
+    claudeTimeoutMs: 0,
+    claudeStallTimeoutMs: 0,
+  };
+
+  it("grants the originating session scope, so the standalone Codex lane can run the ticket block's cctl commands", () => {
+    const callerInput = buildStandaloneCollaborationCallerInput(managerFacts);
+
+    expect(callerInput.grantsOriginatingSessionScope).toBe(true);
+    expect(callerInput.originatingConversationId).toBe("conv-originating");
+    expect(callerInput.projectPath).toBe("/projects/example");
+    expect(callerInput.sessionName).toBe("sess-1");
   });
 });

@@ -156,6 +156,23 @@ describe("AlignmentPanelView", () => {
     expect(screen.getByText(/by alex/)).toBeInTheDocument();
   });
 
+  it("uses the shared Markdown panel background for the active charter", () => {
+    const active = makeVersion({ version: 3 });
+    const { container } = render(
+      <AlignmentPanelView
+        state={makeState({ active, history: [active] })}
+        isLoading={false}
+        onSelectDiff={noop}
+        onRollback={noop}
+      />,
+    );
+
+    const charterSurface = container.querySelector(
+      "[data-markdown-viewport]",
+    )?.parentElement;
+    expect(charterSurface).toHaveClass("bg-bg-surface");
+  });
+
   it("omits the draft section when no draft exists", () => {
     const active = makeVersion({ version: 1 });
     render(

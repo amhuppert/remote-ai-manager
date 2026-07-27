@@ -27,6 +27,8 @@ import {
   createDefaultSessionWorkflowEnvelopeStore,
 } from "./default-session-workflow-envelope-store";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
+import { collaborationFeatureSnapshotSchema } from "@/lib/workflows/collaboration/feature-snapshot";
+import { parseSessionContextForExecution } from "@/lib/workflows/collaboration/session-context";
 
 const PROJECT_PATH = "/projects/wiring-fixture";
 const SESSION_NAME = "wiring-1";
@@ -158,6 +160,78 @@ describe("durable workflow wiring through production factory", () => {
     expect(active).toEqual([]);
     const all = await finalRepo.listAll();
     expect(all.map((e) => e.workflowId)).toEqual(["wf-collab-1"]);
+  });
+
+  it("round-trips a maximal collaboration feature snapshot, including the captured session context, across restart", async () => {
+    // Maximal on the fields the collaboration feature owns: a digest-mode
+    // charter (version + hash + text + immutable snapshot path) AND a linked
+    // ticket block, so neither branch of the captured context is proven only
+    // by its null case.
+    const sessionContext = {
+      alignment: {
+        version: 11,
+        contentHash: "b4d9f0a1c2e3",
+        text: "## Alignment charter\n\nSee `.cc/session-alignment/snapshots/b4d9f0a1c2e3.md`.",
+        snapshotPath: ".cc/session-alignment/snapshots/b4d9f0a1c2e3.md",
+      },
+      activeTicketBlock:
+        "<active-ticket>\nidentifier: wiring-fixture#8\ntitle: Charter parity\nstatus: In progress\nattachments: none\n</active-ticket>",
+    };
+    const featureSnapshot = {
+      origin: "user",
+      mode: "asymmetric",
+      brief: "design X",
+      primaryAgentBackend: "claude",
+      primaryBackend: "claude",
+      secondaryBackend: "codex",
+      agentModelSettings: {
+        claude: { model: "opus", effort: "high" },
+        codex: { model: "gpt-5.6", effort: "medium" },
+      },
+      negotiationRounds: 5,
+      negotiationRoundsCompleted: 2,
+      autonomousResolutionThreshold: "major",
+      sessionContext,
+      userAnswersByQuestionId: { q1: "ship it" },
+      conversationId: "conv-max",
+    };
+
+    const before = await buildManager();
+    const repo = createDefaultSessionWorkflowEnvelopeRepository({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      mutateEnvelopes: before.mutateSessionWorkflowEnvelopes,
+      getSession: before.getSession,
+    });
+    await repo.create(buildEnvelope({ workflowId: "wf-max", featureSnapshot }));
+    await repo.markPaused("wf-max", {
+      pauseKind: "post_turn",
+      gateKind: "human_approval",
+      resumeToken: "tok-max",
+    });
+
+    const afterRestart = await buildManager();
+    const afterRepo = createDefaultSessionWorkflowEnvelopeRepository({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      mutateEnvelopes: afterRestart.mutateSessionWorkflowEnvelopes,
+      getSession: afterRestart.getSession,
+    });
+
+    const reloaded = await afterRepo.get("wf-max");
+    expect(reloaded?.featureSnapshot).toEqual(featureSnapshot);
+
+    // The reloaded blob must satisfy both the storage decoder (display) and
+    // the strict execution parser (resume), not just deep-equal the input.
+    const decoded = collaborationFeatureSnapshotSchema.parse(
+      reloaded?.featureSnapshot,
+    );
+    expect(decoded.origin).toBe("user");
+    if (decoded.origin !== "user") return;
+    expect(decoded.sessionContext).toEqual(sessionContext);
+    expect(parseSessionContextForExecution(decoded.sessionContext)).toEqual(
+      sessionContext,
+    );
   });
 
   it("store factory writes are isolated to the supplied (projectPath, sessionName) and survive restart", async () => {

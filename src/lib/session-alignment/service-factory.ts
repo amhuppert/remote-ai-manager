@@ -1,5 +1,6 @@
 import { publishEvent } from "@/lib/events/publication";
 import { enqueueConversationMessage } from "@/lib/prompt/enqueue-conversation-message";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { getSession } from "@/lib/state-store";
 import { getDb } from "@/lib/state-store/state-db";
 
@@ -8,7 +9,9 @@ import {
   SCAFFOLD_TEMPLATE,
   computeAlignmentHash,
   renderAlignmentPromptSection,
+  usesDigestPointer,
 } from "./render";
+import { createCharterSnapshotWriter } from "./snapshot";
 import { createSessionAlignmentRepo } from "./repo";
 import {
   createSessionAlignmentService,
@@ -27,9 +30,11 @@ export function createSessionAlignmentServiceForProduction(): SessionAlignmentSe
     render: {
       renderAlignmentPromptSection,
       computeAlignmentHash,
+      usesDigestPointer,
       scaffoldTemplate: SCAFFOLD_TEMPLATE,
     },
     mirror: createCharterMirrorWriter(),
+    snapshot: createCharterSnapshotWriter(),
     broadcast: publishEvent,
     promptQueue: { enqueue: enqueueConversationMessage },
     async loadSession(projectPath, sessionName) {
@@ -43,4 +48,15 @@ export function createSessionAlignmentServiceForProduction(): SessionAlignmentSe
       };
     },
   });
+}
+
+/**
+ * Process-wide production service for callers outside the alignment routes,
+ * which own their own instance. Memoized because every instance wraps the same
+ * repo and DB, so rebuilding one per call would only add allocation.
+ */
+export function getSessionAlignmentServiceForProduction(): SessionAlignmentService {
+  return getGlobalSingleton("__cc_session_alignment_service", () =>
+    createSessionAlignmentServiceForProduction(),
+  );
 }

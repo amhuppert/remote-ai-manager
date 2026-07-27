@@ -31,8 +31,8 @@ interface ReasoningLevelSelectorProps {
   onChange(level: EffortLevel): void;
   disabled?: boolean;
   disabledTooltip?: string;
-  /** When provided, only these levels are shown in the dropdown. */
-  availableLevels?: EffortLevel[];
+  /** Only these model-compatible levels are shown in the dropdown. */
+  availableLevels: EffortLevel[];
   /**
    * Reports the dropdown's open-state. The composer-focus hook uses it to hold
    * `composerFocused` true while this portaled popup (rendered outside the
@@ -89,9 +89,9 @@ export default function ReasoningLevelSelector({
   availableLevels,
   onOpenChange,
 }: ReasoningLevelSelectorProps): React.JSX.Element {
-  const visibleOptions = availableLevels
-    ? EFFORT_OPTIONS.filter((o) => availableLevels.includes(o.id))
-    : EFFORT_OPTIONS;
+  const visibleOptions = EFFORT_OPTIONS.filter((option) =>
+    availableLevels.includes(option.id),
+  );
   const effortSupported = visibleOptions.length > 0;
 
   const selected =

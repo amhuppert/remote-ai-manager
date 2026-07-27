@@ -22,6 +22,7 @@ import type {
   AsymmetricCollaborationSliceDeps,
   AsymmetricCollaborationSliceInput,
 } from "./envelope";
+import { EMPTY_COLLABORATION_SESSION_CONTEXT } from "./session-context";
 import type { ArtifactTracker } from "./helpers";
 import { runInitialDraftsPhase } from "./initial-draft";
 import type {
@@ -231,6 +232,7 @@ describe("collaboration structured-output repair contract", () => {
       primaryAgentBackend: "claude",
       negotiationRounds: 1,
       autonomousResolutionThreshold: "major",
+      sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
     };
     const deps: AsymmetricCollaborationSliceDeps = {
       callAgent,

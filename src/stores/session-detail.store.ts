@@ -142,6 +142,8 @@ export const useAcceptOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.acceptOptimisticQueueEntry);
 export const useFailOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.failOptimisticQueueEntry);
+export const useResolveOptimisticQueueEntries = () =>
+  useSessionDetailStore((s) => s.resolveOptimisticQueueEntries);
 export const useCancelOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.cancelOptimisticQueueEntry);
 export const useSettleOptimisticQueueEntry = () =>

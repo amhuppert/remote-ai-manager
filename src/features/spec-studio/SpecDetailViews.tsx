@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/Button";
@@ -29,7 +29,7 @@ import {
   type CriterionProofView,
   type TraceabilityInput,
 } from "./SpecEvidenceLintTrace";
-import SpecControlsPanel from "./SpecControls";
+import SpecControlsPanel, { SpecIntegrityPanel } from "./SpecControls";
 import SpecHistoryPanel from "./SpecHistoryPanel";
 import SpecQuestionsAssumptionsPanel from "./SpecQuestionsAssumptions";
 
@@ -40,6 +40,7 @@ export type DetailView =
   | "lint"
   | "traceability"
   | "questions"
+  | "integrity"
   | "controls";
 
 interface CriterionDescriptor {
@@ -89,27 +90,26 @@ const primarySubscreenPresentation: Record<
 export default function SpecDetailViews({
   detail,
   projectName,
-  initialView = "overview",
+  view,
+  onViewChange,
   overviewHeader,
   overviewBanner,
   children,
 }: {
   detail: SpecDetailView;
   projectName: string;
-  initialView?: DetailView;
+  /**
+   * The active surface, owned by the URL. Keeping it a prop rather than local
+   * state is what makes every in-page deep link land: a tab click and an
+   * `?el=`/`?view=` link are the same operation, so neither can go stale
+   * against the other.
+   */
+  view: DetailView;
+  onViewChange(view: DetailView): void;
   overviewHeader?: ReactNode;
   overviewBanner?: ReactNode;
   children: ReactNode;
 }): React.JSX.Element {
-  const [view, setView] = useState<DetailView>(initialView);
-  // In-page links (gate policy, verify, lint findings) change the URL without
-  // remounting this component, so a changed URL-derived view must win over the
-  // locally tracked tab state.
-  const [syncedInitialView, setSyncedInitialView] = useState(initialView);
-  if (initialView !== syncedInitialView) {
-    setSyncedInitialView(initialView);
-    setView(initialView);
-  }
   const evidenceTarget = useMemo(
     () => selectEvidenceRevision(detail),
     [detail],
@@ -165,7 +165,7 @@ export default function SpecDetailViews({
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => setView("overview")}
+              onClick={() => onViewChange("overview")}
             >
               Back to {detail.spec.slug}
             </Button>
@@ -195,6 +195,9 @@ export default function SpecDetailViews({
             projectName={projectName}
           />
         )}
+        {view === "integrity" && (
+          <SpecIntegrityPanel detail={detail} projectName={projectName} />
+        )}
       </section>
     );
   }
@@ -202,7 +205,7 @@ export default function SpecDetailViews({
   return (
     <TabsRoot
       value={view}
-      onValueChange={(value) => setView(value as DetailView)}
+      onValueChange={(value) => onViewChange(value as DetailView)}
     >
       {view === "overview" ? (
         <>
@@ -213,7 +216,7 @@ export default function SpecDetailViews({
         <PrimarySubscreenHeader
           view={view}
           slug={detail.spec.slug}
-          onBack={() => setView("overview")}
+          onBack={() => onViewChange("overview")}
         >
           <PrimaryViewNavigation />
         </PrimarySubscreenHeader>
@@ -247,11 +250,7 @@ export default function SpecDetailViews({
         </div>
       )}
       <TabsContent value="traceability" layoutClassName="mt-lg">
-        <TraceabilityGraph
-          input={traceabilityInput}
-          showHeading={false}
-          onOpenElement={() => setView("overview")}
-        />
+        <TraceabilityGraph input={traceabilityInput} showHeading={false} />
       </TabsContent>
       <TabsContent value="history" layoutClassName="mt-lg">
         <SpecHistoryPanel
@@ -344,25 +343,31 @@ export function initialDetailViewForDeepLink(
   }
 }
 
-function isFocusedView(view: DetailView): view is "lint" | "questions" {
-  return view === "lint" || view === "questions";
+type FocusedView = "lint" | "questions" | "integrity";
+
+function isFocusedView(view: DetailView): view is FocusedView {
+  return view === "lint" || view === "questions" || view === "integrity";
 }
 
-function focusedViewTitle(view: "lint" | "questions"): string {
+function focusedViewTitle(view: FocusedView): string {
   switch (view) {
     case "lint":
       return "Deterministic lint";
     case "questions":
       return "Questions and assumptions";
+    case "integrity":
+      return "Spec integrity";
   }
 }
 
-function focusedViewDescription(view: "lint" | "questions"): string {
+function focusedViewDescription(view: FocusedView): string {
   switch (view) {
     case "lint":
       return "Inspect the exact findings that gate proposal and sign-off.";
     case "questions":
       return "Resolve the human decisions that keep the contract explicit.";
+    case "integrity":
+      return "Approved revisions are re-hashed and compared against the immutable hashes recorded at approval.";
   }
 }
 

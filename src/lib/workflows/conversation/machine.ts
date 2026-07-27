@@ -492,6 +492,16 @@ export const conversationMachine = setup({
         EXTERNAL_TURN_STARTED: {
           target: "externalExecuting",
         },
+        // Stop with nothing to stop. The machine is already settled, so this is
+        // a reconciliation, not a transition: it re-asserts the settled status
+        // onto the persisted row and the SSE stream. A conversation whose row
+        // was left on "running" by a turn that died without settling (or by a
+        // process that exited mid-transition) reads as permanently busy, and
+        // Stop is where the user goes to fix that. Internal (no target) so the
+        // resting state's entry — the pending-queue drain — does not re-run.
+        ABORT_TURN: {
+          actions: ["syncDerivedFields", "broadcastConversationStatus"],
+        },
       },
     },
 
@@ -517,6 +527,18 @@ export const conversationMachine = setup({
             lastResult: ({ event }) => event.result,
             backendRef: ({ context, event }) =>
               resolveCompletedTurnBackendRef(context, event.result),
+          }),
+        },
+        // An external turn is not caller-initiated, so nothing on the CC side
+        // holds a handle that can force its completion: if the backend never
+        // sends one, this state is a dead end that reads as a permanently
+        // "running" conversation. Stop is the user's only exit, so it settles
+        // the turn here exactly as it does in `executing`.
+        ABORT_TURN: {
+          target: "#conversation.finalizingTurn",
+          actions: assign({
+            lastError: ({ event }) => `Aborted: ${event.reason}`,
+            pendingQuestion: null,
           }),
         },
       },

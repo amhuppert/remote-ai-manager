@@ -699,12 +699,12 @@ const claudeConversationBackendFactory = {
   async createRuntime(
     input: ConversationBackendCreateInput,
   ): Promise<ConversationBackendRuntime> {
-    const mcpScopeConversationId =
-      input.mcpScopeConversationId ?? input.conversationId;
+    const ccScopeConversationId =
+      input.ccScopeConversationId ?? input.conversationId;
 
     logger.info("claude-factory.create_runtime", {
       ...conversationTargetLogFields(input.conversationTarget),
-      mcpScopeConversationId,
+      ccScopeConversationId,
       modelId: input.modelId,
     });
 
@@ -839,7 +839,15 @@ const claudeConversationBackendFactory = {
         baseEnv: buildChildEnv(),
         serverUrl: getServerBaseUrl(),
         apiToken: getCachedInstanceToken(),
-        target: input.conversationTarget,
+        // Scope and session identity come from the DECLARED target, so a project
+        // conversation still exports a neutralized CC_SESSION. Only the
+        // conversation id is redirected: a collaboration lane's own
+        // conversationId is a synthetic handle CC state cannot resolve, so cctl
+        // inside the agent is pointed at the originating conversation instead.
+        target: {
+          ...input.conversationTarget,
+          conversationId: ccScopeConversationId,
+        },
         configDir: getConfigDirPath(),
         ...(input.workflowExecutionId !== undefined
           ? { workflowExecutionId: input.workflowExecutionId }

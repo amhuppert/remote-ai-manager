@@ -289,6 +289,7 @@ export function createProductionSpecWorkflowComposition(
         return db.transaction(fn).immediate();
       },
       policyNotifier: notifier,
+      attentionNotifier: notifier,
       lifecycleGate: {
         async requestApproval(input) {
           const result = await reviewService.requestApproval({

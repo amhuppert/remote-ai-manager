@@ -254,4 +254,50 @@ describe("createCollaborationDeps", () => {
       });
     });
   });
+
+  describe("recordAlignmentSeen (real store)", () => {
+    let fixture: PersistenceFixture;
+
+    afterEach(() => {
+      fixture.close();
+    });
+
+    it("persists the seen charter version through the existing lastSeenAlignmentVersion mutation", async () => {
+      fixture = createPersistenceFixture();
+      fixture.seedProject(baseInput.projectPath);
+      fixture.seedSession(baseInput.projectPath, baseInput.sessionName);
+      await fixture.seedConversation(
+        baseInput.projectPath,
+        baseInput.sessionName,
+        conversationStateSchema.parse({
+          id: "conv-A",
+          transcriptPath: null,
+          status: "running",
+          promptCount: 1,
+          createdAt: "2026-01-01T00:00:00Z",
+          lastActivityAt: "2026-01-01T00:01:00Z",
+          lastSeenAlignmentVersion: 4,
+        }),
+      );
+
+      const deps = createCollaborationDeps({
+        ...baseInput,
+        callAgent: makeStubCallAgent(),
+        projectName: "example",
+        mutateConversation: fixture.deps.mutateConversation,
+      });
+
+      await deps.recordAlignmentSeen!("conv-A", 12);
+      // Repeated delivery (retry / resume) converges on the same state.
+      await deps.recordAlignmentSeen!("conv-A", 12);
+
+      const reloaded = await fixture.deps.getConversation(
+        baseInput.projectPath,
+        baseInput.sessionName,
+        "conv-A",
+      );
+      expect(reloaded).not.toBeNull();
+      expect(reloaded!.lastSeenAlignmentVersion).toBe(12);
+    });
+  });
 });

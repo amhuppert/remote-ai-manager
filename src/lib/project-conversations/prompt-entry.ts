@@ -3,10 +3,10 @@ import { readConfig } from "@/lib/config/loader";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import {
   executePromptStream,
-  hasCollabPrefix,
   BackendMismatchError,
   type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
+import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import {
   getProjectConversation,
   mutateProjectConversation,

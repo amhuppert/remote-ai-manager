@@ -29,7 +29,11 @@ import type { ConversationCommandDispatchInput } from "@/lib/conversation-comman
 import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 import { dispatchConversationCommand as defaultDispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 import { createLogger } from "@/lib/logging";
-import { parseConversationCommand } from "@/lib/conversation-commands/parse";
+import {
+  hasCollabPrefix,
+  parseConversationCommand,
+  stripCollabPrefix,
+} from "@/lib/conversation-commands/parse";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
   scopeRefFromStoreSessionName,
@@ -590,18 +594,6 @@ export class ConversationCommandDispatcherUnavailableError extends Error {
     );
     this.name = "ConversationCommandDispatcherUnavailableError";
   }
-}
-
-export function hasCollabPrefix(text: string): boolean {
-  const trimmed = text.trimStart();
-  return trimmed === "/collab" || trimmed.startsWith("/collab ");
-}
-
-export function stripCollabPrefix(text: string): string {
-  const trimmed = text.trimStart();
-  if (trimmed === "/collab") return "";
-  if (trimmed.startsWith("/collab ")) return trimmed.slice("/collab ".length);
-  return trimmed;
 }
 
 /**

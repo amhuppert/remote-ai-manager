@@ -135,6 +135,16 @@ export interface InFlightSlice {
     queueId: string,
   ): void;
   failOptimisticQueueEntry(conversationId: string, tempId: string): void;
+  /**
+   * Remove accepted optimistic entries whose durable representation has been
+   * observed (their durable queue row, or the transcript row a delivery
+   * stamped with the queue id). Without this reconcile an accepted entry
+   * outlives its server-side prune and re-renders the message as a duplicate.
+   */
+  resolveOptimisticQueueEntries(
+    conversationId: string,
+    queueIds: readonly string[],
+  ): void;
   cancelOptimisticQueueEntry(conversationId: string, idOrTempId: string): void;
   /**
    * Retire this client's pending row for a durable queue id the server has

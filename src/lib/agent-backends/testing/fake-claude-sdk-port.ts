@@ -333,6 +333,11 @@ export function createFakeClaudeTaskPort(
         yield buildResultSuccess(structuredOutput);
       })();
     },
+    // Conformance runs carry no `ccSessionScope`, so no session env contract
+    // is ever built from these.
+    getServerUrl: () => null,
+    getApiToken: () => null,
+    getConfigDir: () => "/conformance/config",
   };
 
   return {

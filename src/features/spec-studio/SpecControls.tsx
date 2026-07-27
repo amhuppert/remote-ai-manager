@@ -44,7 +44,11 @@ import {
   policyChangeRequiresHardConfirmation,
   resolveDial,
 } from "@/lib/specs/policy";
-import type { SpecDetailView } from "@/lib/specs/queries";
+import {
+  useSpecIntegrityQuery,
+  type SpecDetailView,
+} from "@/lib/specs/queries";
+import type { IntegrityReport } from "@/lib/specs/view-schemas";
 import { executionScopeSchema } from "@/lib/specs/scope-validation";
 import {
   specAliasSchema,
@@ -117,25 +121,6 @@ const dispositionLabels: Record<SpecCriterionDisposition, string> = {
   waived: "Waived",
   delivered_elsewhere: "Delivered elsewhere",
 };
-
-export const integrityReportSchema = z
-  .object({
-    ok: z.boolean(),
-    checkedRevisionIds: z.array(z.string().min(1)),
-    mismatches: z.array(
-      z
-        .object({
-          revisionId: z.string().min(1),
-          expectedContentHash: z.string(),
-          actualContentHash: z.string(),
-          mismatchedElementIds: z.array(z.string().min(1)),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
-
-export type IntegrityReportView = z.infer<typeof integrityReportSchema>;
 
 export const renameSpecResultSchema = z
   .object({ spec: specSchema, alias: specAliasSchema })
@@ -600,6 +585,11 @@ export interface CaptureDiscoveredWorkInput {
   blockingReason?: string;
 }
 
+export interface AbandonExecutionPanelInput {
+  executionId: string;
+  reason: string;
+}
+
 export function ExecutionPanel({
   detail,
   projectName,
@@ -611,6 +601,7 @@ export function ExecutionPanel({
   onGrantGateApproval,
   onApproveExecutionStart,
   onCaptureScopeAmendment,
+  onAbandonExecution,
 }: {
   detail: SpecDetailView;
   projectName: string;
@@ -622,6 +613,7 @@ export function ExecutionPanel({
   onGrantGateApproval(input: GrantGateApprovalPanelInput): void;
   onApproveExecutionStart(input: ApproveExecutionStartPanelInput): void;
   onCaptureScopeAmendment(input: CaptureDiscoveredWorkInput): void;
+  onAbandonExecution(input: AbandonExecutionPanelInput): void;
 }): React.JSX.Element {
   const approvedSnapshot = approvedRevisionSnapshot(detail);
   const activeExecution = detail.executions.find(
@@ -709,6 +701,16 @@ export function ExecutionPanel({
               onCapture={onCaptureScopeAmendment}
             />
           )}
+
+          {/* The escape hatch stays reachable in every active state: an
+              execution whose workflow stalled, halted, or was compiled from a
+              superseded revision must be stoppable from here so a fresh run
+              can start. */}
+          <AbandonExecutionForm
+            executionId={activeExecution.id}
+            pending={pendingAction === "abandon-execution"}
+            onAbandon={onAbandonExecution}
+          />
         </>
       ) : approvedSnapshot === null ? (
         <section className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg">
@@ -1567,6 +1569,54 @@ function CaptureDiscoveredWorkForm({
   );
 }
 
+function AbandonExecutionForm({
+  executionId,
+  pending,
+  onAbandon,
+}: {
+  executionId: string;
+  pending: boolean;
+  onAbandon(input: AbandonExecutionPanelInput): void;
+}): React.JSX.Element {
+  const [reason, setReason] = useState("");
+
+  return (
+    <div className="mt-md rounded-md border border-solid border-[var(--cc-red-border)] bg-bg-base p-md">
+      <h3 className="m-0 font-display text-[0.8rem] font-bold text-text-primary">
+        Abandon execution
+      </h3>
+      <p className="mt-xs mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
+        Abandonment is terminal for this run: its pinned revision and scope are
+        retained as history, and a new execution can start from any approved
+        revision.
+      </p>
+      <FormGroup layoutClassName="mt-md">
+        <FormLabel htmlFor="spec-abandon-execution-reason">
+          Abandonment reason
+        </FormLabel>
+        <FormInput
+          id="spec-abandon-execution-reason"
+          aria-label="Abandonment reason"
+          value={reason}
+          onChange={(event) => setReason(event.currentTarget.value)}
+          placeholder="Required durable abandonment reason"
+          autoComplete="off"
+        />
+      </FormGroup>
+      <Button
+        size="sm"
+        variant="danger"
+        layoutClassName="mt-md"
+        loading={pending}
+        disabled={reason.trim().length === 0}
+        onClick={() => onAbandon({ executionId, reason: reason.trim() })}
+      >
+        Abandon execution
+      </Button>
+    </div>
+  );
+}
+
 function CriterionExecutionControls({
   criterionElementId,
   handle,
@@ -1796,7 +1846,7 @@ export function IntegrityBanner({
   isPending,
   error,
 }: {
-  report: IntegrityReportView | null;
+  report: IntegrityReport | null;
   isPending: boolean;
   error: string | null;
 }): React.JSX.Element | null {
@@ -1859,6 +1909,41 @@ export function IntegrityBanner({
   );
 }
 
+export function SpecIntegrityPanel({
+  detail,
+  projectName,
+}: {
+  detail: SpecDetailView;
+  projectName: string;
+}): React.JSX.Element {
+  const verify = useSpecIntegrityQuery(projectName, detail.spec.slug);
+  const report = verify.data ?? null;
+  const error = verify.error instanceof Error ? verify.error.message : null;
+
+  useEffect(() => {
+    if (report !== null && !report.ok) {
+      logger.error("spec_studio.integrity.mismatch", {
+        specId: detail.spec.id,
+        mismatchCount: report.mismatches.length,
+      });
+    }
+    if (error !== null) {
+      logger.warn("spec_studio.integrity.verify_failed", {
+        specId: detail.spec.id,
+        error,
+      });
+    }
+  }, [detail.spec.id, error, report]);
+
+  return (
+    <IntegrityBanner
+      report={report}
+      isPending={verify.isPending}
+      error={error}
+    />
+  );
+}
+
 const startExecutionResponseSchema = z
   .object({
     execution: specExecutionRowSchema,
@@ -1887,9 +1972,6 @@ export default function SpecControlsPanel({
     action: string;
     message: string;
   } | null>(null);
-  const [integrityReport, setIntegrityReport] =
-    useState<IntegrityReportView | null>(null);
-  const verifiedSpecId = useRef<string | null>(null);
   const changePolicy = useSpecActionMutation<
     { proposedPolicy: SpecGatePolicy; hardConfirmed: boolean },
     z.infer<typeof specSchema>
@@ -1943,36 +2025,10 @@ export default function SpecControlsPanel({
     "capture-scope-amendment",
     captureScopeAmendmentResponseSchema,
   );
-  const verify = useSpecActionMutation<
-    Record<string, never>,
-    IntegrityReportView
-  >(projectName, detail.spec.slug, "verify", integrityReportSchema);
-
-  useEffect(() => {
-    if (verifiedSpecId.current === detail.spec.id) return;
-    verifiedSpecId.current = detail.spec.id;
-    verify.mutate(
-      {},
-      {
-        onSuccess: (report) => {
-          setIntegrityReport(report);
-          if (!report.ok) {
-            logger.error("spec_studio.integrity.mismatch", {
-              specId: detail.spec.id,
-              mismatchCount: report.mismatches.length,
-            });
-          }
-        },
-        onError: (mutationError) => {
-          logger.warn("spec_studio.integrity.verify_failed", {
-            specId: detail.spec.id,
-            error: mutationError.message,
-          });
-        },
-      },
-    );
-  }, [detail.spec.id, verify]);
-
+  const abandonExecution = useSpecActionMutation<
+    AbandonExecutionPanelInput,
+    z.infer<typeof specExecutionRowSchema>
+  >(projectName, detail.spec.slug, "abandon-execution", specExecutionRowSchema);
   function mutationCallbacks(action: string) {
     return {
       onSuccess: () => {
@@ -2007,17 +2063,13 @@ export default function SpecControlsPanel({
               ? "approve-execution-start"
               : captureScopeAmendment.isPending
                 ? "capture-scope-amendment"
-                : null;
+                : abandonExecution.isPending
+                  ? "abandon-execution"
+                  : null;
 
   return (
     <div>
-      <div id="spec-integrity" className="scroll-mt-lg">
-        <IntegrityBanner
-          report={integrityReport}
-          isPending={verify.isPending}
-          error={verify.error?.message ?? null}
-        />
-      </div>
+      <SpecIntegrityPanel detail={detail} projectName={projectName} />
       <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
       <div id="gate-policy" className="mb-xl scroll-mt-lg">
         <PolicyDialog
@@ -2070,6 +2122,9 @@ export default function SpecControlsPanel({
             input,
             mutationCallbacks("capture-scope-amendment"),
           )
+        }
+        onAbandonExecution={(input) =>
+          abandonExecution.mutate(input, mutationCallbacks("abandon-execution"))
         }
       />
     </div>

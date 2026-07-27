@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import TddToggle from "@/components/TddToggle";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import { cn } from "@/lib/ui/cn";
@@ -60,85 +61,94 @@ export default function MobileActionMenu({
         &#8943;
       </button>
 
-      {/* Backdrop keeps the shared `.mobile-action-backdrop` rule: its scrim color
-          (rgba(6,9,15,0.7)) has no Tailwind-scale or existing token, and the rule
-          is cross-owned with MobilePromptToolbar, so it stays in CSS until that
-          owner migrates (consumer-gated). */}
-      <div
-        className={cn("mobile-action-backdrop", open && "visible")}
-        onClick={handleClose}
-      />
-
-      {/* Action sheet */}
-      <div
-        data-open={open}
-        className={cn(
-          "fixed right-0 bottom-0 left-0 z-[201] max-h-[70vh] animate-[slideUpSheet_0.25s_ease] overflow-y-auto rounded-t-lg rounded-b-none border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface p-md pb-[calc(var(--space-lg)_+_env(safe-area-inset-bottom,0))]",
-          open ? "flex flex-col gap-sm" : "hidden",
-        )}
-      >
-        <div className="relative mb-xs flex shrink-0 items-center justify-center">
-          <div className="h-[4px] w-[36px] shrink-0 rounded-[2px] bg-border-default" />
-          <button
-            className="absolute top-1/2 right-0 flex h-[32px] w-[32px] -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border-none bg-transparent text-[1rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary"
-            onClick={handleClose}
-            aria-label="Close menu"
-            type="button"
-          >
-            {"\u2715"}
-          </button>
-        </div>
-
-        {/* Settings section */}
-        <div className="flex flex-col gap-[2px]">
-          <div className="px-sm py-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
-            Settings
-          </div>
-          {/* `mobile-action-tdd-row` is a bare hook (no backing rule) for
-              TddToggle's `[.mobile-action-tdd-row_&]:` parent-variant overrides;
-              the container box styling is reproduced by the utilities here. */}
-          <div className="mobile-action-tdd-row flex min-h-[44px] items-center gap-sm px-sm py-xs">
-            <TddToggle
-              enabled={tddEnabled}
-              onChange={onTddToggle}
-              disabled={tddDisabled}
+      {/* The bottom bar's backdrop filter can make fixed descendants relative
+          to the bar instead of the viewport, so the overlay escapes to body. */}
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <>
+            {/* Backdrop keeps the shared `.mobile-action-backdrop` rule: its scrim color
+                (rgba(6,9,15,0.7)) has no Tailwind-scale or existing token, and the rule
+                is cross-owned with MobilePromptToolbar, so it stays in CSS until that
+                owner migrates (consumer-gated). */}
+            <div
+              className="mobile-action-backdrop visible"
+              onClick={handleClose}
             />
-          </div>
-          {onDevServers && (
-            <button
-              className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-text-primary transition-[background] duration-100 ease-[ease] hover:bg-bg-hover"
-              onClick={() => handleAction(onDevServers)}
-              type="button"
-            >
-              <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
-                {"\u2630"}
-              </span>
-              <span className="flex-1">Dev Servers</span>
-              {devServerCounts && devServerCounts.total > 0 && (
-                <span className="shrink-0 text-[0.7rem] text-text-tertiary">
-                  {devServerCounts.running}/{devServerCounts.total}
-                </span>
+
+            {/* Action sheet */}
+            <div
+              data-open="true"
+              className={cn(
+                "fixed right-0 bottom-0 left-0 z-[201] max-h-[70vh] animate-[slideUpSheet_0.25s_ease] overflow-y-auto rounded-t-lg rounded-b-none border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-surface p-md pb-[calc(var(--space-lg)_+_env(safe-area-inset-bottom,0))]",
+                "flex flex-col gap-sm",
               )}
-            </button>
-          )}
-        </div>
+            >
+              <div className="relative mb-xs flex shrink-0 items-center justify-center">
+                <div className="h-[4px] w-[36px] shrink-0 rounded-[2px] bg-border-default" />
+                <button
+                  className="absolute top-1/2 right-0 flex h-[32px] w-[32px] -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border-none bg-transparent text-[1rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary"
+                  onClick={handleClose}
+                  aria-label="Close menu"
+                  type="button"
+                >
+                  {"\u2715"}
+                </button>
+              </div>
 
-        <div className="my-xs h-px bg-border-subtle" />
+              {/* Settings section */}
+              <div className="flex flex-col gap-[2px]">
+                <div className="px-sm py-xs font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                  Settings
+                </div>
+                {/* `mobile-action-tdd-row` is a bare hook (no backing rule) for
+                    TddToggle's `[.mobile-action-tdd-row_&]:` parent-variant overrides;
+                    the container box styling is reproduced by the utilities here. */}
+                <div className="mobile-action-tdd-row flex min-h-[44px] items-center gap-sm px-sm py-xs">
+                  <TddToggle
+                    enabled={tddEnabled}
+                    onChange={onTddToggle}
+                    disabled={tddDisabled}
+                  />
+                </div>
+                {onDevServers && (
+                  <button
+                    className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-text-primary transition-[background] duration-100 ease-[ease] hover:bg-bg-hover"
+                    onClick={() => handleAction(onDevServers)}
+                    type="button"
+                  >
+                    <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
+                      {"\u2630"}
+                    </span>
+                    <span className="flex-1">Dev Servers</span>
+                    {devServerCounts && devServerCounts.total > 0 && (
+                      <span className="shrink-0 text-[0.7rem] text-text-tertiary">
+                        {devServerCounts.running}/{devServerCounts.total}
+                      </span>
+                    )}
+                  </button>
+                )}
+              </div>
 
-        {/* Danger zone */}
-        <div className="flex flex-col gap-[2px]">
-          <button
-            className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-red-text transition-[background] duration-100 ease-[ease] hover:bg-red-glow"
-            onClick={() => handleAction(onDelete)}
-            type="button"
-          >
-            <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
-              {"\u2715"}
-            </span>
-            <span className="flex-1">Delete session</span>
-          </button>
-        </div>
-      </div>
+              <div className="my-xs h-px bg-border-subtle" />
+
+              {/* Danger zone */}
+              <div className="flex flex-col gap-[2px]">
+                <button
+                  className="flex min-h-[44px] w-full cursor-pointer items-center gap-sm rounded-sm border-none bg-transparent p-sm text-left font-mono text-[0.8rem] text-red-text transition-[background] duration-100 ease-[ease] hover:bg-red-glow"
+                  onClick={() => handleAction(onDelete)}
+                  type="button"
+                >
+                  <span className="w-[20px] shrink-0 text-center text-[0.9rem]">
+                    {"\u2715"}
+                  </span>
+                  <span className="flex-1">Delete session</span>
+                </button>
+              </div>
+            </div>
+          </>,
+          document.body,
+        )}
     </>
   );
 }

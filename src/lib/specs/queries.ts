@@ -28,7 +28,7 @@ import {
   specSchema,
   specWaiverRowSchema,
 } from "./schemas";
-import { specStatusViewSchema } from "./view-schemas";
+import { integrityReportSchema, specStatusViewSchema } from "./view-schemas";
 
 export { specStatusViewSchema };
 
@@ -392,6 +392,26 @@ export const specQueries = {
         ),
       refetchOnReconnect: false,
     }),
+  // Verification recomputes hashes and writes nothing, so it is read state that
+  // happens to sit behind the POST action surface. The cache — not a requesting
+  // component — has to own the report, because the panel that asks for it can
+  // remount before the answer arrives.
+  integrity: (projectName: string, slug: string) =>
+    queryOptions({
+      queryKey: specKeys.integrity(projectName, slug),
+      queryFn: ({ signal }) =>
+        apiFetch(
+          `${specBasePath(projectName, slug)}/actions/verify`,
+          integrityReportSchema,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+            signal,
+          },
+        ),
+      refetchOnReconnect: false,
+    }),
   search: (projectName: string, slug: string, query: string) =>
     queryOptions({
       queryKey: specKeys.search(projectName, slug, query),
@@ -453,6 +473,10 @@ export function useSpecElementQuery(
 
 export function useSpecLintQuery(projectName: string, slug: string) {
   return useQuery(specQueries.lint(projectName, slug));
+}
+
+export function useSpecIntegrityQuery(projectName: string, slug: string) {
+  return useQuery(specQueries.integrity(projectName, slug));
 }
 
 export function useSpecSearchQuery(

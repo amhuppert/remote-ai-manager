@@ -142,7 +142,7 @@ export default function PromptDesktopToolbar({
           availableLevels={availableEffortLevels}
           disabledTooltip={
             !effortSupported
-              ? "Reasoning level is only available for Opus and Sonnet models"
+              ? "The selected model does not support reasoning effort"
               : undefined
           }
           onOpenChange={onEffortOpenChange}

@@ -21,6 +21,25 @@ function msg(role: "user" | "assistant", text: string): TranscriptMessage {
   };
 }
 
+/** Transcript row carrying the stable visible-message id the writer stamped —
+ * for a delivered queued message this is the durable queue row's id. */
+function msgWithId(
+  id: string,
+  role: "user" | "assistant",
+  text: string,
+): TranscriptMessage {
+  return { ...msg(role, text), id };
+}
+
+function textRows(result: readonly TranscriptMessage[], text: string) {
+  return result.filter(
+    (m) =>
+      m.content.length === 1 &&
+      m.content[0]?.type === "text" &&
+      m.content[0].text === text,
+  );
+}
+
 function pending(
   id: string,
   text: string,
@@ -65,6 +84,11 @@ const B = "conv-b";
 function optimisticMessagesFor(conversationId: string) {
   return selectInFlightFor(useSessionDetailStore.getState(), conversationId)
     .optimisticMessages;
+}
+
+function optimisticQueueFor(conversationId: string) {
+  return selectInFlightFor(useSessionDetailStore.getState(), conversationId)
+    .optimisticQueue;
 }
 
 describe("useDisplayMessages", () => {
@@ -151,6 +175,71 @@ describe("useDisplayMessages", () => {
     renderHook(() => useDisplayMessages(B, otherPaneMessages));
 
     expect(optimisticMessagesFor(A)).toHaveLength(1);
+  });
+
+  it("prunes an accepted optimistic queue entry once its transcript row lands", () => {
+    // Queue POST accepted (queueId assigned), then the queued delivery
+    // appended the transcript row (stamped with the durable queue id) and the
+    // server pruned the durable queue row. The optimistic bridge entry must be
+    // reconciled away — it is now represented by the transcript row.
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry(A, "temp-1", [
+      { type: "text", text: "queued A" },
+    ]);
+    store.acceptOptimisticQueueEntry(A, "temp-1", "q1");
+
+    const messages: TranscriptMessage[] = [
+      msg("user", "first"),
+      msg("assistant", "partial reply"),
+      msgWithId("q1", "user", "queued A"),
+    ];
+    const { result, rerender } = renderHook(() =>
+      useDisplayMessages(A, messages, []),
+    );
+
+    rerender();
+    expect(optimisticQueueFor(A)).toHaveLength(0);
+    expect(result.current).toBe(messages);
+  });
+
+  it("prunes an accepted optimistic queue entry once its durable row is observed in the pending queue", () => {
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry(A, "temp-1", [
+      { type: "text", text: "queued A" },
+    ]);
+    store.acceptOptimisticQueueEntry(A, "temp-1", "q1");
+
+    const pendingQueue = [pending("q1", "queued A")];
+    const { result, rerender } = renderHook(() =>
+      useDisplayMessages(A, [], pendingQueue),
+    );
+
+    rerender();
+    expect(optimisticQueueFor(A)).toHaveLength(0);
+    // The durable row still renders the message.
+    expect(textRows(result.current, "queued A")).toHaveLength(1);
+  });
+
+  it("keeps optimistic queue entries that are not yet durably represented", () => {
+    // An accepted entry whose durable row has not yet been observed (the
+    // POST-accept → session-detail refetch window) and a pending entry with no
+    // queue id must both survive reconciliation — pruning them would blank the
+    // user's message.
+    const store = useSessionDetailStore.getState();
+    store.addOptimisticQueueEntry(A, "temp-1", [
+      { type: "text", text: "accepted, not represented" },
+    ]);
+    store.acceptOptimisticQueueEntry(A, "temp-1", "q1");
+    store.addOptimisticQueueEntry(A, "temp-2", [
+      { type: "text", text: "still posting" },
+    ]);
+
+    const { rerender } = renderHook(() =>
+      useDisplayMessages(A, [msg("user", "other")], []),
+    );
+
+    rerender();
+    expect(optimisticQueueFor(A)).toHaveLength(2);
   });
 
   it("reconciles by clearing optimistic when streaming finished and server caught up", () => {
@@ -291,6 +380,72 @@ describe("buildDisplayProjection", () => {
           m.content[0].text === "queued A",
       ),
     ).toHaveLength(1);
+  });
+
+  it("drops an accepted optimistic entry whose queue id is already a transcript row id (delivered + pruned)", () => {
+    // The reported bug: queued message delivered mid-stream — the transcript
+    // row (stamped with the durable queue id) arrived and the durable queue
+    // row was pruned, but the accepted optimistic entry lingered and rendered
+    // the user message a second time at the end of the feed.
+    const messages = [
+      msg("user", "first"),
+      msg("assistant", "partial reply"),
+      msgWithId("q1", "user", "queued A"),
+    ];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [],
+      optimisticQueue: [optimistic("temp-1", "queued A", "q1")],
+    });
+
+    expect(textRows(result, "queued A")).toHaveLength(1);
+    expect(result).toHaveLength(3);
+    expect(result.filter((m) => m.queued)).toHaveLength(0);
+  });
+
+  it("drops a durable queue row whose id is already a transcript row id (delivered, refetch pending)", () => {
+    // Between the transcript append and the session-detail refetch the cached
+    // durable row still reads `delivering` — the transcript row wins.
+    const messages = [
+      msg("assistant", "partial reply"),
+      msgWithId("q1", "user", "queued A"),
+    ];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("q1", "queued A", "delivering")],
+      optimisticQueue: [optimistic("temp-1", "queued A", "q1")],
+    });
+
+    expect(textRows(result, "queued A")).toHaveLength(1);
+    expect(result).toHaveLength(2);
+    expect(result.filter((m) => m.queued)).toHaveLength(0);
+  });
+
+  it("keeps an accepted optimistic entry that is not yet durably represented anywhere", () => {
+    // POST accepted but neither the durable row (refetch in flight) nor a
+    // transcript row exists yet — the optimistic bridge must stay visible.
+    const result = buildDisplayProjection({
+      messages: [msg("assistant", "working")],
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [],
+      optimisticQueue: [optimistic("temp-1", "queued A", "q1")],
+    });
+
+    expect(textRows(result, "queued A")).toHaveLength(1);
+    expect(result[1]?.queued).toEqual({
+      id: "q1",
+      tempId: "temp-1",
+      status: "accepted",
+      metadata: null,
+    });
   });
 
   it("dedups an optimistic entry whose queueId matches a durable pending id", () => {

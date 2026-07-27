@@ -87,11 +87,24 @@ export interface CollaborationProductionAgentCallerInput {
   /** Identifier passed to WorkflowAgentCaller as the lane scheduler key. */
   sessionKey: string;
   /**
-   * Conversation that initiated the collaboration. Each Claude lane gets
-   * its own synthetic SDK session ID, but the session MCP server has to
-   * resolve to a conversation that exists in CC state — that's this one.
+   * Conversation that initiated the collaboration. Each Claude lane gets its
+   * own synthetic SDK session ID, but the `cctl` identity handed to the lane
+   * has to resolve to a conversation that exists in CC state — that's this one.
    */
   originatingConversationId: string;
+  /**
+   * Opt-in: let the Codex task lane act as the originating CC session, so the
+   * `<active-ticket>` block's `cctl` retrieval commands can actually execute
+   * there (a task subprocess otherwise has no CC identity at all).
+   *
+   * Set ONLY by standalone collaboration, which is one attended logical turn
+   * owned by the originating conversation. Graph-workflow collaboration omits
+   * it: its task runs stay neutralized, exactly as before. The identity is
+   * derived here from `projectPath` / `sessionName` /
+   * `originatingConversationId` rather than accepted from the caller, so no
+   * caller can name a session it does not own.
+   */
+  grantsOriginatingSessionScope?: boolean;
   /**
    * The slice's lane service. Reused so post-turn outcomes recorded by the
    * WorkflowAgentCaller land on the same `LaneState` the slice operates on.
@@ -205,6 +218,16 @@ function buildInnerCallAgent(
   input: CollaborationProductionAgentCallerInput,
 ): InnerCallAgent {
   const projectName = path.basename(input.projectPath);
+  // Built once from the caller's own session facts: the same identity the
+  // Claude lane's conversation runtime resolves cctl against, so both lanes
+  // address the originating conversation rather than a synthetic lane handle.
+  const ccSessionScope = input.grantsOriginatingSessionScope
+    ? {
+        project: projectName,
+        session: input.sessionName,
+        conversationId: input.originatingConversationId,
+      }
+    : undefined;
   const newId = input.newId ?? (() => crypto.randomUUID().slice(0, 8));
   const exec = input.executeAgentCallImpl ?? executeAgentCall;
   const resolveTaskRunner = input.getTaskRunner ?? defaultGetTaskRunner;
@@ -258,6 +281,7 @@ function buildInnerCallAgent(
             ? { stallTimeoutMs: laneDefaults.stallTimeoutMs }
             : {}),
           ...(codexResumeRef !== null ? { resumeRef: codexResumeRef } : {}),
+          ...(ccSessionScope !== undefined ? { ccSessionScope } : {}),
           ...codexHardenedSettings,
         }),
       });
@@ -297,9 +321,19 @@ function buildInnerCallAgent(
     const effectiveModelId = request.modelId ?? laneDefaults.model;
     const effectiveReasoningEffort =
       request.reasoningEffort ?? laneDefaults.reasoningEffort;
+    // Semantic → transport: the request's governing instructions become the
+    // conversation's session instructions, the same channel an ordinary turn
+    // gives the charter. Both the runtime (which bakes governance at creation)
+    // and the dispatched turn carry them. No `alignmentVersion` is stamped:
+    // collaboration creates and closes a runtime per call, so the
+    // version-gated recreate path it feeds could never fire.
+    const sessionInstructions =
+      request.systemInstructions !== undefined
+        ? [request.systemInstructions]
+        : [];
     const runtime = await factory.createRuntime({
       conversationId,
-      mcpScopeConversationId: input.originatingConversationId,
+      ccScopeConversationId: input.originatingConversationId,
       projectPath: input.projectPath,
       projectName,
       // The lane's session key lifted into the public scope vocabulary at this
@@ -317,7 +351,7 @@ function buildInnerCallAgent(
         ? { reasoningEffort: effectiveReasoningEffort }
         : {}),
       ...(outputFormat !== undefined ? { outputFormat } : {}),
-      sessionInstructions: [],
+      sessionInstructions,
       tooling: {},
     });
     const abort = new AbortController();
@@ -380,7 +414,7 @@ function buildInnerCallAgent(
           ...(request.reasoningEffort !== undefined
             ? { reasoningEffort: request.reasoningEffort }
             : {}),
-          sessionInstructions: [],
+          sessionInstructions,
         }),
       });
       const staleResumeMessage = claudeResumeRef
@@ -519,6 +553,40 @@ export function createCollaborationProductionAgentCaller(
 }
 
 /**
+ * Turn a schema-bearing phase prompt into its prose work-turn form by swapping
+ * the builder-owned structured-output reminder for the prose directive.
+ *
+ * The reminder is only ever the prompt's terminal segment — every phase builder
+ * emits it last — so the swap is anchored to the suffix. A blind
+ * `replace()` would rewrite the FIRST occurrence anywhere in the prompt, and by
+ * this point `callPrimitive` has prefixed the captured `<active-ticket>` block,
+ * whose title and description are unrestricted user text: a ticket that quotes
+ * the reminder would have its own words rewritten while the real trailing
+ * reminder survived. The canonical block has to reach the agent byte-for-byte.
+ */
+function swapTrailingReminderForProseDirective(
+  prompt: string,
+  context: { workflowId: string; laneId: string | undefined },
+): string {
+  if (!prompt.endsWith(COLLABORATION_STRUCTURED_OUTPUT_REMINDER)) {
+    // Not a builder-shaped phase prompt. Dispatch it unchanged rather than
+    // guessing which occurrence was meant; the work turn then keeps whatever
+    // output directive its author wrote.
+    logger.warn("collaboration.work_turn.prose_swap_skipped", {
+      workflowId: context.workflowId,
+      laneId: context.laneId,
+    });
+    return prompt;
+  }
+  return (
+    prompt.slice(
+      0,
+      prompt.length - COLLABORATION_STRUCTURED_OUTPUT_REMINDER.length,
+    ) + COLLABORATION_PROSE_TURN_INSTRUCTION
+  );
+}
+
+/**
  * Adapts a `WorkflowAgentCaller` into the `(request) => Promise<AgentCallResult>`
  * signature the slice's `callAgent` dep expects.
  *
@@ -570,10 +638,10 @@ export function createCollaborationProductionCallAgent(
     const workTurn: AgentCallRequest = {
       ...request,
       outputSchema: undefined,
-      prompt: request.prompt.replace(
-        COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
-        COLLABORATION_PROSE_TURN_INSTRUCTION,
-      ),
+      prompt: swapTrailingReminderForProseDirective(request.prompt, {
+        workflowId: input.workflowId,
+        laneId: laneRef.laneId,
+      }),
     };
     const formatTurn: AgentCallRequest = {
       ...request,

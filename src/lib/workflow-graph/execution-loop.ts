@@ -50,6 +50,7 @@ import {
   appendPendingJoin,
   findActiveJoin,
   findBusyJoinSourceLaneIds,
+  findContextsWithUnfinishedTasks,
   materializeSessionLane,
   planContextJoin,
   planFinalPublishJoin,
@@ -2194,7 +2195,8 @@ export function createGraphWorkflowExecutionLoop(
         | "pending_halt"
         | "active_join_changed"
         | "candidate_changed"
-        | "busy_source_lanes";
+        | "busy_source_lanes"
+        | "stale_final_publish_superseded";
       const claim: {
         join: GraphWorkflowExecutionJoinState | null;
         deferredJoin: GraphWorkflowExecutionJoinState | null;
@@ -2225,6 +2227,31 @@ export function createGraphWorkflowExecutionLoop(
             if (!active || active.joinId !== join.joinId) {
               claim.reason = "active_join_changed";
               return current;
+            }
+            // A final_publish persisted before a halt window may be restored
+            // while a source-eligible context still has unstarted tasks (a
+            // never-started downstream, or a context reset during the halt).
+            // Running it would deliver a candidate that structurally excludes
+            // that work, so supersede it: mark it failed and let the next pass
+            // re-plan from current state (ticket #28 / F25).
+            if (active.kind === "final_publish") {
+              const unfinished = findContextsWithUnfinishedTasks(current);
+              if (unfinished.length > 0) {
+                claim.reason = "stale_final_publish_superseded";
+                return applyJoinProgress(
+                  current,
+                  active.joinId,
+                  new Date().toISOString(),
+                  {
+                    status: "failed",
+                    errorMessage: `Superseded: ${unfinished.length} context(s) still have unfinished tasks (${unfinished
+                      .map((state) => state.contextId)
+                      .join(
+                        ", ",
+                      )}). The final publish is re-planned after that work completes.`,
+                  },
+                );
+              }
             }
             currentJoin = active;
           } else {
@@ -2752,12 +2779,7 @@ export function createGraphWorkflowExecutionLoop(
           // context whose tasks are all done but whose status has not yet been
           // flipped to `completed` (e.g. parked awaiting collaboration delivery)
           // is legitimately finished and must not block completion.
-          const incompleteContexts = Object.values(
-            execution.contextStates,
-          ).filter(
-            (contextState) =>
-              contextState.completedTaskCount < contextState.totalTaskCount,
-          );
+          const incompleteContexts = findContextsWithUnfinishedTasks(execution);
           if (incompleteContexts.length > 0) {
             const incompleteContextIds = incompleteContexts.map(
               (contextState) => contextState.contextId,

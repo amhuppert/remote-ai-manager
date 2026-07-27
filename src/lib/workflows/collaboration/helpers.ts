@@ -22,6 +22,10 @@ import type {
   AsymmetricCollaborationSliceInput,
 } from "./envelope";
 import type { BuiltCollaborationPrompt } from "./prompt-builders";
+import {
+  buildLaneSystemInstructions,
+  prefixPromptWithTicketBlock,
+} from "./session-context";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type {
   CollaborationAgent,
@@ -208,24 +212,40 @@ export async function callPrimitive(
   const { input, deps, backend, prompt, imageRefs } = ctx;
   const writeCapability = ctx.writeCapability ?? DEFAULT_LANE_WRITE_CAPABILITY;
   const laneRef = { workflowId: input.workflowId, laneId: backend };
+
+  // The one seam that decorates a collaboration request with the run's captured
+  // premises, so every phase and both lanes get identical context regardless of
+  // which backend runs them. Each context keeps the channel matching its
+  // authority: the charter governs the call, the ticket view is task context on
+  // the work prompt. A snapshot with neither leaves the request untouched.
+  const systemInstructions = buildLaneSystemInstructions(input.sessionContext);
+  const governance =
+    systemInstructions !== null ? { systemInstructions } : ({} as const);
+  const composedPrompt = prefixPromptWithTicketBlock(
+    input.sessionContext,
+    prompt.prompt,
+  );
+
   const request: AgentCallRequest =
     backend === "claude"
       ? {
           kind: "conversation_turn",
           backend: "claude",
-          prompt: prompt.prompt,
+          prompt: composedPrompt,
           laneRef,
           writeCapability,
           outputSchema: prompt.outputSchema,
+          ...governance,
           ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
         }
       : {
           kind: "task_run",
           backend: "codex",
-          prompt: prompt.prompt,
+          prompt: composedPrompt,
           laneRef,
           writeCapability,
           outputSchema: prompt.outputSchema,
+          ...governance,
           ...(imageRefs?.length ? { imageRefs: [...imageRefs] } : {}),
         };
 

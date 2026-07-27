@@ -940,7 +940,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     });
 
     if (!pendingTurn) {
-      if (!options.externalTurnHandler) {
+      if (!options.externalTurnHandler || !opensExternalTurn(message)) {
         // Between turns — log and discard
         logger.debug("query-session.idle_message", {
           conversationId: options.conversationId,
@@ -1171,6 +1171,38 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // ============================================================
 // Helpers
 // ============================================================
+
+/**
+ * Whether an SDK message received between turns means the agent has actually
+ * started an auto-continuation turn, and so should open a virtual turn.
+ *
+ * An allowlist, not a denylist: the SDK's message union is dominated by ambient
+ * notifications (`rate_limit_event`, and roughly two dozen `system` subtypes
+ * such as `commands_changed`, `task_notification`, `thinking_tokens`) that can
+ * arrive long after a turn settled and carry no turn of their own. Promoting one
+ * to a virtual turn parks the conversation machine in `externalExecuting` with
+ * persisted status `running` and no completion will ever arrive to settle it —
+ * the conversation is stuck "running" and Stop has no turn to abort. Each new
+ * ambient subtype the SDK adds would reintroduce that wedge under a denylist.
+ *
+ * A real auto-continuation announces itself with `system`/`init` and then
+ * streams assistant/user/stream_event frames before its `result`, so the turn
+ * still opens on its first genuine frame; only the preceding notifications are
+ * discarded.
+ */
+function opensExternalTurn(message: SDKMessage): boolean {
+  switch (message.type) {
+    case "assistant":
+    case "user":
+    case "stream_event":
+    case "result":
+      return true;
+    case "system":
+      return message.subtype === "init";
+    default:
+      return false;
+  }
+}
 
 /**
  * Recover a human-readable error from a terminal `result` message.

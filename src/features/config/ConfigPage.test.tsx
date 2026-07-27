@@ -236,7 +236,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       .closest('[data-field="agentBackends.claude.model"]')!;
     fireEvent.click(
       [...claudeModelField.querySelectorAll("button")].find(
-        (button) => button.textContent === "sonnet",
+        (button) => button.textContent === "Sonnet",
       )!,
     );
     fireEvent.click(screen.getByRole("button", { name: /Save changes/i }));
@@ -264,7 +264,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       .closest('[data-field="agentBackends.claude.model"]')!;
     fireEvent.click(
       [...claudeModelField.querySelectorAll("button")].find(
-        (button) => button.textContent === "sonnet",
+        (button) => button.textContent === "Sonnet",
       )!,
     );
     expect(screen.getByText(/unsaved change/i)).toBeVisible();

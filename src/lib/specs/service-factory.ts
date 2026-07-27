@@ -10,6 +10,7 @@ import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { readConversationMessagesWithSeq } from "@/lib/prompt/transcript";
 import { getSession } from "@/lib/state-store";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
+import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
@@ -67,6 +68,8 @@ export async function createProductionSpecRouteServices(
   const eventsRepo = createSpecEventsRepo(db);
   const workflowEvents = createGraphWorkflowEventsRepo(db);
   const workflowExecutions = createGraphWorkflowExecutionsRepo(db);
+  const archivedWorkflowExecutions =
+    createGraphWorkflowArchivedExecutionsRepo(db);
   const jobsRepo = createJobsRepo(db);
   const workflowStorage = createWorkflowStorageService();
   const events = createSpecEventsPublisher({
@@ -377,7 +380,11 @@ export async function createProductionSpecRouteServices(
           return Promise.resolve(workflow.status);
         }
       }
-      return Promise.resolve(null);
+      // A cleared run leaves the active slot but keeps its terminal status in
+      // the archive; only a truly deleted execution reports null.
+      return Promise.resolve(
+        archivedWorkflowExecutions.findStatusByExecutionId(workflowExecutionId),
+      );
     },
     getPublishedMerge(workflowExecutionId) {
       return Promise.resolve(

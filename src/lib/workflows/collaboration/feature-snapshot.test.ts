@@ -77,6 +77,42 @@ describe("collaborationFeatureSnapshotSchema", () => {
     expect(parsed["autonomousResolutionThreshold"]).toBe("minor");
   });
 
+  it("decodes the captured session context as a typed field on the user variant", () => {
+    const sessionContext = {
+      alignment: {
+        version: 3,
+        contentHash: "hash-3",
+        text: "## Charter",
+        snapshotPath: ".cc/session-alignment/snapshots/hash-3.md",
+      },
+      activeTicketBlock: "<active-ticket>\n</active-ticket>",
+    };
+    const result = collaborationFeatureSnapshotSchema.safeParse({
+      ...buildUserSnapshotWithoutOrigin(),
+      sessionContext,
+    });
+    expect(result.success).toBe(true);
+    if (!result.success || result.data.origin !== "user") return;
+    expect(result.data.sessionContext).toEqual(sessionContext);
+  });
+
+  it("still decodes a user snapshot captured before session context existed", () => {
+    const result = collaborationFeatureSnapshotSchema.safeParse(
+      buildUserSnapshotWithoutOrigin(),
+    );
+    expect(result.success).toBe(true);
+    if (!result.success || result.data.origin !== "user") return;
+    expect(result.data.sessionContext).toBeUndefined();
+  });
+
+  it("rejects a user snapshot whose captured session context is malformed", () => {
+    const result = collaborationFeatureSnapshotSchema.safeParse({
+      ...buildUserSnapshotWithoutOrigin(),
+      sessionContext: { alignment: { version: "three" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("parses a workflow-shaped snapshot", () => {
     const snapshot = buildWorkflowSnapshot();
     const result = collaborationFeatureSnapshotSchema.safeParse(snapshot);

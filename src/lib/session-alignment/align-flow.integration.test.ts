@@ -12,6 +12,7 @@ import {
 import {
   renderAlignmentPromptSection,
   computeAlignmentHash,
+  usesDigestPointer,
   SCAFFOLD_TEMPLATE,
 } from "@/lib/session-alignment/render";
 import {
@@ -53,11 +54,20 @@ function setup(): Harness {
     render: {
       renderAlignmentPromptSection,
       computeAlignmentHash,
+      usesDigestPointer,
       scaffoldTemplate: SCAFFOLD_TEMPLATE,
     },
     mirror: {
       async write() {
         return { ok: true, filePath: ".cc/session-alignment/charter.md" };
+      },
+    },
+    snapshot: {
+      write() {
+        return Promise.resolve({
+          filePath: ".cc/session-alignment/snapshots/frozen.md",
+          created: true,
+        });
       },
     },
     broadcast: () => ({ delivered: true }),

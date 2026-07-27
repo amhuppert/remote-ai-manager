@@ -40,6 +40,17 @@ describe("BackendsSection", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("renders the catalog model labels while preserving alias values", () => {
+    const { controller, getState } = makeController();
+    renderWithQuery(<BackendsSection controller={controller} />);
+
+    const opus5 = screen.getByRole("button", { name: "Opus 5" });
+    expect(opus5).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Sonnet" }));
+
+    expect(getState().agentBackends.claude.model).toBe("sonnet");
+  });
+
   it("switches only the default backend and preserves both backend profiles", () => {
     const { controller, getState } = makeController();
     renderWithQuery(<BackendsSection controller={controller} />);
@@ -65,7 +76,7 @@ describe("BackendsSection", () => {
       .getByText("Claude model")
       .closest('[data-field="agentBackends.claude.model"]')!;
     const sonnetButton = [...claudeField.querySelectorAll("button")].find(
-      (button) => button.textContent === "sonnet",
+      (button) => button.textContent === "Sonnet",
     )!;
     fireEvent.click(sonnetButton);
 
@@ -73,7 +84,7 @@ describe("BackendsSection", () => {
       .getByText("Codex model")
       .closest('[data-field="agentBackends.codex.model"]')!;
     const miniButton = [...codexField.querySelectorAll("button")].find(
-      (button) => button.textContent === "gpt-5.4-mini",
+      (button) => button.textContent === "GPT-5.4 Mini",
     )!;
     fireEvent.click(miniButton);
 
@@ -113,7 +124,7 @@ describe("BackendsSection", () => {
       .getByText("Claude model")
       .closest('[data-field="agentBackends.claude.model"]')!;
     const haikuButton = [...claudeField.querySelectorAll("button")].find(
-      (button) => button.textContent === "haiku",
+      (button) => button.textContent === "Haiku",
     )!;
     fireEvent.click(haikuButton);
     view.unmount();
@@ -133,7 +144,7 @@ describe("BackendsSection", () => {
       .closest('[data-field="agentBackends.claude.model"]')!;
     const sonnetButton = [
       ...rerenderedModelField.querySelectorAll("button"),
-    ].find((button) => button.textContent === "sonnet")!;
+    ].find((button) => button.textContent === "Sonnet")!;
     fireEvent.click(sonnetButton);
     haikuView.unmount();
     renderWithQuery(<BackendsSection controller={controller} />);
@@ -164,7 +175,7 @@ describe("BackendsSection", () => {
       .closest('[data-field="agentBackends.claude.model"]')!;
     fireEvent.click(
       [...claudeField.querySelectorAll("button")].find(
-        (button) => button.textContent === "sonnet",
+        (button) => button.textContent === "Sonnet",
       )!,
     );
 

@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
+import { StrictMode } from "react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import type {
   SpecRevisionSnapshot,
@@ -15,6 +18,7 @@ import {
   PolicyAdmissionNotices,
   PolicyDialog,
   RenameSpecDialog,
+  SpecIntegrityPanel,
 } from "./SpecControls";
 import {
   denseSpecControlsDetailFixture as denseExecutionFixture,
@@ -184,6 +188,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -265,6 +270,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -292,6 +298,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={onApproveExecutionStart}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -341,6 +348,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={onGrantGateApproval}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -387,6 +395,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -423,6 +432,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -483,6 +493,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
     await user.click(screen.getByRole("button", { name: "Start execution" }));
@@ -543,6 +554,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -567,6 +579,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -658,6 +671,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -683,6 +697,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={onApproveExecutionStart}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -725,6 +740,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -753,6 +769,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -779,6 +796,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={onGrantGateApproval}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -819,6 +837,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -853,6 +872,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -876,6 +896,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={onCaptureScopeAmendment}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -924,6 +945,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={onCaptureScopeAmendment}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -961,6 +983,70 @@ describe("ExecutionPanel", () => {
     });
   });
 
+  it("abandons the running execution only after a durable reason is provided", async () => {
+    const onAbandonExecution = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detailFixture("running")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={onAbandonExecution}
+      />,
+    );
+
+    const abandon = screen.getByRole("button", { name: "Abandon execution" });
+    expect(abandon).toBeDisabled();
+    await user.type(
+      screen.getByRole("textbox", { name: "Abandonment reason" }),
+      "The plan needs revision before this run can deliver.",
+    );
+    await user.click(abandon);
+
+    expect(onAbandonExecution).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      reason: "The plan needs revision before this run can deliver.",
+    });
+  });
+
+  it("offers abandonment during definition review so a stuck run can always be stopped", async () => {
+    const onAbandonExecution = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExecutionPanel
+        detail={detailFixture("definition_review")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={onAbandonExecution}
+      />,
+    );
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Abandonment reason" }),
+      "Compiled from a superseded revision.",
+    );
+    await user.click(screen.getByRole("button", { name: "Abandon execution" }));
+
+    expect(onAbandonExecution).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      reason: "Compiled from a superseded revision.",
+    });
+  });
+
   it("does not offer capture during definition review, mirroring the server's running-only refusal", () => {
     render(
       <ExecutionPanel
@@ -974,6 +1060,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -1009,6 +1096,7 @@ describe("ExecutionPanel", () => {
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
@@ -1158,5 +1246,64 @@ describe("IntegrityBanner", () => {
     expect(banner).toHaveTextContent("Integrity mismatch");
     expect(banner).toHaveTextContent("revision-1");
     expect(banner).toHaveTextContent("requirement-1");
+  });
+});
+
+describe("SpecIntegrityPanel", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  // React remounts every effect once under StrictMode, so a verification whose
+  // result lands after that remount — the normal case over a real network — is
+  // dropped unless the report survives independently of the requesting mount.
+  it("reports a verification that resolves after React's double mount", async () => {
+    const detail = detailFixture();
+    let release = (): void => {};
+    const inFlight = new Promise<void>((resolve) => {
+      release = () => {
+        resolve();
+      };
+    });
+    api.reply(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+      async () => {
+        await inFlight;
+        return {
+          json: {
+            ok: true,
+            checkedRevisionIds: ["revision-1"],
+            mismatches: [],
+          },
+        };
+      },
+    );
+
+    renderWithQuery(
+      <StrictMode>
+        <SpecIntegrityPanel detail={detail} projectName="command-center" />
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(
+        api.requestsTo(
+          "POST",
+          `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+        ).length,
+      ).toBeGreaterThan(0);
+    });
+    release();
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Integrity intact",
+    );
   });
 });

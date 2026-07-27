@@ -537,7 +537,14 @@ export function createSpecSpineWorld(): SpecSpineWorld {
     nextId: newId,
     now,
     ingestExecutionEvidence,
-    getWorkflowExecutionStatus: async () => null,
+    // Late-bound like the definition gate below: reports the fixture's live
+    // workflow status so read-path reconciliation sees the run instead of
+    // treating the linked workflow as deleted (null now means "abandon").
+    getWorkflowExecutionStatus: async (workflowExecutionId) =>
+      activeWorkflowExecution !== null &&
+      activeWorkflowExecution.id === workflowExecutionId
+        ? activeWorkflowExecution.status
+        : null,
     getPublishedMerge: async (workflowExecutionId) =>
       jobs.findLatestPublishedMergeByExecutionId(workflowExecutionId),
     runInImmediateTransaction<T>(fn: () => T): T {

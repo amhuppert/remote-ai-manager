@@ -112,6 +112,14 @@ interface TaskRunnerResolution {
   artifacts?: readonly ArtifactRef[];
   /** External cancellation signal for the run (see DispatchTaskRunDeps). */
   signal?: AbortSignal;
+  /**
+   * Opt-in CC session identity for the child process (see the trust contract
+   * on `ccTaskSessionScopeSchema`). Deliberately absent from
+   * `TaskExecutionIntent`: only a resolver-callback caller that owns a real
+   * session — today the standalone collaboration production caller — can grant
+   * it, so no registry-resolved intent path can.
+   */
+  ccSessionScope?: AgentTaskRequest["ccSessionScope"];
 }
 
 /**
@@ -202,6 +210,47 @@ export function resolveSchedulingHint(
     writeCapability,
     allowParallel: writeCapability !== "write_capable",
   };
+}
+
+/**
+ * Build the follow-up request for a structured-output repair attempt.
+ *
+ * The repair re-asks for the same answer under the same governance, so the
+ * fields that decide *how* the call runs carry forward verbatim — including
+ * `systemInstructions`, without which the retry would answer stripped of the
+ * instructions that governed the call it repairs. Per-turn payloads (tooling,
+ * images) are deliberately dropped: the repair is an isolated one-shot over
+ * the prior output, not a re-run of the original turn.
+ */
+export function buildStructuredOutputRepairRequest(input: {
+  request: AgentCallRequest;
+  prompt: string;
+  backend: AgentBackendId;
+}): AgentCallRequest {
+  const { request, prompt, backend } = input;
+  const carried = {
+    prompt,
+    ...(request.outputSchema !== undefined
+      ? { outputSchema: request.outputSchema }
+      : {}),
+    ...(request.laneRef !== undefined ? { laneRef: request.laneRef } : {}),
+    ...(request.systemInstructions !== undefined
+      ? { systemInstructions: request.systemInstructions }
+      : {}),
+    ...(request.writeCapability !== undefined
+      ? { writeCapability: request.writeCapability }
+      : {}),
+    ...(request.timeoutMs !== undefined
+      ? { timeoutMs: request.timeoutMs }
+      : {}),
+    ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
+    ...(request.reasoningEffort !== undefined
+      ? { reasoningEffort: request.reasoningEffort }
+      : {}),
+  };
+  return request.kind === "task_run"
+    ? { kind: "task_run", backend, ...carried }
+    : { kind: "conversation_turn", backend, ...carried };
 }
 
 export async function executeAgentCall(
@@ -369,30 +418,11 @@ async function executeConversationTurn(
     dispatchResult,
     deps,
     async (prompt) => {
-      const repairRequest: Extract<
-        AgentCallRequest,
-        { kind: "conversation_turn" }
-      > = {
-        kind: "conversation_turn",
-        backend: resolution.capabilityView.backend,
+      const repairRequest = buildStructuredOutputRepairRequest({
+        request: effectiveRequest,
         prompt,
-        outputSchema: effectiveRequest.outputSchema,
-        ...(effectiveRequest.laneRef !== undefined
-          ? { laneRef: effectiveRequest.laneRef }
-          : {}),
-        ...(effectiveRequest.writeCapability !== undefined
-          ? { writeCapability: effectiveRequest.writeCapability }
-          : {}),
-        ...(effectiveRequest.timeoutMs !== undefined
-          ? { timeoutMs: effectiveRequest.timeoutMs }
-          : {}),
-        ...(effectiveRequest.modelId !== undefined
-          ? { modelId: effectiveRequest.modelId }
-          : {}),
-        ...(effectiveRequest.reasoningEffort !== undefined
-          ? { reasoningEffort: effectiveRequest.reasoningEffort }
-          : {}),
-      };
+        backend: resolution.capabilityView.backend,
+      });
       return dispatchConversationTurn(repairRequest, {
         ...dispatchDeps,
         waitForBackgroundTasks: false,
@@ -518,6 +548,9 @@ async function executeTaskRun(
       ? { artifacts: resolution.artifacts }
       : {}),
     ...(resolution.signal !== undefined ? { signal: resolution.signal } : {}),
+    ...(resolution.ccSessionScope !== undefined
+      ? { ccSessionScope: resolution.ccSessionScope }
+      : {}),
     ...(request.imageRefs !== undefined
       ? { imagePaths: request.imageRefs.map((ref) => ref.path) }
       : {}),
@@ -529,23 +562,11 @@ async function executeTaskRun(
     dispatchResult,
     deps,
     async (prompt) => {
-      const repairRequest: Extract<AgentCallRequest, { kind: "task_run" }> = {
-        kind: "task_run",
-        backend: request.backend,
+      const repairRequest = buildStructuredOutputRepairRequest({
+        request,
         prompt,
-        outputSchema: request.outputSchema,
-        ...(request.laneRef !== undefined ? { laneRef: request.laneRef } : {}),
-        ...(request.writeCapability !== undefined
-          ? { writeCapability: request.writeCapability }
-          : {}),
-        ...(request.timeoutMs !== undefined
-          ? { timeoutMs: request.timeoutMs }
-          : {}),
-        ...(request.modelId !== undefined ? { modelId: request.modelId } : {}),
-        ...(request.reasoningEffort !== undefined
-          ? { reasoningEffort: request.reasoningEffort }
-          : {}),
-      };
+        backend: request.backend,
+      });
       return dispatchTaskRun(repairRequest, {
         ...dispatchDeps,
         resumeRef: null,

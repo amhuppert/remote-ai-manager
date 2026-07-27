@@ -76,6 +76,9 @@ function BackendProfileFields({
         <ConfigPillGroup
           value={profile.model}
           options={modelOptions.map((model) => model.id)}
+          getOptionLabel={(model) =>
+            modelOptions.find((option) => option.id === model)?.label ?? model
+          }
           onChange={handleModelChange}
           aria-labelledby={`${modelPath}-label`}
         />

@@ -63,7 +63,7 @@ function EmptyAlignment(): React.JSX.Element {
 
 function CharterMarkdown({ content }: { content: string }): React.JSX.Element {
   return (
-    <div className="rounded-md border border-solid border-border-subtle bg-bg-base">
+    <div className="rounded-md border border-solid border-border-subtle bg-bg-surface">
       <MarkdownViewport>
         <DocumentMarkdown content={content} />
       </MarkdownViewport>

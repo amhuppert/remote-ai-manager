@@ -49,6 +49,10 @@ import {
   getDefaultCollaborationManager,
   type CollaborationManager,
 } from "./manager";
+import {
+  CollaborationCharterCaptureError,
+  CollaborationSessionContextError,
+} from "./session-context";
 
 const logger = createLogger("workflows.collaboration.route");
 
@@ -378,6 +382,21 @@ export function createCollaborationRouteHandlers(
             { status: 409 },
           );
         }
+        // The charter is governing context, so the run failed closed before
+        // claiming the conversation. Naming the cause tells the user their
+        // prompt is intact and what to retry.
+        if (err instanceof CollaborationCharterCaptureError) {
+          logger.error("collaboration.route.start_charter_capture_failed", {
+            error: getErrorMessage(err),
+          });
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_CHARTER_CAPTURE_FAILED",
+            } satisfies ApiError,
+            { status: 500 },
+          );
+        }
         logger.error("collaboration.route.start_failed", {
           error: getErrorMessage(err),
         });
@@ -641,6 +660,22 @@ export function createCollaborationRouteHandlers(
           return NextResponse.json({ error: err.message } satisfies ApiError, {
             status: 409,
           });
+        }
+        // The envelope survives, but its captured premises do not, so it can
+        // never be resumed — a state conflict, like resuming a run that is not
+        // paused. The error message carries the restart instruction.
+        if (err instanceof CollaborationSessionContextError) {
+          logger.warn("collaboration.route.resume_session_context_unusable", {
+            workflowId: workflowResolution.workflowId,
+            reason: err.reason,
+          });
+          return NextResponse.json(
+            {
+              error: err.message,
+              code: "COLLABORATION_SESSION_CONTEXT_UNUSABLE",
+            } satisfies ApiError,
+            { status: 409 },
+          );
         }
         logger.error("collaboration.route.resume_failed", {
           workflowId: workflowResolution.workflowId,

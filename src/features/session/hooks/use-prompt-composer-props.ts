@@ -8,6 +8,7 @@ import {
 } from "react";
 import type PromptComposer from "@/components/session/prompt/PromptComposer";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
+import { stripCollabPrefix } from "@/lib/conversation-commands/parse";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
@@ -18,12 +19,6 @@ import type {
 } from "@/hooks/use-image-attachments";
 
 type PromptComposerProps = React.ComponentProps<typeof PromptComposer>;
-
-function stripCollabPrefix(text: string): string {
-  if (text === "/collab") return "";
-  if (text.startsWith("/collab ")) return text.slice("/collab ".length);
-  return text;
-}
 
 export interface UsePromptComposerPropsArgs {
   projectName: string;

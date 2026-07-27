@@ -1,3 +1,4 @@
+import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { DisplayMessage } from "@/hooks/conversation/use-display-messages";
 export interface CollabEnvelope {
@@ -25,10 +26,6 @@ export type ConversationRow =
   | { kind: "message"; messageIndex: number; msg: DisplayMessage }
   | { kind: "collab"; workflowId: string }
   | { kind: "extension"; ext: TranscriptExtensionRowData };
-
-function hasCollabPrefix(text: string): boolean {
-  return text === "/collab" || text.startsWith("/collab ");
-}
 
 export function isCollabTriggerMessage(message: TranscriptMessage): boolean {
   for (const block of message.content) {

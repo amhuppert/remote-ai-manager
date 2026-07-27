@@ -1481,6 +1481,79 @@ describe("conversationMachine", () => {
       expect(snap.context.lastResult).toBeTruthy();
     });
 
+    it("re-syncs derived fields on ABORT_TURN while idle so Stop clears a phantom running row", () => {
+      const syncDerivedFields = vi.fn();
+      const broadcastConversationStatus = vi.fn();
+      const machine = conversationMachine.provide({
+        actors: {
+          prepareTurn: makeMockPrepareTurn(),
+          executePrompt: makeMockExecutePrompt(),
+        },
+        actions: {
+          persistSnapshot: () => {},
+          syncDerivedFields,
+          broadcastConversationStatus,
+          broadcastAskQuestion: () => {},
+          broadcastDebugModeStatus: () => {},
+          releaseResources: () => {},
+          dispatchPushNotification: () => {},
+        },
+      });
+      // A conversation that has already run a turn: the machine believes it is
+      // settled, but a wedged predecessor left the persisted row on "running".
+      const actor = createActor(machine, {
+        input: { ...defaultInput, promptCount: 1 },
+      });
+      activeActors.push(actor);
+      actor.start();
+      syncDerivedFields.mockClear();
+      broadcastConversationStatus.mockClear();
+
+      actor.send({ type: "ABORT_TURN", reason: "user" });
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.status).toBe("awaiting");
+      expect(syncDerivedFields).toHaveBeenCalled();
+      expect(broadcastConversationStatus).toHaveBeenCalled();
+    });
+
+    it("settles to idle on ABORT_TURN so Stop recovers an external turn that never completes", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      expect(actor.getSnapshot().value).toBe("externalExecuting");
+
+      actor.send({ type: "ABORT_TURN", reason: "user" });
+      await waitForState(actor, "idle");
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.status).toBe("awaiting");
+      expect(snap.context.activeTurn).toBeNull();
+    });
+
+    it("re-accepts SUBMIT_PROMPT after an external turn is aborted", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      actor.send({ type: "ABORT_TURN", reason: "user" });
+      await waitForState(actor, "idle");
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "next",
+        streamId: "stream-after-abort",
+      });
+      expect(actor.getSnapshot().context.status).toBe("running");
+    });
+
     it("fires broadcastConversationStatus on EXTERNAL_TURN_STARTED", () => {
       const broadcastConversationStatus = vi.fn();
       const machine = conversationMachine.provide({

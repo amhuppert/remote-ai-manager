@@ -10,6 +10,8 @@
  * and persisted so the partial run remains visible in the envelope snapshot.
  */
 
+import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   buildAgentOneInitialDraftPrompt,
   buildAgentTwoInitialDraftPrompt,
@@ -35,6 +37,8 @@ import {
   type ArtifactTracker,
 } from "./helpers";
 import { validateGeneratedArtifactFiles } from "./artifact-files";
+
+const logger = createLogger("workflows.collaboration.initial-draft");
 
 export interface RunInitialDraftsPhaseContext {
   input: AsymmetricCollaborationSliceInput;
@@ -212,9 +216,45 @@ export async function runInitialDraftsPhase(
     };
   }
 
+  await recordAlignmentSeenForRun(input, deps);
+
   return {
     kind: "ok",
     agentOneDraft: agentOneDraft.value,
     agentTwoDraft: agentTwoDraft.value,
   };
+}
+
+/**
+ * Mark the captured charter version as seen by the run.
+ *
+ * Deliberately placed after both drafts parsed and validated: only then has the
+ * charter actually reached both peers, so an Alignment panel reading the
+ * seen-version cannot claim currency for a run where one lane never got it.
+ * A failure here is audit metadata, not run state — it is logged and the run
+ * continues, matching how the ordinary turn path treats post-turn bookkeeping.
+ */
+async function recordAlignmentSeenForRun(
+  input: AsymmetricCollaborationSliceInput,
+  deps: AsymmetricCollaborationSliceDeps,
+): Promise<void> {
+  const alignmentVersion = input.sessionContext.alignment?.version;
+  if (alignmentVersion === undefined) return;
+  if (!input.conversationId || !deps.recordAlignmentSeen) return;
+
+  try {
+    await deps.recordAlignmentSeen(input.conversationId, alignmentVersion);
+    logger.info("collaboration.alignment_version_seen", {
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
+      alignmentVersion,
+    });
+  } catch (err) {
+    logger.warn("collaboration.alignment_version_seen_failed", {
+      workflowId: input.workflowId,
+      conversationId: input.conversationId,
+      alignmentVersion,
+      error: getErrorMessage(err),
+    });
+  }
 }

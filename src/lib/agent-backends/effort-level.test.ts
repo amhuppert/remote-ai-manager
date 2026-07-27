@@ -28,7 +28,7 @@ describe("effortLevelSchema", () => {
 });
 
 describe("claudeEffortLevelSchema", () => {
-  it("accepts xhigh (Opus 4.7)", () => {
+  it("accepts xhigh for Opus 5", () => {
     expect(claudeEffortLevelSchema.parse("xhigh")).toBe("xhigh");
   });
 
@@ -45,7 +45,7 @@ describe("claudeEffortLevelSchema", () => {
 });
 
 describe("getEffortLevelsForModel", () => {
-  it("returns all levels for opus (including xhigh between high and max)", () => {
+  it("returns only the supported Opus 5 levels in ascending order", () => {
     expect(getEffortLevelsForModel("opus")).toEqual([
       "low",
       "medium",

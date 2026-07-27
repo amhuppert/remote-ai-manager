@@ -18,6 +18,7 @@ import {
   type AsymmetricCollaborationSliceDeps,
   type AsymmetricCollaborationSliceInput,
 } from "./envelope";
+import { EMPTY_COLLABORATION_SESSION_CONTEXT } from "./session-context";
 import type { ArtifactTracker } from "./helpers";
 import type {
   CollaborationAgent,
@@ -157,6 +158,7 @@ async function buildTestHarness(
     primaryAgentBackend: "claude",
     negotiationRounds: 1,
     autonomousResolutionThreshold: "major",
+    sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
   };
 
   const deps: AsymmetricCollaborationSliceDeps = {

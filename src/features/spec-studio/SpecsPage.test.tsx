@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import {
   act,
   fireEvent,
@@ -31,22 +31,76 @@ const routerPush = vi.fn();
 let pathname = "/specs";
 let routeParams = { projectName: "command-center", slug: "native-sdd" };
 
+/**
+ * A soft-navigation fake: `next/link` clicks and `router.replace` rewrite the
+ * jsdom URL and wake every `useSearchParams` reader, exactly as the App Router
+ * does when a route stays mounted. Without the subscription a URL change is
+ * invisible to React, so a same-page link would look broken in every test.
+ */
+const urlSubscribers = new Set<() => void>();
+let urlVersion = 0;
+
+function navigateInPlace(href: string): void {
+  window.history.pushState({}, "", href);
+  urlVersion += 1;
+  for (const notify of [...urlSubscribers]) notify();
+}
+
+function subscribeToUrl(notify: () => void): () => void {
+  urlSubscribers.add(notify);
+  return () => {
+    urlSubscribers.delete(notify);
+  };
+}
+
+function readUrlVersion(): number {
+  return urlVersion;
+}
+
+function useFakeSearchParams(): URLSearchParams {
+  useSyncExternalStore(subscribeToUrl, readUrlVersion, readUrlVersion);
+  return new URLSearchParams(window.location.search);
+}
+
 vi.mock("next/navigation", () => ({
   useParams: () => routeParams,
   usePathname: () => pathname,
   useRouter: () => ({
     push: routerPush,
-    replace: routerReplace,
+    replace: (href: string) => {
+      routerReplace(href);
+      navigateInPlace(href);
+    },
     back: vi.fn(),
     prefetch: vi.fn(),
   }),
-  useSearchParams: () => new URLSearchParams(window.location.search),
+  useSearchParams: () => useFakeSearchParams(),
 }));
 
-vi.mock(
-  "next/link",
-  async () => (await import("@/test/component-mocks")).nextLinkMock,
-);
+vi.mock("next/link", () => ({
+  default: ({
+    href,
+    children,
+    onClick,
+    ...rest
+  }: {
+    href: string;
+    children: ReactNode;
+  } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a
+      href={href}
+      {...rest}
+      onClick={(event) => {
+        onClick?.(event);
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        navigateInPlace(href);
+      }}
+    >
+      {children}
+    </a>
+  ),
+}));
 
 const NOW = "2026-07-18T12:00:00.000Z";
 
@@ -451,6 +505,32 @@ function initialReviewDetailPayload() {
   };
 }
 
+function questionsDetailPayload() {
+  const payload = detailPayload();
+  return {
+    ...payload,
+    questions: [1, 2].map((number) => ({
+      id: `question-${number}`,
+      number,
+      handle: `Q${number}`,
+      elementId: null,
+      text: `Open question ${number}`,
+      status: "open" as const,
+      answer: null,
+      answeredAt: null,
+      provenance: { kind: "agent" as const, conversationId: "conversation-1" },
+      createdAt: NOW,
+      updatedAt: NOW,
+    })),
+  };
+}
+
+function historySubjectLink(label: string): HTMLElement {
+  const row = screen.getByRole("heading", { name: label }).closest("article");
+  if (row === null) throw new Error(`No history row for ${label}`);
+  return within(row).getByRole("link", { name: "Open subject →" });
+}
+
 const inventory = {
   specs: [
     {
@@ -712,7 +792,7 @@ describe("Spec Studio routes and inventory", () => {
     );
     expect(screen.getByRole("link", { name: "Verify" })).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=controls#spec-integrity",
+      "/specs/command-center/native-sdd?view=integrity",
     );
     expect(screen.getByRole("link", { name: "Gate policy" })).toHaveAttribute(
       "href",
@@ -845,6 +925,155 @@ describe("Spec Studio routes and inventory", () => {
     expect(
       await screen.findByRole("heading", { name: "Gate policy" }),
     ).toBeInTheDocument();
+  });
+
+  it("lands the header Verify action on integrity rather than the gate policy surface", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState({}, "", "/specs/command-center/native-sdd");
+    api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
+    api.json("POST", "/api/specs/command-center/native-sdd/actions/verify", {
+      ok: true,
+      checkedRevisionIds: [detailRevision.id],
+      mismatches: [],
+    });
+
+    const queryClient = createTestQueryClient();
+    const detailView = renderWithQuery(<SpecDetailPage />, queryClient);
+
+    const verify = await screen.findByRole("link", { name: "Verify" });
+    expect(verify).toHaveAttribute(
+      "href",
+      "/specs/command-center/native-sdd?view=integrity",
+    );
+
+    act(() => {
+      window.history.pushState(
+        {},
+        "",
+        "/specs/command-center/native-sdd?view=integrity",
+      );
+    });
+    detailView.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SpecDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Spec integrity" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Integrity intact")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Gate policy" })).toBeNull();
+  });
+
+  it("keeps the review surface reachable while an execution runs against a proposed revision", async () => {
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState({}, "", "/specs/command-center/native-sdd");
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd",
+      reviewDetailPayload(),
+    );
+
+    const queryClient = createTestQueryClient();
+    const detailView = renderWithQuery(<SpecDetailPage />, queryClient);
+
+    expect(
+      await screen.findByRole("link", { name: "Review revision" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=review");
+
+    act(() => {
+      window.history.pushState(
+        {},
+        "",
+        "/specs/command-center/native-sdd?view=review",
+      );
+    });
+    detailView.rerender(
+      <QueryClientProvider client={queryClient}>
+        <SpecDetailPage />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Review plan-stage revision 4",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens a history subject whose surface is the one the reader is already on", async () => {
+    const user = userEvent.setup();
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState({}, "", "/specs/command-center/native-sdd");
+    api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
+
+    renderWithQuery(<SpecDetailPage />);
+
+    await user.click(await screen.findByRole("tab", { name: "History" }));
+    await user.click(historySubjectLink("R1 approved"));
+
+    expect(
+      await screen.findByRole("region", { name: "Spec narrative" }),
+    ).toBeVisible();
+  });
+
+  it("opens an inspected trace node on the overview it belongs to", async () => {
+    const user = userEvent.setup();
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState(
+      {},
+      "",
+      "/specs/command-center/native-sdd?view=traceability",
+    );
+    api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
+    api.json("GET", "/api/specs/command-center/native-sdd/lint", {
+      revisionId: detailRevision.id,
+      findings: [],
+    });
+
+    renderWithQuery(<SpecDetailPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Select requirement R1" }),
+    );
+    await user.click(screen.getByRole("link", { name: "Open R1" }));
+
+    expect(
+      await screen.findByRole("region", { name: "Spec narrative" }),
+    ).toBeVisible();
+  });
+
+  it("opens a history subject after an earlier deep link already selected that surface", async () => {
+    const user = userEvent.setup();
+    pathname = "/specs/command-center/native-sdd";
+    window.history.replaceState(
+      {},
+      "",
+      "/specs/command-center/native-sdd?el=Q1",
+    );
+    api.json(
+      "GET",
+      "/api/specs/command-center/native-sdd",
+      questionsDetailPayload(),
+    );
+
+    renderWithQuery(<SpecDetailPage />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Questions and assumptions" }),
+    ).toBeVisible();
+
+    await user.click(
+      screen.getByRole("button", { name: "Back to native-sdd" }),
+    );
+    await user.click(await screen.findByRole("tab", { name: "History" }));
+    await user.click(historySubjectLink("Q2 opened"));
+
+    expect(
+      await screen.findByRole("heading", { name: "Questions and assumptions" }),
+    ).toBeVisible();
+    expect(screen.getByText("Open question 2")).toBeVisible();
   });
 
   it("renders criterion evidence and live lint from their direct detail routes", async () => {

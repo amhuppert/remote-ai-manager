@@ -41,7 +41,25 @@ import {
   type AsymmetricDispatchInfo,
 } from "./envelope";
 import { createCollaborationDeps } from "./deps-factory";
-import { createCollaborationProductionCallAgent } from "./agent-caller-production";
+import {
+  createCollaborationProductionCallAgent,
+  type CollaborationProductionAgentCallerInput,
+} from "./agent-caller-production";
+import {
+  failedSessionContextSource,
+  parseSessionContextForExecution,
+  resolveCollaborationSessionContext,
+  type CollaborationSessionContext,
+  type CollaborationSessionContextCapture,
+} from "./session-context";
+import { isAlignmentEligibleContext } from "@/lib/workflows/conversation/pre-turn/alignment-gate";
+import { getSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
+import type {
+  CaptureActiveCharterInput,
+  CapturedAlignmentCharter,
+} from "@/lib/session-alignment/service";
+import { getLiveTicketContextProvider } from "@/lib/tickets/service-factory";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 import type { WorkflowEnvelopeRepository } from "@/lib/workflows/primitives/workflow-envelope-repository";
@@ -244,6 +262,11 @@ interface CollaborationManagerStopResult {
 
 interface CollaborationManagerSessionResolution {
   worktreePath: string;
+  /**
+   * Decides Alignment eligibility for the run: only a normal session's
+   * user-invoked collaboration is governed by a charter.
+   */
+  creationMode?: SessionState["creationMode"] | undefined;
 }
 
 interface CollaborationManagerConversationResolution {
@@ -450,6 +473,128 @@ export interface CollaborationBackendRuntimeConfig {
   stallTimeoutMs: number;
 }
 
+/**
+ * Scope of one capture. `worktreePath` is load-bearing: a digest-mode charter
+ * is frozen at a hash-addressed path inside the run's own worktree, so the
+ * pointer the run stores cannot be repointed by a later activation.
+ */
+export interface CollaborationSessionContextResolutionInput {
+  projectPath: string;
+  sessionName: string;
+  worktreePath: string;
+  creationMode: SessionState["creationMode"] | undefined;
+  workflowId: string;
+  conversationId: string;
+}
+
+export interface CollaborationSessionContextSources {
+  captureActiveCharterForRun(
+    input: CaptureActiveCharterInput,
+  ): Promise<CapturedAlignmentCharter | null>;
+  getLiveTicketBlock(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<string | null>;
+}
+
+/**
+ * Runs one capture and records its outcome as metadata: presence, eligibility,
+ * version, hash, and sizes. Never the charter text, the ticket block, or the
+ * charter's snapshot path — a log line must stay safe to hand to anyone who
+ * can read logs but not the session.
+ */
+async function captureSessionContextForStart(
+  input: CollaborationSessionContextResolutionInput & {
+    resolve: CollaborationManagerDeps["resolveSessionContext"];
+  },
+): Promise<CollaborationSessionContext> {
+  const { resolve, ...scope } = input;
+  const startedAt = performance.now();
+  const eligible = isAlignmentEligibleContext({
+    kind: "standalone_collaboration",
+    creationMode: scope.creationMode,
+    userInitiated: true,
+  });
+
+  let capture: CollaborationSessionContextCapture;
+  try {
+    capture = await resolve(scope);
+  } catch (error) {
+    logger.error("collaboration.manager.session_context_resolution_failed", {
+      projectPath: scope.projectPath,
+      sessionName: scope.sessionName,
+      conversationId: scope.conversationId,
+      workflowId: scope.workflowId,
+      eligible,
+      failedSource: failedSessionContextSource(error),
+      fatal: true,
+      durationMs: performance.now() - startedAt,
+      error: getErrorMessage(error),
+    });
+    throw error;
+  }
+
+  const context = capture.context;
+  // A source that failed without aborting the run still gets attributed, or an
+  // operator cannot tell an unreadable ticket from a session that has none.
+  if (capture.degraded) {
+    logger.warn("collaboration.manager.session_context_resolution_failed", {
+      projectPath: scope.projectPath,
+      sessionName: scope.sessionName,
+      conversationId: scope.conversationId,
+      workflowId: scope.workflowId,
+      eligible,
+      failedSource: capture.degraded.source,
+      fatal: false,
+      durationMs: performance.now() - startedAt,
+      error: capture.degraded.error,
+    });
+  }
+
+  logger.info("collaboration.manager.session_context_resolved", {
+    projectPath: scope.projectPath,
+    sessionName: scope.sessionName,
+    conversationId: scope.conversationId,
+    workflowId: scope.workflowId,
+    alignmentPresent: context.alignment !== null,
+    eligible,
+    alignmentVersion: context.alignment?.version ?? null,
+    alignmentContentHash: context.alignment?.contentHash ?? null,
+    activeTicketPresent: context.activeTicketBlock !== null,
+    alignmentChars: context.alignment?.text.length ?? 0,
+    ticketBlockChars: context.activeTicketBlock?.length ?? 0,
+    durationMs: performance.now() - startedAt,
+  });
+  return context;
+}
+
+/**
+ * Adapts the two canonical context owners to the manager's capture dep. Both
+ * values are taken verbatim from their owners — neither is re-rendered here.
+ */
+export function createCollaborationSessionContextResolver(
+  sources: CollaborationSessionContextSources,
+): CollaborationManagerDeps["resolveSessionContext"] {
+  return (input) =>
+    resolveCollaborationSessionContext(
+      {
+        captureActiveCharter: (projectPath, sessionName) =>
+          sources.captureActiveCharterForRun({
+            projectPath,
+            sessionName,
+            worktreePath: input.worktreePath,
+          }),
+        getLiveTicketBlock: (projectPath, sessionName) =>
+          sources.getLiveTicketBlock(projectPath, sessionName),
+      },
+      {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        creationMode: input.creationMode,
+      },
+    );
+}
+
 export interface CollaborationManagerDeps {
   /**
    * Resolves the session worktree path the slice will write artifacts under.
@@ -473,6 +618,18 @@ export interface CollaborationManagerDeps {
     sessionName: string;
     conversationId: string;
   }): Promise<CollaborationManagerConversationResolution | null>;
+
+  /**
+   * Captures the run's governing session context — the active Alignment
+   * charter and the linked ticket's `<active-ticket>` block — once, before the
+   * conversation is claimed. A rejection is fatal to the start: the charter
+   * governs both lanes, so running without it silently is the failure mode
+   * worth preventing. A source that failed without aborting the capture comes
+   * back as `degraded` so the manager can attribute it.
+   */
+  resolveSessionContext(
+    input: CollaborationSessionContextResolutionInput,
+  ): Promise<CollaborationSessionContextCapture>;
 
   prepareInitialImages(input: {
     conversationId: string;
@@ -688,16 +845,26 @@ export function createSharedCollaborationStopRegistry(): CollaborationStopRegist
 
 const defaultStopRegistry = createSharedCollaborationStopRegistry();
 
-const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
-  input,
-) =>
-  createCollaborationProductionCallAgent({
+/**
+ * Maps a standalone collaboration run's manager facts onto the production
+ * agent-caller composition. Extracted so the standalone-only decisions it
+ * encodes — notably the CC session-scope grant, which no other collaboration
+ * entry point may make — are assertable without booting real backends.
+ */
+export function buildStandaloneCollaborationCallerInput(
+  input: Parameters<CollaborationManagerDeps["buildCallAgent"]>[0],
+): CollaborationProductionAgentCallerInput {
+  return {
     workflowId: input.workflowId,
     projectPath: input.projectPath,
     sessionName: input.sessionName,
     worktreePath: input.worktreePath,
     sessionKey: `${input.projectPath}::${input.sessionName}`,
     originatingConversationId: input.conversationId,
+    // Standalone collaboration is one attended logical turn owned by the
+    // originating conversation, so its Codex task lane may act as that
+    // session and run the captured ticket block's `cctl` retrieval commands.
+    grantsOriginatingSessionScope: true,
     laneService: input.laneService,
     codexModel: input.codexModel,
     ...(input.codexReasoningEffort !== undefined
@@ -711,7 +878,15 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
       : {}),
     claudeTimeoutMs: input.claudeTimeoutMs,
     claudeStallTimeoutMs: input.claudeStallTimeoutMs,
-  });
+  };
+}
+
+const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
+  input,
+) =>
+  createCollaborationProductionCallAgent(
+    buildStandaloneCollaborationCallerInput(input),
+  );
 
 export function resolveCollaborationBackendModelConfig(
   config: ConversationTurnConfig,
@@ -735,7 +910,10 @@ const defaultDeps: CollaborationManagerDeps = {
       input.sessionName,
     );
     if (!session) return null;
-    return { worktreePath: session.worktreePath };
+    return {
+      worktreePath: session.worktreePath,
+      creationMode: session.creationMode,
+    };
   },
   async resolveConversation(input) {
     const conv = await defaultGetConversation(
@@ -750,6 +928,14 @@ const defaultDeps: CollaborationManagerDeps = {
       promptCount: conv.promptCount ?? 0,
     };
   },
+  resolveSessionContext: createCollaborationSessionContextResolver({
+    captureActiveCharterForRun: (input) =>
+      getSessionAlignmentServiceForProduction().captureActiveCharterForRun(
+        input,
+      ),
+    getLiveTicketBlock: (projectPath, sessionName) =>
+      getLiveTicketContextProvider().getForSession(projectPath, sessionName),
+  }),
   prepareInitialImages: prepareCollaborationInitialImages,
   persistStart: createCollaborationStartPersister({
     getTranscriptPath,
@@ -983,6 +1169,20 @@ export function createCollaborationManager(
       }
 
       const workflowId = deps.newWorkflowId();
+
+      // Capture the run's premises before anything durable happens: a charter
+      // failure must leave the conversation unclaimed, with no prompt-count
+      // change, no registered stop handle, and no lane dispatched.
+      const sessionContext = await captureSessionContextForStart({
+        resolve: deps.resolveSessionContext,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        worktreePath: session.worktreePath,
+        creationMode: session.creationMode,
+        workflowId,
+        conversationId: parsed.conversationId,
+      });
+
       const preparedImages = parsed.images?.length
         ? await deps.prepareInitialImages({
             conversationId: parsed.conversationId,
@@ -1074,6 +1274,7 @@ export function createCollaborationManager(
         agentModelSettings,
         negotiationRounds: parsed.negotiationRounds,
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
+        sessionContext,
         conversationId: parsed.conversationId,
         priorBackendRef: conversation.backendRef ?? undefined,
         imageRefs,
@@ -1113,6 +1314,8 @@ export function createCollaborationManager(
         conversationId: parsed.conversationId,
         priorBackendRefBackend: conversation.backendRef?.backend ?? null,
         imageCount: imageRefs.length,
+        alignmentVersion: sessionContext.alignment?.version ?? null,
+        activeTicketPresent: sessionContext.activeTicketBlock !== null,
       });
 
       void Promise.resolve()
@@ -1232,6 +1435,14 @@ export function createCollaborationManager(
       const conversationId = parsed.conversationId;
       const completedRounds = extractCompletedRounds(existingSnapshot);
 
+      // A run, including its pause, is one logical turn: the premises the two
+      // peers negotiated under are the persisted ones. Parsing before
+      // markRunning keeps an unresumable envelope paused rather than stranding
+      // it in `running` with no worker.
+      const sessionContext = parseSessionContextForExecution(
+        existingSnapshot["sessionContext"],
+      );
+
       const priorAnswersByQuestionId =
         existingSnapshot["userAnswersByQuestionId"] &&
         typeof existingSnapshot["userAnswersByQuestionId"] === "object" &&
@@ -1303,6 +1514,7 @@ export function createCollaborationManager(
         autonomousResolutionThreshold: autonomousResolutionThreshold.success
           ? autonomousResolutionThreshold.data
           : "major",
+        sessionContext,
         conversationId,
         stopSignal: stopController.signal,
         resume: { userAnswersByQuestionId },

@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 import Topbar from "@/components/Topbar";
 import AnnotatedMarkdown, {
@@ -104,6 +104,7 @@ export default function SpecDetailPage(): React.JSX.Element {
 function SpecDetailPageInner(): React.JSX.Element {
   const params = useParams<{ projectName: string; slug: string }>();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const projectName = params.projectName;
   const requestedSlug = params.slug;
   const detailQuery = useSpecDetailQuery(projectName, requestedSlug);
@@ -112,6 +113,18 @@ function SpecDetailPageInner(): React.JSX.Element {
     () => resolveDeepLinkId(searchParams.get("el"), detail?.spec.slug),
     [detail?.spec.slug, searchParams],
   );
+
+  // Tab and back-control selections write the URL instead of a local state
+  // slot, so the address bar stays the only description of what is on screen.
+  // `replace` keeps switching surfaces out of the browser's back stack, which
+  // is how the tabs behaved before they became addressable.
+  function selectView(nextView: DetailView): void {
+    const detailPath = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(requestedSlug)}`;
+    router.replace(
+      nextView === "overview" ? detailPath : `${detailPath}?view=${nextView}`,
+      { scroll: false },
+    );
+  }
 
   useEffect(() => {
     if (detail === undefined || deepLinkId === null) return;
@@ -165,11 +178,12 @@ function SpecDetailPageInner(): React.JSX.Element {
                 detail={detail}
                 projectName={projectName}
                 requestedSlug={requestedSlug}
-                initialView={resolveRequestedDetailView(
+                view={resolveRequestedDetailView(
                   searchParams.get("view"),
                   searchParams.get("el"),
                   detail.spec.slug,
                 )}
+                onViewChange={selectView}
               />
             )}
           </>
@@ -235,12 +249,14 @@ export function SpecDetailContent({
   detail,
   projectName,
   requestedSlug,
-  initialView,
+  view,
+  onViewChange,
 }: {
   detail: SpecDetailView;
   projectName: string;
   requestedSlug: string;
-  initialView: DetailView;
+  view: DetailView;
+  onViewChange(view: DetailView): void;
 }): React.JSX.Element {
   const snapshot = detail.currentRevision;
   const revision = snapshot?.revision.number ?? latestRevisionNumber(detail);
@@ -254,12 +270,19 @@ export function SpecDetailContent({
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const controlsHref = `${detailHref}?view=controls`;
+  const reviewHref = `${detailHref}?view=review`;
   const primaryActionHref =
     statePresentation.view === null
       ? null
       : statePresentation.view === "review"
-        ? `${detailHref}?view=review`
+        ? reviewHref
         : `${detailHref}?view=${statePresentation.view}`;
+  // An execution running over a proposed revision projects as `executing` with
+  // an `in_review` authoring facet, so the state-driven primary action points at
+  // evidence and would otherwise leave review mode with no entry point at all.
+  const showSecondaryReviewLink =
+    statePresentation.view !== "review" &&
+    detail.status.phase.authoringFacet === "in_review";
   const lintQuery = useSpecLintQuery(projectName, detail.spec.slug);
   const specReferenceAttrs: SpecMentionAttrs = {
     projectName,
@@ -274,7 +297,8 @@ export function SpecDetailContent({
       <SpecDetailViews
         detail={detail}
         projectName={projectName}
-        initialView={initialView}
+        view={view}
+        onViewChange={onViewChange}
         overviewHeader={
           <header className="border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
             <div className="flex flex-wrap items-start justify-between gap-md">
@@ -317,12 +341,21 @@ export function SpecDetailContent({
                   Export
                 </a>
                 <Link
-                  href={`${controlsHref}#spec-integrity`}
+                  href={`${detailHref}?view=integrity`}
                   title="Verify approved revision integrity"
                   className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
                 >
                   Verify
                 </Link>
+                {showSecondaryReviewLink && (
+                  <Link
+                    href={reviewHref}
+                    title="Review the proposed revision"
+                    className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                  >
+                    Review revision
+                  </Link>
+                )}
                 <Link
                   href={`${controlsHref}#gate-policy`}
                   className="inline-flex h-[28px] items-center rounded-sm border border-solid border-border-default bg-bg-raised px-md font-mono text-[0.72rem] font-medium text-text-secondary no-underline transition-colors hover:border-border-strong hover:bg-bg-elevated hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
@@ -895,6 +928,7 @@ function resolveRequestedDetailView(
     rawView === "evidence" ||
     rawView === "lint" ||
     rawView === "questions" ||
+    rawView === "integrity" ||
     rawView === "controls"
   ) {
     return rawView;

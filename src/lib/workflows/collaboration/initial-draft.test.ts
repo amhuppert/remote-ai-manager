@@ -17,6 +17,10 @@ import {
   type AsymmetricCollaborationSliceDeps,
   type AsymmetricCollaborationSliceInput,
 } from "./envelope";
+import {
+  EMPTY_COLLABORATION_SESSION_CONTEXT,
+  type CollaborationSessionContext,
+} from "./session-context";
 import type { ArtifactTracker } from "./helpers";
 import type {
   CollaborationAgent,
@@ -136,6 +140,7 @@ async function buildTestHarness(
     primaryAgentBackend: "claude",
     negotiationRounds: 1,
     autonomousResolutionThreshold: "major",
+    sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
   };
 
   const deps: AsymmetricCollaborationSliceDeps = {
@@ -371,5 +376,140 @@ describe("runInitialDraftsPhase", () => {
     if (outcome.kind !== "failed") return;
     expect(outcome.result.agent).toBe("agent_one");
     expect(outcome.result.errorSummary).toContain("boom");
+  });
+});
+
+/**
+ * The charter version is recorded as *seen* only once both peers have actually
+ * received it — the end of the initial-draft phase. Recording at capture time
+ * would let the Alignment panel claim currency no agent ever read.
+ */
+describe("runInitialDraftsPhase alignment seen-version recording", () => {
+  const CHARTER_CONTEXT: CollaborationSessionContext = {
+    alignment: {
+      version: 12,
+      contentHash: "hash-12",
+      text: "<session-alignment>\ncharter v12\n</session-alignment>",
+    },
+    activeTicketBlock: null,
+  };
+
+  interface SeenRecord {
+    conversationId: string;
+    alignmentVersion: number;
+  }
+
+  async function runPhaseWithRecorder(args: {
+    sessionContext: CollaborationSessionContext;
+    conversationId?: string;
+    failAgentTwo?: boolean;
+  }): Promise<{ seen: SeenRecord[]; outcomeKind: string }> {
+    const agentOneFixture = withWorkflowId(
+      makeAgentOneInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    const agentTwoFixture = withWorkflowId(
+      makeAgentTwoInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    await writeGeneratedFiles(workingDir, agentOneFixture);
+    await writeGeneratedFiles(workingDir, agentTwoFixture);
+
+    const agentTwoResponse: AgentCallResult = args.failAgentTwo
+      ? {
+          backend: "codex",
+          backendRef: null,
+          capabilities: {
+            backend: "codex",
+            continuationStrength: "synthetic_thread",
+            structuredOutputEnforcement: "backend_native",
+            mcpApplicationBoundary: "per_request",
+            contextMetricsAvailable: false,
+            nativeMidTurnAskUser: false,
+          },
+          usage: { durationMs: 1 },
+          artifacts: [],
+          outcome: {
+            kind: "failed",
+            error: {
+              failureKind: "backend_error",
+              backend: "codex",
+              message: "agent_two exploded",
+            },
+          },
+        }
+      : makeBackendResult("codex", agentTwoFixture);
+
+    const harness = await buildTestHarness(
+      {
+        claude: [makeBackendResult("claude", agentOneFixture)],
+        codex: [agentTwoResponse],
+      },
+      workingDir,
+    );
+    harness.input.sessionContext = args.sessionContext;
+    if (args.conversationId !== undefined) {
+      harness.input.conversationId = args.conversationId;
+    }
+
+    const seen: SeenRecord[] = [];
+    harness.deps.recordAlignmentSeen = async (
+      conversationId,
+      alignmentVersion,
+    ) => {
+      seen.push({ conversationId, alignmentVersion });
+    };
+
+    const outcome = await runInitialDraftsPhase({
+      input: harness.input,
+      deps: harness.deps,
+      now: harness.deps.now!,
+      tracker: harness.tracker,
+      backendForAgent: harness.backendForAgent,
+    });
+
+    return { seen, outcomeKind: outcome.kind };
+  }
+
+  it("records the captured charter version exactly once against the originating conversation after both drafts succeed", async () => {
+    const { seen, outcomeKind } = await runPhaseWithRecorder({
+      sessionContext: CHARTER_CONTEXT,
+      conversationId: "conv-origin",
+    });
+
+    expect(outcomeKind).toBe("ok");
+    expect(seen).toEqual([
+      { conversationId: "conv-origin", alignmentVersion: 12 },
+    ]);
+  });
+
+  it("records nothing when one of the two drafts fails, so a version no peer pair received is never marked seen", async () => {
+    const { seen, outcomeKind } = await runPhaseWithRecorder({
+      sessionContext: CHARTER_CONTEXT,
+      conversationId: "conv-origin",
+      failAgentTwo: true,
+    });
+
+    expect(outcomeKind).toBe("failed");
+    expect(seen).toEqual([]);
+  });
+
+  it("records nothing when no charter governs the run, rather than manufacturing a version", async () => {
+    const { seen, outcomeKind } = await runPhaseWithRecorder({
+      sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
+      conversationId: "conv-origin",
+    });
+
+    expect(outcomeKind).toBe("ok");
+    expect(seen).toEqual([]);
+  });
+
+  it("records nothing when the run has no originating conversation to record against", async () => {
+    const { seen, outcomeKind } = await runPhaseWithRecorder({
+      sessionContext: CHARTER_CONTEXT,
+    });
+
+    expect(outcomeKind).toBe("ok");
+    expect(seen).toEqual([]);
   });
 });

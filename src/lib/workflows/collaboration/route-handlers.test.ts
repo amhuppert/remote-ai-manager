@@ -20,6 +20,11 @@ import {
   CollaborationWorkflowNotFoundError,
   type CollaborationManager,
 } from "./manager";
+import {
+  CollaborationCharterCaptureError,
+  MalformedCollaborationSessionContextError,
+  MissingCollaborationSessionContextError,
+} from "./session-context";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
 
 function buildEnvelope(
@@ -558,6 +563,35 @@ describe("collaboration route handlers — START", () => {
     });
   });
 
+  it("reports why the charter could not be read instead of a masked failure", async () => {
+    const { manager } = buildScriptedManager({
+      startError: new CollaborationCharterCaptureError(new Error("db locked")),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Y",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-1",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: string; code?: string };
+    expect(body.error).toContain("Alignment charter");
+    expect(body.error).toContain("was not started");
+    expect(body.code).toBe("COLLABORATION_CHARTER_CAPTURE_FAILED");
+  });
+
   it("decodes URL-encoded session names", async () => {
     const { manager, startCalls } = buildScriptedManager();
     const handlers = createCollaborationRouteHandlers({
@@ -923,6 +957,61 @@ describe("collaboration route handlers — RESUME", () => {
     expect(response.status).toBe(403);
     const body = (await response.json()) as { error: string };
     expect(body.error).toContain("conv-B");
+  });
+
+  it("returns 409 with restart guidance when the run has no captured session context", async () => {
+    const { manager } = buildScriptedManager({
+      resumeError: new MissingCollaborationSessionContextError(),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.RESUME(
+      new Request("http://test/collab/wf-1/resume", {
+        method: "POST",
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string; code?: string };
+    expect(body.error).toContain("Start a new collaboration run");
+    expect(body.code).toBe("COLLABORATION_SESSION_CONTEXT_UNUSABLE");
+  });
+
+  it("returns 409 with restart guidance when the captured session context is malformed", async () => {
+    const { manager } = buildScriptedManager({
+      resumeError: new MalformedCollaborationSessionContextError(
+        "alignment.version: invalid_type",
+      ),
+    });
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+    });
+
+    const response = await handlers.RESUME(
+      new Request("http://test/collab/wf-1/resume", {
+        method: "POST",
+        body: JSON.stringify({
+          resumeToken: "tok",
+          conversationId: "conv-1",
+          userAnswers: {},
+        }),
+      }),
+      buildWorkflowContext("example", "sess-1", "wf-1"),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("Start a new collaboration run");
   });
 
   it("returns 409 when the workflow is not paused", async () => {

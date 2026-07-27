@@ -240,6 +240,55 @@ describe("ClaudeConversationRuntime — SDK options", () => {
     runtime.close();
   });
 
+  it("exports the CC-scope conversation id as CC_CONVERSATION_ID so cctl resolves a real conversation from a synthetic runtime id", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "collab-wf-1-9f3a2b",
+      ccScopeConversationId: "conv-originating",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const callArg = queryMock.mock.calls[0]![0]! as {
+      options: { env?: Record<string, string> };
+    };
+    expect(callArg.options.env?.["CC_CONVERSATION_ID"]).toBe(
+      "conv-originating",
+    );
+
+    runtime.close();
+  });
+
+  it("falls back to its own conversation id when no CC scope is supplied", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-own-scope",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const callArg = queryMock.mock.calls[0]![0]! as {
+      options: { env?: Record<string, string> };
+    };
+    expect(callArg.options.env?.["CC_CONVERSATION_ID"]).toBe("conv-own-scope");
+
+    runtime.close();
+  });
+
   it("renders the stored full schema into each turn without using SDK outputFormat", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

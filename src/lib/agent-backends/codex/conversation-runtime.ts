@@ -147,6 +147,13 @@ export class CodexConversationRuntime
   private readonly conversationId: string;
   private readonly conversationTarget: ConversationTarget;
   /**
+   * Conversation identity written into the session env contract. Equals
+   * `conversationId` for every ordinary conversation; a caller whose own
+   * `conversationId` is a synthetic handle (collaboration lanes) overrides it
+   * so `cctl` inside the agent addresses a conversation CC state can resolve.
+   */
+  private readonly ccScopeConversationId: string;
+  /**
    * Graph-workflow lane identity, present only for implementer-lane
    * conversations so the injected env carries CC_WORKFLOW_EXECUTION_ID /
    * CC_WORKFLOW_CONTEXT_ID for `cctl workflow …`. Undefined for every non-lane
@@ -171,6 +178,8 @@ export class CodexConversationRuntime
     this.worktreePath = input.worktreePath;
     this.conversationId = input.conversationId;
     this.conversationTarget = input.conversationTarget;
+    this.ccScopeConversationId =
+      input.ccScopeConversationId ?? input.conversationId;
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
     this.modelId = input.modelId;
@@ -537,7 +546,15 @@ export class CodexConversationRuntime
         baseEnv: { ...this.deps.buildChildEnv(), CLAUDECODE: "" },
         serverUrl: this.deps.getServerUrl(),
         apiToken: this.deps.getApiToken(),
-        target: this.conversationTarget,
+        // Scope and session identity come from the DECLARED target, so a project
+        // conversation still exports a neutralized CC_SESSION. Only the
+        // conversation id is redirected: a collaboration lane's own
+        // conversationId is a synthetic handle CC state cannot resolve, so cctl
+        // inside the agent is pointed at the originating conversation instead.
+        target: {
+          ...this.conversationTarget,
+          conversationId: this.ccScopeConversationId,
+        },
         configDir: this.deps.getConfigDir(),
         ...(this.workflowExecutionId !== undefined
           ? { workflowExecutionId: this.workflowExecutionId }

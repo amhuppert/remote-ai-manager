@@ -1,0 +1,340 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200" role="img" aria-labelledby="title description" xml:lang="en">
+  <title id="title">How Command Center graph workflows execute</title>
+  <desc id="description">A technical infographic showing a directed acyclic graph of execution contexts mapped onto reusable lanes. Each worktree lane owns one branch and worktree. At fan-out, one child reuses the parent lane while siblings fork from its committed head. At fan-in, Smart Merge converges source lanes before the downstream context runs. Once all work settles, final publish merges terminal lanes into the session worktree, and a separate gated merge delivers the session branch to the project target.</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06090f"/>
+      <stop offset="0.55" stop-color="#0b1019"/>
+      <stop offset="1" stop-color="#080d16"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141d2d"/>
+      <stop offset="1" stop-color="#0e1522"/>
+    </linearGradient>
+    <linearGradient id="node" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a2740"/>
+      <stop offset="1" stop-color="#111825"/>
+    </linearGradient>
+    <linearGradient id="cyanWash" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00e5ff" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#00e5ff" stop-opacity="0.02"/>
+    </linearGradient>
+    <linearGradient id="blueWash" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#448aff" stop-opacity="0.13"/>
+      <stop offset="1" stop-color="#448aff" stop-opacity="0.02"/>
+    </linearGradient>
+    <linearGradient id="greenWash" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00e676" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#00e676" stop-opacity="0.025"/>
+    </linearGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.15" fill="#7b899f" opacity="0.12"/>
+    </pattern>
+    <filter id="cyanGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="greenGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#00e5ff"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#448aff"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#00e676"/>
+    </marker>
+    <marker id="arrowDim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#52617a"/>
+    </marker>
+    <style>
+      .title { font-family: Anybody, "Arial Black", "Segoe UI", sans-serif; }
+      .display { font-family: "Geist Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+      .mono { font-family: "Geist Mono", "SFMono-Regular", Menlo, Consolas, monospace; }
+      .primary { fill: #dce2f0; }
+      .secondary { fill: #7b899f; }
+      .tertiary { fill: #738699; }
+      .cyan { fill: #00e5ff; }
+      .blue { fill: #448aff; }
+      .green { fill: #00e676; }
+      .amber { fill: #ffb300; }
+      .eyebrow { font-size: 15px; font-weight: 750; letter-spacing: 2.8px; }
+      .section-title { font-size: 20px; font-weight: 750; }
+      .body { font-size: 16px; font-weight: 500; }
+      .small { font-size: 14px; font-weight: 500; }
+      .tiny { font-size: 12px; font-weight: 650; letter-spacing: 0.7px; }
+      .node-title { font-size: 17px; font-weight: 750; }
+      .card-title { font-size: 16px; font-weight: 760; }
+      .panel { fill: url(#panel); stroke: #243048; stroke-width: 1.5; }
+      .node { fill: url(#node); stroke: #2e3d5c; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1200" fill="url(#canvas)"/>
+  <rect width="1800" height="1200" fill="url(#grid)"/>
+  <circle cx="1660" cy="30" r="240" fill="#00e5ff" opacity="0.035"/>
+  <circle cx="120" cy="1160" r="280" fill="#448aff" opacity="0.025"/>
+
+  <g id="header">
+    <text x="64" y="48" class="mono cyan eyebrow">COMMAND CENTER / GRAPH WORKFLOW RUNTIME</text>
+    <text x="64" y="94" class="title primary" font-size="42" font-weight="780">How a graph workflow executes</text>
+    <text x="64" y="127" class="display secondary" font-size="18">A context DAG becomes isolated execution lanes, converges at joins, publishes to the session, then crosses a gated delivery boundary.</text>
+    <g transform="translate(1437 48)">
+      <rect width="300" height="60" rx="30" fill="#111825" stroke="#2e3d5c"/>
+      <circle cx="31" cy="30" r="6" fill="#00e5ff" filter="url(#cyanGlow)"/>
+      <text x="50" y="25" class="mono primary" font-size="13" font-weight="700">CONTEXT ≠ LANE</text>
+      <text x="50" y="43" class="mono tertiary" font-size="12">LANE = BRANCH + WORKTREE</text>
+    </g>
+  </g>
+
+  <g id="plan-panel">
+    <rect x="60" y="160" width="650" height="294" rx="18" class="panel"/>
+    <text x="88" y="198" class="mono cyan eyebrow">1 · PLAN</text>
+    <text x="88" y="228" class="display primary section-title">A DAG of execution contexts</text>
+    <text x="88" y="251" class="display tertiary small">Authored context = ordered tasks + acceptance criteria.</text>
+
+    <path d="M 238 329 C 275 329 280 302 318 302" fill="none" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+    <path d="M 238 329 C 275 329 280 396 318 396" fill="none" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+    <path d="M 478 302 C 515 302 515 348 548 348" fill="none" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+    <path d="M 478 396 C 515 396 515 348 548 348" fill="none" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+
+    <g transform="translate(88 287)">
+      <rect width="150" height="84" rx="12" class="node"/>
+      <rect width="150" height="3" rx="2" fill="#00e5ff" opacity="0.8"/>
+      <text x="14" y="24" class="mono cyan tiny">CTX A</text>
+      <text x="14" y="48" class="display primary node-title">Foundation</text>
+      <text x="14" y="69" class="mono tertiary" font-size="12">tasks 1 → 2 → 3</text>
+    </g>
+    <g transform="translate(318 260)">
+      <rect width="160" height="84" rx="12" class="node"/>
+      <rect width="160" height="3" rx="2" fill="#00e5ff" opacity="0.8"/>
+      <text x="14" y="24" class="mono cyan tiny">CTX B</text>
+      <text x="14" y="48" class="display primary node-title">Backend</text>
+      <text x="14" y="69" class="mono tertiary" font-size="12">tasks 1 → 2</text>
+    </g>
+    <g transform="translate(318 354)">
+      <rect width="160" height="84" rx="12" class="node"/>
+      <rect width="160" height="3" rx="2" fill="#448aff" opacity="0.8"/>
+      <text x="14" y="24" class="mono blue tiny">CTX C</text>
+      <text x="14" y="48" class="display primary node-title">UI</text>
+      <text x="14" y="69" class="mono tertiary" font-size="12">tasks 1 → 2</text>
+    </g>
+    <g transform="translate(548 306)">
+      <rect width="136" height="84" rx="12" class="node"/>
+      <rect width="136" height="3" rx="2" fill="#00e676" opacity="0.8"/>
+      <text x="14" y="24" class="mono green tiny">CTX D</text>
+      <text x="14" y="47" class="display primary" font-size="16" font-weight="750">Integrate</text>
+      <text x="14" y="68" class="display secondary" font-size="13">+ verify</text>
+    </g>
+  </g>
+
+  <g id="schedule-panel">
+    <rect x="735" y="160" width="1005" height="294" rx="18" class="panel"/>
+    <text x="763" y="198" class="mono amber eyebrow">2 · SCHEDULE</text>
+    <text x="763" y="228" class="display primary section-title">Ready contexts are placed onto reusable lanes</text>
+    <text x="763" y="251" class="display tertiary small">An advisory lane plan suggests reuse; runtime assigns or forks lanes as contexts become schedulable.</text>
+
+    <g transform="translate(763 274)">
+      <rect width="286" height="150" rx="14" fill="url(#cyanWash)" stroke="#00b8cc" stroke-opacity="0.65"/>
+      <text x="18" y="25" class="mono cyan tiny">EXECUTION LANE α · CONTINUATION</text>
+      <text x="18" y="50" class="mono primary" font-size="13">branch  csm/session-foundation</text>
+      <text x="18" y="72" class="mono secondary" font-size="12">.worktrees/session.foundation</text>
+      <g transform="translate(18 91)">
+        <rect width="91" height="34" rx="17" fill="#111825" stroke="#00b8cc"/>
+        <text x="45.5" y="22" text-anchor="middle" class="mono cyan" font-size="12" font-weight="700">A · DONE</text>
+        <path d="M 99 17 L 125 17" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrowCyan)"/>
+        <rect x="134" width="103" height="34" rx="17" fill="#111825" stroke="#00b8cc"/>
+        <text x="185.5" y="22" text-anchor="middle" class="mono primary" font-size="12" font-weight="700">B · REUSE</text>
+      </g>
+      <text x="18" y="141" class="display secondary" font-size="12">Serial contexts in one worktree.</text>
+    </g>
+
+    <g transform="translate(1067 274)">
+      <rect width="286" height="150" rx="14" fill="url(#blueWash)" stroke="#2979ff" stroke-opacity="0.7"/>
+      <text x="18" y="25" class="mono blue tiny">EXECUTION LANE β · SIBLING FORK</text>
+      <text x="18" y="50" class="mono primary" font-size="13">branch  csm/session-ui</text>
+      <text x="18" y="72" class="mono secondary" font-size="12">.worktrees/session.ui</text>
+      <g transform="translate(18 91)">
+        <rect width="116" height="34" rx="17" fill="#111825" stroke="#2e3d5c"/>
+        <text x="58" y="22" text-anchor="middle" class="mono secondary" font-size="12" font-weight="700">A ✓ INHERITED</text>
+        <path d="M 124 17 L 145 17" stroke="#448aff" stroke-width="2" marker-end="url(#arrowBlue)"/>
+        <rect x="154" width="82" height="34" rx="17" fill="#111825" stroke="#2979ff"/>
+        <text x="195" y="22" text-anchor="middle" class="mono blue" font-size="12" font-weight="700">C · RUN</text>
+      </g>
+      <text x="18" y="141" class="display secondary" font-size="12">Fork starts at A's committed HEAD.</text>
+    </g>
+
+    <g transform="translate(1371 274)">
+      <rect width="341" height="150" rx="14" fill="#0b1019" stroke="#2e3d5c"/>
+      <text x="18" y="25" class="mono amber tiny">PLACEMENT RULES</text>
+      <circle cx="22" cy="53" r="4" fill="#00e5ff"/>
+      <text x="35" y="58" class="display primary" font-size="14">One child inherits the parent lane.</text>
+      <circle cx="22" cy="82" r="4" fill="#448aff"/>
+      <text x="35" y="87" class="display primary" font-size="14">Other ready children fork safely.</text>
+      <circle cx="22" cy="111" r="4" fill="#00e676"/>
+      <text x="35" y="116" class="display primary" font-size="14">One lane maps to one branch + worktree.</text>
+      <text x="18" y="140" class="mono tertiary" font-size="12">TARGET: latest updatedAt · lane ID ↑ on tie</text>
+    </g>
+  </g>
+
+  <g id="execution-panel">
+    <rect x="60" y="478" width="1680" height="478" rx="18" class="panel"/>
+    <text x="88" y="516" class="mono green eyebrow">3 · EXECUTE + JOIN</text>
+    <text x="88" y="546" class="display primary section-title">One context runs per lane; separate worktree lanes execute in parallel</text>
+
+    <g class="mono tertiary" font-size="12" font-weight="700" letter-spacing="1.1">
+      <text x="415" y="579" text-anchor="middle">SEED</text>
+      <text x="655" y="579" text-anchor="middle">FAN-OUT</text>
+      <text x="835" y="579" text-anchor="middle">PARALLEL</text>
+      <text x="1142" y="579" text-anchor="middle">CONTEXT MERGE</text>
+      <text x="1428" y="579" text-anchor="middle">DOWNSTREAM</text>
+      <text x="1638" y="579" text-anchor="middle">PUBLISH</text>
+    </g>
+    <g stroke="#52617a" stroke-opacity="0.23" stroke-dasharray="4 8">
+      <line x1="415" y1="590" x2="415" y2="892"/>
+      <line x1="655" y1="590" x2="655" y2="892"/>
+      <line x1="835" y1="590" x2="835" y2="892"/>
+      <line x1="1142" y1="590" x2="1142" y2="892"/>
+      <line x1="1428" y1="590" x2="1428" y2="892"/>
+      <line x1="1638" y1="590" x2="1638" y2="892"/>
+    </g>
+
+    <g id="session-lane">
+      <rect x="82" y="595" width="1636" height="72" rx="12" fill="#0b1019" stroke="#243048"/>
+      <text x="102" y="622" class="mono secondary tiny">SESSION WORKTREE</text>
+      <text x="102" y="646" class="mono tertiary" font-size="12">branch csm/feature · unchanged in default worktree-lane mode</text>
+      <path d="M 352 631 L 1510 631" stroke="#52617a" stroke-width="2" stroke-dasharray="5 8"/>
+      <path d="M 330 631 C 330 662 365 671 385 697" fill="none" stroke="#00e5ff" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrowCyan)"/>
+      <text x="339" y="674" class="mono cyan" font-size="12" font-weight="700">FORK ROOT LANE</text>
+      <g transform="translate(1514 606)">
+        <rect width="184" height="50" rx="12" fill="url(#greenWash)" stroke="#00b85c" filter="url(#greenGlow)"/>
+        <text x="92" y="20" text-anchor="middle" class="mono green" font-size="12" font-weight="750">FINAL_PUBLISH</text>
+        <text x="92" y="38" text-anchor="middle" class="display primary" font-size="13" font-weight="650">joined result arrives</text>
+      </g>
+    </g>
+
+    <g id="lane-alpha">
+      <rect x="82" y="684" width="1636" height="102" rx="14" fill="url(#cyanWash)" stroke="#00b8cc" stroke-opacity="0.52"/>
+      <text x="102" y="713" class="mono cyan tiny">EXECUTION LANE α · WORKTREE</text>
+      <text x="102" y="737" class="mono primary" font-size="12">.worktrees/session.foundation</text>
+      <text x="102" y="759" class="mono secondary" font-size="12">csm/session-foundation</text>
+      <path d="M 332 735 L 1665 735" stroke="#00e5ff" stroke-opacity="0.28" stroke-width="3"/>
+
+      <g transform="translate(350 699)">
+        <rect width="174" height="72" rx="12" class="node" stroke="#00b8cc"/>
+        <text x="14" y="22" class="mono cyan tiny">CTX A</text>
+        <text x="14" y="45" class="display primary card-title">Foundation</text>
+        <text x="14" y="63" class="mono green" font-size="12">validate ✓  commit ✓</text>
+      </g>
+      <path d="M 524 735 L 685 735" fill="none" stroke="#00e5ff" stroke-width="2.5" marker-end="url(#arrowCyan)"/>
+      <g transform="translate(695 699)">
+        <rect width="174" height="72" rx="12" class="node" stroke="#00b8cc"/>
+        <text x="14" y="22" class="mono cyan tiny">CTX B</text>
+        <text x="14" y="45" class="display primary card-title">Backend</text>
+        <text x="14" y="63" class="mono green" font-size="12">validate ✓  commit ✓</text>
+      </g>
+      <path d="M 869 735 L 1047 735" fill="none" stroke="#00e5ff" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+
+      <g transform="translate(1057 696)">
+        <path d="M 82 0 L 164 39 L 82 78 L 0 39 Z" fill="#10271f" stroke="#00e676" stroke-width="1.5"/>
+        <text x="82" y="31" text-anchor="middle" class="mono green" font-size="12" font-weight="800">CONTEXT_MERGE</text>
+        <text x="82" y="49" text-anchor="middle" class="mono primary" font-size="12" font-weight="700">β → α</text>
+        <text x="82" y="65" text-anchor="middle" class="mono secondary" font-size="12">SMART MERGE</text>
+      </g>
+      <path d="M 1221 735 L 1352 735" fill="none" stroke="#00e676" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+      <g transform="translate(1362 699)">
+        <rect width="178" height="72" rx="12" class="node" stroke="#00b85c"/>
+        <text x="14" y="22" class="mono green tiny">CTX D</text>
+        <text x="14" y="45" class="display primary card-title">Integrate + verify</text>
+        <text x="14" y="63" class="mono green" font-size="12">validate ✓  commit ✓</text>
+      </g>
+      <path d="M 1540 735 C 1602 735 1594 670 1620 658" fill="none" stroke="#00e676" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+    </g>
+
+    <g id="lane-beta">
+      <rect x="82" y="802" width="1140" height="102" rx="14" fill="url(#blueWash)" stroke="#2979ff" stroke-opacity="0.6"/>
+      <text x="102" y="831" class="mono blue tiny">EXECUTION LANE β · FORKED WORKTREE</text>
+      <text x="102" y="855" class="mono primary" font-size="12">.worktrees/session.ui</text>
+      <text x="102" y="877" class="mono secondary" font-size="12">inherits A commit · own branch</text>
+      <path d="M 332 853 L 1015 853" stroke="#448aff" stroke-opacity="0.3" stroke-width="3"/>
+      <path d="M 604 735 C 604 774 638 803 675 828" fill="none" stroke="#448aff" stroke-width="2.5" stroke-dasharray="5 5" marker-end="url(#arrowBlue)"/>
+      <g transform="translate(686 817)">
+        <rect width="184" height="72" rx="12" class="node" stroke="#2979ff"/>
+        <text x="14" y="22" class="mono blue tiny">CTX C</text>
+        <text x="14" y="45" class="display primary card-title">UI</text>
+        <text x="14" y="63" class="mono green" font-size="12">validate ✓  commit ✓</text>
+      </g>
+      <path d="M 870 853 C 1000 853 1040 800 1080 763" fill="none" stroke="#448aff" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+      <g transform="translate(512 815)">
+        <rect width="143" height="29" rx="14.5" fill="#111825" stroke="#2979ff"/>
+        <text x="71.5" y="19" text-anchor="middle" class="mono secondary" font-size="12" font-weight="700">FORK FROM A HEAD</text>
+      </g>
+    </g>
+
+    <g transform="translate(88 920)">
+      <rect width="625" height="25" rx="12.5" fill="#00e5ff" fill-opacity="0.08" stroke="#00b8cc" stroke-opacity="0.5"/>
+      <text x="14" y="17" class="mono cyan" font-size="12" font-weight="800">DEPENDENCY RULE</text>
+      <text x="137" y="17" class="display secondary" font-size="12">D starts after upstream output is recorded and visible on D's lane.</text>
+    </g>
+    <g transform="translate(731 920)">
+      <rect width="981" height="25" rx="12.5" fill="#ffb300" fill-opacity="0.07" stroke="#cc8f00" stroke-opacity="0.5"/>
+      <text x="14" y="17" class="mono amber" font-size="12" font-weight="800">JOIN RULE</text>
+      <text x="94" y="17" class="display secondary" font-size="12">Pairwise Smart Merge auto-resolves conflicts and runs pre-merge validation; failure halts with saved progress.</text>
+    </g>
+  </g>
+
+  <g id="boundaries-panel">
+    <rect x="60" y="978" width="1680" height="166" rx="18" class="panel"/>
+    <text x="88" y="1014" class="mono green eyebrow">4 · COMPLETION + DELIVERY</text>
+
+    <g transform="translate(88 1032)">
+      <rect width="376" height="88" rx="13" fill="#0b1019" stroke="#2e3d5c"/>
+      <text x="16" y="24" class="mono cyan tiny">WITHIN EACH CONTEXT</text>
+      <text x="16" y="47" class="display primary" font-size="13" font-weight="760">tasks → validators → approval? → record</text>
+      <text x="16" y="67" class="display secondary" font-size="12">Commit, adopt moved HEAD,</text>
+      <text x="16" y="82" class="display secondary" font-size="12">or record no-change completion.</text>
+    </g>
+    <path d="M 474 1076 L 493 1076" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+
+    <g transform="translate(503 1032)">
+      <rect width="376" height="88" rx="13" fill="#0b1019" stroke="#00b85c" stroke-opacity="0.65"/>
+      <text x="16" y="24" class="mono green tiny">FAN-IN · CONTEXT_MERGE</text>
+      <text x="16" y="47" class="display primary card-title">source lanes → an existing lane</text>
+      <text x="16" y="67" class="display secondary" font-size="12">Each non-target source becomes</text>
+      <text x="16" y="82" class="display secondary" font-size="12">a validated squash commit.</text>
+    </g>
+    <path d="M 889 1076 L 908 1076" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+
+    <g transform="translate(918 1032)">
+      <rect width="376" height="88" rx="13" fill="#0b1019" stroke="#00b85c" stroke-opacity="0.65"/>
+      <text x="16" y="24" class="mono green tiny">QUIESCENCE · FINAL_PUBLISH</text>
+      <text x="16" y="47" class="display primary card-title">terminal lanes → session worktree</text>
+      <text x="16" y="67" class="display secondary" font-size="12">Proof-gated Smart Merge;</text>
+      <text x="16" y="82" class="display secondary" font-size="12">does not mark the run Delivered.</text>
+    </g>
+    <path d="M 1304 1076 L 1323 1076" stroke="#52617a" stroke-width="2" marker-end="url(#arrowDim)"/>
+
+    <g transform="translate(1333 1032)">
+      <rect width="379" height="88" rx="13" fill="url(#greenWash)" stroke="#00e676" stroke-opacity="0.8"/>
+      <text x="16" y="24" class="mono amber tiny">DELIVERY · GATED SMART MERGE</text>
+      <text x="16" y="47" class="display primary card-title">session branch → project target</text>
+      <text x="16" y="67" class="display secondary" font-size="12">The gate rechecks proof;</text>
+      <text x="16" y="82" class="display secondary" font-size="12">the linked spec becomes Delivered.</text>
+    </g>
+  </g>
+
+  <g id="footer">
+    <text x="64" y="1177" class="mono tertiary" font-size="12">EXAMPLE: FOUNDATION → {BACKEND, UI} → INTEGRATE · RUNTIME SOURCE: src/lib/workflow-graph · EDITABLE SVG</text>
+    <g transform="translate(1422 1163)">
+      <circle cx="7" cy="7" r="4" fill="#00e5ff"/>
+      <text x="19" y="11" class="mono tertiary" font-size="12">lane α</text>
+      <circle cx="99" cy="7" r="4" fill="#448aff"/>
+      <text x="111" y="11" class="mono tertiary" font-size="12">lane β</text>
+      <circle cx="191" cy="7" r="4" fill="#00e676"/>
+      <text x="203" y="11" class="mono tertiary" font-size="12">merge / landed</text>
+    </g>
+  </g>
+</svg>

@@ -178,6 +178,16 @@ export const createInFlightSlice: SessionDetailSliceCreator<InFlightSlice> = (
       );
     }),
 
+  resolveOptimisticQueueEntries: (conversationId, queueIds) =>
+    set((state) => {
+      const entry = state.inFlight[conversationId];
+      if (!entry) return;
+      const resolved = new Set(queueIds);
+      entry.optimisticQueue = entry.optimisticQueue.filter(
+        (e) => e.queueId === null || !resolved.has(e.queueId),
+      );
+    }),
+
   cancelOptimisticQueueEntry: (conversationId, idOrTempId) =>
     set((state) => {
       const entry = state.inFlight[conversationId];

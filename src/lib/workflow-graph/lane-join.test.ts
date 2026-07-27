@@ -71,6 +71,28 @@ function makeJoin(
   };
 }
 
+/**
+ * Publish-shaped fixtures must be coherent: planFinalPublishJoin refuses to
+ * plan while any context still has unfinished tasks (ticket #28), so tests
+ * about lane selection mark every context's work as done first and override
+ * specific contexts afterward when the scenario needs an exception.
+ */
+function completeAllContextTasks(
+  execution: GraphWorkflowExecution,
+): GraphWorkflowExecution {
+  const contextStates = Object.fromEntries(
+    Object.entries(execution.contextStates).map(([contextId, state]) => [
+      contextId,
+      {
+        ...state,
+        status: "completed" as const,
+        completedTaskCount: state.totalTaskCount,
+      },
+    ]),
+  );
+  return { ...execution, contextStates };
+}
+
 describe("pickJoinTarget", () => {
   it("picks the most-recently-updated existing source lane", () => {
     const base = createWorkflowExecution();
@@ -335,7 +357,14 @@ describe("planContextJoin", () => {
     expect(plan!.joinId).toBe("join-1");
   });
 
-  it("returns null for a terminal context with two source lanes so final publish handles convergence on the session lane", () => {
+  it("plans a context_merge for a terminal fan-in context so its work can run before the final publish (ticket #28)", () => {
+    // Regression for F25: the sentinel-sweep shape. A terminal context fanning
+    // in from multiple worktree lanes must converge those lanes with a
+    // context_merge and run BEFORE final publish — the terminal join is the
+    // delivery point (delivery gate), so deferring the terminal context to
+    // after publish lets incomplete work merge. Supersedes accepted design
+    // decision 9 ("final verification runs after publish"), which predates the
+    // delivery gate.
     const base = createWorkflowExecution();
     const def = base.workingDefinition;
     const definitionWithFanIn = {
@@ -391,7 +420,11 @@ describe("planContextJoin", () => {
       now: () => t1,
       generateJoinId: () => "join-terminal",
     });
-    expect(plan).toBeNull();
+    expect(plan).not.toBeNull();
+    expect(plan!.kind).toBe("context_merge");
+    expect(plan!.contextId).toBe("context-verify");
+    expect(plan!.targetLaneId).toBe("lane-a");
+    expect(plan!.sourceLaneIds.sort()).toEqual(["lane-a", "lane-b"]);
   });
 
   it("returns null when a prior succeeded join makes lanes reach a common target", () => {
@@ -472,7 +505,7 @@ describe("planContextJoin", () => {
 
 describe("planFinalPublishJoin", () => {
   it("returns null when no terminal worktree lanes need publishing", () => {
-    const base = createWorkflowExecution();
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -498,7 +531,7 @@ describe("planFinalPublishJoin", () => {
   });
 
   it("plans a final publish for one non-session terminal lane", () => {
-    const base = createWorkflowExecution();
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -575,7 +608,7 @@ describe("planFinalPublishJoin", () => {
   it("still publishes a lane once its occupant context completes", () => {
     // Guards against the exclusion being too broad: a lane whose occupant has
     // finished is safe to publish.
-    const base = createWorkflowExecution();
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -614,8 +647,129 @@ describe("planFinalPublishJoin", () => {
     expect(plan!.sourceLaneIds).toEqual(["lane-a"]);
   });
 
-  it("plans a final publish for multiple non-session terminal lanes", () => {
+  it("returns null while a never-started context still has unstarted tasks (F25: the terminal join must not be planned over incomplete work)", () => {
+    // The incident shape from ticket #28: every lane-bearing context completed,
+    // but a laneless downstream (the sentinel sweep) went ready and never ran.
+    // Its work exists only as unstarted tasks — no lane carries it, so the
+    // per-lane incomplete-work exclusion cannot see it. The planner must refuse
+    // to plan the terminal join outright until every context's tasks are done.
     const base = createWorkflowExecution();
+    const sessionLaneId = "session-lane";
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        [sessionLaneId]: makeLane({
+          laneId: sessionLaneId,
+          branchName: "csm/session",
+          kind: "session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/test-a",
+          includedContextIds: ["context-plan", "context-implement"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-a",
+          completedTaskCount: 1,
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-a",
+          completedTaskCount: 1,
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "ready",
+          laneId: null,
+          completedTaskCount: 0,
+        },
+      },
+    };
+
+    expect(
+      planFinalPublishJoin({
+        execution,
+        sessionLaneId,
+        now: () => t1,
+        generateJoinId: () => "join-final",
+      }),
+    ).toBeNull();
+  });
+
+  it("plans the final publish once every context's tasks are complete, even when a status lags behind", () => {
+    // Counterpart to the unstarted-tasks refusal: the guard is task-based, not
+    // status-based. A context whose tasks are all done but whose status has
+    // not flipped to completed (e.g. parked awaiting collaboration delivery)
+    // must not block the publish — its LANE is excluded by the per-lane
+    // incomplete-work filter instead when it holds one.
+    const base = createWorkflowExecution();
+    const sessionLaneId = "session-lane";
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        [sessionLaneId]: makeLane({
+          laneId: sessionLaneId,
+          branchName: "csm/session",
+          kind: "session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/test-a",
+          includedContextIds: [
+            "context-plan",
+            "context-implement",
+            "context-verify",
+          ],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-a",
+          completedTaskCount: 1,
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-a",
+          completedTaskCount: 1,
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-a",
+          completedTaskCount: 1,
+        },
+      },
+    };
+
+    const plan = planFinalPublishJoin({
+      execution,
+      sessionLaneId,
+      now: () => t1,
+      generateJoinId: () => "join-final",
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.sourceLaneIds).toEqual(["lane-a"]);
+  });
+
+  it("plans a final publish for multiple non-session terminal lanes", () => {
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -652,7 +806,7 @@ describe("planFinalPublishJoin", () => {
   });
 
   it("excludes lanes already reaching the session via a succeeded prior join", () => {
-    const base = createWorkflowExecution();
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -704,7 +858,7 @@ describe("planFinalPublishJoin", () => {
   });
 
   it("publishes only the terminal target lane after a context_merge consumes a source", () => {
-    const base = createWorkflowExecution();
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -758,7 +912,7 @@ describe("planFinalPublishJoin", () => {
   });
 
   it("excludes a chain of consumed lanes when joins have cascaded into a single terminal", () => {
-    const base = createWorkflowExecution();
+    const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
       ...base,

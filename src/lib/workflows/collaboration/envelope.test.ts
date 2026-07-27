@@ -34,6 +34,7 @@ import {
   type AsymmetricCollaborationSliceDeps,
   type AsymmetricCollaborationSliceInput,
 } from "./envelope";
+import { EMPTY_COLLABORATION_SESSION_CONTEXT } from "./session-context";
 import type {
   CollaborationArtifact,
   CollaborationCounterProposalOutput,
@@ -340,6 +341,7 @@ function baseInput(
     primaryAgentBackend: "claude",
     negotiationRounds: 3,
     autonomousResolutionThreshold: "major",
+    sessionContext: EMPTY_COLLABORATION_SESSION_CONTEXT,
     ...overrides,
   };
 }
@@ -1267,6 +1269,75 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
     const sidecar = built.artifactSidecar.get("wf-asym") ?? [];
     const kinds = sidecar.map((a) => a.kind);
     expect(kinds).toContain("open_conflicts");
+  });
+});
+
+describe("runAsymmetricCollaborationSlice — captured session context durability", () => {
+  const CAPTURED = {
+    alignment: {
+      version: 9,
+      contentHash: "hash-9",
+      text: "## Charter\n\nPrefer boring technology.",
+      snapshotPath: ".cc/session-alignment/snapshots/hash-9.md",
+    },
+    activeTicketBlock: "<active-ticket>\nidentifier: p#12\n</active-ticket>",
+  };
+
+  it("persists the captured snapshot into the envelope's feature snapshot", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges()),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer()),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
+      ],
+    });
+    const built = await buildDeps(programmed);
+
+    await runAsymmetricCollaborationSlice(
+      baseInput({ sessionContext: CAPTURED }),
+      built.deps,
+    );
+
+    const stored = await built.envelopeStore.read("wf-asym");
+    const snapshot = stored?.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["sessionContext"]).toEqual(CAPTURED);
+  });
+
+  it("persists an empty projection when neither a charter nor a ticket governs", async () => {
+    const programmed = makeProgrammedCallAgent({
+      claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
+        makeBackendResult("claude", makeAgentOneProposedChanges()),
+        makeBackendResult(
+          "claude",
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
+        ),
+        makeBackendResult("claude", makeFinalAnswer()),
+      ],
+      codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
+        makeBackendResult("codex", makeAgentTwoCrossReview()),
+        makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
+      ],
+    });
+    const built = await buildDeps(programmed);
+
+    await runAsymmetricCollaborationSlice(baseInput(), built.deps);
+
+    const stored = await built.envelopeStore.read("wf-asym");
+    const snapshot = stored?.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["sessionContext"]).toEqual(
+      EMPTY_COLLABORATION_SESSION_CONTEXT,
+    );
   });
 });
 

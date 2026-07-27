@@ -10,6 +10,10 @@ import {
   type SetStateAction,
 } from "react";
 import { findBusyOtherConversations } from "@/lib/sessions/derived";
+import {
+  hasCollabPrefix,
+  stripCollabPrefix,
+} from "@/lib/conversation-commands/parse";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
@@ -19,16 +23,6 @@ import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-
-function hasCollabPrefix(text: string): boolean {
-  return text === "/collab" || text.startsWith("/collab ");
-}
-
-function stripCollabPrefix(text: string): string {
-  if (text === "/collab") return "";
-  if (text.startsWith("/collab ")) return text.slice("/collab ".length);
-  return text;
-}
 
 function samePromptDocument(
   left: SerializedPromptDoc,

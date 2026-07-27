@@ -9,6 +9,7 @@ const meta = {
   args: {
     value: "high",
     onChange: fn(),
+    availableLevels: ["low", "medium", "high", "xhigh", "max"],
   },
   decorators: [
     (Story) => (
@@ -53,14 +54,14 @@ export const Disabled = {
   },
 } satisfies Story;
 
-export const ClaudeOpus = {
+export const ClaudeOpus5 = {
   args: {
     value: "high",
     availableLevels: ["low", "medium", "high", "xhigh", "max"],
   },
 } satisfies Story;
 
-export const ClaudeOpusXHigh = {
+export const ClaudeOpus5XHigh = {
   args: {
     value: "xhigh",
     availableLevels: ["low", "medium", "high", "xhigh", "max"],
@@ -78,6 +79,7 @@ export const ClaudeHaiku = {
   args: {
     disabled: true,
     disabledTooltip: "Not available for Haiku",
+    availableLevels: [],
   },
 } satisfies Story;
 
