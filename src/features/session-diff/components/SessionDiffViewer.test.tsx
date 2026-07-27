@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   QueryClient,
   QueryClientProvider,
@@ -12,6 +12,11 @@ import SessionDiffViewer from "./SessionDiffViewer";
 import { gitKeys } from "@/lib/git/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import type { CommitLogEntry, SessionDiff } from "@/lib/git/schemas";
+
+vi.mock(
+  "next/navigation",
+  async () => (await import("@/test/component-mocks")).nextNavigationMock,
+);
 
 function renderSeeded(
   ui: React.ReactElement,

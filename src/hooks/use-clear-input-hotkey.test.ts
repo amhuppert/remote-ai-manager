@@ -1,88 +1,92 @@
 // @vitest-environment jsdom
+import { createElement, type PropsWithChildren, type RefObject } from "react";
 import { renderHook } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useRef } from "react";
-import { useClearInputHotkey } from "./use-clear-input-hotkey";
-import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { describe, expect, it, vi } from "vitest";
+import {
+  HotkeyProvider,
+  type HotkeyProviderProps,
+} from "@/components/hotkeys/HotkeyProvider";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
+import { useClearInputHotkey } from "./use-clear-input-hotkey";
 
-vi.mock("@/hooks/useAppHotkey", () => ({
-  useAppHotkey: vi.fn(),
-}));
-
-function lastRegisteredCallback(): (e: KeyboardEvent) => void {
-  const calls = vi.mocked(useAppHotkey).mock.calls;
-  const call = calls.findLast(([id]) => id === "clearInput");
-  expect(call).toBeDefined();
-  return call![1];
+function editorHandle(clear: () => void): PromptEditorHandle {
+  return {
+    serialize: () => ({ prompt: "", images: [] }),
+    clear,
+    focus: () => {},
+    insertText: () => {},
+    editor: null,
+  };
 }
 
 describe("useClearInputHotkey", () => {
-  beforeEach(() => {
-    vi.mocked(useAppHotkey).mockClear();
-  });
-
-  it("clears editor, text, placeholder, and images when prompt is focused", () => {
+  it("clears the active editor after the launcher takes focus", () => {
+    const dispatcher = createHotkeyDispatcher();
     const editorClear = vi.fn();
     const setPromptText = vi.fn();
     const clearPlaceholder = vi.fn();
     const clearImages = vi.fn();
-    const isPromptFocused = vi.fn(() => true);
+    const editorRef: RefObject<PromptEditorHandle | null> = {
+      current: editorHandle(editorClear),
+    };
 
-    renderHook(() => {
-      const editorRef = useRef<PromptEditorHandle | null>({
-        serialize: () => ({ prompt: "", images: [] }),
-        clear: editorClear,
-        focus: () => {},
-        insertText: () => {},
-        editor: null,
-      });
-      useClearInputHotkey({
-        editorRef,
-        setPromptText,
-        clearPlaceholder,
-        clearImages,
-        isPromptFocused,
-      });
-    });
+    renderHook(
+      () =>
+        useClearInputHotkey({
+          editorRef,
+          setPromptText,
+          clearPlaceholder,
+          clearImages,
+        }),
+      {
+        wrapper: ({ children }: PropsWithChildren) =>
+          createElement(
+            HotkeyProvider,
+            { dispatcher } as HotkeyProviderProps,
+            children,
+          ),
+      },
+    );
 
-    lastRegisteredCallback()({} as KeyboardEvent);
-
-    expect(editorClear).toHaveBeenCalledTimes(1);
+    expect(dispatcher.invoke("clearInput")).toBe(true);
+    expect(editorClear).toHaveBeenCalledOnce();
     expect(setPromptText).toHaveBeenCalledWith("");
-    expect(clearPlaceholder).toHaveBeenCalledTimes(1);
-    expect(clearImages).toHaveBeenCalledTimes(1);
+    expect(clearPlaceholder).toHaveBeenCalledOnce();
+    expect(clearImages).toHaveBeenCalledOnce();
   });
 
-  it("does nothing when prompt is not focused", () => {
-    const editorClear = vi.fn();
-    const setPromptText = vi.fn();
-    const clearPlaceholder = vi.fn();
-    const clearImages = vi.fn();
-    const isPromptFocused = vi.fn(() => false);
+  it("is available only while an active prompt editor is mounted", () => {
+    const dispatcher = createHotkeyDispatcher();
+    const editorRef: RefObject<PromptEditorHandle | null> = {
+      current: editorHandle(vi.fn()),
+    };
 
-    renderHook(() => {
-      const editorRef = useRef<PromptEditorHandle | null>({
-        serialize: () => ({ prompt: "", images: [] }),
-        clear: editorClear,
-        focus: () => {},
-        insertText: () => {},
-        editor: null,
-      });
-      useClearInputHotkey({
-        editorRef,
-        setPromptText,
-        clearPlaceholder,
-        clearImages,
-        isPromptFocused,
-      });
-    });
+    renderHook(
+      () =>
+        useClearInputHotkey({
+          editorRef,
+          setPromptText: vi.fn(),
+          clearPlaceholder: vi.fn(),
+          clearImages: vi.fn(),
+        }),
+      {
+        wrapper: ({ children }: PropsWithChildren) =>
+          createElement(
+            HotkeyProvider,
+            { dispatcher } as HotkeyProviderProps,
+            children,
+          ),
+      },
+    );
 
-    lastRegisteredCallback()({} as KeyboardEvent);
+    const availability = () =>
+      dispatcher
+        .getCommands()
+        .find(({ definition }) => definition.id === "clearInput")?.available;
 
-    expect(editorClear).not.toHaveBeenCalled();
-    expect(setPromptText).not.toHaveBeenCalled();
-    expect(clearPlaceholder).not.toHaveBeenCalled();
-    expect(clearImages).not.toHaveBeenCalled();
+    expect(availability()).toBe(true);
+    editorRef.current = null;
+    expect(availability()).toBe(false);
   });
 });

@@ -1,5 +1,12 @@
 # Keyboard Shortcut Audit & Manual-Testing Checklist
 
+> **Historical audit — superseded.** This document records the
+> `react-hotkeys-hook` implementation as it existed on 2026-06-01. The current
+> architecture and manual-verification contract live in
+> `.kiro/specs/hotkey-support/{requirements,design,tasks}.md`; runtime commands
+> are defined by `src/lib/shared/hotkeys.ts` and dispatched through
+> `src/lib/hotkeys/dispatcher.ts`.
+
 Audit date: 2026-06-01. Scope: every keyboard shortcut in Command Center, the context each is meant to apply in, whether it is implemented with `react-hotkeys-hook` correctly, and whether each fires **only** in its intended scope (not while typing in a text field, and not leaking into the background while a modal is open).
 
 Reference for correct library usage: `agent-docs/react-hotkeys-hook-reference.md`.

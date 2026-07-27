@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { act, screen, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot } from "react-dom/client";
@@ -8,6 +14,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { createTestQueryClient, renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import Topbar from "./Topbar";
 import type {
   ActiveConversation,
@@ -29,9 +37,17 @@ vi.mock(
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
 
-const navigationState = vi.hoisted(() => ({ pathname: "/projects" }));
+const navigationState = vi.hoisted(() => ({
+  pathname: "/projects",
+  push: vi.fn(),
+}));
 vi.mock("next/navigation", () => ({
   usePathname: () => navigationState.pathname,
+  useRouter: () => ({
+    push: navigationState.push,
+    replace: vi.fn(),
+    back: vi.fn(),
+  }),
 }));
 
 const RESET_QUICK_TICKET_STATE: QuickTicketStoreState = {
@@ -167,9 +183,18 @@ async function findNeedsTrigger(): Promise<HTMLButtonElement> {
   return getNeedsTrigger();
 }
 
+function renderTopbarWithHotkeys(topbar: React.ReactElement) {
+  return renderWithQuery(
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      {topbar}
+    </HotkeyProvider>,
+  );
+}
+
 describe("Topbar", () => {
   beforeEach(() => {
     navigationState.pathname = "/projects";
+    navigationState.push.mockClear();
     window.history.replaceState({}, "", "/projects");
     useQuickTicketStore.setState(RESET_QUICK_TICKET_STATE);
     api = installFetchFixture();
@@ -315,6 +340,138 @@ describe("Topbar", () => {
     );
     const link = screen.getByTitle("Specs");
     expect(link.getAttribute("href")).toBe("/specs?project=command-center");
+  });
+
+  it("navigates global destinations with project-aware G sequences", async () => {
+    navigationState.pathname = "/projects/command-center/session-a";
+    const user = userEvent.setup();
+    renderTopbarWithHotkeys(
+      <Topbar
+        breadcrumbs={[
+          { label: "projects", href: "/projects" },
+          {
+            label: "command-center",
+            href: "/projects/command-center",
+            isProject: true,
+          },
+          {
+            label: "session-a",
+            href: "/projects/command-center/session-a",
+            isSession: true,
+          },
+        ]}
+        page="detail"
+      />,
+    );
+
+    await user.keyboard("gh");
+    expect(navigationState.push).toHaveBeenLastCalledWith("/projects");
+
+    await user.keyboard("gc");
+    expect(navigationState.push).toHaveBeenLastCalledWith("/conversations");
+
+    await user.keyboard("gt");
+    expect(navigationState.push).toHaveBeenLastCalledWith(
+      "/tickets?project=command-center",
+    );
+
+    await user.keyboard("gr");
+    expect(navigationState.push).toHaveBeenLastCalledWith(
+      "/specs?project=command-center",
+    );
+  });
+
+  it("opens the project switcher with G P outside project-scoped routes", async () => {
+    api.json("GET", "/api/projects", []);
+    api.json("GET", "/api/projects/preferences", {
+      archived: [],
+      pinned: [],
+    });
+    const user = userEvent.setup();
+    renderTopbarWithHotkeys(<Topbar breadcrumbs={[]} page="projects" />);
+
+    await user.keyboard("gp");
+
+    expect(
+      await screen.findByRole("combobox", { name: "Search projects…" }),
+    ).toHaveFocus();
+  });
+
+  it("restores prompt focus after closing the global project switcher", async () => {
+    api.json("GET", "/api/projects", []);
+    api.json("GET", "/api/projects/preferences", {
+      archived: [],
+      pinned: [],
+    });
+    renderWithQuery(
+      <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+        <div
+          contentEditable
+          data-cc-prompt-id="prompt-a"
+          data-testid="prompt"
+        />
+        <Topbar breadcrumbs={[]} page="projects" />
+      </HotkeyProvider>,
+    );
+    const prompt = screen.getByTestId("prompt");
+    prompt.textContent = "switch project without losing this";
+    prompt.focus();
+    const caret = document.createRange();
+    caret.setStart(prompt.firstChild!, 14);
+    caret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(caret);
+
+    fireEvent.keyDown(prompt, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(prompt, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(prompt, {
+      key: "Control",
+      code: "ControlLeft",
+    });
+    fireEvent.keyDown(prompt, { key: "g", code: "KeyG" });
+    fireEvent.keyDown(prompt, { key: "p", code: "KeyP" });
+
+    expect(
+      await screen.findByRole("combobox", { name: "Search projects…" }),
+    ).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => expect(prompt).toHaveFocus());
+    expect(prompt).toHaveTextContent("switch project without losing this");
+    expect(window.getSelection()?.focusOffset).toBe(14);
+  });
+
+  it("does not consume a destination command that is already active", async () => {
+    navigationState.pathname = "/tickets";
+    const user = userEvent.setup();
+    renderTopbarWithHotkeys(
+      <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,
+    );
+
+    await user.keyboard("gt");
+
+    expect(navigationState.push).not.toHaveBeenCalled();
+  });
+
+  it("returns from a ticket detail to the ticket index with G T", async () => {
+    navigationState.pathname = "/tickets/CC-123";
+    const user = userEvent.setup();
+    renderTopbarWithHotkeys(
+      <Topbar breadcrumbs={[{ label: "CC-123" }]} page="tickets" />,
+    );
+
+    await user.keyboard("gt");
+
+    expect(navigationState.push).toHaveBeenLastCalledWith("/tickets");
   });
 
   it("points the mobile Specs menu item at the active project", async () => {
@@ -642,5 +799,81 @@ describe("Topbar", () => {
         .getByRole("menuitem", { name: /input requested.*Release notes/i })
         .getAttribute("href"),
     ).toBe("/projects/root-tools?focus=project-question");
+  });
+
+  it("opens Needs You with G A when attention items are available", async () => {
+    const user = userEvent.setup();
+    setActiveConversations([
+      makeProjectConversation({
+        id: "project-question",
+        projectName: "root-tools",
+        status: "waiting_for_input",
+      }),
+    ]);
+
+    renderTopbarWithHotkeys(<Topbar breadcrumbs={[]} page="projects" />);
+    await findNeedsTrigger();
+
+    await user.keyboard("ga");
+
+    expect(
+      await screen.findByRole("menu", { name: "Needs you, 1 item" }),
+    ).toBeVisible();
+  });
+
+  it("restores the originating prompt after dismissing Needs You opened by one-shot G A", async () => {
+    setActiveConversations([
+      makeProjectConversation({
+        id: "project-question",
+        projectName: "root-tools",
+        status: "waiting_for_input",
+      }),
+    ]);
+    renderWithQuery(
+      <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+        <div
+          contentEditable
+          data-cc-prompt-id="prompt-a"
+          data-testid="prompt"
+        />
+        <Topbar breadcrumbs={[]} page="projects" />
+      </HotkeyProvider>,
+    );
+    await findNeedsTrigger();
+
+    const prompt = screen.getByTestId("prompt");
+    prompt.textContent = "keep this decision draft";
+    prompt.focus();
+    const caret = document.createRange();
+    caret.setStart(prompt.firstChild!, 9);
+    caret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(caret);
+
+    fireEvent.keyDown(prompt, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(prompt, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(prompt, {
+      key: "Control",
+      code: "ControlLeft",
+    });
+    fireEvent.keyDown(prompt, { key: "g", code: "KeyG" });
+    fireEvent.keyDown(prompt, { key: "a", code: "KeyA" });
+
+    expect(
+      await screen.findByRole("menu", { name: "Needs you, 1 item" }),
+    ).toBeVisible();
+    fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+    await waitFor(() => expect(prompt).toHaveFocus());
+    expect(prompt).toHaveTextContent("keep this decision draft");
+    expect(window.getSelection()?.focusOffset).toBe(9);
   });
 });

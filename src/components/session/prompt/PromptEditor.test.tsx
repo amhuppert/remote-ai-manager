@@ -11,6 +11,8 @@ import {
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 
 const {
   mockUseCommandsQuery,
@@ -158,6 +160,49 @@ describe("PromptEditor", () => {
     expect(content).not.toBeNull();
     const pm = container.querySelector(".ProseMirror");
     expect(pm?.getAttribute("contenteditable")).toBe("true");
+  });
+
+  it("owns a prompt shortcut scope and shows its one-shot HUD without changing the draft", () => {
+    const dispatcher = createHotkeyDispatcher();
+    const { container, getByRole } = render(
+      <HotkeyProvider dispatcher={dispatcher}>
+        <PromptEditor
+          conversationId="conv-1"
+          value="keep this draft"
+          onChange={() => {}}
+          onSubmit={() => {}}
+          pendingImages={[]}
+          onAddImage={makeAddImage()}
+          onRemoveImage={() => {}}
+          cumulativeImageCount={0}
+        />
+      </HotkeyProvider>,
+    );
+    const prompt = container.querySelector(".ProseMirror") as HTMLElement;
+    prompt.focus();
+
+    fireEvent.keyDown(prompt, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+
+    expect(prompt.dataset.ccPromptId).toBeTruthy();
+    expect(prompt).toHaveAttribute(
+      "aria-keyshortcuts",
+      expect.stringContaining("Control+;"),
+    );
+    expect(prompt).toHaveAttribute(
+      "aria-keyshortcuts",
+      expect.stringContaining(
+        "Control+A Control+E Control+U Control+K Control+W Alt+B Alt+F Alt+D",
+      ),
+    );
+    expect(getByRole("status")).toHaveTextContent(
+      "APP SHORTCUT · awaiting key",
+    );
+    expect(prompt.textContent).toBe("keep this draft");
+    expect(document.activeElement).toBe(prompt);
   });
 
   it("renders the initial value into the editor doc", () => {

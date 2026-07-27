@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import {
   useLayout,
   useMobilePanel,
+  useRightPaneTab,
   useSendingFor,
   usePromptPlaceholder,
   usePromptErrorFor,
@@ -44,6 +45,7 @@ export function useSessionPageStoreBundle(conversationId: string) {
   const sidebarCollapsed = useSidebarCollapsed();
   const toggleSidebar = useToggleSidebar();
   const mobilePanel = useMobilePanel();
+  const rightPaneTab = useRightPaneTab();
   const sending = useSendingFor(conversationId);
   const promptPlaceholder = usePromptPlaceholder();
   const promptError = usePromptErrorFor(conversationId);
@@ -107,6 +109,7 @@ export function useSessionPageStoreBundle(conversationId: string) {
     sidebarCollapsed,
     toggleSidebar,
     mobilePanel,
+    rightPaneTab,
     sending,
     promptPlaceholder,
     promptError,
@@ -114,6 +117,7 @@ export function useSessionPageStoreBundle(conversationId: string) {
     switchLayout,
     hydrateLayout,
     switchMobilePanel,
+    switchRightPaneTab,
     dismissError,
     dismissCancelled,
     showPlaceholder,

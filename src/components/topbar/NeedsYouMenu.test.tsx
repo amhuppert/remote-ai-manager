@@ -66,4 +66,18 @@ describe("NeedsYouMenu", () => {
       "2026-07-17T15:58:00.000Z",
     );
   });
+
+  it("supports controlled opening for command invocation", () => {
+    const { rerender } = render(
+      <NeedsYouMenu items={items} nowMs={NOW_MS} open={false} />,
+    );
+
+    expect(screen.queryByRole("menu", { name: /Needs you/i })).toBeNull();
+
+    rerender(<NeedsYouMenu items={items} nowMs={NOW_MS} open />);
+
+    expect(
+      screen.getByRole("menu", { name: "Needs you, 2 items" }),
+    ).toBeVisible();
+  });
 });

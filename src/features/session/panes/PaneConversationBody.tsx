@@ -6,7 +6,7 @@ import MessageRow from "@/components/conversation/MessageRow";
 import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
 import { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import { useCollabRowRenderer } from "@/features/session/hooks/use-collab-row-renderer";
-import { useThinkingBlockExpansionHotkeys } from "@/features/session/hooks/use-thinking-block-expansion-hotkeys";
+import { useThinkingBlockExpansionHotkeys } from "@/hooks/use-thinking-block-expansion-hotkeys";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useForkConversationMutation } from "@/lib/conversations/mutations";
 import { useSessionQuery } from "@/lib/sessions/queries";

@@ -8,11 +8,13 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import Topbar from "@/components/Topbar";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 
 // next/link + next/navigation are external framework modules (the sanctioned
@@ -123,7 +125,17 @@ const DETAIL_BREADCRUMBS = [
 
 function renderDetailTopbar() {
   return renderWithQuery(
-    <Topbar breadcrumbs={DETAIL_BREADCRUMBS} page="detail" />,
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      <Topbar breadcrumbs={DETAIL_BREADCRUMBS} page="detail" />
+    </HotkeyProvider>,
+  );
+}
+
+function renderTopbarWithHotkeys(topbar: React.ReactElement) {
+  return renderWithQuery(
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      {topbar}
+    </HotkeyProvider>,
   );
 }
 
@@ -326,26 +338,22 @@ describe("Topbar session switcher", () => {
 });
 
 describe("Topbar switcher hotkeys", () => {
-  it("toggles the project switcher with mod+p and swaps to the session switcher on mod+j", async () => {
+  it("opens the project and session switchers with their G sequences", async () => {
     const user = userEvent.setup();
     renderDetailTopbar();
 
-    await user.keyboard("{Control>}p{/Control}");
+    await user.keyboard("gp");
     expect(
       await screen.findByPlaceholderText("Search projects…"),
     ).toBeInTheDocument();
 
-    // Opening one switcher closes the other, and focus lands in the new
-    // panel's search field (the closing panel must not reclaim it).
-    await user.keyboard("{Control>}j{/Control}");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByPlaceholderText("Search projects…")).toBeNull();
+
+    await user.keyboard("gs");
     const sessionSearch =
       await screen.findByPlaceholderText("Search sessions…");
-    expect(screen.queryByPlaceholderText("Search projects…")).toBeNull();
     expect(sessionSearch).toHaveFocus();
-
-    // The same chord toggles it closed again (even with focus in the input).
-    await user.keyboard("{Control>}j{/Control}");
-    expect(screen.queryByPlaceholderText("Search sessions…")).toBeNull();
   });
 
   it("closes the open switcher with Escape", async () => {
@@ -357,12 +365,72 @@ describe("Topbar switcher hotkeys", () => {
     expect(screen.queryByPlaceholderText("Search projects…")).toBeNull();
   });
 
-  it("does not open the project switcher on pages without a project segment", async () => {
+  it.each([
+    ["project", "p", "Search projects…"],
+    ["session", "s", "Search sessions…"],
+  ])(
+    "returns prompt focus after closing the %s switcher",
+    async (_switcher, key, searchName) => {
+      renderWithQuery(
+        <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+          <div
+            contentEditable
+            data-cc-prompt-id="prompt-a"
+            data-testid="prompt"
+          >
+            preserve this draft
+          </div>
+          <Topbar breadcrumbs={DETAIL_BREADCRUMBS} page="detail" />
+        </HotkeyProvider>,
+      );
+      const prompt = screen.getByTestId("prompt");
+      prompt.focus();
+      const caret = document.createRange();
+      caret.setStart(prompt.firstChild!, 8);
+      caret.collapse(true);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(caret);
+
+      fireEvent.keyDown(prompt, {
+        key: ";",
+        code: "Semicolon",
+        ctrlKey: true,
+      });
+      fireEvent.keyUp(prompt, {
+        key: ";",
+        code: "Semicolon",
+        ctrlKey: true,
+      });
+      fireEvent.keyUp(prompt, {
+        key: "Control",
+        code: "ControlLeft",
+      });
+      fireEvent.keyDown(prompt, { key: "g", code: "KeyG" });
+      fireEvent.keyDown(prompt, {
+        key,
+        code: `Key${key.toUpperCase()}`,
+      });
+
+      expect(
+        await screen.findByRole("combobox", { name: searchName }),
+      ).toHaveFocus();
+
+      fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+
+      await waitFor(() => expect(prompt).toHaveFocus());
+      expect(prompt).toHaveTextContent("preserve this draft");
+      expect(window.getSelection()?.focusOffset).toBe(8);
+    },
+  );
+
+  it("opens the global project switcher on pages without a project segment", async () => {
     const user = userEvent.setup();
-    renderWithQuery(
+    renderTopbarWithHotkeys(
       <Topbar breadcrumbs={[{ label: "tickets" }]} page="tickets" />,
     );
-    await user.keyboard("{Control>}p{/Control}");
-    expect(screen.queryByPlaceholderText("Search projects…")).toBeNull();
+    await user.keyboard("gp");
+    expect(
+      await screen.findByPlaceholderText("Search projects…"),
+    ).toHaveFocus();
   });
 });

@@ -10,7 +10,7 @@ import {
 
 /**
  * Hydrates the dev-tools-visibility store from localStorage,
- * registers the Shift+D hotkey, and syncs a data attribute on
+ * registers the command-launcher action, and syncs a data attribute on
  * <html> so CSS can show/hide the Next.js dev indicator.
  * TanStack Query DevTools are toggled via the store in Providers.
  */

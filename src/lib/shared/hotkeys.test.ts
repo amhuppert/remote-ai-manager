@@ -1,269 +1,195 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HotkeyId } from "./hotkeys";
 
 describe("HOTKEY_REGISTRY", () => {
-  it("has an entry for every HotkeyId", async () => {
+  it("contains the complete command vocabulary", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     const expectedIds: HotkeyId[] = [
       "helpModal",
+      "commandLauncher",
       "voiceToggle",
+      "stopTurn",
       "clearInput",
+      "toggleSidebar",
+      "toggleDevTools",
+      "focusContextSearch",
+      "focusComposer",
       "nextMessage",
       "prevMessage",
       "firstMessage",
       "lastMessage",
-      "toggleSidebar",
-      "toggleDevTools",
-      "focusSidebarSearch",
       "nextFile",
       "prevFile",
       "nextChange",
       "prevChange",
       "newSession",
-      "focusCommandConsole",
+      "newConversation",
+      "newWorkflow",
       "activateOpenTab",
+      "closeConversationTab",
       "exitPanes",
       "expandThinkingBlocks",
       "collapseThinkingBlocks",
+      "goProjects",
       "switchProject",
       "switchSession",
+      "goConversations",
+      "goTickets",
+      "goSpecs",
+      "openNeedsYou",
+      "nextConversation",
+      "prevConversation",
       "quickTicket",
+      "viewPrevious",
+      "viewConversation",
+      "viewDiff",
+      "viewDocuments",
+      "viewAlignment",
+      "viewSpecs",
+      "viewArtifact",
+      "viewPanes",
+      "viewSessions",
+      "viewBoard",
+      "viewList",
     ];
-    for (const id of expectedIds) {
-      expect(HOTKEY_REGISTRY[id]).toBeDefined();
-    }
+
+    expect(Object.keys(HOTKEY_REGISTRY).sort()).toEqual(expectedIds.sort());
   });
 
-  it("binds each key combo to a single entry except allow-listed route-exclusive duplicates", async () => {
+  it("uses the approved conflict-resistant bindings", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    // focusSidebarSearch + focusCommandConsole intentionally share mod+k; they
-    // are never mounted on the same route. clearInput + exitPanes intentionally
-    // share Escape; clearInput is enableOnFormTags (fires in the composer) while
-    // exitPanes is not and is gated to panes mode by its hook, so they never
-    // collide. Any other duplicate is a bug.
-    const ALLOWED_DUPLICATE_KEYS = new Set(["mod+k", "Escape"]);
-    const idsByKeys = new Map<string, string[]>();
-    for (const def of Object.values(HOTKEY_REGISTRY)) {
-      const ids = idsByKeys.get(def.keys) ?? [];
-      ids.push(def.id);
-      idsByKeys.set(def.keys, ids);
-    }
-    for (const [keys, ids] of idsByKeys) {
-      if (ids.length > 1) {
-        expect(
-          ALLOWED_DUPLICATE_KEYS.has(keys),
-          `unexpected duplicate binding for "${keys}": ${ids.join(", ")}`,
-        ).toBe(true);
+
+    expect(HOTKEY_REGISTRY.helpModal.keys).toBe("shift+/");
+    expect(HOTKEY_REGISTRY.commandLauncher.keys).toBe(".");
+    expect(HOTKEY_REGISTRY.switchProject.keys).toBe("g>p");
+    expect(HOTKEY_REGISTRY.switchSession.keys).toBe("g>s");
+    expect(HOTKEY_REGISTRY.newSession.keys).toBe("c>s");
+    expect(HOTKEY_REGISTRY.quickTicket.keys).toBe("c>t");
+    expect(HOTKEY_REGISTRY.activateOpenTab.keys).toBe(
+      "g>1,g>2,g>3,g>4,g>5,g>6,g>7,g>8,g>9",
+    );
+    expect(HOTKEY_REGISTRY.closeConversationTab.keys).toBe("x");
+    expect(HOTKEY_REGISTRY.firstMessage.keys).toBe("g>g");
+    expect(HOTKEY_REGISTRY.lastMessage.keys).toBe("shift+g");
+    expect(HOTKEY_REGISTRY.voiceToggle.keys).toBe("ctrl+shift+.");
+    expect(HOTKEY_REGISTRY.stopTurn.keys).toBe("ctrl+.");
+  });
+
+  it("keeps the exact thinking expansion bindings", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+
+    expect(HOTKEY_REGISTRY.expandThinkingBlocks.keys).toBe("shift+e");
+    expect(HOTKEY_REGISTRY.collapseThinkingBlocks.keys).toBe("shift+c");
+  });
+
+  it("keeps infrequent and destructive prompt actions launcher-only", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+
+    expect(HOTKEY_REGISTRY.clearInput.keys).toBeNull();
+    expect(HOTKEY_REGISTRY.toggleDevTools.keys).toBeNull();
+  });
+
+  it("marks only literal prompt chords as directly available in editors", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    const directPromptIds = Object.values(HOTKEY_REGISTRY)
+      .filter((definition) => definition.allowInEditable)
+      .map((definition) => definition.id)
+      .sort();
+
+    expect(directPromptIds).toEqual(["stopTurn", "voiceToggle"]);
+  });
+
+  it("does not assign direct Alt/Option shortcuts", async () => {
+    const { HOTKEY_REGISTRY, getHotkeySequences } = await import("./hotkeys");
+
+    for (const definition of Object.values(HOTKEY_REGISTRY)) {
+      for (const sequence of getHotkeySequences(definition.keys)) {
+        expect(sequence.some((stroke) => stroke.includes("alt+"))).toBe(false);
       }
     }
   });
 
-  it("does not register a separate voiceFireAndForget hotkey (auto-submit is gestured via Ctrl+Enter while recording)", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+  it("documents the preserved readline-style prompt bindings separately", async () => {
+    const { PROMPT_EDITING_SHORTCUTS } = await import("./hotkeys");
+
     expect(
-      (HOTKEY_REGISTRY as Record<string, unknown>)["voiceFireAndForget"],
-    ).toBeUndefined();
+      PROMPT_EDITING_SHORTCUTS.map(({ keys, label }) => [keys, label]),
+    ).toEqual([
+      ["ctrl+;", "Activate one app shortcut"],
+      ["mod+enter", "Submit prompt"],
+      ["ctrl+a", "Move to line start"],
+      ["ctrl+e", "Move to line end"],
+      ["ctrl+u", "Delete to line start"],
+      ["ctrl+k", "Delete to line end"],
+      ["ctrl+w", "Delete previous word"],
+      ["alt+b", "Move one word backward"],
+      ["alt+f", "Move one word forward"],
+      ["alt+d", "Delete next word"],
+    ]);
   });
 
-  it("has consistent id fields matching registry keys", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    for (const [key, def] of Object.entries(HOTKEY_REGISTRY)) {
-      expect(def.id).toBe(key);
+  it("has consistent ids and complete user-facing metadata", async () => {
+    const { HOTKEY_REGISTRY, getCategoryLabel } = await import("./hotkeys");
+
+    for (const [id, definition] of Object.entries(HOTKEY_REGISTRY)) {
+      expect(definition.id).toBe(id);
+      expect(definition.label).toBeTruthy();
+      expect(definition.description).toBeTruthy();
+      expect(getCategoryLabel(definition.category)).toBeTruthy();
     }
   });
+});
 
-  it("all entries have required fields", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    for (const def of Object.values(HOTKEY_REGISTRY)) {
-      expect(def.id).toBeTruthy();
-      expect(def.keys).toBeTruthy();
-      expect(def.label).toBeTruthy();
-      expect(def.description).toBeTruthy();
-      expect(["general", "navigation", "diff"]).toContain(def.category);
-    }
-  });
+describe("getHotkeySequences", () => {
+  it("parses alternatives and multi-stroke sequences", async () => {
+    const { getHotkeySequences } = await import("./hotkeys");
 
-  it("voiceToggle has enableOnFormTags set", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.voiceToggle.enableOnFormTags).toBe(true);
-  });
-
-  it("clearInput has enableOnFormTags set", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.clearInput.enableOnFormTags).toBe(true);
-  });
-
-  it("voiceToggle has enableOnContentEditable so it fires inside the Tiptap prompt editor", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.voiceToggle.enableOnContentEditable).toBe(true);
-  });
-
-  it("clearInput has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.clearInput.enableOnContentEditable).toBe(true);
-  });
-
-  it("quickTicket uses the vetted chord from form fields and contenteditable", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.quickTicket).toMatchObject({
-      id: "quickTicket",
-      keys: "mod+shift+k",
-      label: "Quick ticket",
-      category: "general",
-      enableOnFormTags: true,
-      enableOnContentEditable: true,
-    });
-  });
-
-  it("activateOpenTab binds mod+1..mod+9 in the navigation category", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    const def = HOTKEY_REGISTRY.activateOpenTab;
-    expect(def).toBeDefined();
-    expect(def.id).toBe("activateOpenTab");
-    expect(def.keys).toBe(
-      "mod+1,mod+2,mod+3,mod+4,mod+5,mod+6,mod+7,mod+8,mod+9",
-    );
-    expect(def.category).toBe("navigation");
-    // Must NOT be enableOnFormTags: activation only fires when focus is outside
-    // form fields.
-    expect(def.enableOnFormTags).toBeUndefined();
-  });
-
-  it("exitPanes binds Escape in the navigation category without enableOnFormTags", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    const def = HOTKEY_REGISTRY.exitPanes;
-    expect(def).toBeDefined();
-    expect(def.id).toBe("exitPanes");
-    expect(def.keys).toBe("Escape");
-    expect(def.category).toBe("navigation");
-    // Must NOT be enableOnFormTags so Escape inside the composer falls through to
-    // the clearInput hotkey instead of exiting panes.
-    expect(def.enableOnFormTags).toBeUndefined();
-  });
-
-  it("binds separate shortcuts for expanding and collapsing thinking blocks", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.expandThinkingBlocks).toMatchObject({
-      id: "expandThinkingBlocks",
-      keys: "shift+e",
-      label: "Expand thinking blocks",
-      category: "navigation",
-    });
-    expect(HOTKEY_REGISTRY.collapseThinkingBlocks).toMatchObject({
-      id: "collapseThinkingBlocks",
-      keys: "shift+c",
-      label: "Collapse thinking blocks",
-      category: "navigation",
-    });
-    expect(HOTKEY_REGISTRY.expandThinkingBlocks.keys).not.toBe(
-      HOTKEY_REGISTRY.collapseThinkingBlocks.keys,
-    );
-    expect(HOTKEY_REGISTRY.expandThinkingBlocks.enableOnFormTags).toBeFalsy();
-    expect(HOTKEY_REGISTRY.collapseThinkingBlocks.enableOnFormTags).toBeFalsy();
-  });
-
-  it("non-modifier hotkeys do not have enableOnFormTags", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    const nonModifierIds: HotkeyId[] = [
-      "toggleSidebar",
-      "nextMessage",
-      "prevMessage",
-      "firstMessage",
-      "lastMessage",
-      "nextFile",
-      "prevFile",
-      "nextChange",
-      "prevChange",
-    ];
-    for (const id of nonModifierIds) {
-      expect(HOTKEY_REGISTRY[id].enableOnFormTags).toBeFalsy();
-    }
-  });
-
-  it("non-modifier hotkeys do not have enableOnContentEditable", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    const nonModifierIds: HotkeyId[] = [
-      "toggleSidebar",
-      "nextMessage",
-      "prevMessage",
-      "firstMessage",
-      "lastMessage",
-      "nextFile",
-      "prevFile",
-      "nextChange",
-      "prevChange",
-    ];
-    for (const id of nonModifierIds) {
-      expect(HOTKEY_REGISTRY[id].enableOnContentEditable).toBeFalsy();
-    }
-  });
-
-  it("helpModal does not have enableOnFormTags so it cannot interfere with text input", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.helpModal.enableOnFormTags).toBeFalsy();
-    expect(HOTKEY_REGISTRY.helpModal.useKey).toBe(true);
-    expect(HOTKEY_REGISTRY.helpModal.keys).toBe("?");
+    expect(getHotkeySequences("g>1,g>2,g>3")).toEqual([
+      ["g", "1"],
+      ["g", "2"],
+      ["g", "3"],
+    ]);
+    expect(getHotkeySequences(null)).toEqual([]);
   });
 });
 
 describe("isMacOS", () => {
-  const origNavigator = globalThis.navigator;
+  const originalNavigator = globalThis.navigator;
 
   afterEach(() => {
     Object.defineProperty(globalThis, "navigator", {
-      value: origNavigator,
+      value: originalNavigator,
       writable: true,
       configurable: true,
     });
     vi.resetModules();
   });
 
-  it("returns true on macOS platform", async () => {
+  it("detects macOS from platform and userAgentData", async () => {
     Object.defineProperty(globalThis, "navigator", {
-      value: { platform: "MacIntel" },
+      value: { platform: "Linux", userAgentData: { platform: "macOS" } },
       writable: true,
       configurable: true,
     });
     const { isMacOS } = await import("./hotkeys");
+
     expect(isMacOS()).toBe(true);
   });
 
-  it("returns false on Linux platform", async () => {
-    Object.defineProperty(globalThis, "navigator", {
-      value: { platform: "Linux x86_64" },
-      writable: true,
-      configurable: true,
-    });
-    const { isMacOS } = await import("./hotkeys");
-    expect(isMacOS()).toBe(false);
-  });
-
-  it("returns false when navigator is undefined", async () => {
+  it("returns false without a navigator", async () => {
     Object.defineProperty(globalThis, "navigator", {
       value: undefined,
       writable: true,
       configurable: true,
     });
     const { isMacOS } = await import("./hotkeys");
-    expect(isMacOS()).toBe(false);
-  });
 
-  it("detects macOS via userAgentData", async () => {
-    Object.defineProperty(globalThis, "navigator", {
-      value: {
-        platform: "Linux",
-        userAgentData: { platform: "macOS" },
-      },
-      writable: true,
-      configurable: true,
-    });
-    const { isMacOS } = await import("./hotkeys");
-    expect(isMacOS()).toBe(true);
+    expect(isMacOS()).toBe(false);
   });
 });
 
 describe("formatHotkeyDisplay", () => {
-  const origNavigator = globalThis.navigator;
+  const originalNavigator = globalThis.navigator;
 
   beforeEach(() => {
     vi.resetModules();
@@ -271,104 +197,60 @@ describe("formatHotkeyDisplay", () => {
 
   afterEach(() => {
     Object.defineProperty(globalThis, "navigator", {
-      value: origNavigator,
+      value: originalNavigator,
       writable: true,
       configurable: true,
     });
     vi.resetModules();
   });
 
-  describe("on Linux", () => {
-    beforeEach(() => {
-      Object.defineProperty(globalThis, "navigator", {
-        value: { platform: "Linux x86_64" },
-        writable: true,
-        configurable: true,
-      });
+  it("formats a sequence as distinct strokes on Linux", async () => {
+    Object.defineProperty(globalThis, "navigator", {
+      value: { platform: "Linux x86_64" },
+      writable: true,
+      configurable: true,
     });
+    const { formatHotkeyDisplay } = await import("./hotkeys");
 
-    it("formats ? as ?", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("?")).toBe("?");
-    });
-
-    it("formats alt+v with Alt prefix", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("alt+v")).toBe("Alt V");
-    });
-
-    it("formats single key by capitalizing", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("j")).toBe("J");
-    });
-
-    it("formats shift+n with Shift prefix", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("shift+n")).toBe("Shift N");
-    });
-
-    it("preserves named keys like Home", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("Home")).toBe("Home");
-    });
-
-    it("formats mod+s as Ctrl S", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("mod+s")).toBe("Ctrl S");
-    });
-
-    it("formats mod+alt+v with Ctrl and Alt prefixes", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("mod+alt+v")).toBe("Ctrl Alt V");
-    });
+    expect(formatHotkeyDisplay("g>p")).toBe("G then P");
+    expect(formatHotkeyDisplay("ctrl+shift+.")).toBe("Ctrl Shift .");
   });
 
-  describe("on macOS", () => {
-    beforeEach(() => {
-      Object.defineProperty(globalThis, "navigator", {
-        value: { platform: "MacIntel" },
-        writable: true,
-        configurable: true,
-      });
+  it("uses platform-correct symbols on macOS", async () => {
+    Object.defineProperty(globalThis, "navigator", {
+      value: { platform: "MacIntel" },
+      writable: true,
+      configurable: true,
     });
+    const { formatHotkeyDisplay } = await import("./hotkeys");
 
-    it("formats ? as ?", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("?")).toBe("?");
-    });
+    expect(formatHotkeyDisplay("mod+shift+p")).toBe("⌘ ⇧ P");
+    expect(formatHotkeyDisplay("ctrl+;")).toBe("⌃ ;");
+  });
 
-    it("formats alt+v with option symbol", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("alt+v")).toBe("\u2325 V");
+  it("formats alternatives without flattening their sequence boundaries", async () => {
+    Object.defineProperty(globalThis, "navigator", {
+      value: { platform: "Linux x86_64" },
+      writable: true,
+      configurable: true,
     });
+    const { formatHotkeyDisplay } = await import("./hotkeys");
 
-    it("formats mod+s with command symbol", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("mod+s")).toBe("\u2318 S");
-    });
-
-    it("formats shift+n with shift symbol", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("shift+n")).toBe("\u21E7 N");
-    });
-
-    it("formats single key by capitalizing", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("b")).toBe("B");
-    });
-
-    it("formats mod+alt+v with command and option symbols", async () => {
-      const { formatHotkeyDisplay } = await import("./hotkeys");
-      expect(formatHotkeyDisplay("mod+alt+v")).toBe("\u2318 \u2325 V");
-    });
+    expect(formatHotkeyDisplay("g>1,g>2")).toBe("G then 1 / G then 2");
   });
 });
 
 describe("getCategoryLabel", () => {
-  it("maps category to human-readable labels", async () => {
+  it("maps every category to a user-facing heading", async () => {
     const { getCategoryLabel } = await import("./hotkeys");
+
     expect(getCategoryLabel("general")).toBe("General");
     expect(getCategoryLabel("navigation")).toBe("Navigation");
+    expect(getCategoryLabel("creation")).toBe("Create");
+    expect(getCategoryLabel("conversation")).toBe("Conversation");
+    expect(getCategoryLabel("review")).toBe("Review");
     expect(getCategoryLabel("diff")).toBe("Diff Review");
+    expect(getCategoryLabel("views")).toBe("Views");
+    expect(getCategoryLabel("development")).toBe("Development");
   });
 });

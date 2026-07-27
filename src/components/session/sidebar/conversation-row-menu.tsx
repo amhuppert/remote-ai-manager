@@ -140,7 +140,6 @@ export function buildConversationRowMenuItems(
           {
             kind: "item" as const,
             label: "Copy context",
-            hotkey: "⌘⇧C",
             onSelect: handlers.onCopyContext,
           },
         ]

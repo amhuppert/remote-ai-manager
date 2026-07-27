@@ -177,6 +177,44 @@ describe("UnifiedComposer shared prompt input", () => {
       document.querySelector('textarea[placeholder^="Message the"]'),
     ).toBeNull();
   });
+
+  it("hydrates a canonical conversation draft and reports the cleared document after send", async () => {
+    const onSendPrompt = vi.fn();
+    const onDocumentChange = vi.fn();
+    const initialDocument = {
+      prompt: "Continue from this draft",
+      images: [
+        {
+          attachmentId: "draft-image",
+          mediaType: "image/png" as const,
+          base64Data: "cGF5bG9hZA==",
+        },
+      ],
+    };
+    renderComposer({
+      initialDocument,
+      onDocumentChange,
+      onSendPrompt,
+    });
+
+    await waitFor(() =>
+      expect(
+        document.querySelector(".prompt-editor__content .ProseMirror"),
+      ).toHaveTextContent("Continue from this draft"),
+    );
+    fireEvent.click(screen.getByTestId("prompt-send"));
+
+    expect(onSendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Continue from this draft",
+        images: initialDocument.images,
+      }),
+    );
+    expect(onDocumentChange).toHaveBeenLastCalledWith({
+      prompt: "",
+      images: [],
+    });
+  });
 });
 
 describe("UnifiedComposer backend lock", () => {

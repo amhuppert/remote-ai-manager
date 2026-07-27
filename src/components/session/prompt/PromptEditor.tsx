@@ -3,6 +3,7 @@
 import {
   forwardRef,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
@@ -63,6 +64,11 @@ import {
   UnifiedMentionPopup,
   type UnifiedMentionPopupHandle,
 } from "@/components/session/prompt/UnifiedMentionPopup";
+import { HotkeyAwaitingHUD } from "@/components/hotkeys/HotkeyAwaitingHUD";
+import {
+  useHotkeyDispatcher,
+  useHotkeySnapshot,
+} from "@/components/hotkeys/HotkeyProvider";
 
 export interface PromptEditorHandle {
   /** Serialize the current document to `{ prompt, images }`. */
@@ -288,6 +294,10 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       onShowPlaceholder,
     } = props;
     const editable = !disabled && !readOnly;
+    const generatedPromptId = useId();
+    const shortcutPromptId = `prompt-${generatedPromptId}`;
+    const hotkeyDispatcher = useHotkeyDispatcher();
+    const hotkeySnapshot = useHotkeySnapshot();
 
     const onSubmitRef = useRef(onSubmit);
     onSubmitRef.current = onSubmit;
@@ -338,6 +348,28 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     const filePopupRef = useRef<FileMentionPopupHandle>(null);
     const unifiedMentionPopupRef = useRef<UnifiedMentionPopupHandle>(null);
     const ticketPopupRef = useRef<TicketMentionPopupHandle>(null);
+
+    useEffect(() => {
+      if (
+        hotkeySnapshot.mode !== "one-shot" ||
+        hotkeySnapshot.promptId !== shortcutPromptId
+      ) {
+        return;
+      }
+      setSlashState(null);
+      setFileState(null);
+      setUnifiedMentionState(null);
+      setTicketState(null);
+    }, [hotkeySnapshot.mode, hotkeySnapshot.promptId, shortcutPromptId]);
+
+    useEffect(
+      () => () => {
+        if (hotkeyDispatcher.getSnapshot().promptId === shortcutPromptId) {
+          hotkeyDispatcher.cancel("prompt_unmounted");
+        }
+      },
+      [hotkeyDispatcher, shortcutPromptId],
+    );
 
     const editor = useEditor({
       immediatelyRender: true,
@@ -474,6 +506,9 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         attributes: {
           class: "prompt-editor__content-inner",
           "data-testid": "prompt-input",
+          "data-cc-prompt-id": shortcutPromptId,
+          "aria-keyshortcuts":
+            "Control+; Control+. Control+Shift+. Meta+Enter Control+Enter Control+A Control+E Control+U Control+K Control+W Alt+B Alt+F Alt+D",
           ...(id ? { id } : {}),
           ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
         },
@@ -550,6 +585,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
 
     return (
       <div className="relative" title={title}>
+        <HotkeyAwaitingHUD promptId={shortcutPromptId} />
         {slashState && projectName ? (
           <PromptEditorSlashCommandPopup
             ref={slashPopupRef}

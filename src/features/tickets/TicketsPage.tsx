@@ -27,6 +27,7 @@ import {
   type TicketsView,
 } from "@/lib/tickets/ticket-url-state";
 import { useQuickTicketStore } from "@/stores/quick-ticket.store";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { cn } from "@/lib/ui/cn";
 import { ticketIdentifier } from "./ticket-reference";
 import TicketBoard from "./components/TicketBoard";
@@ -112,6 +113,12 @@ function TicketsPageInner({
     },
     [navigate, state],
   );
+  useAppHotkey("viewBoard", () => handleViewChange("board"), {
+    enabled: view !== "board",
+  });
+  useAppHotkey("viewList", () => handleViewChange("list"), {
+    enabled: view !== "list",
+  });
 
   const handleSortChange = useCallback(
     (next: TicketListSortState) => {

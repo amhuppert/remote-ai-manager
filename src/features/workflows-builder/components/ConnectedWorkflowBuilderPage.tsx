@@ -20,6 +20,7 @@ import type { WorkflowDefinitionScope } from "@/lib/workflows/definition-scope";
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import { useGlobalDefaults } from "@/hooks/use-global-defaults";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
@@ -166,6 +167,9 @@ export default function ConnectedWorkflowBuilderPage({
     setRequestedWorkflowId(created.item.id);
     autoSwitchPanel("graph");
   }
+  useAppHotkey("newWorkflow", () => void handleCreateWorkflow(), {
+    enabled: !createMutation.isPending,
+  });
 
   async function handleSaveDraft(draft: {
     definition: WorkflowSemanticDefinition;

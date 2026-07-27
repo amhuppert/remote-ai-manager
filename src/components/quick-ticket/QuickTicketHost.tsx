@@ -35,8 +35,7 @@ export default function QuickTicketHost(): React.JSX.Element {
   }, [pathname]);
 
   useAppHotkey("quickTicket", toggle, {
-    enabled: open || isQuickTicketAvailable(pathname),
-    keepActiveInOverlay: open,
+    enabled: !open && isQuickTicketAvailable(pathname),
   });
 
   return <QuickTicketDialog />;

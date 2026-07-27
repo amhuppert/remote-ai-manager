@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import { _useOverlayScopeStore } from "@/stores/overlay-scope.store";
 import { useThinkingBlockExpansionHotkeys } from "./use-thinking-block-expansion-hotkeys";
 
@@ -21,13 +23,21 @@ function Harness({ enabled = true }: { enabled?: boolean }): React.JSX.Element {
   );
 }
 
+function renderHarness(enabled = true): void {
+  render(
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      <Harness enabled={enabled} />
+    </HotkeyProvider>,
+  );
+}
+
 describe("useThinkingBlockExpansionHotkeys", () => {
   beforeEach(() => {
     _useOverlayScopeStore.setState({ openStack: [] });
   });
 
   it("collapses and expands thinking blocks through separate shortcuts", () => {
-    render(<Harness />);
+    renderHarness();
 
     expect(screen.getByTestId("state")).toHaveTextContent("expanded:0");
     pressShiftKey("c");
@@ -38,7 +48,7 @@ describe("useThinkingBlockExpansionHotkeys", () => {
   });
 
   it("does not react while disabled", () => {
-    render(<Harness enabled={false} />);
+    renderHarness(false);
 
     pressShiftKey("c");
     expect(screen.getByTestId("state")).toHaveTextContent("expanded:0");

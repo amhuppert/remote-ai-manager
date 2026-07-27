@@ -176,12 +176,18 @@ interface NeedsYouMenuProps {
   items: NeedsYouItem[];
   nowMs: number;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  restoreOpener?: (event: Event) => void;
 }
 
 export function NeedsYouMenu({
   items,
   nowMs,
   defaultOpen = false,
+  open,
+  onOpenChange,
+  restoreOpener,
 }: NeedsYouMenuProps): React.JSX.Element | null {
   const menuLabelId = useId();
   if (items.length === 0) return null;
@@ -192,7 +198,11 @@ export function NeedsYouMenu({
   const accessibleLabel = `Needs you: ${decisionLabel}`;
 
   return (
-    <DropdownMenu defaultOpen={defaultOpen}>
+    <DropdownMenu
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
+    >
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -228,6 +238,7 @@ export function NeedsYouMenu({
         align="end"
         aria-labelledby={menuLabelId}
         layoutClassName="w-[500px] max-w-[calc(100vw-16px)]"
+        onCloseAutoFocus={restoreOpener}
       >
         <div className="-m-xs overflow-hidden rounded-md bg-bg-surface">
           <RadixDropdownMenu.Label

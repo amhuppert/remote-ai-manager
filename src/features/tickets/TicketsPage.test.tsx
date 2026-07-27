@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +19,11 @@ import {
   type TicketListFilterInput,
 } from "@/lib/tickets/list-filters";
 import { useToastStoreForTesting } from "@/stores/toast.store";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import {
+  createHotkeyDispatcher,
+  type HotkeyDispatcher,
+} from "@/lib/hotkeys/dispatcher";
 import TicketsPage from "./TicketsPage";
 
 const routerReplace = vi.fn();
@@ -286,15 +298,22 @@ function installFetchStub(
   return log;
 }
 
-function renderPage(search = "") {
+function renderPage(search = "", dispatcher?: HotkeyDispatcher) {
   window.history.replaceState(null, "", `/tickets${search}`);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, refetchInterval: false } },
   });
-  return render(
+  const page = (
     <QueryClientProvider client={queryClient}>
       <TicketsPage {...PAGE_PROPS} />
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+  return render(
+    dispatcher === undefined ? (
+      page
+    ) : (
+      <HotkeyProvider dispatcher={dispatcher}>{page}</HotkeyProvider>
+    ),
   );
 }
 
@@ -817,6 +836,46 @@ describe("TicketsPage view switch", () => {
       expect(screen.getByText("aerotrainer#5")).toBeInTheDocument(),
     );
     await user.click(screen.getByRole("radio", { name: "List" }));
+    expect(routerPush).toHaveBeenCalledWith(
+      "/tickets?view=list&project=aerotrainer",
+      { scroll: false },
+    );
+  });
+
+  it("switches between board and list with V B and V L", async () => {
+    installFetchStub(TICKETS);
+    const listDispatcher = createHotkeyDispatcher();
+    const listRender = renderPage(
+      "?view=list&project=aerotrainer",
+      listDispatcher,
+    );
+
+    await screen.findByText("aerotrainer#5");
+    expect(
+      listDispatcher
+        .getCommands()
+        .find((command) => command.definition.id === "viewBoard")?.available,
+    ).toBe(true);
+    expect(
+      listDispatcher
+        .getCommands()
+        .find((command) => command.definition.id === "viewList")?.available,
+    ).toBe(false);
+
+    fireEvent.keyDown(document, { key: "v" });
+    fireEvent.keyDown(document, { key: "b" });
+    expect(routerPush).toHaveBeenCalledWith("/tickets?project=aerotrainer", {
+      scroll: false,
+    });
+
+    listRender.unmount();
+    routerPush.mockClear();
+    const boardDispatcher = createHotkeyDispatcher();
+    renderPage("?project=aerotrainer", boardDispatcher);
+    await screen.findByText("aerotrainer#5");
+
+    fireEvent.keyDown(document, { key: "v" });
+    fireEvent.keyDown(document, { key: "l" });
     expect(routerPush).toHaveBeenCalledWith(
       "/tickets?view=list&project=aerotrainer",
       { scroll: false },

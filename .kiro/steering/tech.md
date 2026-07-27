@@ -15,7 +15,7 @@ Server-rendered Next.js + API routes as backend. **Persistence**: a single SQLit
 - **react-virtuoso** — virtualized message lists
 - **react-markdown + remark-gfm + react-syntax-highlighter** — markdown rendering
 - **mermaid + svg-pan-zoom** — diagram rendering
-- **react-hotkeys-hook** — shortcuts
+- **Central hotkey dispatcher + Tiptap keymaps** — contextual app shortcuts and prompt-native editing bindings
 - **better-sqlite3** — SQLite (WAL); primary persistent store (`command-center.db`) for all state
 
 ### Zod v4 gotcha

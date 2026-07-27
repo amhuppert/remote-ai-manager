@@ -14,7 +14,6 @@ export interface UseClearInputHotkeyArgs {
   setPromptText: Dispatch<SetStateAction<string>>;
   clearPlaceholder: () => void;
   clearImages: () => void;
-  isPromptFocused: () => boolean;
 }
 
 export function useClearInputHotkey({
@@ -22,20 +21,15 @@ export function useClearInputHotkey({
   setPromptText,
   clearPlaceholder,
   clearImages,
-  isPromptFocused,
 }: UseClearInputHotkeyArgs): void {
   const handleClear = useCallback(() => {
-    if (!isPromptFocused()) return;
-    editorRef.current?.clear();
+    if (!editorRef.current) return;
+    editorRef.current.clear();
     setPromptText("");
     clearPlaceholder();
     clearImages();
-  }, [
-    editorRef,
-    setPromptText,
-    clearPlaceholder,
-    clearImages,
-    isPromptFocused,
-  ]);
-  useAppHotkey("clearInput", handleClear);
+  }, [editorRef, setPromptText, clearPlaceholder, clearImages]);
+  useAppHotkey("clearInput", handleClear, {
+    isAvailable: () => editorRef.current !== null,
+  });
 }

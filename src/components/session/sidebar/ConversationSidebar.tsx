@@ -53,7 +53,6 @@ import {
   useSidebarGroupByPersistent,
 } from "@/hooks/use-sidebar-persistent-filters";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
-import { isEditableTarget } from "@/lib/shared/dom";
 import ConversationSidebarHeader from "@/components/session/sidebar/ConversationSidebarHeader";
 import ConversationSidebarFilters from "@/components/session/sidebar/ConversationSidebarFilters";
 import ConversationSidebarRow from "@/components/session/sidebar/ConversationSidebarRow";
@@ -173,9 +172,9 @@ interface Props {
    */
   showCollapseControl?: boolean;
   /**
-   * Whether this sidebar owns the mod+k binding. On the project page mod+k
-   * belongs to the command console (the cockpit composer), so the embedded
-   * rail passes `false` to keep the route-exclusive binding from colliding.
+   * Whether this sidebar owns the contextual `/` search command. The project
+   * cockpit passes `false` because its embedded rail is not the route's primary
+   * search surface.
    */
   enableSearchHotkey?: boolean;
   /**
@@ -402,16 +401,12 @@ function ConversationSidebar({
   }, [hydrateSidebar]);
 
   // Hotkeys
-  useAppHotkey("toggleSidebar", () => {
-    if (showCollapseControl) toggleCollapsed();
+  useAppHotkey("toggleSidebar", toggleCollapsed, {
+    enabled: showCollapseControl,
   });
   useAppHotkey(
-    "focusSidebarSearch",
+    "focusContextSearch",
     () => {
-      // Don't steal focus from the prompt composer or other editable element.
-      const active = document.activeElement;
-      // If editable and not our own search input, leave focus alone.
-      if (isEditableTarget(active) && active !== searchInputRef.current) return;
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
     },
@@ -442,6 +437,12 @@ function ConversationSidebar({
     sessionName,
     openSessionScopedConversation,
   ]);
+  useAppHotkey("newConversation", handleNewConversation, {
+    enabled:
+      showNewConversationButton &&
+      activeConversationId.length > 0 &&
+      !createConvoMutation.isPending,
+  });
 
   const handleRenameStart = useCallback(
     (id: string, name: string, scope: ActiveRowActionScope) => {

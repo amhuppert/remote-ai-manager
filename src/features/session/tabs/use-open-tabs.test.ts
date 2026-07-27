@@ -443,8 +443,7 @@ describe("useOpenTabs", () => {
     act(() => result.current.closeTab("b"));
 
     expect(onOpenConversation).toHaveBeenCalledTimes(1);
-    const neighbor = onOpenConversation.mock.calls[0]?.[0]?.conversationId;
-    expect(["a", "c"]).toContain(neighbor);
+    expect(onOpenConversation).toHaveBeenCalledWith({ conversationId: "a" });
     expect(ids(result.current)).not.toContain("b");
   });
 
@@ -474,6 +473,28 @@ describe("useOpenTabs", () => {
     // only injected effect is `onOpenConversation`, which is not called here).
     expect(onOpenConversation).not.toHaveBeenCalled();
     expect(ids(result.current)).toEqual(["b", "c"]);
+  });
+
+  it("can add the currently selected conversation back after closing the final tab", () => {
+    const onOpenConversation = vi.fn();
+    const list = [convo("a")];
+    const { result } = renderHook(() =>
+      useOpenTabs({
+        activeConversationId: "a",
+        activeConversations: list,
+        activeConversationsLoaded: true,
+        onOpenConversation,
+      }),
+    );
+
+    act(() => result.current.closeTab("a"));
+    expect(ids(result.current)).toEqual([]);
+
+    onOpenConversation.mockClear();
+    act(() => result.current.addTab("a"));
+
+    expect(ids(result.current)).toEqual(["a"]);
+    expect(onOpenConversation).toHaveBeenCalledWith({ conversationId: "a" });
   });
 
   it("starts unhydrated with an empty persistedLruLive, then hydrates (1.8)", async () => {

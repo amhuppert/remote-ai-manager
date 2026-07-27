@@ -105,6 +105,11 @@ function readFileAsBase64(file: File | Blob): Promise<string> {
   });
 }
 
+function revokePreviewUrl(previewUrl: string): void {
+  if (!previewUrl.startsWith("blob:")) return;
+  URL.revokeObjectURL(previewUrl);
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -126,7 +131,7 @@ export function useImageAttachments(
   useEffect(() => {
     return () => {
       for (const img of pendingImagesRef.current) {
-        URL.revokeObjectURL(img.previewUrl);
+        revokePreviewUrl(img.previewUrl);
       }
     };
   }, []);
@@ -176,7 +181,7 @@ export function useImageAttachments(
     const image = pendingImagesRef.current.find(
       (candidate) => candidate.id === id,
     );
-    if (image) URL.revokeObjectURL(image.previewUrl);
+    if (image) revokePreviewUrl(image.previewUrl);
     const nextImages = pendingImagesRef.current.filter(
       (candidate) => candidate.id !== id,
     );
@@ -186,7 +191,7 @@ export function useImageAttachments(
 
   const clearImages = useCallback(() => {
     for (const image of pendingImagesRef.current) {
-      URL.revokeObjectURL(image.previewUrl);
+      revokePreviewUrl(image.previewUrl);
     }
     pendingImagesRef.current = [];
     setPendingImages([]);

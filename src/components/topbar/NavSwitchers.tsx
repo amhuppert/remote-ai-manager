@@ -15,6 +15,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/Popover";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/Dialog";
 import { StatusDot, type StatusDotTone } from "@/components/ui/StatusDot";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import {
@@ -272,7 +273,7 @@ interface ProjectSwitcherProps {
   onOpenChange: (open: boolean) => void;
   /**
    * True while the sibling switcher is open. When this panel closes because
-   * the other one is taking over (⌘P ⇄ ⌘J), Radix's focus return to this
+   * the other one is taking over, Radix's focus return to this
    * trigger would steal focus from the new panel's search input — suppress it.
    */
   siblingOpen: boolean;
@@ -280,6 +281,8 @@ interface ProjectSwitcherProps {
   triggerLayoutClassName?: string;
   /** Route family to keep when the user changes project context. */
   destination?: "project" | "specs";
+  captureOpener: () => void;
+  restoreOpener: (event: Event) => void;
 }
 
 export function BreadcrumbProjectSwitcher({
@@ -289,6 +292,8 @@ export function BreadcrumbProjectSwitcher({
   siblingOpen,
   triggerLayoutClassName,
   destination = "project",
+  captureOpener,
+  restoreOpener,
 }: ProjectSwitcherProps) {
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -314,12 +319,17 @@ export function BreadcrumbProjectSwitcher({
         align="start"
         sideOffset={7}
         layoutClassName="w-[268px]"
-        // Swapping switchers (⌘P → ⌘J) closes this panel while its sibling
+        onOpenAutoFocus={captureOpener}
+        // Swapping switchers closes this panel while its sibling
         // opens; the closing panel's focus return would land "outside" the new
         // panel and dismiss it. Outside *clicks* and Escape still close.
         onFocusOutside={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => {
-          if (siblingOpen) event.preventDefault();
+          if (siblingOpen) {
+            event.preventDefault();
+            return;
+          }
+          restoreOpener(event);
         }}
       >
         <ProjectSwitcherPanel
@@ -332,14 +342,53 @@ export function BreadcrumbProjectSwitcher({
   );
 }
 
+interface GlobalProjectSwitcherProps {
+  readonly activeProject: string | null;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly destination?: "project" | "specs";
+  readonly captureOpener: () => void;
+  readonly restoreOpener: (event: Event) => void;
+}
+
+export function GlobalProjectSwitcher({
+  activeProject,
+  open,
+  onOpenChange,
+  destination = "project",
+  captureOpener,
+  restoreOpener,
+}: GlobalProjectSwitcherProps): React.JSX.Element {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        mobileSheet
+        aria-describedby={undefined}
+        onOpenAutoFocus={captureOpener}
+        onCloseAutoFocus={restoreOpener}
+      >
+        <DialogTitle>Switch project</DialogTitle>
+        <ProjectSwitcherPanel
+          activeProject={activeProject ?? ""}
+          onDone={() => onOpenChange(false)}
+          destination={destination}
+          showHeader={false}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ProjectSwitcherPanel({
   activeProject,
   onDone,
   destination,
+  showHeader = true,
 }: {
   activeProject: string;
   onDone: () => void;
   destination: "project" | "specs";
+  showHeader?: boolean;
 }) {
   const router = useRouter();
   const listboxId = useId();
@@ -431,7 +480,9 @@ function ProjectSwitcherPanel({
 
   return (
     <div>
-      <PanelHeader label="Switch project" hotkeyId="switchProject" />
+      {showHeader ? (
+        <PanelHeader label="Switch project" hotkeyId="switchProject" />
+      ) : null}
       <SwitcherSearch
         value={query}
         onChange={setQuery}
@@ -528,6 +579,8 @@ interface SessionSwitcherProps {
   /** See {@link ProjectSwitcherProps.siblingOpen}. */
   siblingOpen: boolean;
   triggerLayoutClassName?: string;
+  captureOpener: () => void;
+  restoreOpener: (event: Event) => void;
 }
 
 export function BreadcrumbSessionSwitcher({
@@ -537,6 +590,8 @@ export function BreadcrumbSessionSwitcher({
   onOpenChange,
   siblingOpen,
   triggerLayoutClassName,
+  captureOpener,
+  restoreOpener,
 }: SessionSwitcherProps) {
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -564,9 +619,14 @@ export function BreadcrumbSessionSwitcher({
           align="start"
           sideOffset={7}
           layoutClassName="w-[288px]"
+          onOpenAutoFocus={captureOpener}
           onFocusOutside={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => {
-            if (siblingOpen) event.preventDefault();
+            if (siblingOpen) {
+              event.preventDefault();
+              return;
+            }
+            restoreOpener(event);
           }}
         >
           <SessionSwitcherPanel

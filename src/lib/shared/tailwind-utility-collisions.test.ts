@@ -57,6 +57,7 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}session${path.sep}tabs${path.sep}`,
   `${path.sep}features${path.sep}session${path.sep}dialogs${path.sep}`,
   `${path.sep}components${path.sep}mcp${path.sep}`,
+  `${path.sep}components${path.sep}hotkeys${path.sep}`,
   `${path.sep}components${path.sep}HotkeyHelpModal.tsx`,
   `${path.sep}components${path.sep}GlobalHotkeyHelp.tsx`,
   `${path.sep}components${path.sep}BranchSelector.tsx`,

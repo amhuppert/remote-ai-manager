@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { cn } from "@/lib/ui/cn";
 import Topbar from "@/components/Topbar";
 import WorkRailMain from "@/components/WorkRailMain";
@@ -39,6 +39,7 @@ import {
   useOpenProjectMenu,
   useCloseProjectMenu,
 } from "@/stores/projects.store";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 // Parity reproduction of legacy `.btn.btn-sm.btn-toggle` (globals.css). No
 // `<Button>` variant matches the toggle appearance, and appearance utilities are
@@ -60,6 +61,7 @@ const TOGGLE_ACTIVE =
 
 export default function ProjectsIndexPage(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<DiscoveredProject | null>(
     null,
   );
@@ -215,6 +217,14 @@ export default function ProjectsIndexPage(): React.JSX.Element {
   const showPinnedSection = visiblePinnedProjects.length > 0;
   const isLoading =
     projectsQuery.isPending || prefsQuery.isPending || configQuery.isPending;
+  useAppHotkey(
+    "focusContextSearch",
+    () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    },
+    { enabled: !isLoading && projectCount > 0 },
+  );
 
   return (
     <div className="app" data-page="projects">
@@ -230,7 +240,7 @@ export default function ProjectsIndexPage(): React.JSX.Element {
           ) : undefined
         }
       />
-      <WorkRailMain>
+      <WorkRailMain enableRailSearchHotkey={false}>
         <div className="mb-2xl max-768:mb-lg">
           <h1 className="mb-sm font-display text-[2.4rem] leading-[1.1] font-extrabold tracking-[-0.03em] text-text-primary max-768:text-[1.6rem]">
             Ground{" "}
@@ -254,7 +264,10 @@ export default function ProjectsIndexPage(): React.JSX.Element {
             <div className="mb-lg flex flex-wrap items-center gap-md">
               <div className="relative max-w-[360px] min-w-[200px] flex-1">
                 <input
-                  type="text"
+                  ref={searchInputRef}
+                  type="search"
+                  aria-label="Search projects"
+                  aria-keyshortcuts="/"
                   className="w-full rounded-md border border-solid border-border-default bg-bg-surface py-[8px] pr-[32px] pl-[12px] font-mono text-[0.78rem] text-text-primary transition-all duration-150 ease-[ease] outline-none placeholder:text-text-tertiary focus:border-cyan-dim focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
                   placeholder="Search projects..."
                   value={searchQuery}

@@ -18,6 +18,11 @@ import type {
   ProjectActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import {
+  createHotkeyDispatcher,
+  type HotkeyDispatcher,
+} from "@/lib/hotkeys/dispatcher";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 
@@ -94,6 +99,7 @@ const activeConversations: ActiveConversationsResponse = {
 function renderSidebarWithActiveData(
   active: ActiveConversationsResponse,
   props: Partial<ComponentProps<typeof ConversationSidebar>> = {},
+  dispatcher?: HotkeyDispatcher,
 ): void {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -102,7 +108,7 @@ function renderSidebarWithActiveData(
   });
   queryClient.setQueryData(conversationKeys.active(), active);
 
-  render(
+  const sidebar = (
     <QueryClientProvider client={queryClient}>
       <ConversationSidebar
         projectName="remote-ai-manager"
@@ -110,7 +116,14 @@ function renderSidebarWithActiveData(
         activeConversationId="session-convo"
         {...props}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+  render(
+    dispatcher === undefined ? (
+      sidebar
+    ) : (
+      <HotkeyProvider dispatcher={dispatcher}>{sidebar}</HotkeyProvider>
+    ),
   );
 }
 
@@ -246,6 +259,22 @@ describe("ConversationSidebar", () => {
     // is no way to strand the panel because the host owns collapse.
     expect(screen.queryByLabelText("Collapse sidebar")).toBeNull();
     expect(screen.getByRole("tab", { name: /^All/ })).not.toBeNull();
+  });
+
+  it("leaves the sidebar shortcut available for a host-owned rail", () => {
+    const dispatcher = createHotkeyDispatcher();
+    renderSidebarWithActiveData(
+      activeConversations,
+      { showCollapseControl: false },
+      dispatcher,
+    );
+
+    expect(
+      dispatcher
+        .getCommands()
+        .find((command) => command.definition.id === "toggleSidebar")
+        ?.available,
+    ).toBe(false);
   });
 
   it("marks an unread project conversation as read via the project endpoint when OK is pressed", async () => {
@@ -544,6 +573,43 @@ describe("ConversationSidebar", () => {
         });
       });
       expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it("creates a conversation with C C when the workspace action is available", async () => {
+      const onOpenConversation = vi.fn();
+      const dispatcher = createHotkeyDispatcher();
+      renderSidebarWithActiveData(
+        sessionActiveData,
+        { onOpenConversation },
+        dispatcher,
+      );
+
+      fireEvent.keyDown(document, { key: "c" });
+      fireEvent.keyDown(document, { key: "c" });
+
+      await waitFor(() => {
+        expect(onOpenConversation).toHaveBeenCalledWith({
+          conversationId: "created-convo-1",
+          projectName: "remote-ai-manager",
+          sessionName: "conversation-ui-overhaul",
+        });
+      });
+    });
+
+    it("does not expose C C when the new-conversation action is hidden", () => {
+      const dispatcher = createHotkeyDispatcher();
+      renderSidebarWithActiveData(
+        sessionActiveData,
+        { showNewConversationButton: false },
+        dispatcher,
+      );
+
+      expect(
+        dispatcher
+          .getCommands()
+          .find((command) => command.definition.id === "newConversation")
+          ?.available,
+      ).toBe(false);
     });
 
     it("falls back to router.push after create when the prop is absent", async () => {

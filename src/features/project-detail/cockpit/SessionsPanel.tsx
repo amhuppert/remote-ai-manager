@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { CloseIcon } from "@/components/icons";
 import {
   EmptyState,
@@ -21,6 +21,7 @@ import {
 } from "../components/bulk-selection";
 import type { FilterToken } from "../components/filter-tokens";
 import SessionsFilterPopover from "./SessionsFilterPopover";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 export interface SessionsPanelProps {
   id?: string;
@@ -78,6 +79,7 @@ export default function SessionsPanel({
   onBranch,
 }: SessionsPanelProps): React.JSX.Element {
   const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [sort, setSort] = useState<SortState>({
     id: "lastActivityAt",
     desc: true,
@@ -85,6 +87,14 @@ export default function SessionsPanel({
   const [rawSelection, setSelection] = useState<Set<string>>(() => new Set());
   const [confirmKind, setConfirmKind] = useState<BulkConfirmKind | null>(null);
   const bulkMutation = useBulkSessionsMutation(projectName);
+  useAppHotkey(
+    "focusContextSearch",
+    () => {
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    },
+    { enabled: hidden !== true },
+  );
 
   // Drop selections for sessions that no longer exist (e.g. after a bulk
   // delete or an external removal); keeps the count and bulk op accurate.
@@ -156,12 +166,14 @@ export default function SessionsPanel({
       <div className={HEADER_CLASS}>
         <div className="flex items-center gap-sm">
           <input
+            ref={searchRef}
             type="search"
             className={SEARCH_CLASS}
             placeholder="Search name or branch"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search sessions"
+            aria-keyshortcuts="/"
           />
           <SessionsFilterPopover
             tokens={tokens}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PromptComposer from "@/components/session/prompt/PromptComposer";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
@@ -23,6 +23,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ProjectPromptError } from "@/lib/project-conversations-client/mutations";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import type { FilterToken } from "../components/filter-tokens";
 import { detectComposerMode } from "./detect-composer-mode";
 import { parseFilterDraft, replaceTokenByCat } from "./parse-filter-draft";
@@ -50,6 +51,8 @@ export interface UnifiedComposerProps {
   sessions: SessionListItem[];
   archivedCount: number;
   onSendPrompt: (input: UnifiedComposerSendInput) => void;
+  initialDocument?: SerializedPromptDoc;
+  onDocumentChange?: (document: SerializedPromptDoc) => void;
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
   lastUsedModelId?: string;
   lastUsedEffort?: string;
@@ -164,6 +167,8 @@ export default function UnifiedComposer({
   tokens,
   onTokensChange,
   onSendPrompt,
+  initialDocument,
+  onDocumentChange,
   onRunCommand,
   lastUsedModelId,
   lastUsedEffort,
@@ -178,7 +183,7 @@ export default function UnifiedComposer({
     lastUsedModelId,
     lastUsedEffort,
   ]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDocument?.prompt ?? "");
   const [modelPref, setModelPref] = useState(() =>
     modelForBackend(agentBackend, lastUsedModelId, backendDefaults),
   );
@@ -195,7 +200,7 @@ export default function UnifiedComposer({
   );
   const editorRef = useRef<PromptEditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const promptTextRef = useRef("");
+  const promptTextRef = useRef(initialDocument?.prompt ?? "");
   const fireAndForgetRef = useRef(false);
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
@@ -220,7 +225,12 @@ export default function UnifiedComposer({
   const selectedEffort = pickEffort(availableEffortLevels, effortPref);
 
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
-    useImageAttachments();
+    useImageAttachments(initialDocument?.images ?? []);
+
+  useEffect(() => {
+    if (!onDocumentChange || !editorRef.current) return;
+    onDocumentChange(editorRef.current.serialize(pendingImages));
+  }, [onDocumentChange, pendingImages]);
 
   const clearComposer = useCallback(() => {
     setDraft("");
@@ -229,7 +239,8 @@ export default function UnifiedComposer({
     setPromptPlaceholder(null);
     editorRef.current?.clear();
     clearImages();
-  }, [clearImages]);
+    onDocumentChange?.({ prompt: "", images: [] });
+  }, [clearImages, onDocumentChange]);
 
   const handleSendPrompt = useCallback(() => {
     const serialized = editorRef.current?.serialize(pendingImages);
@@ -283,9 +294,9 @@ export default function UnifiedComposer({
     onSendPrompt,
   ]);
 
-  // Voice dictation with the same wiring as session conversations: the Alt+V
-  // hotkey, transcribed-text insertion, and stop-and-submit on Enter while
-  // recording all come from useVoiceWiring.
+  // Voice dictation with the same wiring as session conversations: the
+  // Ctrl+Shift+. hotkey, transcribed-text insertion, and stop-and-submit on
+  // Enter while recording all come from useVoiceWiring.
   const handleSendPromptAsync = useCallback(async () => {
     handleSendPrompt();
   }, [handleSendPrompt]);
@@ -302,14 +313,9 @@ export default function UnifiedComposer({
     setPromptText: setDraft,
     clearPlaceholder: useCallback(() => setPromptPlaceholder(null), []),
     clearImages,
-    isPromptFocused: useCallback(
-      () => editorRef.current?.editor?.isFocused ?? false,
-      [],
-    ),
   });
 
-  // The composer is the project page's command console (registry: mod+k).
-  useAppHotkey("focusCommandConsole", () => {
+  useAppHotkey("focusComposer", () => {
     editorRef.current?.focus();
   });
 
@@ -325,6 +331,8 @@ export default function UnifiedComposer({
         editorRef={editorRef}
         fileInputRef={fileInputRef}
         promptText={draft}
+        initialDocument={initialDocument}
+        onDocumentChange={onDocumentChange}
         onPromptTextChange={(text) => {
           setDraft(text);
           promptTextRef.current = text;

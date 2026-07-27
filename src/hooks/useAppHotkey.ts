@@ -1,30 +1,44 @@
 "use client";
 
-import { useHotkeys } from "react-hotkeys-hook";
-import { HOTKEY_REGISTRY, type HotkeyId } from "@/lib/shared/hotkeys";
-import { useIsOverlayOpen } from "@/stores/overlay-scope.store";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { useHotkeyDispatcher } from "@/components/hotkeys/HotkeyProvider";
+import type {
+  HotkeyInvocation,
+  HotkeyRegistrationOptions,
+} from "@/lib/hotkeys/dispatcher";
+import type { HotkeyId } from "@/lib/shared/hotkeys";
+
+export interface UseAppHotkeyOptions {
+  readonly enabled?: boolean;
+  readonly keepActiveInOverlay?: boolean;
+  readonly isAvailable?: (invocation: HotkeyInvocation) => boolean;
+}
 
 export function useAppHotkey(
   id: HotkeyId,
-  callback: (event: KeyboardEvent) => void,
-  options?: { enabled?: boolean; keepActiveInOverlay?: boolean },
+  callback: (event: KeyboardEvent, invocation: HotkeyInvocation) => void,
+  options: UseAppHotkeyOptions = {},
 ): void {
-  const def = HOTKEY_REGISTRY[id];
-  const overlayOpen = useIsOverlayOpen();
+  const dispatcher = useHotkeyDispatcher();
+  const callbackRef = useRef(callback);
+  const availabilityRef = useRef(options.isAvailable);
 
-  // Page hotkeys are suppressed while any overlay (modal/drawer/menu/popover)
-  // is open. Overlay-owned hotkeys opt out with `keepActiveInOverlay`.
-  const enabled =
-    (options?.enabled ?? true) &&
-    (options?.keepActiveInOverlay ? true : !overlayOpen);
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+    availabilityRef.current = options.isAvailable;
+  }, [callback, options.isAvailable]);
 
-  useHotkeys(def.keys, callback, {
-    preventDefault: true,
-    enabled,
-    enableOnFormTags: def.enableOnFormTags
-      ? (["input", "textarea", "select"] as const)
-      : undefined,
-    enableOnContentEditable: def.enableOnContentEditable,
-    useKey: def.useKey,
-  });
+  useEffect(() => {
+    const registrationOptions: HotkeyRegistrationOptions = {
+      enabled: options.enabled,
+      keepActiveInOverlay: options.keepActiveInOverlay,
+      isAvailable: (invocation) =>
+        availabilityRef.current?.(invocation) ?? true,
+    };
+    return dispatcher.register(
+      id,
+      (event, invocation) => callbackRef.current(event, invocation),
+      registrationOptions,
+    );
+  }, [dispatcher, id, options.enabled, options.keepActiveInOverlay]);
 }
