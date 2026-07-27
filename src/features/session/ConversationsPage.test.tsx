@@ -72,6 +72,7 @@ function lookupItem(conversationId: string): ConversationListItem {
   return {
     projectName: "repo",
     projectPath: "/projects/repo",
+    scope: "session" as const,
     sessionName: "fix-bug",
     worktreePath: "/projects/repo/.worktrees/fix-bug",
     conversationId,

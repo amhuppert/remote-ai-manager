@@ -183,6 +183,7 @@ describe("conversation manager", () => {
         "compaction-a1",
         {
           actorInput: {
+            conversationScope: "session",
             projectName: "test-project",
             sessionWorktreePath: "/test/project",
             persistence: "ephemeral",
@@ -209,6 +210,7 @@ describe("conversation manager", () => {
         "durable-lane-1",
         {
           actorInput: {
+            conversationScope: "session",
             projectName: "test-project",
             sessionWorktreePath: "/test/project",
             persistence: "durable",
@@ -667,6 +669,7 @@ describe("conversation manager", () => {
       overrides: Partial<EnsureActorInputData> = {},
     ): EnsureActorInputData {
       return {
+        conversationScope: "session",
         projectName: "test-project",
         sessionWorktreePath: "/test/project/.worktrees/test-session",
         persistence: "durable",
@@ -964,6 +967,7 @@ describe("conversation manager", () => {
       const loadActorInput = vi.fn(
         async () =>
           ({
+            conversationScope: "session",
             projectName: DEFAULT_INPUT.projectName,
             sessionWorktreePath: DEFAULT_INPUT.worktreePath,
             persistence: "durable",

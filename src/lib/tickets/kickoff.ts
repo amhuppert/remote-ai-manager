@@ -29,7 +29,7 @@ export interface TicketKickoffQueuerDeps {
     conversationId: string;
     text: string;
     projectName: string;
-    sessionName: string;
+    storeSessionName: string;
   }): Promise<void>;
 }
 
@@ -71,7 +71,7 @@ export function createTicketKickoffQueuer(
         conversationId: input.conversationId,
         text: buildKickoffFailureNoticeText(input.ticketIdentifier, reason),
         projectName: input.projectName,
-        sessionName: input.sessionName,
+        storeSessionName: input.sessionName,
       });
       logger.info("kickoff.failure_notice_appended", {
         ticketIdentifier: input.ticketIdentifier,

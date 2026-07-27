@@ -44,6 +44,12 @@ const PROJECT_CONVERSATION_JSON_COLUMNS = [
  */
 export interface ProjectConversationsRepo {
   findById(id: string): ConversationState | null;
+  /** Like `findById`, but also reports the owning project — the id alone does
+   * not say where a project conversation lives, and a cross-scope lookup needs
+   * both. */
+  findByIdWithProject(
+    id: string,
+  ): { projectPath: string; conversation: ConversationState } | null;
   findByKey(projectPath: string, id: string): ConversationState | null;
   findByProject(projectPath: string): ConversationState[];
   findAll(): { projectPath: string; conversation: ConversationState }[];
@@ -126,6 +132,7 @@ const projectConversationsTableRowSchema = z.object({
   pending_queue: z.string().nullable(),
   last_seen_alignment_version: z.number().int().nullable(),
   pending_agent_notices: z.string().nullable(),
+  creation_request_id: z.string().nullable(),
 });
 type ProjectConversationsTableRow = z.infer<
   typeof projectConversationsTableRowSchema
@@ -168,6 +175,7 @@ interface ProjectSqlBindRow {
   pending_queue: string | null;
   last_seen_alignment_version: number | null;
   pending_agent_notices: string | null;
+  creation_request_id: string | null;
 }
 
 function conversationToProjectSqlBind(
@@ -181,6 +189,7 @@ function conversationToProjectSqlBind(
     // `open` defaults to true when unset — a fresh project conversation is open.
     open: validated.open === false ? 0 : 1,
     spawned_session_ids: jsonOrNull(validated.spawnedSessionIds ?? null),
+    creation_request_id: validated.creationRequestId ?? null,
     ...encodeSharedConversationColumns(validated),
   };
 }
@@ -222,6 +231,7 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "pending_queue",
   "last_seen_alignment_version",
   "pending_agent_notices",
+  "creation_request_id",
 ];
 
 /**
@@ -276,6 +286,12 @@ function rowToProjectDomain(rawRow: unknown): {
     scope: "project",
     open: row.open === 1,
     spawnedSessionIds: spawnedSessionIds.value ?? [],
+    // Absent for every conversation created any way other than a
+    // create-and-send submission, so NULL decodes to the field being absent
+    // rather than to an empty token a client could match on.
+    ...(row.creation_request_id !== null
+      ? { creationRequestId: row.creation_request_id }
+      : {}),
     ...decodeSharedConversationColumns(row.id, row),
   };
 
@@ -339,7 +355,8 @@ export function createProjectConversationsRepo(
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
-       unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices
+       unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices,
+       creation_request_id
      ) VALUES (
        @id, @project_path, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived, @open,
@@ -347,7 +364,8 @@ export function createProjectConversationsRepo(
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
-       @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices
+       @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices,
+       @creation_request_id
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -382,7 +400,8 @@ export function createProjectConversationsRepo(
        spawned_session_ids        = excluded.spawned_session_ids,
        pending_queue              = excluded.pending_queue,
        last_seen_alignment_version = excluded.last_seen_alignment_version,
-       pending_agent_notices      = excluded.pending_agent_notices`,
+       pending_agent_notices      = excluded.pending_agent_notices,
+       creation_request_id        = excluded.creation_request_id`,
   );
   // The machine snapshot lives in the owner-discriminated sidecar table, not on
   // the project-conversation row. Its cleanup is DB-enforced by the AFTER DELETE
@@ -436,6 +455,13 @@ export function createProjectConversationsRepo(
         const row: unknown = findByIdStmt.get(id);
         if (row === undefined) return null;
         return rowToProjectDomain(row).conversation;
+      });
+    },
+    findByIdWithProject(id) {
+      return timed("findByIdWithProject", { id }, () => {
+        const row: unknown = findByIdStmt.get(id);
+        if (row === undefined) return null;
+        return rowToProjectDomain(row);
       });
     },
     findByKey(projectPath, id) {

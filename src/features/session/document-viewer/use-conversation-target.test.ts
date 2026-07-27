@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 
@@ -15,11 +16,12 @@ import type {
 } from "@/lib/conversations/schemas";
 
 function conv(
-  overrides: Partial<ConversationListItem> & { conversationId: string },
-): ConversationListItem {
+  overrides: Partial<SessionConversationListItem> & { conversationId: string },
+): SessionConversationListItem {
   return {
     projectName: overrides.projectName ?? "proj-a",
     projectPath: overrides.projectPath ?? "/abs/proj-a",
+    scope: "session" as const,
     sessionName: overrides.sessionName ?? "sess-1",
     worktreePath: overrides.worktreePath ?? "/abs/proj-a/.worktrees/sess-1",
     conversationId: overrides.conversationId,
@@ -49,6 +51,7 @@ describe("targetFromConversation", () => {
       conversationId: "c1",
       projectName: "proj-x",
       projectPath: "/abs/proj-x",
+      scope: "session" as const,
       sessionName: "sess-9",
       backend: "codex",
       status: "running",

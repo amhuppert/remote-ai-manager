@@ -1,6 +1,14 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   backendLabel,
   getModelsForBackend,
@@ -42,6 +50,10 @@ import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
+import {
+  conversationTargetApiBase,
+  targetFromStoreSessionName,
+} from "@/lib/conversations/conversation-target";
 import {
   useCancelOptimisticQueueEntry,
   useComposerFocused,
@@ -153,11 +165,26 @@ export function selectCancellableQueueEntries(
     }));
 }
 
+/**
+ * Queue-affecting turn state for a surface that cannot hand over a session-shaped
+ * `activeConversation` — the project cockpit passes `undefined` there so the
+ * debug strip and the capability drawer stay session-only. Supplying it
+ * explicitly is what lets a project conversation show and cancel its pending
+ * follow-ups without also lighting up session-only chrome. Omitted, it is read
+ * off `activeConversation`, so session surfaces are unchanged.
+ */
+export interface ComposerQueueTurnState {
+  pendingQueue: readonly PendingQueuedMessage[];
+  /** The server says a turn is running, so a submission queues rather than sends. */
+  running: boolean;
+}
+
 interface PromptComposerProps {
   projectName: string;
   sessionName: string;
   conversationId: string;
   activeConversation: ConversationState | undefined;
+  queueTurnState?: ComposerQueueTurnState;
   editorRef: React.RefObject<PromptEditorHandle | null>;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   promptText: string;
@@ -210,6 +237,7 @@ export default function PromptComposer({
   sessionName,
   conversationId,
   activeConversation,
+  queueTurnState,
   editorRef,
   fileInputRef,
   promptText,
@@ -257,6 +285,14 @@ export default function PromptComposer({
 }: PromptComposerProps): React.JSX.Element {
   const cancelOptimisticQueueEntry = useCancelOptimisticQueueEntry();
   const setQueueError = useSetQueueError();
+  // The composer is handed the session-keyed storage name, which is the
+  // sentinel for a project conversation. Converting it to explicit scope once,
+  // here, is what lets the capability surfaces below address the
+  // project-conversation cascade instead of inferring scope from the name (D1).
+  const scope = useMemo(
+    () => scopeRefFromStoreSessionName(sessionName),
+    [sessionName],
+  );
   const { containerRef, onFocus, onBlur, setControlActive } =
     useComposerFocus();
 
@@ -328,7 +364,8 @@ export default function PromptComposer({
     promptText: hasSerializedContent ? "content" : promptText,
     pendingImageCount: pendingImages.length,
     sending,
-    conversationRunning: activeConversation?.status === "running",
+    conversationRunning:
+      queueTurnState?.running ?? activeConversation?.status === "running",
     conversationId,
     backend: selectedBackend,
     isReadOnly,
@@ -343,7 +380,7 @@ export default function PromptComposer({
     onSendPrompt();
   }, [isProcessing, isRecording, onSendPrompt, stopAndSubmit]);
   const cancellableEntries = selectCancellableQueueEntries(
-    activeConversation?.pendingQueue ?? [],
+    queueTurnState?.pendingQueue ?? activeConversation?.pendingQueue ?? [],
   );
 
   const cancelQueued = useCallback(
@@ -352,7 +389,14 @@ export default function PromptComposer({
       // race (the entry already claimed for delivery, returning 409) leaves
       // the pending entry visible. The `message-queue-updated` SSE reconciles
       // the durable cache afterward.
-      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(id)}`;
+      //
+      // Built from the conversation TARGET, not from the session name: a project
+      // conversation's `sessionName` here is the internal store key, and
+      // interpolating it would address `/sessions/__project__/…` — a route that
+      // does not exist and a sentinel on a public URL.
+      const url = `${conversationTargetApiBase(
+        targetFromStoreSessionName(projectName, sessionName, conversationId),
+      )}/queue/${encodeURIComponent(id)}`;
       let res: Response;
       try {
         res = await tracedFetch(url, "cancel-queued", { method: "DELETE" });
@@ -465,6 +509,10 @@ export default function PromptComposer({
           {cancellableEntries.length > 0 ? (
             <div
               className="mb-sm flex flex-wrap gap-xs"
+              // A named group, not a landmark: this is a set of related controls
+              // inside the composer, so the existing `aria-label` names it for
+              // assistive tech without adding a page-level region to navigate.
+              role="group"
               aria-label="Pending queued messages"
             >
               {cancellableEntries.map((entry) => (
@@ -515,6 +563,7 @@ export default function PromptComposer({
           <PromptDesktopToolbar
             projectName={projectName}
             sessionName={sessionName}
+            scope={scope}
             conversationId={conversationId}
             activeConversation={activeConversation}
             onAttachClick={() => fileInputRef.current?.click()}
@@ -574,7 +623,7 @@ export default function PromptComposer({
               <div className={MOBILE_PROMPT_ROW_CLASS}>
                 <ConversationAgentCapabilitiesConfig
                   projectName={projectName}
-                  sessionName={sessionName}
+                  scope={scope}
                   conversationId={conversationId}
                   disabled={isReadOnly}
                   disabledTooltip={

@@ -120,12 +120,53 @@ export const createInFlightSlice: SessionDetailSliceCreator<InFlightSlice> = (
 
   acceptOptimisticQueueEntry: (conversationId, tempId, queueId) =>
     set((state) => {
-      const entry = state.inFlight[conversationId]?.optimisticQueue.find(
+      const inFlight = state.inFlight[conversationId];
+      if (!inFlight) return;
+      const index = inFlight.optimisticQueue.findIndex(
         (e) => e.tempId === tempId,
       );
+      if (index === -1) return;
+
+      // The row this entry is adopting may already have been delivered — the
+      // in-turn delivery path settles it before the enqueue response is
+      // written. Adopting the id would resurrect the entry as pending beside
+      // the transcript row it has already become, so it retires instead.
+      const settledIndex = inFlight.settledQueueIds.indexOf(queueId);
+      if (settledIndex !== -1) {
+        inFlight.settledQueueIds.splice(settledIndex, 1);
+        inFlight.optimisticQueue.splice(index, 1);
+        return;
+      }
+
+      const entry = inFlight.optimisticQueue[index];
       if (!entry) return;
       entry.queueId = queueId;
       entry.status = "accepted";
+    }),
+
+  settleOptimisticQueueEntry: (conversationId, queueId) =>
+    set((state) => {
+      const inFlight = state.inFlight[conversationId];
+      if (!inFlight) return;
+
+      const remaining = inFlight.optimisticQueue.filter(
+        (e) => e.queueId !== queueId,
+      );
+      if (remaining.length !== inFlight.optimisticQueue.length) {
+        inFlight.optimisticQueue = remaining;
+        return;
+      }
+
+      // No entry carries this id yet. Remember it only while an enqueue is
+      // still awaiting its server id — that entry may be the one this row
+      // belongs to. With nothing left to adopt it, the row is another client's
+      // (or another tab's) and there is nothing here to reconcile.
+      const awaitingId = inFlight.optimisticQueue.some(
+        (e) => e.queueId === null,
+      );
+      if (awaitingId && !inFlight.settledQueueIds.includes(queueId)) {
+        inFlight.settledQueueIds.push(queueId);
+      }
     }),
 
   failOptimisticQueueEntry: (conversationId, tempId) =>
@@ -218,5 +259,18 @@ export const createInFlightSlice: SessionDetailSliceCreator<InFlightSlice> = (
       if (!entry) return;
       entry.optimisticMessages = [];
       entry.messageCountBeforeSubmit = 0;
+    }),
+
+  reassignInFlight: (fromConversationId, toConversationId) =>
+    set((state) => {
+      const entry = state.inFlight[fromConversationId];
+      if (!entry) return;
+      state.inFlight[toConversationId] = entry;
+      delete state.inFlight[fromConversationId];
+    }),
+
+  discardInFlight: (conversationId) =>
+    set((state) => {
+      delete state.inFlight[conversationId];
     }),
 });

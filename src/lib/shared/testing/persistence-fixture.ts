@@ -19,6 +19,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
+import { createProjectConversationsRepo } from "@/lib/state-store/project-conversations-repo";
 import { createProjectsRepo } from "@/lib/state-store/projects-repo";
 import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
@@ -71,6 +72,23 @@ export interface PersistenceFixture {
     sessionName: string,
     conversation: ConversationState,
   ): Promise<void>;
+  /**
+   * Seed a project-scoped conversation — the session-less row the sentinel-aware
+   * store path reads. Needed to prove behaviour that differs between the two
+   * conversation scopes through the real repositories.
+   */
+  seedProjectConversation(
+    projectPath: string,
+    conversation: ConversationState,
+  ): Promise<void>;
+  /**
+   * A brand-new `StateStore` over the SAME database — the state a restarted
+   * server comes up with. Proving a recovery path needs this: reusing the
+   * original store would leave whatever it holds in memory available to the
+   * assertion, which is exactly what the recovery is supposed to survive
+   * without.
+   */
+  recreateStore(): StateStore;
   reset(): void;
   close(): void;
 }
@@ -87,6 +105,22 @@ function buildSeedSession(
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
     ...overrides,
+  });
+}
+
+function buildStore(db: Db): StateStore {
+  return createStateStore({
+    db,
+    writeQueue: createWriteQueue(),
+    repos: {
+      projects: createProjectsRepo(db),
+      sessions: createSessionsRepo(db),
+      conversations: createConversationsRepo(db),
+      graphWorkflowEvents: createGraphWorkflowEventsRepo(db),
+      graphWorkflowArchivedExecutions:
+        createGraphWorkflowArchivedExecutionsRepo(db),
+      projectConversations: createProjectConversationsRepo(db),
+    },
   });
 }
 
@@ -108,8 +142,13 @@ export function createPersistenceFixture(): PersistenceFixture {
     graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   };
   const specs = createSpecsRepo(db, writeQueue);
+  const projectConversations = createProjectConversationsRepo(db);
 
-  const store = createStateStore({ db, writeQueue, repos });
+  const store = createStateStore({
+    db,
+    writeQueue,
+    repos: { ...repos, projectConversations },
+  });
 
   const deps: ConversationSeamDeps = {
     mutateConversation: store.mutateConversation,
@@ -135,6 +174,13 @@ export function createPersistenceFixture(): PersistenceFixture {
     async seedConversation(projectPath, sessionName, conversation) {
       const validated = conversationStateSchema.parse(conversation);
       repos.conversations.upsert(projectPath, sessionName, validated);
+    },
+    async seedProjectConversation(projectPath, conversation) {
+      const validated = conversationStateSchema.parse(conversation);
+      projectConversations.upsert(projectPath, validated);
+    },
+    recreateStore() {
+      return buildStore(db);
     },
     reset() {
       truncateAllTables(db);

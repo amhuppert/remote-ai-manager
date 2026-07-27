@@ -49,10 +49,22 @@ export interface ProjectConversationServiceDeps {
   now(): string;
 }
 
+export interface CreateProjectConversationOptions {
+  agentBackend?: AgentBackendId;
+  name?: string;
+  /**
+   * Token of the create-and-send submission this conversation is created for,
+   * recorded on the record so the list the client reads carries the creation's
+   * provenance. Absent for every other creation path: those return the
+   * conversation to the caller, which already correlates it.
+   */
+  creationRequestId?: string;
+}
+
 export interface ProjectConversationService {
   createProjectConversation(
     projectPath: string,
-    opts?: { agentBackend?: AgentBackendId; name?: string },
+    opts?: CreateProjectConversationOptions,
   ): Promise<ConversationState>;
   getProjectConversation(
     projectPath: string,
@@ -99,7 +111,7 @@ export function createProjectConversationService(
 ): ProjectConversationService {
   async function createProjectConversation(
     projectPath: string,
-    opts?: { agentBackend?: AgentBackendId; name?: string },
+    opts?: CreateProjectConversationOptions,
   ): Promise<ConversationState> {
     const existing = await deps.getProjectConversations(projectPath);
     const sequenceNumber = existing.length + 1;
@@ -115,6 +127,9 @@ export function createProjectConversationService(
       name: opts?.name ?? `${projectName} chat ${sequenceNumber}`,
       createdAt: now,
       agentBackend,
+      ...(opts?.creationRequestId !== undefined
+        ? { creationRequestId: opts.creationRequestId }
+        : {}),
     });
 
     await deps.createProjectConversationRecord(projectPath, conversation);

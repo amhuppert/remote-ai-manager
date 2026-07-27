@@ -1,11 +1,11 @@
 /**
- * Queue route handler logic — extracted for dependency injection.
+ * Session-conversation queue routes — the session adapter of the shared queue
+ * operations.
  *
  * Route files delegate to these handlers, passing production deps.
  * Tests create handlers with mock deps via `createQueueRouteHandlers(deps)`.
  */
 
-import { NextResponse } from "next/server";
 import {
   notFound,
   resolveProjectSessionOr404,
@@ -33,31 +33,20 @@ import {
   ensureConversationActorAndDrain as defaultEnsureConversationActorAndDrain,
 } from "@/lib/workflows/conversation/manager";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
-import { queueEnqueueRequestSchema } from "@/lib/prompt/schemas";
-import type { QueueCapability } from "@/lib/agent-backends/descriptor";
-import type { ApiError } from "@/lib/api/errors";
+import {
+  cancelQueuedMessage,
+  enqueueQueuedMessage,
+  parseQueueEnqueueBody,
+  type QueueOperationDeps,
+} from "@/lib/prompt/queue-operations";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type {
-  PendingQueuedMessage,
-  QueueErrorCode,
-  QueuedMessageView,
-} from "@/lib/conversations/message-queue-schemas";
-import type {
-  QueueCancellationResponse,
-  QueueEnqueueResponse,
-} from "@/lib/prompt/schemas";
-import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
-import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { QueueDeliveryTiming } from "@/lib/agent-backends/descriptor";
-import { getErrorMessage } from "@/lib/shared/errors";
 
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
 
-export interface QueueRouteDeps {
+export interface QueueRouteDeps extends QueueOperationDeps {
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
     projectPath: string,
@@ -68,43 +57,6 @@ export interface QueueRouteDeps {
     sessionName: string,
     conversationId: string,
   ): Promise<ConversationState | null>;
-  getProjectDisplayName(projectPath: string): string;
-  queueMessage(params: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    text?: string;
-    images?: ImagePayload[];
-    documentFeedback?: DocumentFeedbackPayload;
-    backend: AgentBackendId;
-  }): Promise<{
-    entry: PendingQueuedMessage;
-    deliveryTiming: QueueDeliveryTiming;
-  }>;
-  queueCapabilityForBackend(backend: AgentBackendId): QueueCapability;
-  toQueuedMessageView(entry: PendingQueuedMessage): QueuedMessageView;
-  clearConversationPendingPromptTextIfMatches: typeof defaultClearConversationPendingPromptTextIfMatches;
-  hasLiveConversationActor(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-  ): boolean;
-  ensureConversationActorAndDrain(
-    projectPath: string,
-    sessionName: string,
-    conversationId: string,
-  ): Promise<void>;
-  recoverAbandonedDeliveries(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): Promise<number>;
-  cancel(input: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    id: string;
-  }): Promise<"cancelled" | "not_found" | "not_cancellable">;
 }
 
 const defaultDeps: QueueRouteDeps = {
@@ -134,14 +86,6 @@ type RouteContext = {
   params: Promise<Record<string, string>>;
 };
 
-function queueError(
-  error: string,
-  code: QueueErrorCode,
-  status: number,
-): Response {
-  return NextResponse.json({ error, code } satisfies ApiError, { status });
-}
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -157,23 +101,8 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
     const sessionName = decodeURIComponent(sessionSlug);
     const conversationId = resolvedParams["conversationId"] ?? "";
 
-    // Validate the request body up front: an empty payload (no text and no
-    // images) is rejected with the typed EMPTY_MESSAGE error before any
-    // resolution or boundary work.
-    let rawBody: unknown = {};
-    try {
-      rawBody = await request.json();
-    } catch {
-      rawBody = {};
-    }
-    const parsed = queueEnqueueRequestSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return queueError(
-        "Either message text or at least one image is required",
-        "EMPTY_MESSAGE",
-        400,
-      );
-    }
+    const body = await parseQueueEnqueueBody(request);
+    if (!body.ok) return body.response;
 
     const resolved = await resolveProjectSessionOr404(deps, name, sessionName);
     if (!resolved.ok) return resolved.response;
@@ -189,117 +118,16 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       return notFound("Conversation not found");
     }
 
-    // Queuing is only for user-interactive conversations. A non-null role is a
-    // managed workflow conversation (initialization/iteration/validator/planner).
-    if (conversation.role !== null) {
-      return queueError(
-        "Queuing is not available for managed workflow conversations",
-        "NON_INTERACTIVE_CONVERSATION",
-        403,
-      );
-    }
-
-    // Can only queue into a running conversation.
-    if (conversation.status !== "running") {
-      return queueError(
-        "Conversation is not running — use the prompt endpoint to send a new message",
-        "NOT_RUNNING",
-        409,
-      );
-    }
-
-    // The backend must be able to accept a queued message while running.
-    if (
-      !deps.queueCapabilityForBackend(conversation.agentBackend)
-        .acceptsWhileRunning
-    ) {
-      return queueError(
-        "The active backend does not support queuing messages",
-        "UNSUPPORTED_BACKEND",
-        422,
-      );
-    }
-
-    const result = await timed(
-      logger,
-      "queue.post.enqueue",
-      { projectPath, sessionName, conversationId },
-      () =>
-        deps.queueMessage({
-          projectPath,
-          sessionName,
-          conversationId,
-          text: parsed.data.text,
-          images: parsed.data.images,
-          ...(parsed.data.documentFeedback
-            ? { documentFeedback: parsed.data.documentFeedback }
-            : {}),
-          backend: conversation.agentBackend,
-        }),
-      (r) => ({ deliveryTiming: r.deliveryTiming }),
-    );
-
-    if (parsed.data.submittedPendingPromptText !== undefined) {
-      try {
-        const cleared = await deps.clearConversationPendingPromptTextIfMatches(
-          projectPath,
-          sessionName,
-          conversationId,
-          parsed.data.submittedPendingPromptText,
-        );
-        logger.debug("queue.pending_draft_clear_completed", {
-          projectPath,
-          sessionName,
-          conversationId,
-          messageId: result.entry.id,
-          cleared,
-        });
-      } catch (error) {
-        logger.warn("queue.pending_draft_clear_failed", {
-          projectPath,
-          sessionName,
-          conversationId,
-          messageId: result.entry.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    // The running-status check above raced the turn's end: if the turn
-    // finalized between that read and the enqueue commit, the idle-entry drain
-    // has already run and this row would sit pending until some future turn.
-    // Ensure+drain closes the gap — it is a no-op while a turn is running (the
-    // busy actor drains on its own idle entry) and delivers immediately when
-    // the actor settled. Never fails the already-committed enqueue.
-    try {
-      await timed(
-        logger,
-        "queue.post.drain",
-        { projectPath, sessionName, conversationId },
-        () =>
-          deps.ensureConversationActorAndDrain(
-            projectPath,
-            sessionName,
-            conversationId,
-          ),
-      );
-    } catch (err) {
-      logger.error("queue.post_enqueue_drain_failed", {
-        projectName: deps.getProjectDisplayName(projectPath),
-        sessionName,
+    return enqueueQueuedMessage(
+      deps,
+      {
+        projectPath,
+        scope: { scope: "session", sessionName },
         conversationId,
-        messageIds: [result.entry.id],
-        error: getErrorMessage(err),
-      });
-    }
-
-    const response: QueueEnqueueResponse = {
-      queued: true,
-      message: deps.toQueuedMessageView(result.entry),
-      deliveryTiming: result.deliveryTiming,
-    };
-
-    return NextResponse.json(response);
+        conversation,
+      },
+      body.value,
+    );
   }
 
   async function DELETE(
@@ -326,62 +154,15 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       return notFound("Conversation not found");
     }
 
-    // Cancellation, like queuing, is only for user-interactive conversations.
-    if (conversation.role !== null) {
-      return queueError(
-        "Queuing is not available for managed workflow conversations",
-        "NON_INTERACTIVE_CONVERSATION",
-        403,
-      );
-    }
-
-    const projectName = deps.getProjectDisplayName(projectPath);
-
-    // When no live actor owns the conversation (e.g. after a process restart), a
-    // row may be stranded in `delivering` from an attempt whose owner is gone.
-    // Recover it back to `pending` first so cancellation can succeed; a live
-    // actor still owning the attempt must not be disturbed.
-    if (
-      !deps.hasLiveConversationActor(projectPath, sessionName, conversationId)
-    ) {
-      await deps.recoverAbandonedDeliveries({
+    return cancelQueuedMessage(
+      deps,
+      {
         projectPath,
-        sessionName,
+        scope: { scope: "session", sessionName },
         conversationId,
-      });
-    }
-
-    const result = await deps.cancel({
-      projectPath,
-      sessionName,
-      conversationId,
-      id: messageId,
-    });
-
-    logger.info("queue.cancel", {
-      projectName,
-      sessionName,
-      conversationId,
-      messageIds: [messageId],
-      result,
-    });
-
-    if (result === "cancelled") {
-      const response: QueueCancellationResponse = {
-        cancelled: true,
-        id: messageId,
-      };
-      return NextResponse.json(response);
-    }
-
-    if (result === "not_found") {
-      return notFound("Queued message not found");
-    }
-
-    return queueError(
-      "This message has already been delivered and can no longer be cancelled",
-      "NOT_CANCELLABLE",
-      409,
+        conversation,
+      },
+      messageId,
     );
   }
 

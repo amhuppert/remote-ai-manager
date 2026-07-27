@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { z } from "zod";
 import type {
   SDKMessage,
   SDKUserMessage,
@@ -18,15 +19,36 @@ import {
 } from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./runtime-config/agent-suppression";
 import type {
+  ConversationBackendCreateInput,
   ConversationBackendEvent,
   ConversationBackendRuntime,
 } from "../conversation";
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { renderStructuredOutputInstruction } from "../structured-output-prompt";
 import type { ClaudeCapabilityApplyTarget } from "./runtime-config/adapter";
 import { isUndeliveredQuerySessionError } from "./query-session-errors";
 
-const createRuntimeWithFakeDeps: typeof claudeConversationBackendFactory.createRuntime =
-  (input) => claudeConversationBackendFactory.createRuntime(input);
+/**
+ * Session-scoped runtime under the mocked SDK — the shape every test below
+ * wants. Scope is a DECLARED create-input now, so the helper states it once;
+ * project-scope behaviour calls the factory directly with a project target.
+ */
+const createRuntimeWithFakeDeps = (
+  input: Omit<ConversationBackendCreateInput, "conversationTarget"> & {
+    sessionName: string;
+  },
+): Promise<ConversationBackendRuntime> =>
+  claudeConversationBackendFactory.createRuntime({
+    ...input,
+    conversationTarget: sessionConversationTarget(
+      input.projectName,
+      input.sessionName,
+      input.conversationId,
+    ),
+  });
 
 function createControllableMockQuery() {
   const messages: SDKMessage[] = [];
@@ -133,7 +155,67 @@ describe("resolveIdleTtlMs", () => {
   });
 });
 
+/**
+ * The env handed to the SDK on the first `query` call, extracted through a schema
+ * rather than a cast — a wrong shape fails as a parse error naming the field.
+ */
+const firstQueryEnvSchema = z.object({
+  options: z.object({ env: z.record(z.string(), z.string()) }),
+});
+
+function firstQueryEnv(): Record<string, string> {
+  const [call] = queryMock.mock.calls;
+  if (call === undefined) throw new Error("claude query was never called");
+  return firstQueryEnvSchema.parse(call[0]).options.env;
+}
+
 describe("ClaudeConversationRuntime — SDK options", () => {
+  it("exports the session scope discriminator declared on the create input", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-session-scope",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const env = firstQueryEnv();
+    expect(env["CC_CONVERSATION_SCOPE"]).toBe("session");
+    expect(env["CC_SESSION"]).toBe("sess");
+
+    runtime.close();
+  });
+
+  it("exports the project scope discriminator and a neutralized CC_SESSION for a project conversation", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime({
+      conversationId: "conv-plc",
+      projectPath: "/project",
+      projectName: "proj",
+      // Scope arrives as declared input; the runtime never infers it.
+      conversationTarget: projectConversationTarget("proj", "conv-plc"),
+      worktreePath: "/project",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const env = firstQueryEnv();
+    expect(env["CC_CONVERSATION_SCOPE"]).toBe("project");
+    expect("CC_SESSION" in env).toBe(true);
+    expect(env["CC_SESSION"]).toBe("");
+
+    runtime.close();
+  });
+
   it("disallows the native AskUserQuestion tool so the MCP version is the only path", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);

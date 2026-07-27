@@ -13,6 +13,7 @@ import {
 import { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import { projectConversationKeys } from "./query-keys";
+import type { ProjectConversationCreation } from "./mutations";
 
 /**
  * A project conversation is "open" (i.e. rendered as a cockpit tab and counted
@@ -58,6 +59,41 @@ export function useProjectConversationsQuery(
     queryFn: () => fetchProjectConversations(projectName),
     select: (all) => all.filter(isOpenProjectConversation),
   });
+}
+
+/**
+ * Every conversation the project has with the creation each one records — open,
+ * closed, and archived. Shares the list query's key, so this is the same fetch
+ * the cockpit tabs already read, and the same cache the scope=project
+ * `conversation-created` SSE reaction appends to; a creation therefore reaches
+ * this selection without waiting for a refetch.
+ *
+ * This is the second of the two sources that can name the conversation a
+ * create-and-send turn created. It carries `creationRequestId` because
+ * membership alone cannot: the list says which conversations exist, never which
+ * submission caused one, so pairing a pending turn with an id that merely looks
+ * new mistakes a reopen, another tab's creation, or a slow first fetch for the
+ * turn's own conversation.
+ */
+export function useProjectConversationCreationsQuery(
+  projectName: string,
+): UseQueryResult<ProjectConversationCreation[]> {
+  return useQuery({
+    queryKey: projectConversationKeys.list(projectName),
+    queryFn: () => fetchProjectConversations(projectName),
+    // Module-scoped so the selected array keeps its identity across renders;
+    // consumers drive an effect off it.
+    select: selectConversationCreations,
+  });
+}
+
+function selectConversationCreations(
+  all: ConversationState[],
+): ProjectConversationCreation[] {
+  return all.map((c) => ({
+    conversationId: c.id,
+    creationRequestId: c.creationRequestId ?? null,
+  }));
 }
 
 /**

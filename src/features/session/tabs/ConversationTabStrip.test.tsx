@@ -347,6 +347,7 @@ describe("ConversationTabStrip", () => {
       const lookupItem = {
         projectName: "proj",
         projectPath: "/tmp/proj",
+        scope: "session",
         sessionName: "session-a",
         worktreePath: "/tmp/proj/.worktrees/x",
         conversationId: "a",

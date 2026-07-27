@@ -1531,6 +1531,11 @@ describe("conversations-repo durability contract", () => {
         // written here, correctly absent on reload.
         open: "not-persisted",
         spawnedSessionIds: "not-persisted",
+        // Also PLC-only: only the project create-and-send entry creates a
+        // conversation whose requesting client cannot name it yet, so only
+        // `project_conversations` carries the creating submission's token. A
+        // session conversation exists before any prompt targets it.
+        creationRequestId: "not-persisted",
       },
     });
   });

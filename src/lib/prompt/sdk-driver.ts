@@ -36,6 +36,10 @@ import {
 } from "@/lib/conversation-commands/parse";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
+  scopeRefFromStoreSessionName,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
+import {
   getConversation,
   createConversation,
   setConversationBackend,
@@ -540,7 +544,7 @@ export interface PromptStreamResult {
 
 async function notifyPromptAccepted(
   options: PromptStreamOptions | undefined,
-  sessionName: string,
+  scopeRef: ConversationScopeRef,
   conversationId: string,
 ): Promise<void> {
   if (!options?.onAccepted) return;
@@ -549,7 +553,7 @@ async function notifyPromptAccepted(
     await options.onAccepted();
   } catch (error) {
     logger.warn("prompt.acceptance_callback_failed", {
-      sessionName,
+      ...scopeRef,
       conversationId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -612,6 +616,12 @@ export async function executePromptStream(
   deps?: PromptDeps,
 ): Promise<PromptStreamResult> {
   const resolvedDeps = deps ?? (await getDefaultPromptDeps());
+
+  // Diagnostic identity for this prompt (R1.3). The project-conversation entry
+  // synthesizes a sentinel `SessionState`, so `session.sessionName` is the
+  // internal store key on every project turn — it may address the session-keyed
+  // conversation/actor APIs below, but must never be logged as a session.
+  const scopeRef = scopeRefFromStoreSessionName(session.sessionName);
 
   const isCollab = hasCollabPrefix(promptText);
   const parsedCommand = parseConversationCommand(promptText);
@@ -676,7 +686,7 @@ export async function executePromptStream(
       entry: "prompt-stream",
       command: parsedCommand.command,
       hintLength: parsedCommand.hint.length,
-      sessionName: session.sessionName,
+      ...scopeRef,
       conversationId,
       modelId: modelId ?? null,
       effort: options?.effort ?? null,
@@ -684,7 +694,7 @@ export async function executePromptStream(
     if (!resolvedDeps.dispatchConversationCommand) {
       logger.error("prompt.command_dispatcher_unavailable", {
         command: parsedCommand.command,
-        sessionName: session.sessionName,
+        ...scopeRef,
         conversationId,
       });
       throw new ConversationCommandDispatcherUnavailableError();
@@ -710,16 +720,16 @@ export async function executePromptStream(
       logger.info("prompt.command_complete", {
         command: parsedCommand.command,
         status: outcome.status,
-        sessionName: session.sessionName,
+        ...scopeRef,
         conversationId,
       });
-      await notifyPromptAccepted(options, session.sessionName, conversationId);
+      await notifyPromptAccepted(options, scopeRef, conversationId);
       const ticketFallback = ticketCommandFallbackMessage(outcome);
       if (ticketFallback !== null) {
         logger.warn("prompt.command_ticket_fallback", {
           command: parsedCommand.command,
           status: outcome.status,
-          sessionName: session.sessionName,
+          ...scopeRef,
           conversationId,
         });
         emit("error", {
@@ -738,7 +748,7 @@ export async function executePromptStream(
         err instanceof Error ? err.message : "Conversation command failed";
       logger.error("prompt.command_failed", {
         command: parsedCommand.command,
-        sessionName: session.sessionName,
+        ...scopeRef,
         conversationId,
         error: errorMsg,
       });
@@ -757,20 +767,20 @@ export async function executePromptStream(
     const brief = stripCollabPrefix(promptText).trim();
     if (brief.length === 0) {
       logger.warn("prompt.collab_brief_required", {
-        sessionName: session.sessionName,
+        ...scopeRef,
         conversationId,
       });
       throw new CollabBriefRequiredError();
     }
     if (!resolvedDeps.dispatchCollabStart) {
       logger.error("prompt.collab_dispatcher_unavailable", {
-        sessionName: session.sessionName,
+        ...scopeRef,
         conversationId,
       });
       throw new CollabDispatcherUnavailableError();
     }
     logger.info("prompt.collab_dispatch", {
-      sessionName: session.sessionName,
+      ...scopeRef,
       conversationId,
       briefLength: brief.length,
       imageCount: images?.length ?? 0,
@@ -794,7 +804,7 @@ export async function executePromptStream(
         ...(options?.effort !== undefined ? { effort: options.effort } : {}),
         ...(images?.length ? { images } : {}),
       });
-      await notifyPromptAccepted(options, session.sessionName, conversationId);
+      await notifyPromptAccepted(options, scopeRef, conversationId);
       emit("collab-started", {
         workflowId: result.workflowId,
         conversationId,
@@ -810,7 +820,7 @@ export async function executePromptStream(
       const errorMsg =
         err instanceof Error ? err.message : "Collaboration dispatch failed";
       logger.error("prompt.collab_dispatch_failed", {
-        sessionName: session.sessionName,
+        ...scopeRef,
         conversationId,
         error: errorMsg,
       });
@@ -851,7 +861,7 @@ export async function executePromptStream(
   const streamId = randomUUID();
 
   logger.info("prompt.submit", {
-    sessionName: session.sessionName,
+    ...scopeRef,
     promptLength: promptText.length,
     model: modelId ?? "default",
     backend: resolvedBackend,
@@ -913,8 +923,7 @@ export async function executePromptStream(
     conversationId,
     streamId,
     emit,
-    onAccepted: () =>
-      notifyPromptAccepted(options, session.sessionName, conversationId),
+    onAccepted: () => notifyPromptAccepted(options, scopeRef, conversationId),
     turn: {
       promptText,
       images,
@@ -939,7 +948,7 @@ export async function executePromptStream(
     const errorMessage = "Conversation is not ready to accept a new prompt";
     logger.error("prompt.submit_rejected", {
       conversationId,
-      sessionName: session.sessionName,
+      ...scopeRef,
       reason: execution.reason,
     });
     emitErrorAndDone(emit, errorMessage);
@@ -952,7 +961,7 @@ export async function executePromptStream(
 
   if (execution.status === "failed") {
     logger.error("prompt.facade_error", {
-      sessionName: session.sessionName,
+      ...scopeRef,
       conversationId,
       error: execution.error,
     });
@@ -965,7 +974,7 @@ export async function executePromptStream(
   }
 
   logger.info("prompt.complete", {
-    sessionName: session.sessionName,
+    ...scopeRef,
     conversationId,
   });
 

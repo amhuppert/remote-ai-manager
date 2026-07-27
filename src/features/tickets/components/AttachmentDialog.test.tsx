@@ -78,6 +78,7 @@ function installFetch(
             {
               projectName: "command-center",
               projectPath: "/repos/command-center",
+              scope: "session",
               sessionName: "csm/ticket-context",
               worktreePath: "/repos/command-center/.worktrees/ticket-context",
               conversationId: "conv-ticket-context",

@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  projectConversationTarget,
+  sessionConversationTarget,
+  type ConversationTarget,
+} from "./conversation-target";
+import { isProjectSentinel } from "./project-conversation-scope";
+import type { ConversationScopeRef } from "./conversation-target";
+import {
   agentBackendSchema,
   agentSessionRefSchema,
 } from "@/lib/shared/schemas";
@@ -231,6 +238,15 @@ export const conversationStateSchema = z.object({
   // conversations never carry it, and the project-conversations repo provides
   // an explicit `[]` on decode so a populated/legacy PLC always reads an array.
   spawnedSessionIds: z.array(z.string()).optional(),
+  // Opaque token the client generated for the create-and-send submission this
+  // conversation was created for. Creation provenance, and the only evidence
+  // tying a conversation to the request that caused it: the conversation list
+  // says which conversations exist, never which submission created one, so a
+  // client whose prompt stream has not delivered the id can recognise its own
+  // conversation here instead of guessing which unaccounted-for conversation is
+  // its. Optional+PLC-only (like `open`): only the project create-and-send entry
+  // creates a conversation the requesting client cannot yet name.
+  creationRequestId: z.string().optional(),
   totalCostUsd: z.number().nullable().default(null),
   totalDurationMs: z.number().nullable().default(null),
   totalTurns: z.number().nullable().default(null),
@@ -290,10 +306,16 @@ export type ConversationCompactStatus = z.infer<
   typeof conversationCompactStatusSchema
 >;
 
-export const conversationListItemSchema = z.object({
+/**
+ * Everything a listed conversation carries regardless of scope. `sessionName`
+ * lives only on the session variant below: this list is a public API response
+ * (`GET /api/conversations/all`), and a single `sessionName: string` field is
+ * exactly what let the internal `__project__` sentinel occupy a public position
+ * (R1.3/D1). The project variant has no field for it to occupy.
+ */
+const conversationListItemFieldsSchema = z.object({
   projectName: z.string(),
   projectPath: z.string(),
-  sessionName: z.string(),
   worktreePath: z.string(),
   conversationId: z.string(),
   conversationName: z.string().nullable(),
@@ -314,7 +336,48 @@ export const conversationListItemSchema = z.object({
   compactCoveredSeq: z.string().optional(),
   compactCreatedAt: z.string().optional(),
 });
+
+export const conversationListItemSchema = z.discriminatedUnion("scope", [
+  conversationListItemFieldsSchema.extend({
+    scope: z.literal("session"),
+    sessionName: z
+      .string()
+      .min(1)
+      .refine((name) => !isProjectSentinel(name), {
+        message:
+          'a project conversation is listed with scope "project", not a sentinel session name',
+      }),
+  }),
+  conversationListItemFieldsSchema.extend({ scope: z.literal("project") }),
+]);
 export type ConversationListItem = z.infer<typeof conversationListItemSchema>;
+
+/**
+ * The session-scoped variant. Consumers whose capability is session-only (the
+ * document-comment workflow, session-scoped attachments) take this type, so the
+ * compiler makes them filter project conversations out rather than reading a
+ * `sessionName` that does not exist.
+ */
+export type SessionConversationListItem = Extract<
+  ConversationListItem,
+  { scope: "session" }
+>;
+
+/**
+ * The listed conversation's public addressing target — the one supported way to
+ * turn a list item into a URL, query key, or label.
+ */
+export function conversationListItemTarget(
+  item: ConversationListItem,
+): ConversationTarget {
+  return item.scope === "session"
+    ? sessionConversationTarget(
+        item.projectName,
+        item.sessionName,
+        item.conversationId,
+      )
+    : projectConversationTarget(item.projectName, item.conversationId);
+}
 
 export const allConversationsResponseSchema = z.object({
   items: z.array(conversationListItemSchema),
@@ -327,10 +390,9 @@ export type AllConversationsResponse = z.infer<
 // Attributes of an inline `<conversation-ref ... />` XML tag emitted by the
 // prompt-editor serializer and parsed by the message renderer. Hyphenated
 // keys match the wire-format attribute names exactly.
-export const conversationRefAttrsSchema = z.object({
+const conversationRefWireFieldsSchema = z.object({
   "project-name": z.string().min(1),
   "project-path": z.string().min(1),
-  "session-name": z.string().min(1),
   "worktree-path": z.string().min(1),
   "conversation-id": z.string().min(1),
   "conversation-name": z.string(),
@@ -353,7 +415,77 @@ export const conversationRefAttrsSchema = z.object({
   "read-command": z.string().optional(),
   "compaction-command": z.string().optional(),
 });
+
+/**
+ * The reference wire contract, discriminated on scope (D1).
+ *
+ * `scope` is required — a tolerated default would be a backward-compatibility
+ * shim, which needs explicit approval under the charter, and would reintroduce
+ * the very defect D1 closes. The project variant carries NO `session-name`, so
+ * an inconsistent combination (project scope naming a session, or session scope
+ * naming the internal sentinel) fails validation instead of round-tripping.
+ */
+export const conversationRefAttrsSchema = z.discriminatedUnion("scope", [
+  conversationRefWireFieldsSchema.extend({
+    scope: z.literal("session"),
+    "session-name": z
+      .string()
+      .min(1)
+      .refine((name) => !isProjectSentinel(name), {
+        message:
+          'project conversations are referenced with scope="project", not a session name',
+      }),
+  }),
+  conversationRefWireFieldsSchema.extend({
+    scope: z.literal("project"),
+    // A project conversation has no owning session, so the attribute must be
+    // absent rather than empty — there is no field for a name to occupy. A
+    // present value (empty, a real name, or the sentinel) fails validation.
+    "session-name": z.undefined().optional(),
+  }),
+]);
 export type ConversationRefAttrs = z.infer<typeof conversationRefAttrsSchema>;
+
+/**
+ * The camelCase counterpart of the wire attributes: what the prompt editor's
+ * `conversationMention` node holds and what the `#` picker inserts. Absent
+ * values are empty strings (the node persists every attribute as a string).
+ * Derived from Zod rather than restated, so the two cannot drift.
+ */
+export const conversationMentionFieldsSchema = z.object({
+  projectName: z.string(),
+  projectPath: z.string(),
+  worktreePath: z.string(),
+  conversationId: z.string(),
+  /** Empty string when the source conversation had no name. */
+  conversationName: z.string(),
+  backend: agentBackendSchema,
+  /** Empty string when the source conversation has no backend session yet. */
+  backendRef: z.string(),
+  /** Not carried on the wire — the serializer omits it. */
+  transcriptPath: z.string(),
+  debugLogPath: z.string(),
+  status: conversationStatusSchema,
+  lastActivityAt: z.string(),
+  /** Empty string when no completed conversation compaction exists. */
+  compactArtifactId: z.string(),
+  compactStatus: conversationCompactStatusSchema,
+  /** Covered seq range "<start>..<end>"; empty string when no compaction. */
+  compactCoveredSeq: z.string(),
+  /** ISO timestamp; empty string when no compaction. */
+  compactCreatedAt: z.string(),
+});
+export type ConversationMentionFields = z.infer<
+  typeof conversationMentionFieldsSchema
+>;
+
+/**
+ * Mention/builder attributes, scope-discriminated by intersection with the
+ * shared `ConversationScopeRef` union: the project variant has no `sessionName`
+ * key at all (D1 / R1.3).
+ */
+export type ConversationMentionAttrs = ConversationMentionFields &
+  ConversationScopeRef;
 
 // Attributes of an inline `<message-ref ... />` XML tag — a reference to one
 // message of a conversation, copied from the message's action bar and emitted
@@ -626,25 +758,50 @@ export const askQuestionEventSchema = z.discriminatedUnion("scope", [
 ]);
 export type AskQuestionEvent = z.infer<typeof askQuestionEventSchema>;
 
-export const messageQueuedEventSchema = z.object({
-  type: z.literal("message-queued"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  text: z.string(),
-  // The durable queued message projection. Optional so a producer that has not
-  // yet built the projection still validates without it.
-  message: queuedMessageViewSchema.optional(),
-});
+// The queue is session-keyed storage that serves both scopes, so its producer
+// derives the identity fields from the store key via
+// `conversationEventScopeFields`: a project conversation's queue events carry
+// `scope: "project"` and have no `sessionName` field for the internal sentinel
+// to occupy (R1.3), and the client reacts on the scope rather than guessing from
+// a session name it cannot route with.
+export const messageQueuedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-queued"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    text: z.string(),
+    // The durable queued message projection. Optional so a producer that has not
+    // yet built the projection still validates without it.
+    message: queuedMessageViewSchema.optional(),
+  }),
+  z
+    .object({
+      type: z.literal("message-queued"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      text: z.string(),
+      message: queuedMessageViewSchema.optional(),
+    })
+    .strict(),
+]);
 export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
 
-export const messageQueueUpdatedEventSchema = z.object({
-  type: z.literal("message-queue-updated"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  message: queuedMessageViewSchema,
-});
+export const messageQueueUpdatedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-queue-updated"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    message: queuedMessageViewSchema,
+  }),
+  z
+    .object({
+      type: z.literal("message-queue-updated"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      message: queuedMessageViewSchema,
+    })
+    .strict(),
+]);
 export type MessageQueueUpdatedEvent = z.infer<
   typeof messageQueueUpdatedEventSchema
 >;

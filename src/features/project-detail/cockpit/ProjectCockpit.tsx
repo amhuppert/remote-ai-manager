@@ -27,8 +27,18 @@ import {
   useSendProjectPrompt,
   useCreateProjectConversation,
   useCloseProjectConversation,
+  useQueueProjectMessage,
+  conversationTurnKey,
+  type ConversationTurnKey,
+  type ProjectConversationCreation,
+  type ProjectTurnKey,
 } from "@/lib/project-conversations-client/mutations";
+import type {
+  UnifiedComposerSendInput,
+  UnifiedComposerSendResult,
+} from "../composer/UnifiedComposer";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
+import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/useConversationSpawnCards";
 import { useOrderedConversationHotkeys } from "@/hooks/use-ordered-conversation-hotkeys";
 import {
@@ -38,6 +48,7 @@ import {
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
 import ConversationPane from "./ConversationPane";
+import ProjectQuestionSlot from "./ProjectQuestionSlot";
 import ProjectTranscriptHost from "./ProjectTranscriptHost";
 import MainDiffSurface from "./MainDiffSurface";
 import SessionsPanel from "./SessionsPanel";
@@ -72,6 +83,12 @@ export interface ProjectCockpitProps {
   projectName: string;
   /** Open project conversations from the foundation (server truth). */
   openConversations: ConversationState[];
+  /**
+   * Every conversation the project has with the creation it records — open,
+   * closed, and archived. The second of the two sources that can name the
+   * conversation a create-and-send turn created; see `noticeConversations`.
+   */
+  conversationCreations: ProjectConversationCreation[];
   sessions: SessionListItem[];
   archivedCount: number;
   /** Shared filter-token state (also driven by the composer's filter mode). */
@@ -208,6 +225,7 @@ function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
 export default function ProjectCockpit({
   projectName,
   openConversations,
+  conversationCreations,
   sessions,
   archivedCount,
   tokens,
@@ -258,18 +276,40 @@ export default function ProjectCockpit({
     setMobilePane("chat");
   }
 
-  const sender = useSendProjectPrompt(projectName);
+  const sender = useSendProjectPrompt(projectName, {
+    // The turn's conversation now exists, so its tab is where the turn reports
+    // from here on — opening it immediately is what makes releasing the
+    // provisional key a handover rather than a gap.
+    onConversationAdopted: focusTab,
+  });
   const createConversation = useCreateProjectConversation(projectName);
   const closeConversation = useCloseProjectConversation(projectName);
+  const queueMessage = useQueueProjectMessage(projectName);
 
   const serverOpenIds = useMemo(
     () => openConversations.map((c) => c.id),
     [openConversations],
   );
 
+  // The conversation list is the second of the two sources that can name the
+  // conversation a create-and-send turn created — the first being that turn's
+  // own request stream. Whichever arrives first adopts the turn.
+  //
+  // It reports every conversation, not the open subset, and each one's recorded
+  // creation rather than its id alone: a conversation names a pending turn by
+  // carrying that turn's submission token. Membership would not do — a reopened
+  // conversation, another tab's creation, and a first fetch that has only just
+  // resolved all look equally new to this client.
+  //
+  // Tab reconciliation is unaffected — it tracks the open list exactly as the
+  // server currently reports it.
+  const noticeConversations = sender.noticeConversations;
   useEffect(() => {
     reconcile(serverOpenIds);
   }, [reconcile, serverOpenIds]);
+  useEffect(() => {
+    noticeConversations(conversationCreations);
+  }, [noticeConversations, conversationCreations]);
 
   const byId = useMemo(
     () => new Map(openConversations.map((c) => [c.id, c])),
@@ -448,6 +488,98 @@ export default function ProjectCockpit({
     [composerDraftKey],
   );
 
+  // A create-and-send turn has no tab to report on until the conversation it
+  // created exists, so until then the composer reads it under the provisional
+  // key that submission allocated.
+  const pendingCreateKey = sender.pendingCreateKey;
+  const composerTurnKey = useMemo<ProjectTurnKey | null>(
+    () =>
+      activeTabId !== null
+        ? conversationTurnKey(activeTabId)
+        : pendingCreateKey,
+    [activeTabId, pendingCreateKey],
+  );
+
+  const clearPromptError = sender.clearError;
+  const handleDismissError = useCallback(() => {
+    clearPromptError(composerTurnKey);
+  }, [clearPromptError, composerTurnKey]);
+
+  // A turn is active when this tab's own submission is streaming OR the server
+  // reports the conversation running — a turn started before a reload, from
+  // another client, or by a drained queued message. Reading only this tab's flag
+  // would send a direct prompt into a busy conversation and lose it to a 409.
+  //
+  // Both halves are read from THIS conversation, never the project: a sibling
+  // conversation running is not a reason to queue here, and treating it as one
+  // would reintroduce the cross-conversation block the cockpit removed.
+  const turnActive =
+    sender.isSending(composerTurnKey) ||
+    activeConversation?.status === "running";
+
+  const queueTurnState = useMemo(
+    () => ({
+      pendingQueue: activeConversation?.pendingQueue ?? [],
+      running: turnActive,
+    }),
+    [activeConversation?.pendingQueue, turnActive],
+  );
+
+  const queueProjectMessage = queueMessage.queue;
+  const sendPrompt = sender.send;
+  const handleSendPrompt = useCallback(
+    async (
+      input: UnifiedComposerSendInput,
+    ): Promise<UnifiedComposerSendResult> => {
+      // Queue rather than send when this conversation already has a turn in
+      // flight; a conversation that does not exist yet has nothing to queue into.
+      if (turnActive && activeTabId !== null) {
+        const queued = await queueProjectMessage({
+          conversationId: activeTabId,
+          text: input.text,
+          ...(input.images.length > 0 ? { images: input.images } : {}),
+        });
+        return queued ? "accepted" : "rejected";
+      }
+
+      const submission = sendPrompt({
+        target:
+          activeTabId !== null
+            ? conversationTurnKey(activeTabId)
+            : { kind: "create" },
+        text: input.text,
+        images: input.images,
+        backend: input.backend,
+        modelId: input.modelId,
+        ...(input.effort !== undefined ? { effort: input.effort } : {}),
+      });
+      return (await submission.accepted) ? "accepted" : "rejected";
+    },
+    [turnActive, activeTabId, queueProjectMessage, sendPrompt],
+  );
+
+  // Stop is offered for the conversation on screen and stops that conversation,
+  // so a turn running in a background tab is never what the button reaches. The
+  // same gate the session header uses: this tab's own keyed sending flag, or a
+  // server-running turn this client did not start (another tab, or a reload).
+  const activeTurnKey = useMemo<ConversationTurnKey | null>(
+    () => (activeTabId !== null ? conversationTurnKey(activeTabId) : null),
+    [activeTabId],
+  );
+  const canStop = canStopTurn({
+    sending: sender.isSending(activeTurnKey),
+    status: activeConversation?.status,
+    // Graph workflow execution at project scope is a spec non-goal, so no
+    // project turn is workflow-driven; reading the field keeps the gate shared
+    // rather than forking a project-only rule.
+    drivenByWorkflow: activeConversation?.activeTurnSource === "workflow",
+  });
+  const abortTurn = sender.abort;
+  const handleStop = useCallback(() => {
+    if (activeTurnKey === null) return;
+    void abortTurn(activeTurnKey);
+  }, [abortTurn, activeTurnKey]);
+
   const transcript = activeTabId ? (
     <ProjectTranscriptHost
       projectName={projectName}
@@ -455,13 +587,13 @@ export default function ProjectCockpit({
       selectedBackend={agentBackend}
       spawnCards={spawnCards}
       renderSpawnCardRow={renderSpawnCardRow}
+      pendingQueue={queueTurnState.pendingQueue}
       {...(activeConversation ? { status: activeConversation.status } : {})}
     />
   ) : null;
 
-  const composer = (
+  const composerInput = (
     <UnifiedComposer
-      key={composerDraftKey}
       projectName={projectName}
       activeConversationId={activeTabId}
       activeConversation={activeConversation}
@@ -472,24 +604,28 @@ export default function ProjectCockpit({
       onTokensChange={onTokensChange}
       sessions={sessions}
       archivedCount={archivedCount}
-      busy={sender.sending}
-      error={sender.error}
-      onDismissError={sender.clearError}
+      busy={sender.isSending(composerTurnKey)}
+      error={sender.errorFor(composerTurnKey)}
+      onDismissError={handleDismissError}
       lastUsedModelId={lastUserTurnAgentSettings.modelId}
       lastUsedEffort={lastUserTurnAgentSettings.effort}
       initialDocument={initialComposerDocument}
       onDocumentChange={handleComposerDocumentChange}
       onRunCommand={onRunCommand}
-      onSendPrompt={(input) =>
-        void sender.send({
-          conversationId: activeTabId,
-          text: input.text,
-          images: input.images,
-          backend: input.backend,
-          modelId: input.modelId,
-          ...(input.effort !== undefined ? { effort: input.effort } : {}),
-        })
-      }
+      onSendPrompt={handleSendPrompt}
+      queueTurnState={queueTurnState}
+    />
+  );
+
+  // A pending question takes the composer's place, exactly as it does on the
+  // session page. It is hydrated from the active conversation's persisted
+  // fields, so it is there after a reload and on whichever client opens the tab.
+  const composer = (
+    <ProjectQuestionSlot
+      projectName={projectName}
+      conversation={activeConversation}
+      agentBackend={agentBackend}
+      composer={composerInput}
     />
   );
 
@@ -498,6 +634,8 @@ export default function ProjectCockpit({
       <ConversationPane
         agentBackend={agentBackend}
         projectName={projectName}
+        canStop={canStop}
+        onStop={handleStop}
         {...(activeConversation ? { status: activeConversation.status } : {})}
         tabs={
           <ConversationTabs

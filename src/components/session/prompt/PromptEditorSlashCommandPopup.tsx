@@ -24,65 +24,20 @@ import {
 } from "@/lib/commands/queries";
 import { filterDisabledCommandItems } from "@/lib/commands/capability-filter";
 import {
+  BUILT_IN_COMMANDS,
+  filterCommandsForScope,
+} from "@/lib/commands/built-in-commands";
+import {
   useAgentCapabilityViewQuery,
   type AgentCapabilityScope,
 } from "@/hooks/use-agent-capabilities";
+import { conversationCapabilityScope } from "@/components/agent-capabilities/conversation-capability-scope";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
-  {
-    name: "/spec",
-    description: "Author a durable native Command Center spec.",
-    argumentHint: "<what-to-specify>",
-    type: "command",
-    source: "built-in",
-  },
-  {
-    name: "/collab",
-    description: "Run two agents in parallel and converge to a merged result.",
-    type: "command",
-    source: "built-in",
-  },
-  {
-    name: "/commit",
-    description: "Commit session changes with an agent-written message.",
-    argumentHint: "[message guidance]",
-    type: "command",
-    source: "built-in",
-  },
-  {
-    name: "/merge",
-    description:
-      "Smart-merge the session into its target with an agent-written squash message.",
-    argumentHint: "[message guidance]",
-    type: "command",
-    source: "built-in",
-  },
-  {
-    name: "/rebase",
-    description:
-      "Rebase the session branch onto another branch (defaults to its target), auto-resolving conflicts.",
-    argumentHint: "[[remote] branch]",
-    type: "command",
-    source: "built-in",
-  },
-  {
-    name: "/align",
-    description:
-      "Draft or update the session's shared Alignment charter from the conversation.",
-    argumentHint: "[guidance]",
-    type: "command",
-    source: "built-in",
-  },
-  {
-    name: "/ticket",
-    description:
-      "Create a ticket from this conversation's accumulated context.",
-    argumentHint: "[hint text]",
-    type: "command",
-    source: "built-in",
-  },
-];
+import {
+  scopeRefSessionName,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
 
 export interface SlashCommandPopupHandle {
   /** Forward a keydown event from the editor; returns true when consumed. */
@@ -104,7 +59,13 @@ export interface SlashCommandPopupProps {
   /** Trigger character that initiated the suggestion (e.g. "/" or "$"). */
   triggerChar: string;
   projectName: string;
-  sessionName?: string;
+  /**
+   * Explicit scope (D1). A discriminated union rather than an optional
+   * `sessionName`: "undefined means project" read a sentinel-valued session
+   * name as a real session, leaking it into the commands URL and the capability
+   * query key (R1.3).
+   */
+  scopeRef: ConversationScopeRef;
   /**
    * The conversation this popup belongs to. Used to filter the catalog by CC's
    * effective capability config — items disabled at any cascade layer (global
@@ -142,7 +103,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     query,
     triggerChar,
     projectName,
-    sessionName,
+    scopeRef,
     conversationId,
     backend = "claude",
     isWorkflowManagedConversation = false,
@@ -155,7 +116,8 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   // Project-level prompts discover commands from the project root rather than
   // a session worktree, and capabilities cascade through the project-scoped
   // conversation layer when a conversation exists.
-  const projectScoped = sessionName === undefined;
+  const projectScoped = scopeRef.scope === "project";
+  const sessionName = scopeRefSessionName(scopeRef);
   const sessionCommandsQuery = useCommandsQuery(
     projectName,
     sessionName,
@@ -169,29 +131,15 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     ? projectCommandsQuery
     : sessionCommandsQuery;
 
-  const capabilityScope = useMemo<AgentCapabilityScope>(() => {
-    if (projectScoped) {
-      // Before the first conversation exists there is no conversation layer to
-      // cascade through; fall back to the project layer.
-      return conversationId
-        ? {
-            level: "conversation",
-            projectName,
-            conversationScope: "project",
-            conversationId,
-          }
-        : { level: "project", projectName };
-    }
-    if (conversationId) {
-      return {
-        level: "conversation",
+  const capabilityScope = useMemo<AgentCapabilityScope>(
+    () =>
+      conversationCapabilityScope({
+        scope: scopeRef,
         projectName,
-        sessionName,
         conversationId,
-      };
-    }
-    return { level: "session", projectName, sessionName };
-  }, [projectScoped, projectName, sessionName, conversationId]);
+      }),
+    [scopeRef, projectName, conversationId],
+  );
   const pluginsCascade =
     backend === "codex" ? "codex-plugins" : "claude-plugins";
   const skillsCascade = backend === "codex" ? "codex-skills" : "claude-skills";
@@ -207,29 +155,34 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   const isCodexSkillMode = backend === "codex" && triggerChar === "$";
 
   const items = useMemo<CommandItem[]>(() => {
-    const availableBuiltIns = projectScoped
-      ? BUILT_IN_CLAUDE_COMMANDS.filter((item) => item.name === "/spec")
-      : isWorkflowManagedConversation
-        ? BUILT_IN_CLAUDE_COMMANDS.filter((i) => i.name !== "/ticket")
-        : BUILT_IN_CLAUDE_COMMANDS;
     const fetched = commandsQuery.data?.items ?? [];
     const filtered = filterDisabledCommandItems(
       fetched,
       pluginsView.data,
       skillsView.data,
     );
-    if (isCodexSkillMode) {
-      return filtered.filter((i) => i.name.startsWith("$"));
-    }
-    if (backend === "codex") {
-      return [...availableBuiltIns];
-    }
-    const fetchedSlashCommands = filtered.filter(
-      (item) => item.name.startsWith("/") && item.name !== "/spec",
-    );
-    const fetchedNames = new Set(fetchedSlashCommands.map((i) => i.name));
-    const builtIns = availableBuiltIns.filter((i) => !fetchedNames.has(i.name));
-    return [...builtIns, ...fetchedSlashCommands];
+    const catalog = ((): CommandItem[] => {
+      if (isCodexSkillMode) {
+        return filtered.filter((i) => i.name.startsWith("$"));
+      }
+      if (backend === "codex") {
+        return [...BUILT_IN_COMMANDS];
+      }
+      const fetchedSlashCommands = filtered.filter(
+        (item) => item.name.startsWith("/") && item.name !== "/spec",
+      );
+      const fetchedNames = new Set(fetchedSlashCommands.map((i) => i.name));
+      const builtIns = BUILT_IN_COMMANDS.filter(
+        (i) => !fetchedNames.has(i.name),
+      );
+      return [...builtIns, ...fetchedSlashCommands];
+    })();
+    // One exit point, so a command the scope cannot execute cannot re-enter the
+    // catalog by being discovered instead of built in.
+    return filterCommandsForScope(catalog, {
+      scope: scopeRef,
+      isWorkflowManagedConversation,
+    });
   }, [
     commandsQuery.data?.items,
     pluginsView.data,
@@ -237,7 +190,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     backend,
     isCodexSkillMode,
     isWorkflowManagedConversation,
-    projectScoped,
+    scopeRef,
   ]);
 
   const scored = useMemo<ScoredItem[]>(() => {

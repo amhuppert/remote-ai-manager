@@ -3,7 +3,11 @@
 import { NodeViewWrapper } from "@tiptap/react";
 import type { ReactNodeViewProps } from "@tiptap/react";
 import type { MouseEvent } from "react";
-import type { ConversationMentionAttrs } from "@/lib/prompt-editor";
+import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
+import type {
+  ConversationMentionAttrs,
+  ConversationMentionFields,
+} from "@/lib/conversations/schemas";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import { truncate } from "@/lib/shared/truncate";
 import { resolveDisplayLabel } from "@/lib/conversations/display-label";
@@ -14,13 +18,14 @@ const MAX_LABEL_LENGTH = 40;
  * Node attributes as the chip renders them: the backend id is parsed through
  * the canonical schema, so an id outside it is carried as null and rendered
  * as an explicit unknown-backend state — never coerced to a default backend.
+ *
+ * Scope stays discriminated (D1): a project chip has no `sessionName` field, so
+ * its tooltip cannot render a stale or sentinel session name.
  */
-export interface ConversationMentionChipAttrs extends Omit<
-  ConversationMentionAttrs,
+export type ConversationMentionChipAttrs = Omit<
+  ConversationMentionFields,
   "backend"
-> {
-  backend: AgentBackendId | null;
-}
+> & { backend: AgentBackendId | null } & ConversationScopeRef;
 
 export function coerceMentionAttrs(
   value: unknown,
@@ -31,9 +36,9 @@ export function coerceMentionAttrs(
   const v = value as Record<string, unknown>;
   const backend = agentBackendSchema.safeParse(v["backend"]);
   return {
+    ...coerceScopeRef(v),
     projectName: str(v["projectName"]),
     projectPath: str(v["projectPath"]),
-    sessionName: str(v["sessionName"]),
     worktreePath: str(v["worktreePath"]),
     conversationId: str(v["conversationId"]),
     conversationName: str(v["conversationName"]),
@@ -52,6 +57,18 @@ export function coerceMentionAttrs(
 
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * Lift the node's FLAT attribute bag — TipTap stores `scope` and `sessionName`
+ * as separate string attributes — back into the discriminated scope union.
+ * Not a wire-compat path: `conversationRefAttrsSchema` requires `scope`, so a
+ * ref without one never reaches a chip.
+ */
+function coerceScopeRef(v: Record<string, unknown>): ConversationScopeRef {
+  return v["scope"] === "project"
+    ? { scope: "project" }
+    : { scope: "session", sessionName: str(v["sessionName"]) };
 }
 
 function coerceStatus(value: unknown): ConversationMentionAttrs["status"] {
@@ -76,6 +93,7 @@ function coerceCompactStatus(
 const EMPTY_ATTRS: ConversationMentionChipAttrs = {
   projectName: "",
   projectPath: "",
+  scope: "session",
   sessionName: "",
   worktreePath: "",
   conversationId: "",
@@ -125,10 +143,13 @@ export function ConversationMentionChipBody({
     { countEllipsisInBudget: true },
   );
 
+  // The scope's user-visible name: the session name, or "project" for a
+  // session-less project conversation — never an empty segment (R1.3).
+  const scopeLabel = attrs.scope === "session" ? attrs.sessionName : "project";
   const tooltip =
     attrs.backend === null
-      ? `${attrs.projectName} · ${attrs.sessionName} · unknown agent backend`
-      : `${attrs.projectName} · ${attrs.sessionName}`;
+      ? `${attrs.projectName} · ${scopeLabel} · unknown agent backend`
+      : `${attrs.projectName} · ${scopeLabel}`;
   const removeAriaTarget =
     attrs.conversationName.length > 0
       ? attrs.conversationName

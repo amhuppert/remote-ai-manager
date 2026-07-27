@@ -77,6 +77,31 @@ describe("consumePromptStream", () => {
     expect(events).toEqual([{ type: "done" }]);
   });
 
+  it("surfaces the conversation the create-and-send entry created for this turn", async () => {
+    const events = await collect(
+      streamOf(
+        sseFrame("conversation", { conversationId: "c1" }),
+        sseFrame("content", { type: "text", text: "hello" }),
+        sseFrame("done", {}),
+      ),
+    );
+    expect(events).toEqual([
+      { type: "conversation", conversationId: "c1" },
+      { type: "content", block: { type: "text", text: "hello" } },
+      { type: "done" },
+    ]);
+  });
+
+  it("skips a malformed conversation payload rather than reporting an unusable id", async () => {
+    const events = await collect(
+      streamOf(
+        sseFrame("conversation", { conversationId: 7 }),
+        sseFrame("done", {}),
+      ),
+    );
+    expect(events).toEqual([{ type: "done" }]);
+  });
+
   it("reassembles frames split across chunk boundaries", async () => {
     const frame = sseFrame("content", { type: "text", text: "split" });
     const events = await collect(

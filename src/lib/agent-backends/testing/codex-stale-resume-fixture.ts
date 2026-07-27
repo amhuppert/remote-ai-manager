@@ -7,6 +7,7 @@
  * in production.
  */
 
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationBackendTurnResult } from "../conversation";
 import {
@@ -58,6 +59,11 @@ export async function runStaleCodexResumeTurn(identity: {
   const runtime = new CodexConversationRuntime(
     {
       ...identity,
+      conversationTarget: sessionConversationTarget(
+        identity.projectName,
+        identity.sessionName,
+        identity.conversationId,
+      ),
       persistedRef: STALE_CODEX_RESUME_REF,
       sessionInstructions: [],
       tooling: {},

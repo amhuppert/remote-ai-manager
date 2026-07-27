@@ -6,6 +6,7 @@ function makeItem(id: string, archived = false): ConversationListItem {
   return {
     projectName: "proj",
     projectPath: "/projects/proj",
+    scope: "session" as const,
     sessionName: "main",
     worktreePath: "/projects/proj/.worktrees/main",
     conversationId: id,
@@ -44,7 +45,9 @@ describe("createConversationLookupRouteHandlers GET", () => {
     const body = (await res.json()) as ConversationListItem;
     expect(body.conversationId).toBe("abc123");
     expect(body.projectName).toBe("proj");
-    expect(body.sessionName).toBe("main");
+    // `sessionName` lives only on the session variant, so the payload must
+    // carry the discriminator that makes it readable (R1.3).
+    expect(body).toMatchObject({ scope: "session", sessionName: "main" });
     expect(calls).toEqual(["abc123"]);
   });
 

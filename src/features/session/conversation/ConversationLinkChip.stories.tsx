@@ -5,6 +5,7 @@ import type { ConversationRefAttrs } from "@/lib/conversations/schemas";
 const baseAttrs: ConversationRefAttrs = {
   "project-name": "my-app",
   "project-path": "/repos/my-app",
+  scope: "session",
   "session-name": "main",
   "worktree-path": "/repos/my-app/.worktrees/main",
   "conversation-id": "conv-123",

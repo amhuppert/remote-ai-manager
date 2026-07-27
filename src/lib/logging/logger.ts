@@ -9,9 +9,18 @@
  *   - <config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/session.log       (project + session)
  *   - <config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log
  *                                                                               (project + session + conversation)
+ *   - <config-dir>/logs/projects/<projectSlug>/project.log                      (project conversation scope)
+ *   - <config-dir>/logs/projects/<projectSlug>/conversations/<conversationSlug>.log
  *
- * Resolution priority: conversation > session > global. The dynamic path components
- * (projectSlug, sessionSlug, conversationSlug) are sanitized on every call.
+ * A project conversation has no owning session — its state-store key is the
+ * internal sentinel — so it routes to the `projects/` tree rather than to
+ * `sessions/<projectSlug>__<sentinel>`. A log file path is a diagnostic identity
+ * a reader sees, and the sentinel does not appear on those
+ * (project-conversation-parity R1.3).
+ *
+ * Resolution priority: conversation > session/project > global. The dynamic path
+ * components (projectSlug, sessionSlug, conversationSlug) are sanitized on every
+ * call.
  *
  * Documented exception — request.start / request.complete from the "tracing"
  * module are written to BOTH the scoped destination AND the global log so
@@ -46,6 +55,7 @@ import {
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { getTraceContext, type TraceContext } from "./context";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { resolveConfigDir } from "../config/loader";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -174,20 +184,37 @@ function sessionDirPath(projectSlug: string, sessionSlug: string): string {
   return path.join(logsRoot!, "sessions", `${projectSlug}__${sessionSlug}`);
 }
 
-function sessionLogPath(projectSlug: string, sessionSlug: string): string {
-  return path.join(sessionDirPath(projectSlug, sessionSlug), "session.log");
+/**
+ * A project conversation's log tree. It is deliberately NOT
+ * `sessions/<project>__<sessionSlug>`: for a project conversation the store
+ * session key is the sentinel, and a file path is a diagnostic identity a
+ * reader sees, so routing there would publish the sentinel that
+ * `refuseSentinelSessionIdentity` strips from the entry itself (R1.3).
+ */
+function projectDirPath(projectSlug: string): string {
+  return path.join(logsRoot!, "projects", projectSlug);
+}
+
+/**
+ * The directory owning this trace's logs, or null when the context is too thin
+ * to scope (falls back to the global log).
+ */
+function resolveScopeDir(
+  projectSlug: string | null,
+  sessionSlug: string | null,
+  isProjectScope: boolean,
+): string | null {
+  if (projectSlug === null) return null;
+  if (isProjectScope) return projectDirPath(projectSlug);
+  if (sessionSlug === null) return null;
+  return sessionDirPath(projectSlug, sessionSlug);
 }
 
 function conversationLogPath(
-  projectSlug: string,
-  sessionSlug: string,
+  scopeDir: string,
   conversationSlug: string,
 ): string {
-  return path.join(
-    sessionDirPath(projectSlug, sessionSlug),
-    "conversations",
-    `${conversationSlug}.log`,
-  );
+  return path.join(scopeDir, "conversations", `${conversationSlug}.log`);
 }
 
 interface RouteDecision {
@@ -209,12 +236,18 @@ function resolveDestinations(
   let scopedPath: string | undefined;
 
   if (ctx) {
+    // A project conversation is keyed by the sentinel in the state store, and
+    // the log tree mirrors the store — but the mirror stops at the PATH, which
+    // is published. Project scope gets its own session-less tree instead.
+    const isProjectScope =
+      ctx.sessionName !== undefined && isProjectSentinel(ctx.sessionName);
     const projectSlug = ctx.projectName
       ? sanitizePathComponent(ctx.projectName)
       : null;
-    const sessionSlug = ctx.sessionName
-      ? sanitizePathComponent(ctx.sessionName)
-      : null;
+    const sessionSlug =
+      ctx.sessionName && !isProjectScope
+        ? sanitizePathComponent(ctx.sessionName)
+        : null;
     const conversationSlug = ctx.conversationId
       ? sanitizePathComponent(ctx.conversationId)
       : null;
@@ -225,7 +258,7 @@ function resolveDestinations(
         fields: { component: "projectName", value: ctx.projectName },
       });
     }
-    if (ctx.sessionName && sessionSlug === null) {
+    if (ctx.sessionName && !isProjectScope && sessionSlug === null) {
       diagnostics.push({
         event: "logger.path.sanitize_failure",
         fields: { component: "sessionName", value: ctx.sessionName },
@@ -238,6 +271,8 @@ function resolveDestinations(
       });
     }
 
+    // A project conversation always carries a (sentinel) sessionName, so it is
+    // scoped, not unscoped — this stays the original condition.
     if (ctx.conversationId && (!ctx.sessionName || !ctx.projectName)) {
       diagnostics.push({
         event: "logger.path.unscoped_conversation",
@@ -249,14 +284,11 @@ function resolveDestinations(
       });
     }
 
-    if (projectSlug && sessionSlug && conversationSlug) {
-      scopedPath = conversationLogPath(
-        projectSlug,
-        sessionSlug,
-        conversationSlug,
-      );
-    } else if (projectSlug && sessionSlug) {
-      scopedPath = sessionLogPath(projectSlug, sessionSlug);
+    const scopeDir = resolveScopeDir(projectSlug, sessionSlug, isProjectScope);
+    if (scopeDir !== null) {
+      scopedPath = conversationSlug
+        ? conversationLogPath(scopeDir, conversationSlug)
+        : path.join(scopeDir, isProjectScope ? "project.log" : "session.log");
     }
   }
 
@@ -273,6 +305,36 @@ function resolveDestinations(
     : [primaryPath];
 
   return { paths, diagnostics };
+}
+
+/**
+ * The sink's refusal of the project sentinel in a public session position
+ * (`project-conversation-parity` R1.3, D2).
+ *
+ * `sessionName` is a PUBLIC diagnostic identity; the sentinel is a state-store /
+ * runtime key that serves the session-keyed APIs a project conversation shares.
+ * Two things can put it in this field: a call site on the project-reachable call
+ * graph, and the request trace context, which stamps `sessionName` onto EVERY
+ * entry emitted inside a project request regardless of the call site. Auditing
+ * that surface call-by-call is what kept missing sinks, so the guarantee lives
+ * here instead: a session-less conversation reports `scope: "project"` and NO
+ * `sessionName` key, which is the same discriminated shape the call sites on
+ * that path build deliberately.
+ *
+ * This is the logging analogue of the throw in `conversationTargetApiBase` — the
+ * builder that would emit the sentinel refuses to. The logger never throws by
+ * contract, so it substitutes.
+ *
+ * The destination PATH is the other half of the same guarantee and is resolved
+ * separately, in `resolveDestinations`: project scope routes to `projectDirPath`
+ * so no sentinel-bearing path is ever created.
+ */
+function refuseSentinelSessionIdentity(entry: Record<string, unknown>): void {
+  const sessionName = entry["sessionName"];
+  if (typeof sessionName !== "string" || !isProjectSentinel(sessionName))
+    return;
+  delete entry["sessionName"];
+  entry["scope"] = "project";
 }
 
 function buildEntry(
@@ -311,6 +373,8 @@ function buildEntry(
       }
     }
   }
+
+  refuseSentinelSessionIdentity(entry);
 
   return entry;
 }

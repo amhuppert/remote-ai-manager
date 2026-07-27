@@ -6,6 +6,7 @@ function makeItem(id: string): ConversationListItem {
   return {
     projectName: "proj",
     projectPath: "/projects/proj",
+    scope: "session" as const,
     sessionName: "main",
     worktreePath: "/projects/proj/.worktrees/main",
     conversationId: id,

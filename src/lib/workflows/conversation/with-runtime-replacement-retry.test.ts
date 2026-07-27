@@ -5,26 +5,25 @@ import type {
   ConversationBackendTurnResult,
 } from "@/lib/agent-backends/conversation";
 import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import {
   shouldReplaceRuntimeAndRetry,
   withRuntimeReplacementRetry,
   type RuntimeReplacementRetryDeps,
 } from "./with-runtime-replacement-retry";
 
-vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
-}));
-
 const META = {
   conversationId: "conv-1",
-  sessionName: "sess",
+  scopeRef: { scope: "session", sessionName: "sess" },
   backend: "claude",
-};
+} satisfies RuntimeReplacementRetryDeps["meta"];
+
+const PROJECT_META = {
+  conversationId: "conv-1",
+  scopeRef: { scope: "project" },
+  backend: "claude",
+} satisfies RuntimeReplacementRetryDeps["meta"];
 
 function makeTurnResult(
   overrides: Partial<ConversationBackendTurnResult> = {},
@@ -189,6 +188,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify: stubClassify(),
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     const result = await wrapped.sendTurn(makeTurnInput());
@@ -211,6 +211,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify: stubClassify(),
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     await expect(wrapped.sendTurn(makeTurnInput())).rejects.toThrow(
@@ -234,6 +235,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify: stubClassify(false),
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     await expect(wrapped.sendTurn(makeTurnInput())).rejects.toThrow(
@@ -266,6 +268,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify,
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     await wrapped.sendTurn(makeTurnInput());
@@ -287,6 +290,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify,
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     await expect(wrapped.sendTurn(makeTurnInput())).rejects.toThrow(
@@ -307,6 +311,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify: stubClassify(),
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     await expect(wrapped.sendTurn(makeTurnInput())).rejects.toThrow(
@@ -331,11 +336,117 @@ describe("withRuntimeReplacementRetry", () => {
       classify: stubClassify(),
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     const result = await wrapped.sendTurn(makeTurnInput());
     expect(result.continuationDisposition).toBe("clear");
     expect(result.backendRef).toBeNull();
+  });
+
+  // R1.3: this policy is the LAST diagnostic sink on the turn path. It is
+  // handed the turn's identity as `meta` and emits it from two structured
+  // events, so a `sessionName` field here reported the internal sentinel for
+  // every project conversation that hit a runtime replacement or an adapter
+  // continuation contradiction.
+  describe("scope in structured diagnostics (R1.3)", () => {
+    async function retryOnce(
+      meta: RuntimeReplacementRetryDeps["meta"],
+    ): Promise<ReturnType<typeof createCapturingLogger>> {
+      const log = createCapturingLogger();
+      const staleRuntime = makeRuntime({
+        async sendTurn() {
+          (staleRuntime as { status: string }).status = "dead";
+          throw markPromptNotDelivered(new Error("died before delivery"));
+        },
+      });
+      const freshRuntime = makeRuntime();
+      let current = staleRuntime;
+
+      const wrapped = withRuntimeReplacementRetry({
+        getRuntime: () => current,
+        replaceRuntime: async () => {
+          current = freshRuntime;
+          return freshRuntime;
+        },
+        classify: stubClassify(),
+        signal: new AbortController().signal,
+        meta,
+        log,
+      });
+
+      await wrapped.sendTurn(makeTurnInput());
+      return log;
+    }
+
+    async function contradictContinuation(
+      meta: RuntimeReplacementRetryDeps["meta"],
+    ): Promise<ReturnType<typeof createCapturingLogger>> {
+      const log = createCapturingLogger();
+      const runtime = makeRuntime({
+        async sendTurn() {
+          return makeTurnResult({
+            backendRef: { backend: "claude", ref: "stale-ref" },
+            continuationDisposition: "clear",
+          });
+        },
+      });
+
+      const wrapped = withRuntimeReplacementRetry({
+        getRuntime: () => runtime,
+        replaceRuntime: async () => runtime,
+        classify: stubClassify(),
+        signal: new AbortController().signal,
+        meta,
+        log,
+      });
+
+      await wrapped.sendTurn(makeTurnInput());
+      return log;
+    }
+
+    it("emits scope:project with no session identity on the retry event", async () => {
+      const log = await retryOnce(PROJECT_META);
+
+      const retry = log.entries.find(
+        (e) => e.message === "prompt.runtime_retry",
+      );
+      expect(retry).toBeDefined();
+      expect(retry?.fields).toMatchObject({ scope: "project", attempt: 1 });
+      expect(retry?.fields).not.toHaveProperty("sessionName");
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    it("emits scope:project with no session identity on the continuation contradiction", async () => {
+      const log = await contradictContinuation(PROJECT_META);
+
+      const contradiction = log.entries.find(
+        (e) => e.message === "prompt.continuation_pair_contradiction",
+      );
+      expect(contradiction).toBeDefined();
+      expect(contradiction?.fields).toMatchObject({ scope: "project" });
+      expect(contradiction?.fields).not.toHaveProperty("sessionName");
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    it("still attributes a session turn to its session on both events", async () => {
+      // The fix removes the sentinel, not the diagnostic.
+      const retry = await retryOnce(META);
+      expect(
+        retry.entries.find((e) => e.message === "prompt.runtime_retry")?.fields,
+      ).toMatchObject({ scope: "session", sessionName: "sess" });
+
+      const contradiction = await contradictContinuation(META);
+      expect(
+        contradiction.entries.find(
+          (e) => e.message === "prompt.continuation_pair_contradiction",
+        )?.fields,
+      ).toMatchObject({ scope: "session", sessionName: "sess" });
+    });
   });
 
   it("delegates identity members to the live runtime across replacement", async () => {
@@ -349,6 +460,7 @@ describe("withRuntimeReplacementRetry", () => {
       classify: stubClassify(),
       signal: new AbortController().signal,
       meta: META,
+      log: createCapturingLogger(),
     });
 
     expect(wrapped.modelId).toBe("opus");

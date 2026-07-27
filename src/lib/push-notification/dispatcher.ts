@@ -1,6 +1,7 @@
 import {
   sendPushNotification,
   sendAgentNotification,
+  type AgentNotificationTarget,
   type PushEvent,
 } from "../notifications/push";
 import { assertNever } from "../shared/assert-never";
@@ -45,8 +46,7 @@ async function getPushConfig(): Promise<PushNotificationConfig | undefined> {
 // ============================================================
 
 export interface AgentNotificationRequest {
-  projectName: string;
-  sessionName: string;
+  target: AgentNotificationTarget;
   title: string;
   message: string;
   /** info → default "robot" tag; attention → "warning" tag. */
@@ -64,8 +64,7 @@ export interface AgentNotificationDispatchDeps {
     title: string,
     message: string,
     tags: string,
-    projectName: string,
-    sessionName: string,
+    target: AgentNotificationTarget,
   ): Promise<void>;
 }
 
@@ -108,8 +107,7 @@ export async function dispatchAgentNotification(
     request.title,
     request.message,
     tag,
-    request.projectName,
-    request.sessionName,
+    request.target,
   );
   return { delivered: true };
 }

@@ -221,6 +221,10 @@ function PageHarness({
   const [backend, setBackend] = useState<AgentBackendId>("claude");
   return (
     <ProjectCockpit
+      conversationCreations={openConversations.map((c) => ({
+        conversationId: c.id,
+        creationRequestId: null,
+      }))}
       projectName="proj"
       sessions={[runningSession]}
       archivedCount={0}
@@ -692,6 +696,9 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     const props = (backend: AgentBackendId) => ({
       projectName: "proj",
       openConversations: [conv],
+      conversationCreations: [
+        { conversationId: conv.id, creationRequestId: null },
+      ],
       sessions: [runningSession],
       archivedCount: 0,
       tokens: [],

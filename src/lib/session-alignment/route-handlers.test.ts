@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { withTracing } from "@/lib/logging";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import {
@@ -213,6 +215,37 @@ describe("getAlignmentState", () => {
         content: "# Mission\nDeliver alignment.",
       }),
     );
+  });
+
+  /**
+   * R1.2: alignment resolves the project itself rather than going through the
+   * session resolution seam, so the sentinel used to be carried into the service
+   * as a session name and answered with a domain error about a session that does
+   * not exist. Run through `withTracing` because that is what puts the request
+   * path on the trace context the refusal names its replacement from.
+   */
+  it("refuses the internal project sentinel in the public session position", async () => {
+    const traced = withTracing(real.handlers.getAlignmentState);
+
+    const response = await traced(
+      makeRequest(
+        `http://t/api/projects/${PROJECT_NAME}/sessions/${PROJECT_CONVERSATION_SESSION_SENTINEL}/alignment`,
+      ),
+      {
+        params: Promise.resolve({
+          name: PROJECT_NAME,
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    // Alignment is session-only by spec non-goal, so the refusal says so rather
+    // than naming a project route that would 404.
+    expect(body.error).toContain("alignment");
+    expect(body.error).toContain("session-only");
+    expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
   });
 
   it("returns 404 for an unknown project", async () => {

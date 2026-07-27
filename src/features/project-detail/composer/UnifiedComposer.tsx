@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import PromptComposer from "@/components/session/prompt/PromptComposer";
+import PromptComposer, {
+  type ComposerQueueTurnState,
+} from "@/components/session/prompt/PromptComposer";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
+import { deserializePromptDoc } from "@/lib/prompt-editor";
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
 import {
@@ -12,7 +15,9 @@ import {
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
+import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import {
   effortLevelSchema,
   type EffortLevel,
@@ -36,6 +41,14 @@ export interface UnifiedComposerSendInput {
   effort?: string;
 }
 
+/**
+ * Whether the server took a submission. `"rejected"` covers a refusal (busy,
+ * not running, unsupported backend), a transport failure, and a duplicate the
+ * client dropped — every case where nothing was recorded and the user's text
+ * would otherwise be gone.
+ */
+export type UnifiedComposerSendResult = "accepted" | "rejected";
+
 export interface UnifiedComposerProps {
   projectName: string;
   /** `null` => first-run; a chat send issues create-and-send (PLC-5). */
@@ -50,7 +63,24 @@ export interface UnifiedComposerProps {
   onTokensChange: (next: FilterToken[]) => void;
   sessions: SessionListItem[];
   archivedCount: number;
-  onSendPrompt: (input: UnifiedComposerSendInput) => void;
+  /**
+   * Submit the composed message. Reporting the outcome is what lets the composer
+   * hand the text back on a refusal instead of clearing it into nothing (R6.1).
+   */
+  onSendPrompt: (
+    input: UnifiedComposerSendInput,
+  ) => Promise<UnifiedComposerSendResult>;
+  /**
+   * Durable queue and server-reported turn state for the active conversation.
+   * Drives the pending-message chips, their cancellation, and whether the send
+   * button offers to queue rather than send.
+   */
+  queueTurnState?: ComposerQueueTurnState;
+  /**
+   * The tab's in-memory composer document, lifted so a closed-and-reopened tab
+   * comes back with what was typed in it. Distinct from the conversation's
+   * persisted draft below, which is what survives a reload.
+   */
   initialDocument?: SerializedPromptDoc;
   onDocumentChange?: (document: SerializedPromptDoc) => void;
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
@@ -70,6 +100,13 @@ export type ProjectComposerSubmitResult =
   | { kind: "send"; input: UnifiedComposerSendInput };
 
 const DEFAULT_EFFORT: EffortLevel = "high";
+
+/**
+ * The attachment scope for the create-and-send path, which has no conversation
+ * id yet. Prefixed apart from the conversation keys so it can never collide with
+ * one.
+ */
+const NEW_CONVERSATION_ATTACHMENT_SCOPE = "new-conversation";
 
 function modelForBackend(
   backend: AgentBackendId,
@@ -175,6 +212,7 @@ export default function UnifiedComposer({
   busy,
   error,
   onDismissError,
+  queueTurnState,
 }: UnifiedComposerProps): React.JSX.Element {
   const rememberedSettingsKey = JSON.stringify([
     activeConversationId,
@@ -201,6 +239,12 @@ export default function UnifiedComposer({
   const editorRef = useRef<PromptEditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptTextRef = useRef(initialDocument?.prompt ?? "");
+  // The draft flush reads this ref, and hydration writes the draft without going
+  // through the editor's change handler — so the ref tracks the state rather
+  // than only the keystrokes that produced it.
+  useEffect(() => {
+    promptTextRef.current = draft;
+  }, [draft]);
   const fireAndForgetRef = useRef(false);
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
@@ -224,13 +268,77 @@ export default function UnifiedComposer({
   const effortSupported = availableEffortLevels.length > 0;
   const selectedEffort = pickEffort(availableEffortLevels, effortPref);
 
+  // One composer instance serves every tab, so both halves of a draft — the
+  // text and the attachments — are bound to the conversation they were authored
+  // for. The text rides the conversation's persisted `pendingPromptText` (so it
+  // also survives a reload); the attachments are held per conversation in the
+  // attachment hook (R3.3 / D6).
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
-    useImageAttachments(initialDocument?.images ?? []);
+    useImageAttachments(
+      initialDocument?.images ?? [],
+      activeConversationId === null
+        ? NEW_CONVERSATION_ATTACHMENT_SCOPE
+        : `conversation:${activeConversationId}`,
+    );
 
+  // The lifted tab document tracks the attachments too, so reopening a closed
+  // tab restores what was attached to it, not just the text.
   useEffect(() => {
     if (!onDocumentChange || !editorRef.current) return;
     onDocumentChange(editorRef.current.serialize(pendingImages));
   }, [onDocumentChange, pendingImages]);
+
+  // The cockpit remounts this composer per tab, so a reopened tab arrives with
+  // its lifted document already in hand. Read once at mount: the persisted draft
+  // must not hydrate over text the user can see.
+  const [mountedWithLocalDraft] = useState(
+    () => (initialDocument?.prompt ?? "") !== "",
+  );
+
+  // Stable identity required: the draft hook's flush and beacon effects key off
+  // the target. Null until the create-and-send path has a conversation to
+  // address, and the draft stays composer-local until then.
+  const draftTarget = useMemo(
+    () =>
+      activeConversationId === null
+        ? null
+        : projectConversationTarget(projectName, activeConversationId),
+    [projectName, activeConversationId],
+  );
+
+  const { handlePromptTextChange, suppressPendingPromptAutosaveAfterSubmit } =
+    usePendingPromptPersistence({
+      target: draftTarget,
+      activeConversation,
+      promptText: draft,
+      setPromptText: setDraft,
+      promptTextRef,
+      editorRef,
+      mountedWithLocalDraft,
+    });
+
+  // Switching tabs keeps this composer mounted — the attachment scope map and
+  // the per-conversation draft hook both depend on that — so the tab's lifted
+  // document is re-seeded here rather than by a remount. It is the same draft as
+  // the conversation's persisted copy but ahead of it by the autosave debounce,
+  // so it wins; an empty one defers to the hook's hydration.
+  const seededDraftKeyRef = useRef(
+    activeConversationId ?? NEW_CONVERSATION_ATTACHMENT_SCOPE,
+  );
+  useEffect(() => {
+    const draftKey = activeConversationId ?? NEW_CONVERSATION_ATTACHMENT_SCOPE;
+    if (seededDraftKeyRef.current === draftKey) return;
+    seededDraftKeyRef.current = draftKey;
+    const text = initialDocument?.prompt ?? "";
+    if (text === "") return;
+    // Marks the conversation hydrated, so the persisted draft cannot land on top
+    // of the text the user is looking at.
+    handlePromptTextChange(text);
+    promptTextRef.current = text;
+    editorRef.current?.editor?.commands.setContent(
+      deserializePromptDoc({ prompt: text, images: [] }),
+    );
+  }, [activeConversationId, initialDocument, handlePromptTextChange]);
 
   const clearComposer = useCallback(() => {
     setDraft("");
@@ -239,8 +347,35 @@ export default function UnifiedComposer({
     setPromptPlaceholder(null);
     editorRef.current?.clear();
     clearImages();
+    // The persisted draft has to go with the visible one, or the next time this
+    // tab is selected the conversation rehydrates the text just consumed.
+    suppressPendingPromptAutosaveAfterSubmit();
+    // The lifted tab document is the other copy of the same draft; leaving it
+    // behind would restore the consumed text when the tab is reopened.
     onDocumentChange?.({ prompt: "", images: [] });
-  }, [clearImages, onDocumentChange]);
+  }, [clearImages, onDocumentChange, suppressPendingPromptAutosaveAfterSubmit]);
+
+  /**
+   * Hand a refused submission's text back to the composer. The composer clears
+   * optimistically — a send that waited for the server before emptying would
+   * stall on every ordinary turn — so a refusal restores rather than never
+   * having cleared. Attachments are not restored: the durable text is what the
+   * user would otherwise have to retype, and re-materializing image payloads as
+   * fresh attachments is a separate concern from this recovery.
+   */
+  const restoreComposer = useCallback((text: string) => {
+    setDraft(text);
+    promptTextRef.current = text;
+    setPromptPlaceholder(null);
+    const editor = editorRef.current?.editor;
+    if (!editor) return;
+    // The same primitive the session composer restores a persisted draft with.
+    // `insertText` would be wrong here: it focuses the editor, stealing focus
+    // from wherever the user moved while the request was in flight.
+    editor.commands.setContent(
+      deserializePromptDoc({ prompt: text, images: [] }),
+    );
+  }, []);
 
   const handleSendPrompt = useCallback(() => {
     const serialized = editorRef.current?.serialize(pendingImages);
@@ -275,10 +410,19 @@ export default function UnifiedComposer({
         onTokensChange(result.tokens);
         clearComposer();
         return;
-      case "send":
-        onSendPrompt(result.input);
+      case "send": {
+        const submitted = result.input.text;
+        void onSendPrompt(result.input)
+          // A throw means nothing was recorded either, so it restores like any
+          // other refusal — and swallowing it here is what keeps a rejected
+          // promise from escaping as an unhandled rejection.
+          .catch(() => "rejected" as const)
+          .then((outcome) => {
+            if (outcome === "rejected") restoreComposer(submitted);
+          });
         clearComposer();
         return;
+      }
     }
   }, [
     pendingImages,
@@ -290,6 +434,7 @@ export default function UnifiedComposer({
     effortSupported,
     onRunCommand,
     clearComposer,
+    restoreComposer,
     onTokensChange,
     onSendPrompt,
   ]);
@@ -327,14 +472,18 @@ export default function UnifiedComposer({
         projectName={projectName}
         sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
         conversationId={activeConversationId ?? ""}
+        // Deliberately absent: the session-shaped record would light up the debug
+        // strip and the capability drawer, which stay session-only. The queue
+        // state the composer legitimately needs comes through its own prop.
         activeConversation={undefined}
+        {...(queueTurnState ? { queueTurnState } : {})}
         editorRef={editorRef}
         fileInputRef={fileInputRef}
         promptText={draft}
         initialDocument={initialDocument}
         onDocumentChange={onDocumentChange}
         onPromptTextChange={(text) => {
-          setDraft(text);
+          handlePromptTextChange(text);
           promptTextRef.current = text;
           if (promptPlaceholder !== null) setPromptPlaceholder(null);
         }}

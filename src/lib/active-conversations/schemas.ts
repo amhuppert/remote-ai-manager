@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { askQuestionItemSchema } from "@/lib/conversations/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
@@ -73,7 +74,13 @@ export const activeConversationSchema = z.discriminatedUnion("scope", [
   z.object({
     scope: z.literal("session"),
     ...activeConversationSharedFields,
-    sessionName: z.string(),
+    // This list is a public API response body (R1.3): a project conversation
+    // is a `scope: "project"` row, so a session row naming the internal store
+    // sentinel is a producer leaking a storage key as a session identity.
+    sessionName: z.string().refine((name) => !isProjectSentinel(name), {
+      message:
+        'a project conversation is listed with scope "project", not a sentinel session name',
+    }),
     branchName: z.string().nullable(),
   }),
   z.object({

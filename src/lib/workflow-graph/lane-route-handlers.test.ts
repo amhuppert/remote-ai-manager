@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
+import { withTracing } from "@/lib/logging";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import type {
   GraphWorkflowAgentSessionState,
@@ -365,6 +367,75 @@ describe("lane route handlers — complete task", () => {
       (state?.totalTaskCount ?? 0) - (state?.completedTaskCount ?? 0),
     );
     expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+  });
+
+  /**
+   * R1.2: the lane endpoints resolve the project themselves rather than going
+   * through the session resolution seam, so the sentinel used to be carried into
+   * the lane tool context loader as if it named a real session. Run through
+   * `withTracing` because that is what puts the request path on the trace context
+   * the refusal names its replacement from.
+   */
+  it("refuses the internal project sentinel in the public session position", async () => {
+    const { context } = buildContext();
+    let loadedLaneContext = false;
+    const handlers = createLaneRouteHandlers({
+      ...makeDeps(context),
+      async loadLaneToolContext() {
+        loadedLaneContext = true;
+        throw new Error("lane context must not load for a refused request");
+      },
+    });
+    const traced = withTracing(handlers.completeTask);
+
+    const response = await traced(
+      new Request(
+        `http://cc.local/api/projects/cc/sessions/${PROJECT_CONVERSATION_SESSION_SENTINEL}/graph-workflow/contexts/context-plan/tasks/task-plan-1/complete`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            executionId: "execution-1",
+            summary: "Wrote the plan.",
+          }),
+        },
+      ),
+      params({
+        ...BASE_PARAMS,
+        session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        taskId: "task-plan-1",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    // Graph workflow execution is session-only by spec non-goal, so the refusal
+    // says so rather than naming a project route that would 404.
+    expect(body.error).toContain("graph-workflow");
+    expect(body.error).toContain("session-only");
+    expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(loadedLaneContext).toBe(false);
+  });
+
+  /**
+   * The lane endpoints hand the session param to the loader exactly as received,
+   * so the refusal cannot assume a decoded value — otherwise the sentinel gets
+   * back in by being spelled differently.
+   */
+  it("refuses a percent-encoded sentinel in the session position", async () => {
+    const { context } = buildContext();
+    const handlers = createLaneRouteHandlers(makeDeps(context));
+
+    const response = await handlers.completeTask(
+      req({ executionId: "execution-1", summary: "Wrote the plan." }),
+      params({
+        ...BASE_PARAMS,
+        session: "%5F%5Fproject%5F%5F",
+        taskId: "task-plan-1",
+      }),
+    );
+
+    expect(response.status).toBe(400);
   });
 
   it("returns the execution-contract completion refusal as a machine-readable 409", async () => {

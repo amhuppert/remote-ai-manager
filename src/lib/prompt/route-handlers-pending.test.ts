@@ -6,6 +6,7 @@ import {
 } from "./route-handlers";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 // ---------------------------------------------------------------------------
 // Mock deps (no vi.mock needed)
 // ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ function createTestDeps(
     clearConversationPendingPromptTextIfMatches: vi
       .fn()
       .mockResolvedValue(true),
+    log: createCapturingLogger(),
     ...overrides,
   };
 }

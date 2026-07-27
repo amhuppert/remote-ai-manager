@@ -1,20 +1,32 @@
 /**
- * Agent-facing session notification endpoint (docs/design/cc-cli/02 §2.1).
+ * Agent-facing notification endpoints (docs/design/cc-cli/02 §2.1). Both scopes
+ * are adapters over ONE domain operation (`dispatchAgentNotification`):
  *
  * - POST /api/projects/[name]/sessions/[session]/notifications
+ * - POST /api/projects/[name]/conversations/[conversationId]/notifications
  *   Body: { title?, message, urgency? }. Token-gated; sends an agent-initiated
- *   push via the existing dispatcher path. Replaces the send_notification MCP
- *   tool. The browser UI never calls this route.
+ *   push. Replaces the send_notification MCP tool. The browser UI never calls
+ *   these routes.
+ *
+ * The project adapter resolves the addressed project conversation — no session
+ * record exists for it — and hands the dispatcher the project target, so nothing
+ * downstream has to re-derive scope from a session name.
  */
 
 import { NextResponse } from "next/server";
-import { resolveProjectSessionOr404 } from "@/lib/shared/route-resolution";
+import {
+  notFound,
+  resolveProjectOr404,
+  resolveProjectSessionOr404,
+} from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import { getSession } from "@/lib/state-store";
+import { getProjectConversation, getSession } from "@/lib/state-store";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
+import type { AgentNotificationTarget } from "@/lib/notifications/push";
 import {
   dispatchAgentNotification,
   type AgentNotificationOutcome,
@@ -39,6 +51,10 @@ export interface SessionNotificationRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<{ sessionName: string } | null>;
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<{ id: string } | null>;
   dispatchAgentNotification(
     request: AgentNotificationRequest,
   ): Promise<AgentNotificationOutcome>;
@@ -47,25 +63,11 @@ export interface SessionNotificationRouteDeps {
 export function createSessionNotificationHandlers(
   deps: SessionNotificationRouteDeps,
 ) {
-  async function post(
+  /** The one domain call both adapters reach, once their scope is resolved. */
+  async function dispatch(
     request: Request,
-    { params }: { params: Promise<Record<string, string>> },
+    target: AgentNotificationTarget,
   ): Promise<Response> {
-    const denied = await deps.auth.requireToken(request);
-    if (denied) return denied;
-
-    const { name, session } = await params;
-    const projectName = name ?? "";
-    const sessionName = session ?? "";
-
-    const resolved = await resolveProjectSessionOr404(
-      deps,
-      projectName,
-      sessionName,
-    );
-    if (!resolved.ok) return resolved.response;
-    const sessionState = resolved.value.session;
-
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -91,8 +93,7 @@ export function createSessionNotificationHandlers(
     }
 
     const request_: AgentNotificationRequest = {
-      projectName,
-      sessionName: sessionState.sessionName,
+      target,
       title: parsed.data.title ?? DEFAULT_TITLE,
       message: parsed.data.message,
       ...(parsed.data.urgency !== undefined
@@ -103,8 +104,7 @@ export function createSessionNotificationHandlers(
     const outcome = await deps.dispatchAgentNotification(request_);
     if (!outcome.delivered) {
       log.info("agent-notification.not_delivered", {
-        projectName,
-        sessionName,
+        ...target,
         reason: outcome.reason,
       });
       return NextResponse.json({ error: outcome.reason } satisfies ApiError, {
@@ -112,19 +112,76 @@ export function createSessionNotificationHandlers(
       });
     }
 
-    log.info("agent-notification.delivered", { projectName, sessionName });
+    log.info("agent-notification.delivered", { ...target });
     return NextResponse.json({ ok: true });
   }
 
-  return { POST: post };
+  async function post(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const { name, session } = await params;
+    const projectName = name ?? "";
+
+    const resolved = await resolveProjectSessionOr404(
+      deps,
+      projectName,
+      session ?? "",
+    );
+    if (!resolved.ok) return resolved.response;
+
+    return dispatch(request, {
+      scope: "session",
+      projectName,
+      sessionName: resolved.value.session.sessionName,
+    });
+  }
+
+  async function projectPost(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const { name, conversationId } = await params;
+    const projectName = name ?? "";
+
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
+
+    const conversation = await deps.getProjectConversation(
+      project.value,
+      conversationId ?? "",
+    );
+    if (!conversation) {
+      return notFound("Conversation not found", "conversation_not_found");
+    }
+
+    return dispatch(
+      request,
+      projectConversationTarget(projectName, conversation.id),
+    );
+  }
+
+  return { POST: post, PROJECT_POST: projectPost };
 }
 
 const defaultHandlers = createSessionNotificationHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
+  getProjectConversation,
   dispatchAgentNotification,
 });
 
 /** POST /api/projects/[name]/sessions/[session]/notifications */
 export const POST = withTracing(defaultHandlers.POST);
+
+/** POST /api/projects/[name]/conversations/[conversationId]/notifications */
+export const PROJECT_CONVERSATION_POST = withTracing(
+  defaultHandlers.PROJECT_POST,
+);

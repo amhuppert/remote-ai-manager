@@ -11,7 +11,11 @@ import type { ParsedConversationCommand } from "@/lib/conversation-commands/sche
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
-import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
+import {
+  isActiveQueuedMessageStatus,
+  pendingQueuedMessageSchema,
+} from "@/lib/conversations/message-queue-schemas";
+import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import type {
   PendingQueuedMessage,
   QueuedMessageMetadata,
@@ -136,9 +140,7 @@ function refuseAttemptLimitEntry(
 export function listActiveEntries(
   queue: readonly PendingQueuedMessage[],
 ): PendingQueuedMessage[] {
-  return queue.filter(
-    (entry) => entry.status === "pending" || entry.status === "delivering",
-  );
+  return queue.filter((entry) => isActiveQueuedMessageStatus(entry.status));
 }
 
 /**
@@ -611,9 +613,11 @@ export function createMessageQueueService(
     try {
       deps.broadcast({
         type: "message-queued",
-        projectName,
-        sessionName,
-        conversationId,
+        ...conversationEventScopeFields(
+          projectName,
+          sessionName,
+          conversationId,
+        ),
         text: contentToText(content),
         message: toQueuedMessageView(entry),
       });
@@ -656,9 +660,11 @@ export function createMessageQueueService(
       try {
         deps.broadcast({
           type: "message-queue-updated",
-          projectName,
-          sessionName: key.sessionName,
-          conversationId: key.conversationId,
+          ...conversationEventScopeFields(
+            projectName,
+            key.sessionName,
+            key.conversationId,
+          ),
           message: toQueuedMessageView(row),
         });
       } catch {

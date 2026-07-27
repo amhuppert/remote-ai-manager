@@ -31,9 +31,8 @@ import {
   turnContinuationSchema,
   type AgentFailureClassification,
 } from "@/lib/agent-backends/errors";
-import { createLogger } from "@/lib/logging";
-
-const logger = createLogger("conversation-actor.runtime-replacement-retry");
+import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
+import type { Logger } from "@/lib/logging";
 
 export interface RuntimeReplacementRetryDeps {
   /** Live runtime accessor — replacement swaps the underlying instance. */
@@ -44,8 +43,35 @@ export interface RuntimeReplacementRetryDeps {
   classify(error: unknown): AgentFailureClassification;
   /** Turn abort signal; an aborted turn is never retried. */
   signal: AbortSignal;
-  /** Identity fields for structured logging. */
-  meta: { conversationId: string; sessionName: string; backend: string };
+  /**
+   * Identity fields for structured logging. Scope arrives DISCRIMINATED rather
+   * than as a session name: the caller's session name is the session-keyed
+   * STORE key, which is the project sentinel for a project conversation, and
+   * log fields are a public identity surface (R1.3). The project variant has no
+   * field for the sentinel to occupy.
+   */
+  meta: {
+    conversationId: string;
+    scopeRef: ConversationScopeRef;
+    backend: string;
+  };
+  /**
+   * The turn's structured-log sink, injected rather than module-scoped so a
+   * test can read what this policy actually emitted — the module-level file
+   * sink has no seam, which is how the sentinel survived here (R1.3).
+   */
+  log: Logger;
+}
+
+/** Flat identity fields for one log line: scope leads, session name only at session scope. */
+function logFields(
+  meta: RuntimeReplacementRetryDeps["meta"],
+): Record<string, unknown> {
+  return {
+    conversationId: meta.conversationId,
+    backend: meta.backend,
+    ...meta.scopeRef,
+  };
 }
 
 /**
@@ -81,15 +107,15 @@ export function shouldReplaceRuntimeAndRetry(input: {
 
 function enforceContinuationConsistency(
   result: ConversationBackendTurnResult,
-  meta: RuntimeReplacementRetryDeps["meta"],
+  deps: Pick<RuntimeReplacementRetryDeps, "meta" | "log">,
 ): ConversationBackendTurnResult {
   const check = turnContinuationSchema.safeParse({
     backendRef: result.backendRef,
     continuationDisposition: result.continuationDisposition,
   });
   if (check.success) return result;
-  logger.error("prompt.continuation_pair_contradiction", {
-    ...meta,
+  deps.log.error("prompt.continuation_pair_contradiction", {
+    ...logFields(deps.meta),
     backendRef: result.backendRef,
     continuationDisposition: result.continuationDisposition,
   });
@@ -114,7 +140,7 @@ export function withRuntimeReplacementRetry(
       try {
         return enforceContinuationConsistency(
           await current.sendTurn(turnInput),
-          deps.meta,
+          deps,
         );
       } catch (err) {
         const classification = deps.classify(err);
@@ -130,8 +156,8 @@ export function withRuntimeReplacementRetry(
           throw err;
         }
         attempt += 1;
-        logger.warn("prompt.runtime_retry", {
-          ...deps.meta,
+        deps.log.warn("prompt.runtime_retry", {
+          ...logFields(deps.meta),
           attempt,
           failureKind: classification.kind,
           error: classification.message,

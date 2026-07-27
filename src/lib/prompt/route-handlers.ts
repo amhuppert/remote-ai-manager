@@ -13,9 +13,15 @@ import {
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
+  getProjectConversation as defaultGetProjectConversation,
   getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
   clearConversationPendingPromptTextIfMatches as defaultClearConversationPendingPromptTextIfMatches,
 } from "@/lib/state-store";
+import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
+import {
+  storeSessionNameFromScopeRef,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
 import {
   getConversation as defaultGetConversation,
   setConversationPendingPromptText as defaultSetConversationPendingPromptText,
@@ -35,8 +41,9 @@ import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/si
 import {
   runPromptRequestSchema,
   pendingPromptRequestSchema,
+  type PendingPromptRequest,
 } from "@/lib/prompt/schemas";
-import { createLogger, withTracing } from "@/lib/logging";
+import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import {
   getDefaultCollaborationManager,
   type CollaborationManager,
@@ -524,24 +531,130 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
 // Pending-prompt persistence handler (separate concern, separate deps)
 // ---------------------------------------------------------------------------
 
-export interface PendingPromptRouteDeps {
-  resolveProjectPath(name: string): Promise<string | null>;
-  getSession(
-    projectPath: string,
-    sessionName: string,
-  ): Promise<SessionState | null>;
+/**
+ * Writing the draft itself — the scope-invariant core of the pending-prompt
+ * pair. Both store calls are session-KEYED APIs that serve either scope through
+ * one storage key, so the parameter is named `storeSessionName`: the sentinel is
+ * materialized once, at the call, and never bound to a name a log line could
+ * pick up (A5 / R1.3).
+ */
+export interface PendingPromptPersistenceDeps {
   setConversationPendingPromptText(
     projectPath: string,
-    sessionName: string,
+    storeSessionName: string,
     conversationId: string,
     text: string | null,
   ): Promise<void>;
   clearConversationPendingPromptTextIfMatches(
     projectPath: string,
-    sessionName: string,
+    storeSessionName: string,
     conversationId: string,
     expectedText: string,
   ): Promise<boolean>;
+  /**
+   * Injected so a test can read what this handler EMITTED. Structured-log fields
+   * are a public identity surface and this path is project-reachable, so the
+   * module-scoped logger's file sink would make a sentinel leak unobservable
+   * (`.kiro/steering/logs.md`).
+   */
+  log: Logger;
+}
+
+export interface PendingPromptRouteDeps extends PendingPromptPersistenceDeps {
+  resolveProjectPath(name: string): Promise<string | null>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
+}
+
+export interface ProjectPendingPromptRouteDeps extends PendingPromptPersistenceDeps {
+  resolveProjectPath(name: string): Promise<string | null>;
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+}
+
+/** The conversation a resolved request addresses, in public scope vocabulary. */
+interface AddressedDraft {
+  projectPath: string;
+  scopeRef: ConversationScopeRef;
+  conversationId: string;
+}
+
+/**
+ * Persist or clear one conversation's draft. Reached identically by both scope
+ * adapters: the draft a project conversation carries is the same field, written
+ * through the same sentinel-aware store path, as a session conversation's.
+ *
+ * The compare-and-clear branch exists for submit: the client clears the draft it
+ * just submitted, and the guard keeps that clear from discarding text the user
+ * typed while the request was in flight.
+ */
+async function persistPendingPromptText(
+  deps: PendingPromptPersistenceDeps,
+  request: Request,
+  { projectPath, scopeRef, conversationId }: AddressedDraft,
+): Promise<Response> {
+  let body: PendingPromptRequest;
+  try {
+    body = pendingPromptRequestSchema.parse(await request.json());
+  } catch {
+    return NextResponse.json(
+      { error: "text (string or null) is required" } satisfies ApiError,
+      { status: 400 },
+    );
+  }
+
+  const storeSessionName = storeSessionNameFromScopeRef(scopeRef);
+  try {
+    if (body.text === null && body.expectedText !== undefined) {
+      const updated = await deps.clearConversationPendingPromptTextIfMatches(
+        projectPath,
+        storeSessionName,
+        conversationId,
+        body.expectedText,
+      );
+      deps.log.debug("pending_prompt.compare_and_clear_completed", {
+        projectPath,
+        ...scopeRef,
+        conversationId,
+        updated,
+      });
+      return NextResponse.json({ ok: true, updated });
+    }
+
+    await deps.setConversationPendingPromptText(
+      projectPath,
+      storeSessionName,
+      conversationId,
+      body.text,
+    );
+    deps.log.debug("pending_prompt.update_completed", {
+      projectPath,
+      ...scopeRef,
+      conversationId,
+      cleared: body.text === null,
+      textLength: body.text?.length ?? 0,
+    });
+    return NextResponse.json({ ok: true, updated: true });
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Failed to update pending prompt text";
+    deps.log.warn("pending_prompt.update_failed", {
+      projectPath,
+      ...scopeRef,
+      conversationId,
+      compareAndClear: body.text === null && body.expectedText !== undefined,
+      error: message,
+    });
+    return NextResponse.json({ error: message } satisfies ApiError, {
+      status: 500,
+    });
+  }
 }
 
 const defaultPendingDeps: PendingPromptRouteDeps = {
@@ -550,6 +663,7 @@ const defaultPendingDeps: PendingPromptRouteDeps = {
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
   clearConversationPendingPromptTextIfMatches:
     defaultClearConversationPendingPromptTextIfMatches,
+  log: logger,
 };
 
 export function createPendingPromptRouteHandlers(
@@ -576,63 +690,46 @@ export function createPendingPromptRouteHandlers(
       return notFound("Conversation not found");
     }
 
-    let body: { text: string | null; expectedText?: string };
-    try {
-      body = pendingPromptRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "text (string or null) is required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    return persistPendingPromptText(deps, request, {
+      projectPath,
+      scopeRef: { scope: "session", sessionName },
+      conversationId,
+    });
+  }
 
-    try {
-      if (body.text === null && body.expectedText !== undefined) {
-        const updated = await deps.clearConversationPendingPromptTextIfMatches(
-          projectPath,
-          sessionName,
-          conversationId,
-          body.expectedText,
-        );
-        logger.debug("pending_prompt.compare_and_clear_completed", {
-          projectPath,
-          sessionName,
-          conversationId,
-          updated,
-        });
-        return NextResponse.json({ ok: true, updated });
-      }
+  return { POST };
+}
 
-      await deps.setConversationPendingPromptText(
-        projectPath,
-        sessionName,
-        conversationId,
-        body.text,
-      );
-      logger.debug("pending_prompt.update_completed", {
-        projectPath,
-        sessionName,
-        conversationId,
-        cleared: body.text === null,
-        textLength: body.text?.length ?? 0,
-      });
-      return NextResponse.json({ ok: true, updated: true });
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to update pending prompt text";
-      logger.warn("pending_prompt.update_failed", {
-        projectPath,
-        sessionName,
-        conversationId,
-        compareAndClear: body.text === null && body.expectedText !== undefined,
-        error: message,
-      });
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
-    }
+const defaultProjectPendingDeps: ProjectPendingPromptRouteDeps = {
+  resolveProjectPath: defaultResolveProjectPath,
+  getProjectConversation: defaultGetProjectConversation,
+  setConversationPendingPromptText: defaultSetConversationPendingPromptText,
+  clearConversationPendingPromptTextIfMatches:
+    defaultClearConversationPendingPromptTextIfMatches,
+  log: logger,
+};
+
+/**
+ * Project-scoped pending prompt (R3.3). Resolves the project conversation
+ * directly — a project conversation has no owning session record to look up —
+ * and reaches the SAME persistence core the session adapter uses, so a draft is
+ * durable at project scope for the same reason it is at session scope.
+ */
+export function createProjectPendingPromptRouteHandlers(
+  deps: ProjectPendingPromptRouteDeps = defaultProjectPendingDeps,
+) {
+  async function POST(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+
+    return persistPendingPromptText(deps, request, {
+      projectPath: resolved.value.projectPath,
+      scopeRef: { scope: "project" },
+      conversationId: resolved.value.conversationId,
+    });
   }
 
   return { POST };
@@ -651,4 +748,12 @@ export const executeConversationPrompt = withTracing(
 );
 export const updatePendingPrompt = withTracing(
   defaultPendingPromptHandlers.POST,
+);
+
+const defaultProjectPendingPromptHandlers =
+  createProjectPendingPromptRouteHandlers();
+
+/** POST /api/projects/[name]/conversations/[conversationId]/pending-prompt */
+export const updateProjectPendingPrompt = withTracing(
+  defaultProjectPendingPromptHandlers.POST,
 );

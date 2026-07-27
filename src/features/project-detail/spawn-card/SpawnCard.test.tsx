@@ -328,6 +328,7 @@ describe("SpawnCard", () => {
     );
     const conversationRef =
       '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+      'scope="session" ' +
       'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
       'conversation-id="conv-1" conversation-name="Refactor parser" ' +
       'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +
@@ -424,6 +425,7 @@ describe("SpawnCard", () => {
     URL.revokeObjectURL = vi.fn();
     const conversationRef =
       '<conversation-ref project-name="my-app" project-path="/repos/my-app" ' +
+      'scope="session" ' +
       'session-name="main" worktree-path="/repos/my-app/.worktrees/main" ' +
       'conversation-id="conv-1" conversation-name="Refactor parser" ' +
       'backend="claude" backend-ref="sess-abc" debug-log-path="" ' +

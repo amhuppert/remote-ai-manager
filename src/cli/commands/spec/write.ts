@@ -33,11 +33,12 @@ import {
   readJsonObjectFile,
   render,
   resolveConversationContext,
+  resolveProjectConversationContext,
   usageFailure,
   type CliEnv,
   type CliHost,
   type CliResult,
-  type ConversationContext,
+  type ProjectConversationContext,
   type GlobalFlags,
 } from "../../shared";
 
@@ -137,12 +138,15 @@ type CommandResult<T> =
   | { ok: true; value: T }
   | { ok: false; result: CliResult };
 
-function specBasePath(context: ConversationContext, slug: string): string {
+function specBasePath(
+  context: ProjectConversationContext,
+  slug: string,
+): string {
   return `/api/specs/${encodePathSegment(context.project)}/${encodePathSegment(slug)}`;
 }
 
 function actionPath(
-  context: ConversationContext,
+  context: ProjectConversationContext,
   slug: string,
   action: string,
 ): string {
@@ -150,7 +154,7 @@ function actionPath(
 }
 
 function mutationHeaders(
-  context: ConversationContext,
+  context: ProjectConversationContext,
   env: CliEnv,
 ): Record<string, string> {
   const backend = env["CC_AGENT_BACKEND"];
@@ -208,7 +212,7 @@ function invalidFileResult(
 
 async function requestTyped<T>(
   host: CliHost,
-  context: ConversationContext,
+  context: ProjectConversationContext,
   env: CliEnv,
   input: {
     method: "GET" | "POST";
@@ -254,7 +258,7 @@ async function requestTyped<T>(
 
 async function readDetail(
   host: CliHost,
-  context: ConversationContext,
+  context: ProjectConversationContext,
   env: CliEnv,
   slug: string,
   command: string,
@@ -385,7 +389,7 @@ export async function runSpecCreate(
   if (!parsedFile.success) {
     return invalidFileResult("create", filePath, "first element", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const response = await requestTyped(
     host,
@@ -448,7 +452,7 @@ export async function runSpecDraft(
   if (!parsedFile.success) {
     return invalidFileResult("draft", filePath, "draft element", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const detail = await readDetail(
     host,
@@ -501,7 +505,7 @@ export async function runSpecPropose(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "propose", json);
   if (!slug.ok) return slug.result;
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const detail = await readDetail(
     host,
@@ -557,7 +561,7 @@ export async function runSpecAdvance(
       json,
     );
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const detail = await readDetail(
     host,
@@ -613,7 +617,7 @@ export async function runSpecAnswer(
   if (answer === undefined) {
     return usageFailure("spec answer requires --answer <text>", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const status = await requestTyped(
     host,
@@ -672,7 +676,7 @@ async function resolveAttachmentElementId(
   command: "question" | "assume",
   rawElement: string | undefined,
   slug: string,
-  context: ConversationContext,
+  context: ProjectConversationContext,
   env: CliEnv,
   host: CliHost,
   json: boolean,
@@ -737,7 +741,7 @@ export async function runSpecQuestion(
   if (text === undefined) {
     return usageFailure("spec question requires --text <text>", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const elementId = await resolveAttachmentElementId(
     "question",
@@ -789,7 +793,7 @@ export async function runSpecAssume(
   if (text === undefined) {
     return usageFailure("spec assume requires --text <text>", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const elementId = await resolveAttachmentElementId(
     "assume",
@@ -840,7 +844,7 @@ export async function runSpecTaskComplete(
       json,
     );
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const task = await requestTyped(
     host,
@@ -911,7 +915,7 @@ export async function runSpecRequestApproval(
     );
   }
   const subject = values["subject"] ?? gate.data;
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const detail = await readDetail(
     host,
@@ -960,6 +964,14 @@ export async function runSpecStart(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "start", json);
   if (!slug.ok) return slug.result;
+  // `spec start` is the ONE session-only verb in the spec group: it pins the
+  // execution to a session, and `approveExecutionStart` refuses an execution
+  // whose session is null ("The execution is not pinned to a session"). A project
+  // conversation would otherwise persist an unapprovable execution. Resolving the
+  // session BEFORE the scope file means the refusal lands before the agent has
+  // done the work, not after.
+  const resolved = await resolveConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
   const filePath = values["file"];
   if (filePath === undefined) {
     return usageFailure("spec start requires --file <scope.json>", json);
@@ -970,8 +982,6 @@ export async function runSpecStart(
   if (!scope.success) {
     return invalidFileResult("start", filePath, "scope", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
-  if (!resolved.ok) return resolved.result;
   const detail = await readDetail(
     host,
     resolved.context,
@@ -993,7 +1003,7 @@ export async function runSpecStart(
       body: {
         revisionId: revisionId.value,
         scope: scope.data,
-        sessionName: env["CC_SESSION"] ?? null,
+        sessionName: resolved.context.session,
       },
       schema: startResponseSchema,
       command: "start",
@@ -1050,7 +1060,7 @@ export async function runSpecCapture(
   if (!parsedFile.success) {
     return invalidFileResult("capture", filePath, "discovered task", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const response = await requestTyped(
     host,
@@ -1111,7 +1121,7 @@ export async function runSpecRename(
     );
   }
   const name = values["name"];
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const response = await requestTyped(
     host,
@@ -1156,7 +1166,7 @@ export async function runSpecAbandon(
   if (reason === undefined) {
     return usageFailure("spec abandon requires --reason <reason>", json);
   }
-  const resolved = await resolveConversationContext(flags, env, host);
+  const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const executionId = values["execution"];
   const response = await requestTyped(

@@ -6,11 +6,12 @@ import { deriveSessionStatus } from "@/lib/sessions/derived";
 import { isSessionNotFoundError } from "@/lib/sessions/queries";
 import { useDebugModeToggleMutation } from "@/lib/debug-log/mutations";
 import { useCollaborationStartMutation } from "@/lib/workflows/mutations";
-import { usePendingPromptPersistence } from "@/features/session/hooks/use-pending-prompt-persistence";
+import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { useTddToggleMutation } from "@/lib/sessions/mutations";
 import { useSessionPageHandlers } from "@/features/session/hooks/use-session-page-handlers";
 import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecycle";
-import { canStopTurn } from "@/features/session/hooks/turn-activity";
+import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import { isWorkflowLaneRole } from "@/lib/conversations/schemas";
@@ -197,11 +198,16 @@ export default function ConversationWorkspace({
     lastUsedEffort: lastUserTurnAgentSettings.effort,
   });
 
+  // Stable identity required: the draft hook's flush and beacon effects key off
+  // the target, so a fresh object each render would re-register them per render.
+  const draftTarget = useMemo(
+    () => sessionConversationTarget(projectName, sessionName, conversationId),
+    [projectName, sessionName, conversationId],
+  );
+
   const { handlePromptTextChange, suppressPendingPromptAutosaveAfterSubmit } =
     usePendingPromptPersistence({
-      projectName,
-      sessionName,
-      conversationId,
+      target: draftTarget,
       activeConversation,
       promptText: local.promptText,
       setPromptText: local.setPromptText,

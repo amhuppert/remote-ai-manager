@@ -28,6 +28,12 @@ export interface BuildConversationInput {
   role?: ConversationRole;
   /** Fork sites carry over the source's resume handle. */
   backendRef?: AgentSessionRef | null;
+  /**
+   * Token of the create-and-send submission this conversation is being created
+   * for. Only the project create-and-send entry has one: every other site
+   * already hands the requesting client the conversation id.
+   */
+  creationRequestId?: string;
 }
 
 /**
@@ -79,6 +85,9 @@ export function buildConversation(
 
   if (input.scope === "project") {
     conversation.open = true;
+    if (input.creationRequestId !== undefined) {
+      conversation.creationRequestId = input.creationRequestId;
+    }
   }
 
   return conversation;

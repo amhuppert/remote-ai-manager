@@ -17,6 +17,7 @@ import { useProjectFilesQuery } from "@/lib/files/queries";
 import { filterAndScoreFiles } from "@/lib/files/file-autocomplete-filter";
 import { isMarkdownPath } from "@/lib/documents/path";
 import { useOpenDocument } from "@/stores/session-detail.store";
+import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
 
 export interface FileMentionPopupHandle {
   /** Forward a keydown event from the editor; returns true when consumed. */
@@ -33,7 +34,12 @@ export interface FileMentionPopupProps {
   /** Text typed after `@` (without the leading `@`). */
   query: string;
   projectName: string;
-  sessionName?: string;
+  /**
+   * Explicit scope (D1). A discriminated union rather than an optional
+   * `sessionName`, because "undefined means project" silently reads a
+   * sentinel-valued session name as a real session (R1.3).
+   */
+  scopeRef: ConversationScopeRef;
   /** Insert the chosen file into the editor at the trigger range. */
   onSelect: (selection: FileMentionSelection) => void;
   /** Dismiss the popup (Escape). Host should clear its suggestion state. */
@@ -52,15 +58,16 @@ export const PromptEditorFileMentionPopup = forwardRef<
   FileMentionPopupHandle,
   FileMentionPopupProps
 >(function PromptEditorFileMentionPopup(
-  { query, projectName, sessionName, onSelect, onClose },
+  { query, projectName, scopeRef, onSelect, onClose },
   ref,
 ) {
   const openDocument = useOpenDocument();
-  const projectLevel = sessionName === undefined;
-  // Project-level conversations (the `__project__` sentinel) scan the project
-  // root; sessions scan their own worktree.
+  const projectLevel = scopeRef.scope === "project";
+  // Project conversations scan the project root; sessions scan their worktree.
   const filesQuery = useProjectFilesQuery(
-    projectLevel ? { projectName } : { projectName, sessionName },
+    scopeRef.scope === "project"
+      ? { projectName }
+      : { projectName, sessionName: scopeRef.sessionName },
   );
 
   const { display, totalCount, truncated } = useMemo(() => {
@@ -114,17 +121,20 @@ export const PromptEditorFileMentionPopup = forwardRef<
   const openAt = useCallback(
     (index: number) => {
       const target = displayRef.current[index];
-      if (!target || !isMarkdownPath(target.item.path) || projectLevel) return;
+      if (!target || !isMarkdownPath(target.item.path)) return;
+      // The document viewer is a session capability; project conversations have
+      // no session to open a document against.
+      if (scopeRef.scope !== "session") return;
       const { basename } = deriveBasenameAndExt(target.item.path);
       openDocument({
         projectName,
-        sessionName,
+        sessionName: scopeRef.sessionName,
         docPath: target.item.path,
         title: basename,
       });
       onClose?.();
     },
-    [onClose, openDocument, projectLevel, projectName, sessionName],
+    [onClose, openDocument, projectName, scopeRef],
   );
 
   const handleKeyDown = useCallback(

@@ -13,17 +13,23 @@ import {
  * instead of hand-parsing frames.
  *
  * Vocabulary (server emitters: prompt route handlers + conversation-manager
- * `streamEmit`): `content` (one streamed content block), `ask-question`
- * (AskUserQuestion payload), `error` (turn failure envelope), `aborted`
- * (turn cancelled), `done` (terminal — always emitted last). Event names
- * outside the vocabulary (e.g. `collab-started`) are ignored.
+ * `streamEmit`): `conversation` (the conversation this turn runs in, emitted
+ * only by an entry that created it), `content` (one streamed content block),
+ * `ask-question` (AskUserQuestion payload), `error` (turn failure envelope),
+ * `aborted` (turn cancelled), `done` (terminal — always emitted last). Event
+ * names outside the vocabulary (e.g. `collab-started`) are ignored.
  */
 export type PromptStreamEvent =
+  | { type: "conversation"; conversationId: string }
   | { type: "content"; block: MessageContentBlock }
   | { type: "ask-question"; questionId: string; questions: AskQuestionItem[] }
   | { type: "error"; message?: string; code?: string }
   | { type: "aborted" }
   | { type: "done" };
+
+const conversationPayloadSchema = z.object({
+  conversationId: z.string(),
+});
 
 const askQuestionPayloadSchema = z.object({
   questionId: z.string(),
@@ -45,8 +51,9 @@ function parseJson(raw: string): unknown {
 
 /**
  * Decode one SSE frame into a stream event. Returns `null` for frames outside
- * the vocabulary and for malformed `content`/`ask-question` payloads (the
- * stream stays alive; a dropped block is reconciled by the settle refetch). A
+ * the vocabulary and for malformed `content`/`ask-question`/`conversation`
+ * payloads (the stream stays alive; a dropped block is reconciled by the settle
+ * refetch, and no conversation id at all is safer than an unusable one). A
  * malformed `error` payload still yields an `error` event so failures are
  * never swallowed — consumers supply their own fallback message.
  */
@@ -62,6 +69,12 @@ function decodeFrame(frame: string): PromptStreamEvent | null {
   }
 
   switch (eventName) {
+    case "conversation": {
+      const payload = conversationPayloadSchema.safeParse(parseJson(dataRaw));
+      return payload.success
+        ? { type: "conversation", conversationId: payload.data.conversationId }
+        : null;
+    }
     case "content": {
       const block = messageContentBlockSchema.safeParse(parseJson(dataRaw));
       return block.success ? { type: "content", block: block.data } : null;

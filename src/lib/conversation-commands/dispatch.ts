@@ -33,7 +33,7 @@ export async function dispatchConversationCommand(
     undefined,
     {
       projectName: input.projectName,
-      sessionName: input.sessionName ?? input.noticeSessionName ?? "",
+      storeSessionName: input.sessionName ?? input.noticeSessionName ?? "",
     },
   );
   const { conversationCommandService } = await import("./service");

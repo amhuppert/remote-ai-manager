@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import {
   deriveSessionLastActivityFromConvs,
   deriveSessionPromptCountFromConvs,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/sessions/derived";
 import { sessionListItemSchema } from "@/lib/sessions/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
   ConversationIdentity,
@@ -43,23 +44,33 @@ export interface SessionConversationListItem {
 
 interface ReadTimingPayload {
   accessor: string;
-  durationMs: number;
   projectPath?: string;
-  sessionName?: string;
+  /**
+   * The session-keyed storage name a read was addressed with — the project
+   * sentinel when `getConversation` serves a project conversation. Named for
+   * what it is, so no call site can hand this accessor a value that gets logged
+   * as a public `sessionName`: the emitted event carries the discriminated
+   * scope instead (R1.3).
+   */
+  storeSessionName?: string;
   conversationId?: string;
 }
 
-function emitReadTiming(
-  start: number,
-  payload: Omit<ReadTimingPayload, "durationMs">,
-): void {
-  const durationMs = +(performance.now() - start).toFixed(3);
-  if (durationMs < STATE_READ_TIMING_LOG_THRESHOLD_MS) return;
-  logger.info("state.read.timing", { ...payload, durationMs });
-}
-
-export function createAccessors(core: StateStoreCore) {
+export function createAccessors(core: StateStoreCore, log: Logger = logger) {
   const { repos } = core;
+
+  function emitReadTiming(start: number, payload: ReadTimingPayload): void {
+    const durationMs = +(performance.now() - start).toFixed(3);
+    if (durationMs < STATE_READ_TIMING_LOG_THRESHOLD_MS) return;
+    const { storeSessionName, ...rest } = payload;
+    log.info("state.read.timing", {
+      ...rest,
+      ...(storeSessionName !== undefined
+        ? scopeRefFromStoreSessionName(storeSessionName)
+        : {}),
+      durationMs,
+    });
+  }
 
   async function getSession(
     projectPath: string,
@@ -82,7 +93,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getSession",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -207,7 +218,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getConversation",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
         conversationId,
       });
     }
@@ -250,6 +261,26 @@ export function createAccessors(core: StateStoreCore) {
     } finally {
       emitReadTiming(start, {
         accessor: "getConversationById",
+        conversationId,
+      });
+    }
+  }
+
+  /**
+   * Resolve a project conversation by id alone, reporting its owning project.
+   * The id-only lookup path serves both scopes, so a project conversation must
+   * be findable without the caller already knowing its project.
+   */
+  async function getProjectConversationById(conversationId: string): Promise<{
+    projectPath: string;
+    conversation: ConversationState;
+  } | null> {
+    const start = performance.now();
+    try {
+      return repos.projectConversations.findByIdWithProject(conversationId);
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getProjectConversationById",
         conversationId,
       });
     }
@@ -397,7 +428,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getSessionConversations",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -413,7 +444,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getReferenceDocuments",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -432,7 +463,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getSessionMarkdownDocuments",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -465,7 +496,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getDocumentComments",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -481,7 +512,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getSessionDocumentComments",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -502,7 +533,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getDocumentCommentInScope",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -620,7 +651,7 @@ export function createAccessors(core: StateStoreCore) {
       emitReadTiming(start, {
         accessor: "getActiveGraphWorkflowExecution",
         projectPath,
-        sessionName,
+        storeSessionName: sessionName,
       });
     }
   }
@@ -673,6 +704,7 @@ export function createAccessors(core: StateStoreCore) {
     getConversationById,
     getSessionConversations,
     getProjectConversation,
+    getProjectConversationById,
     getProjectConversations,
     listAllProjectConversations,
     listConversationIdentities,

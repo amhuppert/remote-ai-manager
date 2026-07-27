@@ -354,6 +354,7 @@ describe("projectLifecycle — wire-only events return null (no manufactured fal
     const wireOnly: SSEEvent[] = [
       {
         type: "message-queue-updated",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-1",

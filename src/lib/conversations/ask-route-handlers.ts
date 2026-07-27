@@ -14,10 +14,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import type { ApiError } from "@/lib/api/errors";
-import { createLogger, withTracing } from "@/lib/logging";
+import { createLogger, withTracing, type Logger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession,
+  getProjectConversation,
   getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
@@ -26,6 +27,11 @@ import {
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 import { resolveSessionConversationRoute } from "./route-resolution";
+import { resolveProjectConversationRoute } from "@/lib/project-conversations/route-resolution";
+import {
+  storeSessionNameFromScopeRef,
+  type ConversationScopeRef,
+} from "./conversation-target";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
@@ -50,7 +56,24 @@ export type AskQuestionsBody = z.infer<typeof askQuestionsBodySchema>;
 const AUTONOMOUS_DENIAL =
   "autonomous conversation — proceed with best judgment";
 
-export interface AskRouteDeps {
+/** What batch registration itself needs — no session lookup, no lane gate. */
+export interface AskRegistrationDeps {
+  sendConversationEvent(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    event: ConversationEvent,
+  ): boolean;
+  generateQuestionBatchId(): string;
+  /**
+   * Injected so a test can read the diagnostics this path actually emits. The
+   * sentinel reaching a log field is the R1.3 defect the module-level logger
+   * hid — it is only observable if the log sink is a dependency.
+   */
+  log: Logger;
+}
+
+export interface AskRouteDeps extends AskRegistrationDeps {
   auth: AgentAuth;
   resolveProjectPath(name: string): Promise<string | null>;
   getSession(
@@ -72,6 +95,53 @@ export interface AskRouteDeps {
 }
 
 const LANE_ASK_ROLES = new Set<ConversationRole>(["iteration", "validator"]);
+
+/**
+ * The scope-invariant half of ask: the autonomous, turn, single-batch, and
+ * payload gates plus batch registration. Both the session and the project
+ * adapter call THIS — the adapters differ only in how they resolve the
+ * conversation (and in the session-only graph-lane gate, which stays in the
+ * session adapter by spec non-goal).
+ *
+ * Scope travels as a `ConversationScopeRef`, never as a resolved session name.
+ * The sentinel is materialized only at the storage call site
+ * (`storeSessionNameFromScopeRef`), so no log line in this file can report it as
+ * a session identity (R1.3).
+ */
+async function registerAskBatch(
+  deps: AskRegistrationDeps,
+  request: Request,
+  resolved: {
+    projectPath: string;
+    scopeRef: ConversationScopeRef;
+    conversationId: string;
+    conversation: ConversationState;
+  },
+): Promise<Response> {
+  const { projectPath, scopeRef, conversationId, conversation } = resolved;
+
+  if (
+    conversation.role !== null ||
+    conversation.activeTurnSource === "workflow"
+  ) {
+    deps.log.info("ask.denied_autonomous", {
+      conversationId,
+      ...scopeRef,
+      role: conversation.role,
+      activeTurnSource: conversation.activeTurnSource,
+    });
+    return NextResponse.json({ error: AUTONOMOUS_DENIAL } satisfies ApiError, {
+      status: 403,
+    });
+  }
+
+  return registerAskBatchAfterRoleGate(deps, request, {
+    projectPath,
+    scopeRef,
+    conversationId,
+    conversation,
+  });
+}
 
 export function createAskQuestionHandlers(deps: AskRouteDeps) {
   async function post(
@@ -103,7 +173,7 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
         conversationId,
       );
       if (!permission.allowed) {
-        log.info("ask.denied_lane_gate", {
+        deps.log.info("ask.denied_lane_gate", {
           conversationId,
           sessionName,
           role: conversation.role,
@@ -118,7 +188,7 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
       conversation.role !== null ||
       conversation.activeTurnSource === "workflow"
     ) {
-      log.info("ask.denied_autonomous", {
+      deps.log.info("ask.denied_autonomous", {
         conversationId,
         sessionName,
         role: conversation.role,
@@ -132,6 +202,33 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
       );
     }
 
+    // A session route always has a real session name, so its scope ref is the
+    // session variant by construction — the sentinel cannot arrive here (the
+    // public-param refusal rejects it upstream).
+    return registerAskBatchAfterRoleGate(deps, request, {
+      projectPath,
+      scopeRef: { scope: "session", sessionName },
+      conversationId,
+      conversation,
+    });
+  }
+
+  return { POST: post };
+}
+
+/** Turn / single-batch / payload gates and registration. Scope-invariant. */
+async function registerAskBatchAfterRoleGate(
+  deps: AskRegistrationDeps,
+  request: Request,
+  resolved: {
+    projectPath: string;
+    scopeRef: ConversationScopeRef;
+    conversationId: string;
+    conversation: ConversationState;
+  },
+): Promise<Response> {
+  {
+    const { projectPath, scopeRef, conversationId, conversation } = resolved;
     // Turn gate: a stray ask from outside a turn has no one to end a turn.
     // waiting_for_input passes through so the single-batch gate below can name
     // the pending batch (a mid-turn re-ask must get that 409, not this one).
@@ -139,9 +236,9 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
       conversation.status !== "running" &&
       conversation.status !== "waiting_for_input"
     ) {
-      log.info("ask.no_running_turn", {
+      deps.log.info("ask.no_running_turn", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         status: conversation.status,
       });
       return NextResponse.json(
@@ -154,9 +251,9 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
 
     // Single-batch gate: one batch per conversation.
     if (conversation.pendingQuestionId != null) {
-      log.info("ask.batch_already_pending", {
+      deps.log.info("ask.batch_already_pending", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         pendingQuestionId: conversation.pendingQuestionId,
       });
       return NextResponse.json(
@@ -200,16 +297,19 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
 
     const questionBatchId = deps.generateQuestionBatchId();
 
+    // The one place the sentinel is materialized: the session-keyed storage API
+    // (A5). It is passed straight into the call and never bound to a name that a
+    // later log line could pick up.
     const accepted = deps.sendConversationEvent(
       projectPath,
-      sessionName,
+      storeSessionNameFromScopeRef(scopeRef),
       conversationId,
       { type: "ASK_QUESTION", questionId: questionBatchId, questions },
     );
     if (!accepted) {
-      log.warn("ask.event_rejected", {
+      deps.log.warn("ask.event_rejected", {
         conversationId,
-        sessionName,
+        ...scopeRef,
         questionBatchId,
       });
       return NextResponse.json(
@@ -220,13 +320,49 @@ export function createAskQuestionHandlers(deps: AskRouteDeps) {
       );
     }
 
-    log.info("ask.registered", {
+    deps.log.info("ask.registered", {
       conversationId,
-      sessionName,
+      ...scopeRef,
       questionBatchId,
       questionCount: questions.length,
     });
     return NextResponse.json({ ok: true, questionBatchId });
+  }
+}
+
+export interface ProjectAskRouteDeps extends Omit<
+  AskRouteDeps,
+  "getSession" | "resolveLaneAskPermission"
+> {
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+}
+
+/**
+ * Project-scoped ask (R2.4/D1). Resolves the project conversation directly —
+ * no session record is required — and reaches the SAME registration core the
+ * session adapter uses. The graph-lane permission branch is deliberately absent:
+ * graph workflow execution at project scope is a spec non-goal.
+ */
+export function createProjectAskQuestionHandlers(deps: ProjectAskRouteDeps) {
+  async function post(
+    request: Request,
+    context: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+
+    return registerAskBatch(deps, request, {
+      projectPath: resolved.value.projectPath,
+      scopeRef: { scope: "project" },
+      conversationId: resolved.value.conversationId,
+      conversation: resolved.value.conversation,
+    });
   }
 
   return { POST: post };
@@ -262,7 +398,22 @@ const defaultHandlers = createAskQuestionHandlers({
   sendConversationEvent,
   resolveLaneAskPermission: userInputGateService.resolveLaneAskPermission,
   generateQuestionBatchId: () => `q_${randomUUID()}`,
+  log,
 });
 
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/ask */
 export const POST = withTracing(defaultHandlers.POST);
+
+const defaultProjectHandlers = createProjectAskQuestionHandlers({
+  auth: createAgentAuth(),
+  resolveProjectPath,
+  getProjectConversation,
+  sendConversationEvent,
+  generateQuestionBatchId: () => `q_${randomUUID()}`,
+  log,
+});
+
+/** POST /api/projects/[name]/conversations/[conversationId]/ask */
+export const projectConversationAskPOST = withTracing(
+  defaultProjectHandlers.POST,
+);

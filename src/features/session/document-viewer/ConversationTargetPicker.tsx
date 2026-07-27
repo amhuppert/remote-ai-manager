@@ -11,6 +11,7 @@ import {
   ConversationAutocompleteList,
   type ConversationAutocompleteListItem,
 } from "@/components/ConversationAutocompleteList";
+import type { SessionConversationListItem } from "@/lib/conversations/schemas";
 import { filterAndScoreConversations } from "@/lib/conversations/conversation-autocomplete-filter";
 import { resolveDisplayLabel } from "@/lib/conversations/display-label";
 import { useAllConversationsQuery } from "@/lib/conversations/queries";
@@ -60,13 +61,24 @@ export function createConversationTargetPicker(deps: ConversationTargetDeps) {
       [queryResult.data],
     );
 
+    // Document feedback targets a session conversation (its target is keyed by
+    // project/session/doc path), so project conversations are never offered.
+    const targetableItems = useMemo(
+      () =>
+        allItems.filter(
+          (item): item is SessionConversationListItem =>
+            item.scope === "session",
+        ),
+      [allItems],
+    );
+
     const filterResult = useMemo(
       () =>
-        filterAndScoreConversations(query, allItems, {
+        filterAndScoreConversations(query, targetableItems, {
           currentProjectName: docProjectName ?? null,
           currentConversationId: null,
         }),
-      [query, allItems, docProjectName],
+      [query, targetableItems, docProjectName],
     );
 
     const listItems = useMemo<ConversationAutocompleteListItem[]>(

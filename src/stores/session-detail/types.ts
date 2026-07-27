@@ -79,6 +79,15 @@ export interface ConversationInFlight {
   promptCancelled: boolean;
   optimisticMessages: TranscriptMessage[];
   optimisticQueue: OptimisticQueueEntry[];
+  /**
+   * Durable queue ids the server has already reported terminal while an enqueue
+   * of this client's was still awaiting its id. In-turn delivery marks a row
+   * delivered before the enqueue response is written, so the terminal event
+   * routinely arrives first; remembering the id is what lets the entry that
+   * adopts it settle immediately instead of standing as pending forever beside
+   * the message it already became.
+   */
+  settledQueueIds: string[];
   messageCountBeforeSubmit: number;
 }
 
@@ -137,12 +146,36 @@ export interface InFlightSlice {
     queueIds: readonly string[],
   ): void;
   cancelOptimisticQueueEntry(conversationId: string, idOrTempId: string): void;
+  /**
+   * Retire this client's pending row for a durable queue id the server has
+   * reported terminal — delivered, cancelled, or failed. A delivered message
+   * renders as its transcript row and a cancelled or failed one renders as
+   * nothing, so in either case the optimistic stand-in has nothing left to show.
+   */
+  settleOptimisticQueueEntry(conversationId: string, queueId: string): void;
   rollbackOptimisticQueueEntry(conversationId: string, tempId: string): void;
   dismissError: (conversationId: string) => void;
   markCancelled: (conversationId: string) => void;
   dismissCancelled: (conversationId: string) => void;
   reconcileMessages: (conversationId: string, serverCount: number) => void;
   clearConversationMessages: (conversationId: string) => void;
+  /**
+   * Move a turn's in-flight state to another key, leaving nothing under the old
+   * one. A create-and-send turn starts under a provisional key and adopts into
+   * the conversation the server names for it, so the optimistic prompt and the
+   * streamed reply already produced surface on that conversation's transcript
+   * and no state stays reachable under the key it came from.
+   */
+  reassignInFlight: (
+    fromConversationId: string,
+    toConversationId: string,
+  ) => void;
+  /**
+   * Drop a key's in-flight state entirely. Distinct from
+   * `clearConversationMessages`, which empties a surviving entry: this removes
+   * the entry, so a released key is not reachable at all.
+   */
+  discardInFlight: (conversationId: string) => void;
 }
 
 export interface SidebarSlice {
@@ -310,6 +343,7 @@ export const EMPTY_IN_FLIGHT: ConversationInFlight = Object.freeze({
   promptCancelled: false,
   optimisticMessages: [],
   optimisticQueue: [],
+  settledQueueIds: [],
   messageCountBeforeSubmit: 0,
 });
 
@@ -338,6 +372,7 @@ export function ensureInFlight(
     promptCancelled: false,
     optimisticMessages: [],
     optimisticQueue: [],
+    settledQueueIds: [],
     messageCountBeforeSubmit: 0,
   };
   state.inFlight[conversationId] = created;

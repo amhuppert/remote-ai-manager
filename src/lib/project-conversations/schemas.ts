@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { runPromptRequestSchema } from "@/lib/prompt/schemas";
 
 export const createProjectConversationRequestSchema = z.object({
   // Defaults via config when omitted.
@@ -8,6 +9,21 @@ export const createProjectConversationRequestSchema = z.object({
 });
 export type CreateProjectConversationRequest = z.infer<
   typeof createProjectConversationRequestSchema
+>;
+
+/**
+ * Create-and-send body: a prompt request plus the token identifying the
+ * submission. The conversation created for it records the token, which is how
+ * the posting client recognises its own conversation in the project conversation
+ * list — the list reports which conversations exist, never which submission
+ * created one. Optional: a client with no unnamed turn to correlate (a script,
+ * `cctl`) simply omits it.
+ */
+export const projectFirstPromptRequestSchema = runPromptRequestSchema.and(
+  z.object({ creationRequestId: z.string().trim().min(1).optional() }),
+);
+export type ProjectFirstPromptRequest = z.infer<
+  typeof projectFirstPromptRequestSchema
 >;
 
 export const projectConversationOpenRequestSchema = z.object({

@@ -16,7 +16,7 @@ import type {
 import { getConfigDirPath } from "@/lib/config/loader";
 import { projectStoredToolResultBlocks } from "@/lib/agent-backends/transcript-projections";
 import { resolveImageRefs } from "@/lib/images/transcript-images";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
 const transcriptLogger = createLogger("transcript");
@@ -114,14 +114,21 @@ export async function getTranscriptPath(
 // ============================================================
 
 /**
- * Project + session identity passed to write APIs so the transcript module
- * can publish `message-appended` SSE events scoped to the right conversation.
- * Optional: omitting it suppresses the broadcast (used by tests / utility
- * paths like `copyTranscriptUpTo` that fabricate transcripts).
+ * Project + conversation-store identity passed to write APIs so the transcript
+ * module can publish `message-appended` SSE events scoped to the right
+ * conversation. Optional: omitting it suppresses the broadcast (used by tests /
+ * utility paths like `copyTranscriptUpTo` that fabricate transcripts).
+ *
+ * `storeSessionName` is the SESSION-KEYED STORE name and is the project sentinel
+ * for a project conversation, so it may only be handed to internal adapters
+ * (`indexMarkdownDocuments`) or run through `conversationEventScopeFields` — it
+ * is deliberately NOT named `sessionName`, because every consumer here spreads
+ * meta into a payload or a log line and a `sessionName` key is a public identity
+ * surface the sentinel must never occupy (R1.3).
  */
 export interface TranscriptBroadcastMeta {
   projectName: string;
-  sessionName: string;
+  storeSessionName: string;
 }
 
 interface TranscriptDeps {
@@ -132,11 +139,18 @@ interface TranscriptDeps {
     seenAt: string;
     content: MessageContentBlock[];
   }): Promise<void>;
+  /**
+   * Sink for the scope-carrying diagnostics below. Injected for the same reason
+   * `broadcast` is: what these emit is asserted (R1.3), and the module-level
+   * file logger has no seam a test can read.
+   */
+  log: Logger;
 }
 
 const productionDeps: TranscriptDeps = {
   broadcast: publishEvent,
   indexMarkdownDocuments: defaultIndexMarkdownDocuments,
+  log: transcriptLogger,
 };
 
 let activeDeps: TranscriptDeps = productionDeps;
@@ -237,17 +251,21 @@ export async function appendTranscriptEntry(
 
   if (meta && isVisibleEntry(entry)) {
     try {
+      // Internal adapter (A5): the document index is session-keyed storage and
+      // legitimately receives the sentinel.
       await activeDeps.indexMarkdownDocuments({
         projectName: meta.projectName,
-        sessionName: meta.sessionName,
+        sessionName: meta.storeSessionName,
         seenAt: entry.timestamp,
         content: entry.content,
       });
     } catch (err) {
-      transcriptLogger.warn("documents-index.index_failed", {
-        projectName: meta.projectName,
-        sessionName: meta.sessionName,
-        conversationId,
+      activeDeps.log.warn("documents-index.index_failed", {
+        ...conversationEventScopeFields(
+          meta.projectName,
+          meta.storeSessionName,
+          conversationId,
+        ),
         error: getErrorMessage(err),
       });
     }
@@ -261,7 +279,7 @@ export async function appendTranscriptEntry(
       type: "message-appended",
       ...conversationEventScopeFields(
         meta.projectName,
-        meta.sessionName,
+        meta.storeSessionName,
         conversationId,
       ),
       seq,
@@ -322,7 +340,8 @@ export interface AppendNoticeInput {
   /** Notice body shown in the conversation as a system-style row */
   text: string;
   projectName: string;
-  sessionName: string;
+  /** Session-keyed store name — the project sentinel for a PLC (see `TranscriptBroadcastMeta`). */
+  storeSessionName: string;
   /** Optional config directory for transcript path resolution */
   configDir?: string;
 }
@@ -334,7 +353,8 @@ export interface AppendNoticeInput {
  * not user or agent turns.
  */
 export async function appendNotice(input: AppendNoticeInput): Promise<void> {
-  const { conversationId, text, projectName, sessionName, configDir } = input;
+  const { conversationId, text, projectName, storeSessionName, configDir } =
+    input;
   await appendTranscriptEntry(
     conversationId,
     {
@@ -344,12 +364,14 @@ export async function appendNotice(input: AppendNoticeInput): Promise<void> {
       content: [{ type: "text", text }],
     },
     configDir,
-    { projectName, sessionName },
+    { projectName, storeSessionName },
   );
-  transcriptLogger.info("notice_appended", {
-    conversationId,
-    projectName,
-    sessionName,
+  activeDeps.log.info("notice_appended", {
+    ...conversationEventScopeFields(
+      projectName,
+      storeSessionName,
+      conversationId,
+    ),
     textLength: text.length,
   });
 }

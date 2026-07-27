@@ -6,6 +6,7 @@ import {
   BackendMismatchError,
   type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
+import { hasCollabPrefix } from "@/lib/conversation-commands/parse";
 import {
   getProjectConversation,
   mutateProjectConversation,
@@ -31,7 +32,7 @@ export interface ExecuteProjectPromptStreamDeps {
   getProjectDisplayName(projectPath: string): string;
   createProjectConversation(
     projectPath: string,
-    opts?: { agentBackend?: AgentBackendId },
+    opts?: { agentBackend?: AgentBackendId; creationRequestId?: string },
   ): Promise<ConversationState>;
   getProjectConversation(
     projectPath: string,
@@ -53,6 +54,28 @@ export interface ExecuteProjectPromptStreamDeps {
   ): void;
 }
 
+/**
+ * Manual collaboration is session-scoped by decision, not by accident: a collab
+ * workflow needs a session branch and worktree to negotiate and land changes in,
+ * and a project conversation executes directly in the shared project root.
+ *
+ * The refusal has to be the project boundary's own, and explicit. Delegating a
+ * `/collab` prompt to the shared driver instead reached the collaboration
+ * manager with this entry's synthetic sentinel session, whose session lookup
+ * failed with `Session "__project__" not found` — publishing the internal
+ * sentinel in an SSE error and disguising a scope decision as a missing record.
+ */
+export class ProjectCollaborationUnsupportedError extends Error {
+  readonly statusCode = 400;
+  readonly code = "PROJECT_COLLABORATION_UNSUPPORTED";
+  constructor() {
+    super(
+      "/collab is not available in a project conversation — manual collaboration needs a session branch and worktree. Start a session for this project and run /collab there.",
+    );
+    this.name = "ProjectCollaborationUnsupportedError";
+  }
+}
+
 export interface ExecuteProjectPromptStreamInput {
   projectPath: string;
   /** Omitted ⇒ create the first project conversation and submit its first turn. */
@@ -63,6 +86,14 @@ export interface ExecuteProjectPromptStreamInput {
   images?: ImagePayload[];
   backend?: AgentBackendId;
   effort?: string;
+  /**
+   * Opaque token the posting client generated for this submission. Recorded on
+   * the conversation this entry creates, so the client can identify its own
+   * conversation from the project conversation list — which reports what exists,
+   * not which submission caused it. Ignored when the turn targets an existing
+   * conversation: the client already named that one.
+   */
+  creationRequestId?: string;
 }
 
 function defaultDeps(): ExecuteProjectPromptStreamDeps {
@@ -111,6 +142,17 @@ export function createProjectPromptExecutor(
     input: ExecuteProjectPromptStreamInput,
   ): Promise<PromptStreamResult> {
     const { projectPath } = input;
+    // Refuse before any get-or-create: a refused command must not leave a new
+    // project conversation behind.
+    if (hasCollabPrefix(input.promptText)) {
+      logger.info("project-conversation.collab_refused", {
+        projectPath,
+        ...(input.conversationId !== undefined
+          ? { conversationId: input.conversationId }
+          : {}),
+      });
+      throw new ProjectCollaborationUnsupportedError();
+    }
     const executionTarget = await deps.resolveExecutionTarget(projectPath);
     // Read config so the synthetic session inherits global defaults; values not
     // overridden fall back to the session-schema defaults.
@@ -129,14 +171,23 @@ export function createProjectPromptExecutor(
       }
       conversation = existing;
     } else {
-      conversation = await deps.createProjectConversation(
-        projectPath,
-        input.backend ? { agentBackend: input.backend } : undefined,
-      );
+      conversation = await deps.createProjectConversation(projectPath, {
+        ...(input.backend ? { agentBackend: input.backend } : {}),
+        ...(input.creationRequestId !== undefined
+          ? { creationRequestId: input.creationRequestId }
+          : {}),
+      });
       logger.info("project-conversation.first_turn_created", {
         projectPath,
         conversationId: conversation.id,
       });
+      // The client that posted this turn had no conversation id to attribute
+      // its turn state to, so the entry that created one names it on that
+      // client's own stream, ahead of any turn output. Without this the client
+      // could only guess which conversation its turn belongs to from whichever
+      // one surfaces first in the list — a guess that misattributes the turn
+      // whenever two are created close together.
+      input.emit("conversation", { conversationId: conversation.id });
       // First-prompt creation emits the same real-time creation event the
       // explicit create route emits, so downstream surfaces learn of the new
       // project conversation immediately.

@@ -49,6 +49,7 @@ import { buildClaudePromptBlocks } from "./build-prompt-blocks";
 import { createCanUseTool } from "./native-tooling";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
+import { conversationTargetLogFields } from "@/lib/conversations/conversation-target";
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { getConfigDirPath } from "@/lib/config/loader";
@@ -702,10 +703,8 @@ const claudeConversationBackendFactory = {
       input.ccScopeConversationId ?? input.conversationId;
 
     logger.info("claude-factory.create_runtime", {
-      conversationId: input.conversationId,
+      ...conversationTargetLogFields(input.conversationTarget),
       ccScopeConversationId,
-      projectName: input.projectName,
-      sessionName: input.sessionName,
       modelId: input.modelId,
     });
 
@@ -840,9 +839,15 @@ const claudeConversationBackendFactory = {
         baseEnv: buildChildEnv(),
         serverUrl: getServerBaseUrl(),
         apiToken: getCachedInstanceToken(),
-        project: input.projectName,
-        session: input.sessionName,
-        conversationId: ccScopeConversationId,
+        // Scope and session identity come from the DECLARED target, so a project
+        // conversation still exports a neutralized CC_SESSION. Only the
+        // conversation id is redirected: a collaboration lane's own
+        // conversationId is a synthetic handle CC state cannot resolve, so cctl
+        // inside the agent is pointed at the originating conversation instead.
+        target: {
+          ...input.conversationTarget,
+          conversationId: ccScopeConversationId,
+        },
         configDir: getConfigDirPath(),
         ...(input.workflowExecutionId !== undefined
           ? { workflowExecutionId: input.workflowExecutionId }

@@ -26,6 +26,7 @@ import type {
   AgentTaskRunner,
 } from "@/lib/agent-backends/task";
 import { createTicketProjectOperationGate } from "../tickets/project-operation-gate";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createSessionLifecycleGate } from "./lifecycle-gate";
 import {
   validateSessionName,
@@ -418,8 +419,13 @@ describe("validateSessionName", () => {
     );
   });
 
-  it("rejects the reserved project-conversation sentinel", () => {
-    expect(validateSessionName("__project__")).toMatch(/reserved/);
+  it("rejects the reserved project-conversation sentinel without echoing it", () => {
+    const error = validateSessionName(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(error).toMatch(/reserved/);
+    // This message is returned verbatim in the session-creation route's public
+    // JSON body, so it is a public API payload (R1.3) — it must not carry the
+    // internal sentinel.
+    expect(error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
     // Other underscore names remain valid.
     expect(validateSessionName("my_feature")).toBeNull();
   });

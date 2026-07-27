@@ -6,6 +6,7 @@ import {
   neutralizeAmbientCcEnv,
   type SessionEnv,
 } from "@/lib/agent-gateway/session-env";
+import { targetFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
 import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
 import { createLogger } from "@/lib/logging";
@@ -398,9 +399,15 @@ export class CodexTaskRunner implements AgentTaskRunner {
         baseEnv: neutralizedEnv,
         serverUrl: this.deps.getServerUrl(),
         apiToken: this.deps.getApiToken(),
-        project: scope.data.project,
-        session: scope.data.session,
-        conversationId: scope.data.conversationId,
+        // The scope names a session-keyed identity, so it crosses into the
+        // public target vocabulary through the one sanctioned adapter: a task
+        // lane spawned from a project conversation carries the sentinel here,
+        // and the target union is what keeps it out of CC_SESSION.
+        target: targetFromStoreSessionName(
+          scope.data.project,
+          scope.data.session,
+          scope.data.conversationId,
+        ),
         configDir: this.deps.getConfigDir(),
       });
     }

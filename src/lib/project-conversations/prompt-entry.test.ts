@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createProjectPromptExecutor,
+  ProjectCollaborationUnsupportedError,
   type ExecuteProjectPromptStreamDeps,
 } from "./prompt-entry";
 import {
@@ -48,6 +49,9 @@ function makeConv(
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    ...(overrides.creationRequestId !== undefined
+      ? { creationRequestId: overrides.creationRequestId }
+      : {}),
   };
 }
 
@@ -75,7 +79,11 @@ function harness(opts?: {
   for (const c of opts?.seed ?? []) store.set(c.id, c);
   const calls: ExecCall[] = [];
   const adopted: Array<{ id: string; backend: string }> = [];
-  const createdBroadcasts: Array<{ projectPath: string; id: string }> = [];
+  const createdBroadcasts: Array<{
+    projectPath: string;
+    id: string;
+    creationRequestId: string | undefined;
+  }> = [];
   let createdCount = 0;
 
   const deps: ExecuteProjectPromptStreamDeps = {
@@ -119,6 +127,9 @@ function harness(opts?: {
       const conv = makeConv({
         id: `created-${createdCount}`,
         agentBackend: o?.agentBackend ?? "claude",
+        ...(o?.creationRequestId !== undefined
+          ? { creationRequestId: o.creationRequestId }
+          : {}),
       });
       store.set(conv.id, conv);
       return conv;
@@ -130,7 +141,11 @@ function harness(opts?: {
       if (c) c.agentBackend = backend;
     },
     broadcastConversationCreated: (projectPath, conversation) => {
-      createdBroadcasts.push({ projectPath, id: conversation.id });
+      createdBroadcasts.push({
+        projectPath,
+        id: conversation.id,
+        creationRequestId: conversation.creationRequestId,
+      });
     },
     ...opts?.overrides,
   };
@@ -168,8 +183,86 @@ describe("executeProjectPromptStream", () => {
       emit: () => {},
     });
     expect(h.createdBroadcasts).toEqual([
-      { projectPath: "/repo", id: "created-1" },
+      { projectPath: "/repo", id: "created-1", creationRequestId: undefined },
     ]);
+  });
+
+  it("names the created conversation on the turn's own stream, before the turn runs", async () => {
+    const emitted: Array<{ event: string; data: unknown }> = [];
+    const emittedBeforeTurn: string[] = [];
+    const h = harness({
+      executeImpl: async (call) => {
+        emittedBeforeTurn.push(...emitted.map((e) => e.event));
+        return {
+          conversationId: call.conversationId ?? "?",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    });
+
+    await h.executeProjectPromptStream({
+      projectPath: "/repo",
+      promptText: "first",
+      emit: (event, data) => emitted.push({ event, data }),
+    });
+
+    // The client that posted this turn learns which conversation is now its
+    // own from the response it is already reading, so its turn state is never
+    // attributed by guesswork to whichever conversation surfaces first.
+    expect(emitted).toContainEqual({
+      event: "conversation",
+      data: { conversationId: "created-1" },
+    });
+    expect(emittedBeforeTurn).toEqual(["conversation"]);
+  });
+
+  it("records the posting client's creation-request token on the conversation it creates", async () => {
+    const h = harness();
+    await h.executeProjectPromptStream({
+      projectPath: "/repo",
+      promptText: "first",
+      creationRequestId: "req-7",
+      emit: () => {},
+    });
+
+    // Durable creation provenance: the client that posted this submission can
+    // recognise the conversation created for it wherever the record is read,
+    // including the list it already subscribes to — so a lost `conversation`
+    // frame does not leave the turn unable to identify its own conversation.
+    expect(h.store.get("created-1")?.creationRequestId).toBe("req-7");
+    expect(h.createdBroadcasts).toEqual([
+      { projectPath: "/repo", id: "created-1", creationRequestId: "req-7" },
+    ]);
+  });
+
+  it("records no creation-request token on a turn that targets an existing conversation", async () => {
+    const h = harness({ seed: [makeConv({ id: "c1", promptCount: 1 })] });
+    await h.executeProjectPromptStream({
+      projectPath: "/repo",
+      conversationId: "c1",
+      promptText: "next",
+      creationRequestId: "req-7",
+      emit: () => {},
+    });
+
+    // Nothing was created, so nothing gains a creation token — a later
+    // create-and-send submission must not find this conversation wearing one.
+    expect(h.store.get("c1")?.creationRequestId).toBeUndefined();
+    expect(h.createdBroadcasts).toEqual([]);
+  });
+
+  it("names no conversation for an existing-conversation turn (the client already keyed it)", async () => {
+    const emitted: string[] = [];
+    const h = harness({ seed: [makeConv({ id: "c1", promptCount: 1 })] });
+    await h.executeProjectPromptStream({
+      projectPath: "/repo",
+      conversationId: "c1",
+      promptText: "next",
+      emit: (event) => emitted.push(event),
+    });
+    expect(emitted).not.toContain("conversation");
   });
 
   it("does not broadcast conversation-created for an existing-conversation turn", async () => {
@@ -323,5 +416,77 @@ describe("executeProjectPromptStream", () => {
         emit: () => {},
       }),
     ).rejects.toThrow(/not found/);
+  });
+
+  // Project-scoped manual collaboration is a charter non-goal, and the boundary
+  // has to refuse it itself. Delegating `/collab` to the shared driver carried
+  // the synthetic sentinel session into the collaboration manager's session
+  // lookup, which failed with `Session "__project__" not found` — a public SSE
+  // error message naming the internal sentinel (R1.2, R1.3).
+  describe("/collab refusal at the project boundary", () => {
+    const collabPrompts = [
+      "/collab redesign the sidebar",
+      "/collab",
+      "  /collab ",
+    ];
+
+    for (const promptText of collabPrompts) {
+      it(`refuses ${JSON.stringify(promptText)} before any delegation`, async () => {
+        const h = harness({ seed: [makeConv({ id: "c1", promptCount: 1 })] });
+        await expect(
+          h.executeProjectPromptStream({
+            projectPath: "/repo",
+            conversationId: "c1",
+            promptText,
+            emit: () => {},
+          }),
+        ).rejects.toBeInstanceOf(ProjectCollaborationUnsupportedError);
+        // The refusal is the boundary's own decision, not a downstream failure.
+        expect(h.calls).toHaveLength(0);
+      });
+    }
+
+    it("names the session-scoped route and never the sentinel", async () => {
+      const h = harness({ seed: [makeConv({ id: "c1", promptCount: 1 })] });
+      const err = await h
+        .executeProjectPromptStream({
+          projectPath: "/repo",
+          conversationId: "c1",
+          promptText: "/collab ship it",
+          emit: () => {},
+        })
+        .catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(ProjectCollaborationUnsupportedError);
+      const message = err instanceof Error ? err.message : "";
+      expect(message).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+      expect(message).not.toMatch(/not found/i);
+      expect(message).toContain("/collab");
+      expect(message).toMatch(/session/i);
+    });
+
+    it("does not create a project conversation for a refused first turn", async () => {
+      const h = harness();
+      await expect(
+        h.executeProjectPromptStream({
+          projectPath: "/repo",
+          promptText: "/collab start something",
+          emit: () => {},
+        }),
+      ).rejects.toBeInstanceOf(ProjectCollaborationUnsupportedError);
+      expect(h.createdCount()).toBe(0);
+      expect(h.createdBroadcasts).toHaveLength(0);
+    });
+
+    it("still runs a prompt that merely mentions /collab mid-text", async () => {
+      const h = harness({ seed: [makeConv({ id: "c1", promptCount: 1 })] });
+      await h.executeProjectPromptStream({
+        projectPath: "/repo",
+        conversationId: "c1",
+        promptText: "explain what /collab does",
+        emit: () => {},
+      });
+      expect(h.calls).toHaveLength(1);
+    });
   });
 });

@@ -9,6 +9,7 @@ import DebugModeToggle from "@/components/session/DebugModeToggle";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ConversationScopeRef } from "@/lib/conversations/conversation-target";
 
 /**
  * The send/queue button recipe (legacy `.send-btn` + `.send-btn.busy`). Shared
@@ -21,7 +22,10 @@ export const SEND_BUTTON_CLASS =
 
 export interface PromptDesktopToolbarProps {
   projectName: string;
+  /** Session-keyed storage name — the internal sentinel for a PLC. */
   sessionName: string;
+  /** The conversation's explicit scope, for the surfaces that address it. */
+  scope: ConversationScopeRef;
   conversationId: string;
   activeConversation: ConversationState | undefined;
   onAttachClick: () => void;
@@ -55,6 +59,7 @@ export interface PromptDesktopToolbarProps {
 export default function PromptDesktopToolbar({
   projectName,
   sessionName,
+  scope,
   conversationId,
   activeConversation,
   onAttachClick,
@@ -150,7 +155,7 @@ export default function PromptDesktopToolbar({
         />
         <ConversationAgentCapabilitiesConfig
           projectName={projectName}
-          sessionName={sessionName}
+          scope={scope}
           conversationId={conversationId}
           disabled={isReadOnly}
           disabledTooltip={isReadOnly ? "Session is read-only" : undefined}

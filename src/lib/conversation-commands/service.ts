@@ -242,7 +242,7 @@ export function createConversationCommandService(
       conversationId: input.conversationId,
       text: REJECTION_NOTICES[reason](input.parsed.command),
       projectName: input.projectName,
-      sessionName: input.sessionName ?? input.noticeSessionName ?? "",
+      storeSessionName: input.sessionName ?? input.noticeSessionName ?? "",
     });
     return { status: "rejected", reason };
   }
@@ -305,7 +305,7 @@ export function createConversationCommandService(
       conversationId: input.conversationId,
       text: `Commit message generation failed (${reason}); proceeding with the default message: "${fallback}".`,
       projectName: input.projectName,
-      sessionName: ctx.sessionName,
+      storeSessionName: ctx.sessionName,
     });
     return { message: fallback, usedFallback: true };
   }
@@ -401,7 +401,7 @@ export function createConversationCommandService(
           conversationId: input.conversationId,
           text: `Cannot run /merge: failed to resolve the merge target (${reason}).`,
           projectName: input.projectName,
-          sessionName: session.sessionName,
+          storeSessionName: session.sessionName,
         });
         return { status: "rejected", reason: "dispatch-failed" };
       }
@@ -478,7 +478,7 @@ export function createConversationCommandService(
         conversationId: input.conversationId,
         text: `Cannot run /${parsed.command}: ${dispatchErrorText}`,
         projectName: input.projectName,
-        sessionName: session.sessionName,
+        storeSessionName: session.sessionName,
       });
       return { status: "rejected", reason: "dispatch-failed" };
     }
@@ -521,7 +521,7 @@ export function createConversationCommandService(
         conversationId: input.conversationId,
         text: `Cannot run /rebase: ${parsedArgs.error}`,
         projectName: input.projectName,
-        sessionName: session.sessionName,
+        storeSessionName: session.sessionName,
       });
       return { status: "rejected", reason: "dispatch-failed" };
     }
@@ -552,7 +552,7 @@ export function createConversationCommandService(
             : "a background job is already running for this session"
         }.`,
         projectName: input.projectName,
-        sessionName: session.sessionName,
+        storeSessionName: session.sessionName,
       });
       return { status: "rejected", reason: "dispatch-failed" };
     }

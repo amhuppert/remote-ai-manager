@@ -20,6 +20,24 @@ export type PendingQueuedMessageStatus = z.infer<
   typeof pendingQueuedMessageStatusSchema
 >;
 
+/** A row the queue may still act on: awaiting delivery, or being delivered. */
+export function isActiveQueuedMessageStatus(
+  status: PendingQueuedMessageStatus,
+): boolean {
+  return status === "pending" || status === "delivering";
+}
+
+/**
+ * A row that will never change again. The client reads this as "stop showing it
+ * as pending": a delivered row is now a transcript message, and a cancelled or
+ * failed one will never become anything at all.
+ */
+export function isTerminalQueuedMessageStatus(
+  status: PendingQueuedMessageStatus,
+): boolean {
+  return !isActiveQueuedMessageStatus(status);
+}
+
 // Provenance tag on a queue row whose content is machine-built rather than
 // typed by the user. `question_answers` marks the delimited
 // <cc-question-answers> block the answer route enqueues, so the UI renders an

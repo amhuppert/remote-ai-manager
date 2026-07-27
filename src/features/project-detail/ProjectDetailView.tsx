@@ -33,6 +33,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import {
   useProjectConversationsQuery,
+  useProjectConversationCreationsQuery,
   useRefetchProjectConversationsOnFocus,
 } from "@/lib/project-conversations-client/queries";
 import { useReopenProjectConversation } from "@/lib/project-conversations-client/mutations";
@@ -158,6 +159,11 @@ export default function ProjectDetailView({
   const sessionsQuery = useSessionsQuery(projectName);
   const projectsQuery = useProjectsQuery();
   const conversationsQuery = useProjectConversationsQuery(projectName);
+  // Same query key, so the same fetch: every conversation with the creation it
+  // records, which is how a create-and-send turn recognises the conversation the
+  // server created for its own submission.
+  const conversationCreationsQuery =
+    useProjectConversationCreationsQuery(projectName);
   useRefetchProjectConversationsOnFocus(projectName);
 
   const modalOpen = useShowCreateModal();
@@ -195,6 +201,10 @@ export default function ProjectDetailView({
   const openConversations = useMemo(
     () => conversationsQuery.data ?? [],
     [conversationsQuery.data],
+  );
+  const conversationCreations = useMemo(
+    () => conversationCreationsQuery.data ?? [],
+    [conversationCreationsQuery.data],
   );
   const projectPath = useMemo(
     () => projectsQuery.data?.find((p) => p.name === projectName)?.path,
@@ -392,6 +402,7 @@ export default function ProjectDetailView({
               <ProjectCockpit
                 projectName={projectName}
                 openConversations={openConversations}
+                conversationCreations={conversationCreations}
                 sessions={sessions}
                 archivedCount={archivedCount}
                 tokens={tokens}

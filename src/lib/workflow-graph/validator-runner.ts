@@ -601,6 +601,8 @@ function buildValidatorActorInput(
   projectName: string,
 ): EnsureActorInputData {
   return {
+    // A validator lane runs against a session worktree, not the project root.
+    conversationScope: "session",
     projectName,
     sessionWorktreePath: invocation.workingDirectory,
     // A synthetic validator lane has no persisted ConversationState record, so

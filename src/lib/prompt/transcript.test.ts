@@ -22,6 +22,8 @@ import {
   type TranscriptEntry,
 } from "./transcript";
 import { messageAppendedEventSchema } from "@/lib/conversations/schemas";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 import type { SSEEvent } from "@/lib/api/sse-events";
 const TEST_DIR = path.join("/tmp", "cc-transcript-test-" + Date.now());
 
@@ -1849,7 +1851,7 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     _resetTranscriptDepsForTesting();
   });
 
-  const meta = { projectName: "demo", sessionName: "main" };
+  const meta = { projectName: "demo", storeSessionName: "main" };
 
   function makeEntry(
     role: "user" | "assistant",
@@ -1905,7 +1907,7 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
       "conv-proj",
       makeEntry("assistant", "on main"),
       TEST_DIR,
-      { projectName: "demo", sessionName: "__project__" },
+      { projectName: "demo", storeSessionName: "__project__" },
     );
     expect(captured).toHaveLength(1);
     const event = captured[0] as {
@@ -2048,6 +2050,60 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(broadcast).toHaveBeenCalledTimes(1);
   });
 
+  // R1.3: `TranscriptBroadcastMeta` carries the SESSION-KEYED STORE name, which
+  // is the project sentinel for a project conversation. The SSE payload already
+  // derived the public scope variant, but the index-failure warning re-emitted
+  // the raw store name as `sessionName` — a leak on an ordinary project turn
+  // whose document indexing happened to fail.
+  describe("conversation scope in the index-failure diagnostic (R1.3)", () => {
+    async function appendWithFailingIndex(
+      storeSessionName: string,
+    ): Promise<ReturnType<typeof createCapturingLogger>> {
+      const log = createCapturingLogger();
+      setTranscriptDeps({
+        indexMarkdownDocuments: vi.fn().mockRejectedValue(new Error("db busy")),
+        broadcast: () => ({ delivered: true }),
+        log,
+      });
+
+      await appendTranscriptEntry(
+        `conv-index-scope-${storeSessionName}`,
+        makeEntry("assistant", "still visible"),
+        TEST_DIR,
+        { projectName: "demo", storeSessionName },
+      );
+      return log;
+    }
+
+    it("emits scope:project with no session identity for a project conversation", async () => {
+      const log = await appendWithFailingIndex(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+
+      const failure = log.entries.find(
+        (e) => e.message === "documents-index.index_failed",
+      );
+      expect(failure).toBeDefined();
+      expect(failure?.fields).toMatchObject({
+        scope: "project",
+        projectName: "demo",
+      });
+      expect(failure?.fields).not.toHaveProperty("sessionName");
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    it("still reports the real session name for a session conversation", async () => {
+      const log = await appendWithFailingIndex("main");
+
+      expect(
+        log.entries.find((e) => e.message === "documents-index.index_failed")
+          ?.fields,
+      ).toMatchObject({ scope: "session", sessionName: "main" });
+    });
+  });
+
   describe("seq cache", () => {
     beforeEach(() => {
       _resetLastSeqCacheForTesting();
@@ -2147,7 +2203,7 @@ describe("system notices", () => {
     _resetTranscriptDepsForTesting();
   });
 
-  const meta = { projectName: "demo", sessionName: "main" };
+  const meta = { projectName: "demo", storeSessionName: "main" };
 
   it("appendNotice round-trips through the visible-message read path and the SSE broadcast gate", async () => {
     const conversationId = "conv-notice-roundtrip";
@@ -2166,7 +2222,7 @@ describe("system notices", () => {
       conversationId,
       text: "No changes to commit.",
       projectName: meta.projectName,
-      sessionName: meta.sessionName,
+      storeSessionName: meta.storeSessionName,
       configDir: TEST_DIR,
     });
 
@@ -2188,6 +2244,30 @@ describe("system notices", () => {
       { type: "text", text: "No changes to commit." },
     ]);
     expect(noticeEvent.seq).toBe(1);
+  });
+
+  // R1.3: a project conversation reaches `appendNotice` through the slash-command
+  // service (a refused `/collab`, a rejected command), and its caller holds the
+  // store session key — the sentinel.
+  it("emits scope:project with no session identity when a project conversation is noticed", async () => {
+    const log = createCapturingLogger();
+    setTranscriptDeps({ broadcast: () => ({ delivered: true }), log });
+
+    await appendNotice({
+      conversationId: "conv-notice-scope",
+      text: "That command is session-only.",
+      projectName: "demo",
+      storeSessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      configDir: TEST_DIR,
+    });
+
+    const appended = log.entries.find((e) => e.message === "notice_appended");
+    expect(appended).toBeDefined();
+    expect(appended?.fields).toMatchObject({ scope: "project" });
+    expect(appended?.fields).not.toHaveProperty("sessionName");
+    expect(log.allFieldValues()).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
   });
 
   it("does not broadcast a notice entry with empty content", async () => {
