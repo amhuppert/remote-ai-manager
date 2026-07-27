@@ -9,6 +9,7 @@ import type { ConversationVirtuosoListProps } from "@/components/conversation/Co
 import type { TranscriptExtensionRowData } from "@/components/conversation/conversation-rows";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
+import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import { stripProposalFencesFromContent } from "@/features/project-detail/spawn-card/derive-spawn-cards";
 import {
   noopRenderSpawnCardRow,
@@ -32,6 +33,11 @@ export interface ProjectTranscriptHostProps {
   spawnCards?: SpawnCardRowData[];
   /** Supplied by chat-session-spawning; defaults to a no-op renderer. */
   renderSpawnCardRow?: RenderSpawnCardRow;
+  /**
+   * Durable queued follow-ups, rendered as pending rows after the transcript so
+   * a message waiting on the running turn is visible rather than silently held.
+   */
+  pendingQueue?: readonly PendingQueuedMessage[];
 }
 
 /** Spawn card adapted onto the transcript's extension-row contract. */
@@ -57,6 +63,7 @@ export default function ProjectTranscriptHost({
   status,
   spawnCards,
   renderSpawnCardRow = noopRenderSpawnCardRow,
+  pendingQueue,
 }: ProjectTranscriptHostProps): React.JSX.Element {
   const extensionRows = useMemo<SpawnExtensionRow[]>(
     () =>
@@ -104,6 +111,7 @@ export default function ProjectTranscriptHost({
         scope={{ kind: "project", projectName, conversationId }}
         backend={selectedBackend}
         status={status}
+        pendingQueue={pendingQueue}
         worktreePath={worktreePath}
         renderMessageRow={renderMessageRow}
         extensions={extensions}

@@ -1,6 +1,11 @@
 import path from "node:path";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { resolveConfigDirFrom } from "@/lib/config/config-dir";
+import {
+  projectConversationTarget,
+  sessionConversationTarget,
+  type ConversationTarget,
+} from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import { booleanFlagNames, renderTopUsage } from "./help-registry";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -390,6 +395,22 @@ export interface ConversationContext extends SessionContext {
 }
 
 /**
+ * Resolved server + project + authoring conversation id, session-agnostic.
+ */
+export interface ProjectConversationContext extends ProjectContext {
+  conversation: string;
+}
+
+/**
+ * Resolved server + project + a scope-discriminated conversation target, for
+ * the project-supported commands. The target — not a nullable session name —
+ * is what makes an empty or sentinel session segment unspellable.
+ */
+export interface ConversationTargetContext extends ProjectContext {
+  target: ConversationTarget;
+}
+
+/**
  * Resolved session + graph-workflow lane identity, for the `cctl workflow`
  * lane verbs (task complete/add, shared-doc upsert, collab request). The lane's
  * execution + context come from the env CC injects at spawn
@@ -399,6 +420,34 @@ export interface ConversationContext extends SessionContext {
 export interface LaneContext extends SessionContext {
   executionId: string;
   contextId: string;
+}
+
+/**
+ * The session identity from the env, treated as ABSENT when empty.
+ *
+ * A project conversation's env carries `CC_SESSION=""` — present so it cannot
+ * resurrect the ambient value through the contract's env merge, empty so it is
+ * not an identity. Every env session read must be this falsy check and never
+ * `env["CC_SESSION"] ?? fallback`: `??` passes "" straight through and builds a
+ * URL with an empty session segment (`/sessions//conversations/…`), which is the
+ * silent misrouting the neutralization exists to prevent.
+ */
+export function readSessionEnv(env: CliEnv): string | null {
+  const session = env["CC_SESSION"];
+  return session === undefined || session === "" ? null : session;
+}
+
+/**
+ * The conversation scope the agent environment declares (`CC_CONVERSATION_SCOPE`,
+ * D3). Read explicitly rather than inferred from the shape of `CC_SESSION`, and
+ * null when the var is absent or unrecognised (an older env, or a human shell)
+ * so callers fall back to the session identity.
+ */
+export function readConversationScope(
+  env: CliEnv,
+): "session" | "project" | null {
+  const scope = env["CC_CONVERSATION_SCOPE"];
+  return scope === "session" || scope === "project" ? scope : null;
 }
 
 /**
@@ -458,7 +507,7 @@ export async function resolveSessionContext(
   const base = await resolveProjectContext(flags, env, host);
   if (!base.ok) return base;
 
-  const session = flags.session ?? env["CC_SESSION"];
+  const session = flags.session ?? readSessionEnv(env);
   if (!session) {
     return {
       ok: false,
@@ -501,6 +550,101 @@ export async function resolveConversationContext(
   }
 
   return { ok: true, context: { ...base.context, conversation } };
+}
+
+/**
+ * Resolve server + project + the authoring conversation's id, WITHOUT a session.
+ *
+ * For commands whose endpoints are project-scoped and only need to know which
+ * conversation is speaking (spec authoring records authorship, it does not route
+ * by session). Demanding a session here would break these commands for every
+ * project conversation while buying nothing — the exact "incidental coupling to
+ * a session lookup" the scope contract removes.
+ */
+export async function resolveProjectConversationContext(
+  flags: GlobalFlags,
+  env: CliEnv,
+  host: CliHost,
+): Promise<
+  | { ok: true; context: ProjectConversationContext }
+  | { ok: false; result: CliResult }
+> {
+  const base = await resolveProjectContext(flags, env, host);
+  if (!base.ok) return base;
+
+  const conversation = flags.conversation ?? env["CC_CONVERSATION_ID"];
+  if (!conversation) {
+    return {
+      ok: false,
+      result: usageFailure(
+        "no conversation — pass --conversation or set CC_CONVERSATION_ID",
+        flags.json,
+      ),
+    };
+  }
+
+  return { ok: true, context: { ...base.context, conversation } };
+}
+
+/**
+ * Resolve server + project + conversation into a scope-DISCRIMINATED target
+ * (R2.4, D1) for the commands classified project-supported in
+ * `session-env-inventory.ts`. Route construction then goes through
+ * `conversationTargetApiBase`, so neither scope can be spelled by hand.
+ *
+ * Scope selection: an explicit `--session` always wins (a human targeting
+ * another session), then the environment's declared `CC_CONVERSATION_SCOPE`,
+ * then a non-empty env session. With none of those the command has no
+ * conversation identity to address and fails with the ordinary usage error.
+ */
+export async function resolveConversationTargetContext(
+  flags: GlobalFlags,
+  env: CliEnv,
+  host: CliHost,
+): Promise<
+  | { ok: true; context: ConversationTargetContext }
+  | { ok: false; result: CliResult }
+> {
+  const base = await resolveProjectContext(flags, env, host);
+  if (!base.ok) return base;
+
+  const conversation = flags.conversation ?? env["CC_CONVERSATION_ID"];
+  if (!conversation) {
+    return {
+      ok: false,
+      result: usageFailure(
+        "no conversation — pass --conversation or set CC_CONVERSATION_ID",
+        flags.json,
+      ),
+    };
+  }
+
+  const explicitSession = flags.session ?? null;
+  const envSession = readSessionEnv(env);
+  const declaredScope = readConversationScope(env);
+  const sessionName =
+    explicitSession ?? (declaredScope === "project" ? null : envSession);
+
+  if (sessionName === null && declaredScope === null) {
+    return {
+      ok: false,
+      result: usageFailure(
+        "no conversation scope — pass --session, or set CC_SESSION or CC_CONVERSATION_SCOPE",
+        flags.json,
+      ),
+    };
+  }
+
+  const target: ConversationTarget =
+    sessionName === null
+      ? projectConversationTarget(base.context.project, conversation)
+      : sessionConversationTarget(
+          base.context.project,
+          sessionName,
+          conversation,
+        );
+
+  return { ok: true, context: { ...base.context, target } };
 }
 
 /**

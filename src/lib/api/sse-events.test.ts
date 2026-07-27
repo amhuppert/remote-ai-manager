@@ -35,6 +35,7 @@ describe("SSEEvent union — queue events", () => {
   it("includes the queue-created (message-queued) event and validates a sample payload", () => {
     const sample: MessageQueuedEvent = {
       type: "message-queued",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "c1",
@@ -53,6 +54,7 @@ describe("SSEEvent union — queue events", () => {
   it("includes the queue-updated (message-queue-updated) event and validates a sample payload", () => {
     const sample: MessageQueueUpdatedEvent = {
       type: "message-queue-updated",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "c1",

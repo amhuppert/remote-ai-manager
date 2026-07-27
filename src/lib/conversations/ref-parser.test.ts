@@ -7,7 +7,7 @@ import {
 import { conversationRefAttrsSchema } from "./schemas";
 
 const SAMPLE_REF =
-  '<conversation-ref project-name="proj" project-path="/p" session-name="sess" worktree-path="/w" conversation-id="abc" conversation-name="Hello" backend="claude" backend-ref="sid-1" transcript-path="/t.jsonl" debug-log-path="" status="awaiting" last-activity-at="2026-01-01T00:00:00Z" />';
+  '<conversation-ref project-name="proj" project-path="/p" scope="session" session-name="sess" worktree-path="/w" conversation-id="abc" conversation-name="Hello" backend="claude" backend-ref="sid-1" transcript-path="/t.jsonl" debug-log-path="" status="awaiting" last-activity-at="2026-01-01T00:00:00Z" />';
 
 const COMPACT_REF = SAMPLE_REF.replace(
   " />",
@@ -109,7 +109,7 @@ describe("parseRefAttrs", () => {
   });
 
   it("decodes XML entities in attribute values", () => {
-    const raw = `<conversation-ref project-name="P&amp;Q" project-path="/p" session-name="s" worktree-path="/w" conversation-id="abc" conversation-name="&lt;tag&gt;" backend="claude" backend-ref="" transcript-path="" debug-log-path="" status="new" last-activity-at="2026-01-01T00:00:00Z" />`;
+    const raw = `<conversation-ref project-name="P&amp;Q" project-path="/p" scope="session" session-name="s" worktree-path="/w" conversation-id="abc" conversation-name="&lt;tag&gt;" backend="claude" backend-ref="" transcript-path="" debug-log-path="" status="new" last-activity-at="2026-01-01T00:00:00Z" />`;
     const attrs = parseRefAttrs(raw);
     expect(attrs["project-name"]).toBe("P&Q");
     expect(attrs["conversation-name"]).toBe("<tag>");

@@ -434,8 +434,10 @@ describe("createTicketCommandRunner", () => {
 
     // Deterministic success notice reports the identifier.
     expect(notices).toHaveLength(1);
-    expect(notices[0]!.text).toContain("command-center#1");
-    expect(notices[0]!.sessionName).toBe(SESSION_NAME);
+    expect(notices[0]).toMatchObject({
+      text: expect.stringContaining("command-center#1"),
+      storeSessionName: SESSION_NAME,
+    });
 
     // A created change event went out with the attachment counted.
     const created = events.find(
@@ -479,7 +481,7 @@ describe("createTicketCommandRunner", () => {
       kind: "conversation",
       sessionName: null,
     });
-    expect(notices[0]!.sessionName).toBe("__project__");
+    expect(notices[0]).toMatchObject({ storeSessionName: "__project__" });
   });
 
   it("falls back to the live compaction rendering when the backendRef is null", async () => {

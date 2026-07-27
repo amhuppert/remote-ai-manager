@@ -12,6 +12,7 @@ import path from "node:path";
 import {
   getArchivedProjects as defaultGetArchivedProjects,
   getConversationById as defaultGetConversationById,
+  getProjectConversationById as defaultGetProjectConversationById,
   listAllProjectConversations as defaultListAllProjectConversations,
   listSessionConversationListItems as defaultListSessionConversationListItems,
   getStateDb,
@@ -20,11 +21,10 @@ import {
 import { createContextArtifactsRepo } from "@/lib/context-artifacts/repo";
 import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
 import { getFirstPromptSnippet as defaultGetFirstPromptSnippet } from "./first-prompt-snippet";
-import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import { createLogger } from "@/lib/logging";
+import { isProjectSentinel } from "./project-conversation-scope";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
-import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationListItem, ConversationState } from "./schemas";
 
 /**
@@ -87,16 +87,38 @@ const defaultDeps: ListAllConversationsDeps = {
   readTranscriptEntries: readTranscriptEntriesWithSeq,
 };
 
+/**
+ * The listed conversation's scope. A project conversation is emitted as the
+ * project variant — it has no `sessionName` field, so the internal sentinel it is
+ * keyed by in the state store cannot reach this public payload (R1.3).
+ */
+type ListItemScope =
+  | { scope: "session"; sessionName: string }
+  | { scope: "project" };
+
+/**
+ * Lift a STORE session key into the public list scope (the A5 adapter boundary):
+ * a sentinel-keyed row is a project conversation and is listed as one. Used where
+ * the session name arrives from a store row rather than from iterating real
+ * sessions, so a sentinel can never be projected as a session name.
+ */
+function listItemScopeFromStoreSessionName(sessionName: string): ListItemScope {
+  return isProjectSentinel(sessionName)
+    ? { scope: "project" }
+    : { scope: "session", sessionName };
+}
+
 function buildConversationListItem(
   projectPath: string,
-  session: Pick<SessionState, "sessionName" | "worktreePath">,
+  scope: ListItemScope,
+  worktreePath: string,
   convo: ConversationListItemSource,
 ): ConversationListItem {
   return {
+    ...scope,
     projectName: path.basename(projectPath) || projectPath,
     projectPath,
-    sessionName: session.sessionName,
-    worktreePath: session.worktreePath,
+    worktreePath,
     conversationId: convo.id,
     conversationName: convo.name,
     summary: convo.summary,
@@ -146,11 +168,14 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
 
     const pushItem = (
       projectPath: string,
-      session: Pick<SessionState, "sessionName" | "worktreePath">,
+      scope: ListItemScope,
+      worktreePath: string,
       convo: ConversationListItemSource,
     ) => {
       const itemIndex = items.length;
-      items.push(buildConversationListItem(projectPath, session, convo));
+      items.push(
+        buildConversationListItem(projectPath, scope, worktreePath, convo),
+      );
 
       if (needsSnippet(convo) && convo.transcriptPath !== null) {
         pending.push({ itemIndex, transcriptPath: convo.transcriptPath });
@@ -167,28 +192,26 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
       for (const convo of conversations) {
         if (!options.includeArchived && convo.archived) continue;
         conversationCount += 1;
-        pushItem(projectPath, session, convo);
+        pushItem(
+          projectPath,
+          { scope: "session", sessionName: session.sessionName },
+          session.worktreePath,
+          convo,
+        );
       }
     }
     const projectCount = countedProjects.size;
 
-    // Project-scoped conversations live in their own repo (not on any
-    // session), execute at the project root, and are addressed through the
-    // reserved sentinel session name.
+    // Project-scoped conversations live in their own repo (not on any session)
+    // and execute at the project root. The sentinel they are keyed by internally
+    // stops here: they go on the wire as the project variant.
     const projectConversations = await deps.listAllProjectConversations();
     for (const { projectPath, conversation } of projectConversations) {
       if (!options.includeArchived && archivedProjects.has(projectPath))
         continue;
       if (!options.includeArchived && conversation.archived) continue;
       projectConversationCount += 1;
-      pushItem(
-        projectPath,
-        {
-          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
-          worktreePath: projectPath,
-        },
-        conversation,
-      );
+      pushItem(projectPath, { scope: "project" }, projectPath, conversation);
     }
 
     log.info("listing conversations", {
@@ -335,46 +358,81 @@ export interface FindConversationByIdDeps {
     worktreePath: string;
     conversation: ConversationState;
   } | null>;
+  /**
+   * Project conversations live in their own table, so resolving an id alone
+   * needs both lookups. Without this, `cctl conversation read <id>` on a
+   * project conversation 404s and can never select the project route (R2.4).
+   */
+  getProjectConversationById(conversationId: string): Promise<{
+    projectPath: string;
+    conversation: ConversationState;
+  } | null>;
   getFirstPromptSnippet(transcriptPath: string): Promise<string | null>;
 }
 
 const defaultFindDeps: FindConversationByIdDeps = {
   getConversationById: defaultGetConversationById,
+  getProjectConversationById: defaultGetProjectConversationById,
   getFirstPromptSnippet: defaultGetFirstPromptSnippet,
 };
 
 /**
- * Resolve a single session-scoped conversation by id alone, via the focused
- * state-store accessor (no whole-state scan). Archived conversations stay
- * resolvable — deep links to archived conversations must render.
- * Project-scoped conversations live in a separate table and are never found.
+ * Resolve a conversation of EITHER scope by id alone, via the focused
+ * state-store accessors (no whole-state scan). Archived conversations stay
+ * resolvable — deep links to archived conversations must render. A project
+ * conversation is returned as the project variant, with no `sessionName` for
+ * the sentinel to occupy.
  */
 export function createFindConversationById(deps: FindConversationByIdDeps) {
   return async function findConversationById(
     conversationId: string,
   ): Promise<ConversationListItem | null> {
     const found = await deps.getConversationById(conversationId);
-    if (!found) return null;
-
-    const item = buildConversationListItem(
-      found.projectPath,
-      found,
-      found.conversation,
-    );
-    if (needsSnippet(found.conversation) && item.transcriptPath !== null) {
-      try {
-        item.firstPromptSnippet = await deps.getFirstPromptSnippet(
-          item.transcriptPath,
-        );
-      } catch (err) {
-        log.warn("snippet read failed", {
-          conversationId,
-          err: String(err),
-        });
-      }
+    if (!found) {
+      const project = await deps.getProjectConversationById(conversationId);
+      if (!project) return null;
+      // A project conversation executes in the project root; it has no worktree.
+      return withSnippet(
+        deps,
+        buildConversationListItem(
+          project.projectPath,
+          { scope: "project" },
+          project.projectPath,
+          project.conversation,
+        ),
+        conversationId,
+      );
     }
-    return item;
+
+    return withSnippet(
+      deps,
+      buildConversationListItem(
+        found.projectPath,
+        listItemScopeFromStoreSessionName(found.sessionName),
+        found.worktreePath,
+        found.conversation,
+      ),
+      conversationId,
+    );
   };
+}
+
+/** Fill the first-prompt snippet for an unnamed conversation. Scope-invariant. */
+async function withSnippet(
+  deps: Pick<FindConversationByIdDeps, "getFirstPromptSnippet">,
+  item: ConversationListItem,
+  conversationId: string,
+): Promise<ConversationListItem> {
+  if (item.conversationName !== null || item.summary !== null) return item;
+  if (item.transcriptPath === null) return item;
+  try {
+    item.firstPromptSnippet = await deps.getFirstPromptSnippet(
+      item.transcriptPath,
+    );
+  } catch (err) {
+    log.warn("snippet read failed", { conversationId, err: String(err) });
+  }
+  return item;
 }
 
 export const findConversationById = createFindConversationById(defaultFindDeps);

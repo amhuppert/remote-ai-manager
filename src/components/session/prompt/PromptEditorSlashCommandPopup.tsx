@@ -29,6 +29,10 @@ import {
 } from "@/hooks/use-agent-capabilities";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  scopeRefSessionName,
+  type ConversationScopeRef,
+} from "@/lib/conversations/conversation-target";
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
   {
     name: "/spec",
@@ -104,7 +108,13 @@ export interface SlashCommandPopupProps {
   /** Trigger character that initiated the suggestion (e.g. "/" or "$"). */
   triggerChar: string;
   projectName: string;
-  sessionName?: string;
+  /**
+   * Explicit scope (D1). A discriminated union rather than an optional
+   * `sessionName`: "undefined means project" read a sentinel-valued session
+   * name as a real session, leaking it into the commands URL and the capability
+   * query key (R1.3).
+   */
+  scopeRef: ConversationScopeRef;
   /**
    * The conversation this popup belongs to. Used to filter the catalog by CC's
    * effective capability config — items disabled at any cascade layer (global
@@ -142,7 +152,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     query,
     triggerChar,
     projectName,
-    sessionName,
+    scopeRef,
     conversationId,
     backend = "claude",
     isWorkflowManagedConversation = false,
@@ -155,7 +165,8 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   // Project-level prompts discover commands from the project root rather than
   // a session worktree, and capabilities cascade through the project-scoped
   // conversation layer when a conversation exists.
-  const projectScoped = sessionName === undefined;
+  const projectScoped = scopeRef.scope === "project";
+  const sessionName = scopeRefSessionName(scopeRef);
   const sessionCommandsQuery = useCommandsQuery(
     projectName,
     sessionName,
@@ -170,7 +181,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     : sessionCommandsQuery;
 
   const capabilityScope = useMemo<AgentCapabilityScope>(() => {
-    if (projectScoped) {
+    if (scopeRef.scope === "project") {
       // Before the first conversation exists there is no conversation layer to
       // cascade through; fall back to the project layer.
       return conversationId
@@ -186,12 +197,12 @@ export const PromptEditorSlashCommandPopup = forwardRef<
       return {
         level: "conversation",
         projectName,
-        sessionName,
+        sessionName: scopeRef.sessionName,
         conversationId,
       };
     }
-    return { level: "session", projectName, sessionName };
-  }, [projectScoped, projectName, sessionName, conversationId]);
+    return { level: "session", projectName, sessionName: scopeRef.sessionName };
+  }, [scopeRef, projectName, conversationId]);
   const pluginsCascade =
     backend === "codex" ? "codex-plugins" : "claude-plugins";
   const skillsCascade = backend === "codex" ? "codex-skills" : "claude-skills";

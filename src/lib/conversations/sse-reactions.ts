@@ -23,6 +23,7 @@ import {
   messageUpdatedEventSchema,
 } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { isTerminalQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 import { createTurnEndArtifactInvalidator } from "@/lib/context-artifacts/sse-cache";
 import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
 import { markdownDocumentKeys } from "@/lib/documents/query-keys";
@@ -40,6 +41,12 @@ export interface ConversationSseReactionDeps {
   enqueueInputToast(item: InputNeededItem): void;
   enqueuePromptErrorToast(item: PromptErrorItem): void;
   showBrowserNotification(input: BrowserNotificationInput): void;
+  /**
+   * Retire this client's pending row for a queue id the server has reported
+   * terminal. Keyed by conversation and scope-invariant, so a project and a
+   * session conversation reconcile through the same call.
+   */
+  settleOptimisticQueueEntry(conversationId: string, queueId: string): void;
 }
 
 /** Refetch the views that render a session conversation's live state. */
@@ -430,13 +437,18 @@ export function registerConversationSseReactions(
     invalidateConversationViews(queryClient, d.projectName, d.sessionName);
   });
 
+  // Queue events refresh the cache that carries `ConversationState.pendingQueue`
+  // for the addressed scope — the session-detail cache, or the project
+  // conversation list the cockpit reads its tabs from. They must NOT touch the
+  // messages cache: a queued message is not yet a transcript row (req 7.3), and
+  // the transcript is written only by the message-appended handler once delivery
+  // produces a real message.
   addSseListener(es, "message-queued", messageQueuedEventSchema, (d) => {
+    if (d.scope === "project") {
+      invalidateProjectConversationActivity(queryClient, d.projectName);
+      return;
+    }
     invalidateConversationViews(queryClient, d.projectName, d.sessionName);
-    // Queue pending events refresh ConversationState.pendingQueue via the
-    // session-detail cache; they must NOT touch conversationKeys.messages —
-    // a queued message is not yet a transcript row (req 7.3). The transcript
-    // cache is written only by the message-appended handler once delivery
-    // produces a real message.
   });
 
   addSseListener(
@@ -444,6 +456,17 @@ export function registerConversationSseReactions(
     "message-queue-updated",
     messageQueueUpdatedEventSchema,
     (d) => {
+      // A terminal row is the end of this client's pending display for it: the
+      // durable row leaves the active queue in the same write, so nothing else
+      // would ever retire the optimistic stand-in and the delivered message
+      // would render twice — once as its transcript row, once as still-queued.
+      if (isTerminalQueuedMessageStatus(d.message.status)) {
+        deps.settleOptimisticQueueEntry(d.conversationId, d.message.id);
+      }
+      if (d.scope === "project") {
+        invalidateProjectConversationActivity(queryClient, d.projectName);
+        return;
+      }
       invalidateConversationViews(queryClient, d.projectName, d.sessionName);
     },
   );

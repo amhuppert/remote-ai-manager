@@ -20,6 +20,7 @@ import {
   type ReadRouteDeps,
 } from "./read-route-handlers";
 import { renderedTranscriptSchema } from "@/lib/conversations/transcript-render";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
@@ -447,6 +448,24 @@ describe("GET …/projects/[name]/conversations/[conversationId]/read", () => {
     expect(deps.getProjectConversation).toHaveBeenCalledWith(
       "/home/projects/test-proj",
       "proj-convo-1",
+    );
+    // Reaches the shared render/serve operation without any session record.
+    expect(deps.getSession).not.toHaveBeenCalled();
+  });
+
+  it("audits the read with project-scope identity and no session name", async () => {
+    logSpies.info.mockClear();
+    await handlers.projectGET(projectRequest(), projectParams());
+
+    const auditCall = logSpies.info.mock.calls.find(
+      ([event]) => event === "audit.conversation_read",
+    );
+    expect(auditCall).toBeDefined();
+    const fields = auditCall?.[1] as Record<string, unknown>;
+    expect(fields["scope"]).toBe("project");
+    expect(fields).not.toHaveProperty("sessionName");
+    expect(JSON.stringify(fields)).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
     );
   });
 

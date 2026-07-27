@@ -97,3 +97,71 @@ missing/offending flag/file/identity; validation issues one per line (`  <path>:
 exit-3 failures point at `cctl doctor`. Deterministic local checks (flags, `--file` parse,
 identity) fail at exit 2 **before** any network round-trip. Server routes return
 `{ error, code?, issues? }` — never flatten computed issues into a prose string.
+
+## Conversation scope: identity is scope-discriminated, never sentinel-shaped
+
+An agent's environment declares its scope: `CC_CONVERSATION_SCOPE` is `session` or
+`project`, and a project conversation's `CC_SESSION` is an explicitly neutralized
+`""` (present, not omitted — the env contract merges over `process.env`).
+
+Two rules follow, and both are enforced by tests:
+
+- **Every env session read is a falsy check** — `readSessionEnv(env)` from
+  `src/cli/shared.ts`, never `env["CC_SESSION"] ?? fallback`. `??` passes the
+  neutralized `""` straight through and builds `/sessions//conversations/…`, which
+  is silent misrouting rather than a visible failure.
+- **Every command that reads the session env is classified** in
+  `src/cli/session-env-inventory.ts` as `project-supported` or `session-only`, with
+  a reason. Project-supported commands select a project route at project scope
+  (build paths with `conversationTargetApiBase`, or the session-agnostic
+  `resolveProjectConversationContext` when the endpoint is project-scoped and only
+  needs to know which conversation is speaking). Session-only commands fail with
+  the ordinary `no session — pass --session or set CC_SESSION` usage error — that
+  loud failure is the point of the neutralization. `session-env-inventory.arch.test.ts`
+  fails on an unclassified new reader and on a stale entry.
+
+Classifying a command session-only is a statement about the SERVER surface: the
+capability needs a session branch, worktree, or graph execution, so there is no
+project-scoped route to select. Adding a session-env reader without an inventory
+entry fails the build; migrating a command onto a project route means adding the
+route in the same change, or project agents lose a command that worked.
+
+**Classify at the granularity the command actually splits at.** Entries resolve
+longest-prefix-first, so a group and its leaves can differ, and a group whose
+verbs disagree MUST list the exceptions. `workflow` is the worked example:
+definition authoring (`create`, `replace`, `list`, `get`, `edit`, `delete`,
+`templates`) resolves project context only and is project-supported, while
+execution and lane operations (`validate`, `status`, `start`, `live *`, `task *`,
+`shared-doc *`, `collab *`) pin to a session. Group defaults are session-only so
+a NEW subcommand fails loudly rather than being silently advertised.
+
+The arch test classifies by SOURCE FILE, so it sees groups, not leaves — a
+group-level entry satisfies it even when the verbs disagree. The behaviour test
+in `src/cli/conversation-scope.test.ts` is what closes that gap, and it asserts
+BOTH directions: every session-only command refuses at project scope with the
+`CC_SESSION` usage error, and every project-supported command routes without
+demanding a session. Exercise each classified verb, not one representative per
+group — a single sample is how a project-supported verb hides inside a
+session-only group.
+
+**A command implementation belongs in `src/cli/commands/<name>.ts`.** The scan
+attributes a session-env read to a command by source file, so a command
+implemented anywhere else is attributed to that file's INFRASTRUCTURE entry and
+becomes invisible to the ratchet — it can be missing from the inventory while the
+test stays green. `doctor` is the worked example: it read the session env and
+published the identity to `/api/agent/handshake` from inside `core.ts`, so it
+carried no classification until it moved to `commands/doctor.ts`. Keep `core.ts`
+to dispatch, help resolution, and the shared identity plumbing.
+
+**A CLI test cannot prove the route exists.** `CliHost.fetch` is a test double
+that answers any path with 200, so a project-supported command that points at a
+route nobody wrote still passes every test above — that is exactly how `cctl ask`
+shipped a project path with no server route behind it.
+`src/cli/project-route-wiring.arch.test.ts` is the backstop: it enumerates
+`src/app/api/**/route.ts`, drives each project-supported command through the real
+dispatch, and asserts the constructed path matches a real route file *and* that
+the route exports the HTTP method the command uses (an existing route missing the
+method 405s in production). Dynamic segments deliberately do not match an empty
+segment, so a non-neutralized `CC_SESSION` producing `/sessions//…` is a miss
+rather than a match. Add a project-supported command here in the same change that
+adds its route.

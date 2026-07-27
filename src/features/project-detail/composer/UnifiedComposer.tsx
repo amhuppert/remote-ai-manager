@@ -1,8 +1,11 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import PromptComposer from "@/components/session/prompt/PromptComposer";
+import PromptComposer, {
+  type ComposerQueueTurnState,
+} from "@/components/session/prompt/PromptComposer";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
+import { deserializePromptDoc } from "@/lib/prompt-editor";
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
 import {
@@ -35,6 +38,14 @@ export interface UnifiedComposerSendInput {
   effort?: string;
 }
 
+/**
+ * Whether the server took a submission. `"rejected"` covers a refusal (busy,
+ * not running, unsupported backend), a transport failure, and a duplicate the
+ * client dropped — every case where nothing was recorded and the user's text
+ * would otherwise be gone.
+ */
+export type UnifiedComposerSendResult = "accepted" | "rejected";
+
 export interface UnifiedComposerProps {
   projectName: string;
   /** `null` => first-run; a chat send issues create-and-send (PLC-5). */
@@ -49,7 +60,19 @@ export interface UnifiedComposerProps {
   onTokensChange: (next: FilterToken[]) => void;
   sessions: SessionListItem[];
   archivedCount: number;
-  onSendPrompt: (input: UnifiedComposerSendInput) => void;
+  /**
+   * Submit the composed message. Reporting the outcome is what lets the composer
+   * hand the text back on a refusal instead of clearing it into nothing (R6.1).
+   */
+  onSendPrompt: (
+    input: UnifiedComposerSendInput,
+  ) => Promise<UnifiedComposerSendResult>;
+  /**
+   * Durable queue and server-reported turn state for the active conversation.
+   * Drives the pending-message chips, their cancellation, and whether the send
+   * button offers to queue rather than send.
+   */
+  queueTurnState?: ComposerQueueTurnState;
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
   lastUsedModelId?: string;
   lastUsedEffort?: string;
@@ -170,6 +193,7 @@ export default function UnifiedComposer({
   busy,
   error,
   onDismissError,
+  queueTurnState,
 }: UnifiedComposerProps): React.JSX.Element {
   const rememberedSettingsKey = JSON.stringify([
     activeConversationId,
@@ -231,6 +255,28 @@ export default function UnifiedComposer({
     clearImages();
   }, [clearImages]);
 
+  /**
+   * Hand a refused submission's text back to the composer. The composer clears
+   * optimistically — a send that waited for the server before emptying would
+   * stall on every ordinary turn — so a refusal restores rather than never
+   * having cleared. Attachments are not restored: the durable text is what the
+   * user would otherwise have to retype, and re-materializing image payloads as
+   * fresh attachments is a separate concern from this recovery.
+   */
+  const restoreComposer = useCallback((text: string) => {
+    setDraft(text);
+    promptTextRef.current = text;
+    setPromptPlaceholder(null);
+    const editor = editorRef.current?.editor;
+    if (!editor) return;
+    // The same primitive the session composer restores a persisted draft with.
+    // `insertText` would be wrong here: it focuses the editor, stealing focus
+    // from wherever the user moved while the request was in flight.
+    editor.commands.setContent(
+      deserializePromptDoc({ prompt: text, images: [] }),
+    );
+  }, []);
+
   const handleSendPrompt = useCallback(() => {
     const serialized = editorRef.current?.serialize(pendingImages);
     const images =
@@ -264,10 +310,19 @@ export default function UnifiedComposer({
         onTokensChange(result.tokens);
         clearComposer();
         return;
-      case "send":
-        onSendPrompt(result.input);
+      case "send": {
+        const submitted = result.input.text;
+        void onSendPrompt(result.input)
+          // A throw means nothing was recorded either, so it restores like any
+          // other refusal — and swallowing it here is what keeps a rejected
+          // promise from escaping as an unhandled rejection.
+          .catch(() => "rejected" as const)
+          .then((outcome) => {
+            if (outcome === "rejected") restoreComposer(submitted);
+          });
         clearComposer();
         return;
+      }
     }
   }, [
     pendingImages,
@@ -279,6 +334,7 @@ export default function UnifiedComposer({
     effortSupported,
     onRunCommand,
     clearComposer,
+    restoreComposer,
     onTokensChange,
     onSendPrompt,
   ]);
@@ -321,7 +377,11 @@ export default function UnifiedComposer({
         projectName={projectName}
         sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
         conversationId={activeConversationId ?? ""}
+        // Deliberately absent: the session-shaped record would light up the debug
+        // strip and the capability drawer, which stay session-only. The queue
+        // state the composer legitimately needs comes through its own prop.
         activeConversation={undefined}
+        {...(queueTurnState ? { queueTurnState } : {})}
         editorRef={editorRef}
         fileInputRef={fileInputRef}
         promptText={draft}

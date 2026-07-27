@@ -144,6 +144,8 @@ export const useFailOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.failOptimisticQueueEntry);
 export const useCancelOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.cancelOptimisticQueueEntry);
+export const useSettleOptimisticQueueEntry = () =>
+  useSessionDetailStore((s) => s.settleOptimisticQueueEntry);
 export const useRollbackOptimisticQueueEntry = () =>
   useSessionDetailStore((s) => s.rollbackOptimisticQueueEntry);
 export const useDismissError = () =>
@@ -214,6 +216,10 @@ export const useActivatePanelSession = () =>
   useSessionDetailStore((s) => s.activatePanelSession);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
+export const useReassignInFlight = () =>
+  useSessionDetailStore((s) => s.reassignInFlight);
+export const useDiscardInFlight = () =>
+  useSessionDetailStore((s) => s.discardInFlight);
 export const useResetConversationState = () =>
   useSessionDetailStore((s) => s.resetConversationState);
 export const useResetSessionDetailStore = () =>

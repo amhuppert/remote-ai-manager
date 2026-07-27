@@ -21,7 +21,7 @@ const REFERENCE_FIXTURES = [
   {
     type: "conversation",
     nodeName: "conversationMention",
-    xml: '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" read-command="cctl conversation read conv-123 --outline" />',
+    xml: '<conversation-ref project-name="my-app" project-path="/repos/my-app" scope="session" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" read-command="cctl conversation read conv-123 --outline" />',
   },
   {
     type: "message",

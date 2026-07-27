@@ -4,6 +4,8 @@ import {
   type ProjectConversationRouteDeps,
 } from "./route-handlers";
 import { BackendMismatchError } from "@/lib/prompt/sdk-driver";
+import { ProjectCollaborationUnsupportedError } from "./prompt-entry";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 
@@ -209,6 +211,84 @@ describe("project conversation route handlers", () => {
     expect(text).toContain('"status":"running"');
   });
 
+  it("forwards the submission's creation-request token on the create-and-send path only", async () => {
+    const forwarded: Array<string | undefined> = [];
+    const h = harness({
+      executeProjectPromptStream: async (input) => {
+        forwarded.push(input.creationRequestId);
+        return {
+          conversationId: input.conversationId ?? "new-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    });
+
+    await readStream(
+      await h.handlers.firstPromptPOST(
+        jsonRequest({ prompt: "hello main", creationRequestId: "req-42" }),
+        ctx({ name: "demo" }),
+      ),
+    );
+
+    // The per-conversation route creates nothing, so it has no creation to
+    // stamp — the client that posts there already knows its conversation id.
+    h.store.set("c1", makeConv({ id: "c1", promptCount: 1 }));
+    await readStream(
+      await h.handlers.promptPOST(
+        jsonRequest({ prompt: "next", creationRequestId: "req-42" }),
+        ctx({ name: "demo", conversationId: "c1" }),
+      ),
+    );
+
+    expect(forwarded).toEqual(["req-42", undefined]);
+  });
+
+  it("firstPromptPOST decides every non-OK answer before running the prompt, so a rejection creates no conversation", async () => {
+    // A rejected create-and-send must leave no empty project conversation
+    // behind: the user sees an error and retries, and a retry that accumulated
+    // orphan conversations would be visible in the cockpit's tabs.
+    // `executeProjectPromptStream` is the only path that creates the
+    // conversation (see `prompt-entry.ts`), so not reaching it is the proof.
+    let executions = 0;
+    const h = harness({
+      executeProjectPromptStream: async (input) => {
+        executions += 1;
+        input.emit("status", { status: "running" });
+        return {
+          conversationId: input.conversationId ?? "new-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    });
+
+    const unresolvableProject = await h.handlers.firstPromptPOST(
+      jsonRequest({ prompt: "hello" }),
+      ctx({ name: "nope" }),
+    );
+    const unusableBody = await h.handlers.firstPromptPOST(
+      jsonRequest({ prompt: "   " }),
+      ctx({ name: "demo" }),
+    );
+
+    expect(unresolvableProject.ok).toBe(false);
+    expect(unusableBody.ok).toBe(false);
+    expect(executions).toBe(0);
+
+    // The counter is live: an accepted request does reach the executor, and it
+    // answers OK — so non-OK and "created nothing" coincide.
+    const accepted = await h.handlers.firstPromptPOST(
+      jsonRequest({ prompt: "hello" }),
+      ctx({ name: "demo" }),
+    );
+    expect(accepted.ok).toBe(true);
+    await readStream(accepted);
+    expect(executions).toBe(1);
+  });
+
   it("promptPOST maps a backend mismatch to the SSE BACKEND_MISMATCH frame", async () => {
     const h = harness({
       executeProjectPromptStream: async () => {
@@ -222,6 +302,27 @@ describe("project conversation route handlers", () => {
     );
     const text = await readStream(res);
     expect(text).toContain('"code":"BACKEND_MISMATCH"');
+  });
+
+  // The boundary's `/collab` refusal has to reach the client as an explicit,
+  // coded error. Before the refusal existed the turn was delegated and failed
+  // deep in the collaboration manager, so the SSE frame carried the raw
+  // `Session "__project__" not found` message (R1.2, R1.3).
+  it("promptPOST maps a project /collab refusal to a coded SSE frame", async () => {
+    const h = harness({
+      executeProjectPromptStream: async () => {
+        throw new ProjectCollaborationUnsupportedError();
+      },
+    });
+    h.store.set("c1", makeConv({ id: "c1", promptCount: 1 }));
+    const res = await h.handlers.promptPOST(
+      jsonRequest({ prompt: "/collab redesign the sidebar" }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+    const text = await readStream(res);
+    expect(text).toContain('"code":"PROJECT_COLLABORATION_UNSUPPORTED"');
+    expect(text).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(text).toContain("event: done");
   });
 
   it("promptPOST returns 404 for an unknown conversation", async () => {

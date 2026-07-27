@@ -18,6 +18,7 @@ import type {
   ProjectActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import ConversationSidebar from "@/components/session/sidebar/ConversationSidebar";
 
@@ -719,6 +720,7 @@ describe("ConversationSidebar", () => {
       const lookupItem = {
         projectName: "remote-ai-manager",
         projectPath: "/home/alex/github/remote-ai-manager",
+        scope: "session",
         sessionName: "conversation-ui-overhaul",
         worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/overhaul",
         conversationId: "session-convo-1",
@@ -803,5 +805,45 @@ describe("ConversationSidebar", () => {
     expect(screen.getByText("Closed")).not.toBeNull();
     expect(screen.getByText("Closed waiting project cockpit")).not.toBeNull();
     expect(screen.getByText("Closed running project cockpit")).not.toBeNull();
+  });
+
+  it("registers no query key carrying the store sentinel when mounted at project scope", () => {
+    // The project page mounts this session-shaped sidebar with the store
+    // sentinel as `sessionName`. A React Query key is a public identity surface
+    // (R1.3), and the peek hooks build theirs eagerly — a disabled query still
+    // registers its key — so the sentinel must not reach one.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Infinity, gcTime: Infinity },
+      },
+    });
+    queryClient.setQueryData(conversationKeys.active(), {
+      conversations: [currentProjectConversation],
+      graphWorkflowExecutions: [],
+      activeCollaborationExecutions: [],
+      specExecutions: [],
+    } satisfies ActiveConversationsResponse);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConversationSidebar
+          projectName="remote-ai-manager"
+          sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
+          activeConversationId="current-project-convo"
+          showNewConversationButton={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    const keys = queryClient
+      .getQueryCache()
+      .getAll()
+      .map((query) => JSON.stringify(query.queryKey));
+    expect(keys.length).toBeGreaterThan(0);
+    expect(
+      keys.filter((key) =>
+        key.includes(PROJECT_CONVERSATION_SESSION_SENTINEL),
+      ),
+    ).toEqual([]);
   });
 });

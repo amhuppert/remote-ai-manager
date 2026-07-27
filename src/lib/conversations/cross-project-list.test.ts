@@ -468,7 +468,7 @@ describe("listAllConversations", () => {
 });
 
 describe("listAllConversations project conversations", () => {
-  it("emits project conversations with the sentinel session name and project-root worktree", async () => {
+  it("emits project conversations as project-scoped items with a project-root worktree", async () => {
     const state = makeState({
       projects: {
         "/repos/awesome-app": {
@@ -505,12 +505,21 @@ describe("listAllConversations project conversations", () => {
     expect(totalCount).toBe(2);
     const plc = items.find((i) => i.conversationId === "plc-1");
     expect(plc).toMatchObject({
+      scope: "project",
       projectName: "awesome-app",
       projectPath: "/repos/awesome-app",
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
       worktreePath: "/repos/awesome-app",
       conversationName: "Project convo",
     });
+    // R1.3: this is a public API response — the project variant has no session
+    // field at all, so the sentinel cannot appear anywhere in the payload.
+    expect(plc).not.toHaveProperty("sessionName");
+    expect(JSON.stringify(items)).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+
+    const sessionItem = items.find((i) => i.conversationId === "session-c1");
+    expect(sessionItem).toMatchObject({ scope: "session", sessionName: "s1" });
   });
 
   it("filters archived project conversations and archived projects unless includeArchived", async () => {
@@ -809,6 +818,7 @@ describe("findConversationById", () => {
           lastActivityAt: "2024-06-01T12:00:00Z",
         });
       },
+      getProjectConversationById: async () => null,
       getFirstPromptSnippet: async () => null,
     });
 
@@ -831,6 +841,7 @@ describe("findConversationById", () => {
     const find = createFindConversationById({
       getConversationById: async () =>
         makeLookupRecord({ id: "buried", archived: true }),
+      getProjectConversationById: async () => null,
       getFirstPromptSnippet: async () => null,
     });
 
@@ -839,13 +850,66 @@ describe("findConversationById", () => {
     expect(item?.archived).toBe(true);
   });
 
-  it("returns null when the lookup finds nothing", async () => {
+  it("returns null when neither lookup finds anything", async () => {
     const find = createFindConversationById({
       getConversationById: async () => null,
+      getProjectConversationById: async () => null,
       getFirstPromptSnippet: async () => null,
     });
 
     expect(await find("missing")).toBeNull();
+  });
+
+  // R2.4: `cctl conversation read <id>` on a project conversation resolves the
+  // owning scope through this endpoint. While it queried only session
+  // conversations, a cross-scope read of a project conversation 404'd and the
+  // CLI could never select the project route.
+  it("resolves a project conversation by id alone, as the project variant", async () => {
+    const projectCalls: string[] = [];
+    const find = createFindConversationById({
+      getConversationById: async () => null,
+      getProjectConversationById: async (id) => {
+        projectCalls.push(id);
+        return {
+          projectPath: "/repos/awesome-app",
+          conversation: makeConversation({
+            id: "plc-1",
+            name: "Project chat",
+            status: "running",
+          }),
+        };
+      },
+      getFirstPromptSnippet: async () => null,
+    });
+
+    const item = await find("plc-1");
+    expect(projectCalls).toEqual(["plc-1"]);
+    expect(item?.scope).toBe("project");
+    expect(item).toMatchObject({
+      projectName: "awesome-app",
+      projectPath: "/repos/awesome-app",
+      // A project conversation executes in the project root, not a worktree.
+      worktreePath: "/repos/awesome-app",
+      conversationId: "plc-1",
+      conversationName: "Project chat",
+    });
+    expect(JSON.stringify(item)).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+  });
+
+  it("prefers the session conversation when an id exists in both tables", async () => {
+    const find = createFindConversationById({
+      getConversationById: async () => makeLookupRecord({ id: "dup" }),
+      getProjectConversationById: async () => ({
+        projectPath: "/repos/other",
+        conversation: makeConversation({ id: "dup" }),
+      }),
+      getFirstPromptSnippet: async () => null,
+    });
+
+    const item = await find("dup");
+    expect(item?.scope).toBe("session");
   });
 
   it("reads the first-prompt snippet for an unnamed conversation", async () => {
@@ -858,6 +922,7 @@ describe("findConversationById", () => {
           summary: null,
           transcriptPath: "/t/target.jsonl",
         }),
+      getProjectConversationById: async () => null,
       getFirstPromptSnippet: async (path) => {
         snippetCalls.push(path);
         return "snippet";
@@ -878,6 +943,7 @@ describe("findConversationById", () => {
           name: "Named",
           transcriptPath: "/t/named.jsonl",
         }),
+      getProjectConversationById: async () => null,
       getFirstPromptSnippet: async () => {
         called = true;
         return null;
@@ -898,6 +964,7 @@ describe("findConversationById", () => {
           summary: null,
           transcriptPath: "/t/target.jsonl",
         }),
+      getProjectConversationById: async () => null,
       getFirstPromptSnippet: async () => {
         throw new Error("transcript unreadable");
       },

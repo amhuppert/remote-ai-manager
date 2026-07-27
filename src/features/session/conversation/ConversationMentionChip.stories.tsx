@@ -38,7 +38,9 @@ function ChipPreview({
       className="inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised py-[2px] pr-[4px] pl-[6px] align-baseline font-mono text-[0.78rem] leading-none [transition:border-color_0.15s_ease,box-shadow_0.15s_ease] data-[backend=codex]:border-violet-dim data-[selected=true]:shadow-[0_0_0_2px_var(--cyan-glow)] data-[backend=claude]:data-[selected=true]:border-cyan-dim max-768:min-h-[28px] max-768:py-[4px] max-768:pr-[6px] max-768:pl-[8px]"
       data-selected={selected ? "true" : "false"}
       data-backend={attrs.backend}
-      title={`${attrs.projectName} · ${attrs.sessionName}`}
+      title={`${attrs.projectName} · ${
+        attrs.scope === "session" ? attrs.sessionName : "project"
+      }`}
     >
       <span className="font-semibold text-cyan">#</span>
       <span className="text-text-primary">{label}</span>
@@ -56,6 +58,7 @@ function ChipPreview({
 const baseAttrs: ConversationMentionAttrs = {
   projectName: "my-app",
   projectPath: "/repos/my-app",
+  scope: "session",
   sessionName: "main",
   worktreePath: "/repos/my-app/.worktrees/main",
   conversationId: "conv-123",

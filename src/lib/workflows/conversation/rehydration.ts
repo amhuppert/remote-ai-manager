@@ -22,7 +22,8 @@ import {
   drainConversationQueue,
   getConversationQueueDeps,
 } from "@/lib/conversations/message-queue-drain";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { AgentSessionRef, AgentBackendId } from "@/lib/shared/schemas";
 import type {
   ConversationState,
@@ -74,7 +75,13 @@ interface RehydrateOneActorArgs {
   key: string;
   projectPath: string;
   projectName: string;
-  sessionName: string;
+  /**
+   * The session-keyed runtime/state-store name — the project sentinel for a
+   * session-less project conversation (A5). Named for what it is so it cannot be
+   * spread into a log line as a public `sessionName`: this stage's structured
+   * events carry the discriminated scope instead (R1.3).
+   */
+  storeSessionName: string;
   worktreePath: string;
   conversation: {
     id: string;
@@ -87,6 +94,9 @@ interface RehydrateOneActorArgs {
     promptCount: number;
   };
   snapshot: Snapshot<unknown>;
+  /** Structured-log sink. Injected so a test can read what the restore emitted;
+   *  log fields are a public identity surface (R1.3). */
+  log?: Logger;
 }
 
 /**
@@ -102,8 +112,11 @@ interface RehydrateOneActorArgs {
 export async function rehydrateOneConversationActor(
   args: RehydrateOneActorArgs,
 ): Promise<boolean> {
-  const { key, projectPath, projectName, sessionName, worktreePath } = args;
+  const { key, projectPath, projectName, storeSessionName, worktreePath } =
+    args;
   const { conversation, snapshot } = args;
+  const log = args.log ?? logger;
+  const scopeRef = scopeRefFromStoreSessionName(storeSessionName);
 
   try {
     // Register runtime state
@@ -121,7 +134,7 @@ export async function rehydrateOneConversationActor(
       input: {
         projectPath,
         projectName,
-        sessionName,
+        sessionName: storeSessionName,
         worktreePath,
         conversationId: conversation.id,
         createdAt: conversation.createdAt,
@@ -152,13 +165,13 @@ export async function rehydrateOneConversationActor(
     try {
       await getConversationQueueDeps().recoverAbandonedDeliveries({
         projectPath,
-        sessionName,
+        sessionName: storeSessionName,
         conversationId: conversation.id,
       });
     } catch (err) {
-      logger.error("queue.recover_failed", {
+      log.error("queue.recover_failed", {
         conversationId: conversation.id,
-        sessionName,
+        ...scopeRef,
         error: getErrorMessage(err),
       });
     }
@@ -177,15 +190,16 @@ export async function rehydrateOneConversationActor(
       );
     }
 
-    logger.info("conversation-manager.rehydrated", {
+    log.info("conversation-manager.rehydrated", {
       conversationId: conversation.id,
-      sessionName,
+      ...scopeRef,
       projectName,
     });
     return true;
   } catch (err) {
-    logger.error("conversation-manager.rehydrate_failed", {
+    log.error("conversation-manager.rehydrate_failed", {
       conversationId: conversation.id,
+      ...scopeRef,
       error: getErrorMessage(err),
     });
     // Clean up partial registration
@@ -202,7 +216,8 @@ export async function rehydrateOneConversationActor(
  */
 export interface RehydrationCandidate {
   projectPath: string;
-  sessionName: string;
+  /** Session-keyed store/runtime name; the sentinel at project scope (A5). */
+  storeSessionName: string;
   worktreePath: string;
   conversation: ConversationState;
 }
@@ -224,7 +239,7 @@ export function collectRehydrationCandidates(
       for (const conversation of session.conversations) {
         candidates.push({
           projectPath,
-          sessionName,
+          storeSessionName: sessionName,
           worktreePath: session.worktreePath,
           conversation,
         });
@@ -234,7 +249,7 @@ export function collectRehydrationCandidates(
   for (const { projectPath, conversation } of projectConversations) {
     candidates.push({
       projectPath,
-      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      storeSessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
       worktreePath: projectPath,
       conversation,
     });
@@ -299,11 +314,11 @@ export async function rehydrateConversationActors(
 
   for (const {
     projectPath,
-    sessionName,
+    storeSessionName,
     worktreePath,
     conversation,
   } of collectRehydrationCandidates(state, projectConversations)) {
-    const owner: ConversationSnapshotOwner = isProjectSentinel(sessionName)
+    const owner: ConversationSnapshotOwner = isProjectSentinel(storeSessionName)
       ? "project"
       : "session";
     const persistedSnapshot = resolved.getConversationMachineSnapshot(
@@ -327,7 +342,7 @@ export async function rehydrateConversationActors(
 
     const key = conversationRuntimeKey(
       projectPath,
-      sessionName,
+      storeSessionName,
       conversation.id,
     );
 
@@ -338,7 +353,7 @@ export async function rehydrateConversationActors(
       key,
       projectPath,
       projectName: resolved.getProjectDisplayName(projectPath),
-      sessionName,
+      storeSessionName,
       worktreePath,
       conversation: {
         id: conversation.id,

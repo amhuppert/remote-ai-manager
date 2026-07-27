@@ -81,6 +81,25 @@ describe("ProjectConversationService", () => {
     expect(fetched?.id).toBe(created.id);
   });
 
+  it("records the creating submission's token on the conversation, and nothing when there is none", async () => {
+    // The token is how the client that posted a create-and-send turn recognises
+    // the conversation created for it in the project conversation list, which
+    // otherwise says only which conversations exist.
+    const forSubmission = await service.createProjectConversation("/repo", {
+      creationRequestId: "req-abc",
+    });
+    expect(forSubmission.creationRequestId).toBe("req-abc");
+    expect(
+      (await service.getProjectConversation("/repo", forSubmission.id))
+        ?.creationRequestId,
+    ).toBe("req-abc");
+
+    // Created through the explicit create route: the caller already has the id
+    // in the response, so there is nothing to correlate and no token to record.
+    const explicit = await service.createProjectConversation("/repo");
+    expect(explicit.creationRequestId).toBeUndefined();
+  });
+
   it("assigns a stable, incrementing default title per project", async () => {
     const a = await service.createProjectConversation("/repo");
     const b = await service.createProjectConversation("/repo");

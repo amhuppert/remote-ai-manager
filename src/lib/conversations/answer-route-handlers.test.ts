@@ -6,11 +6,19 @@ import {
 import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { RecordAnswersResult } from "@/lib/workflow-graph/user-input-gate";
+import { withTracing } from "@/lib/logging";
+import {
+  createCapturingLogger,
+  type CapturingLogger,
+} from "@/lib/shared/testing/capturing-logger";
 import {
   createAnswerHandlers,
+  createProjectAnswerHandlers,
   type AnswerRouteDeps,
+  type ProjectAnswerRouteDeps,
 } from "./answer-route-handlers";
 import { createMessageQueueService } from "./message-queue-service";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import { parseQuestionAnswersBlock } from "./question-answers-block";
 import {
   conversationStateSchema,
@@ -56,9 +64,12 @@ function seedConversation(
   });
 }
 
-function makeRequest(body: unknown): Request {
+function makeRequest(
+  body: unknown,
+  { session = SESSION }: { session?: string } = {},
+): Request {
   return new Request(
-    `http://127.0.0.1/api/projects/repo/sessions/${SESSION}/conversations/${CONV}/answer`,
+    `http://127.0.0.1/api/projects/repo/sessions/${session}/conversations/${CONV}/answer`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -158,10 +169,69 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       async readConfig() {
         return { defaultAgentBackend: "claude" as const };
       },
+      log: createCapturingLogger(),
       ...overrides,
     };
     return { deps, sendEvent, drain, queueMessageSpy, recordLaneAnswers };
   }
+
+  describe("public session position", () => {
+    it("refuses the internal project sentinel instead of accepting it as an alias", async () => {
+      // A real project conversation with a pending batch exists, so the
+      // sentinel-aware store path WOULD find it and answer through the
+      // session-shaped route. The refusal must come first.
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const getConversation = vi.fn(fixture.deps.getConversation);
+      const { deps, queueMessageSpy, drain } = makeDeps({ getConversation });
+      const { POST } = createAnswerHandlers(deps);
+
+      const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
+        params: Promise.resolve({
+          name: "repo",
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          conversationId: CONV,
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain(`/api/projects/repo/conversations/${CONV}`);
+      expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+      expect(getConversation).not.toHaveBeenCalled();
+      expect(queueMessageSpy).not.toHaveBeenCalled();
+      expect(drain).not.toHaveBeenCalled();
+    });
+
+    it("names the project ANSWER route, not the conversation base", async () => {
+      // Wrapped the way the route shell wraps it, because `withTracing` is what
+      // puts the request path on the trace context the refusal reads (R1.2).
+      const { deps } = makeDeps();
+      const handler = withTracing(createAnswerHandlers(deps).POST);
+
+      const res = await handler(
+        makeRequest({ questionId: "q_b1", answers }, {
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        }),
+        {
+          params: Promise.resolve({
+            name: "repo",
+            session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+            conversationId: CONV,
+          }),
+        },
+      );
+
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain(
+        `/api/projects/repo/conversations/${CONV}/answer`,
+      );
+      expect(body.error).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    });
+  });
 
   it("answer while idle/waiting: consumes the marker and enqueues the block, then drains", async () => {
     await fixture.seedConversation(PROJECT, SESSION, seedConversation());
@@ -529,6 +599,275 @@ describe("POST conversation answer (async consume + enqueue)", () => {
         params,
       });
       expect(second.status).toBe(410);
+    });
+  });
+
+  describe("project-scoped adapter (R1.1)", () => {
+    const projectParams = Promise.resolve({
+      name: "repo",
+      conversationId: CONV,
+    });
+
+    function makeProjectRequest(body: unknown): Request {
+      return new Request(
+        `http://127.0.0.1/api/projects/repo/conversations/${CONV}/answer`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+    }
+
+    function makeProjectDeps(): {
+      deps: ProjectAnswerRouteDeps;
+      log: CapturingLogger;
+      drain: ReturnType<typeof vi.fn>;
+    } {
+      const { deps, drain } = makeDeps();
+      const log = createCapturingLogger();
+      const {
+        getConversation: _ignored,
+        recordLaneAnswers: _laneGate,
+        ...shared
+      } = deps;
+      return {
+        deps: {
+          ...shared,
+          getProjectConversation: (projectPath, conversationId) =>
+            fixture.deps.getConversation(
+              projectPath,
+              PROJECT_CONVERSATION_SESSION_SENTINEL,
+              conversationId,
+            ),
+          log,
+        },
+        log,
+        drain,
+      };
+    }
+
+    it("answers a project conversation with NO session record present", async () => {
+      // Deliberately no `seedSession` — R1.1 is that the project adapter never
+      // requires one.
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps, drain } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      const res = await POST(makeProjectRequest({ questionId: "q_b1", answers }), {
+        params: projectParams,
+      });
+
+      expect(res.status).toBe(200);
+
+      // The SAME shared domain operation ran: the marker is consumed and the
+      // answers block is queued, proven through a repository reload.
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBeNull();
+      expect(reloaded?.pendingQuestions).toBeNull();
+      const text = reloaded?.pendingQueue[0]?.content.find(
+        (b) => b.type === "text",
+      );
+      expect(
+        parseQuestionAnswersBlock(text?.type === "text" ? text.text : ""),
+      ).toEqual({ questionBatchId: "q_b1", answers });
+      expect(drain).toHaveBeenCalledWith(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+    });
+
+    it("never emits the sentinel as a diagnostic identity", async () => {
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps, log } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      await POST(makeProjectRequest({ questionId: "q_b1", answers }), {
+        params: projectParams,
+      });
+
+      expect(log.entries.length).toBeGreaterThan(0);
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+      for (const entry of log.entries) {
+        expect(entry.fields).not.toHaveProperty("sessionName");
+        expect(entry.fields["scope"]).toBe("project");
+      }
+    });
+
+    it("410s a duplicate answer, exactly as the session adapter does", async () => {
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      const first = await POST(
+        makeProjectRequest({ questionId: "q_b1", answers }),
+        { params: projectParams },
+      );
+      expect(first.status).toBe(200);
+
+      const second = await POST(
+        makeProjectRequest({ questionId: "q_b1", answers }),
+        { params: projectParams },
+      );
+      expect(second.status).toBe(410);
+    });
+
+    it("404s when the project has no such conversation", async () => {
+      const { deps } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      const res = await POST(
+        makeProjectRequest({ questionId: "q_b1", answers }),
+        { params: projectParams },
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    // R4.4: the idempotency and atomicity guarantees are the shared core's, so
+    // these assert the project ADDRESSING reaches them — a project adapter that
+    // grew its own consume/enqueue would fail here rather than silently diverge.
+    it("404s a stale questionId and leaves the pending batch intact", async () => {
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      const res = await POST(
+        makeProjectRequest({ questionId: "q_superseded", answers }),
+        { params: projectParams },
+      );
+
+      expect(res.status).toBe(404);
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBe("q_b1");
+      expect(reloaded?.pendingQueue).toHaveLength(0);
+    });
+
+    it("leaves the marker intact when the enqueue write fails (atomic consume+enqueue)", async () => {
+      await fixture.seedProjectConversation(
+        PROJECT,
+        seedConversation({ scope: "project" }),
+      );
+      const { deps } = makeProjectDeps();
+      const { POST } = createProjectAnswerHandlers(deps);
+
+      failNextEnqueueWrite = true;
+      await expect(
+        POST(makeProjectRequest({ questionId: "q_b1", answers }), {
+          params: projectParams,
+        }),
+      ).rejects.toThrow("simulated write failure");
+
+      const afterFailure = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(afterFailure?.pendingQuestionId).toBe("q_b1");
+      expect(afterFailure?.pendingQueue).toHaveLength(0);
+
+      const retry = await POST(
+        makeProjectRequest({ questionId: "q_b1", answers }),
+        { params: projectParams },
+      );
+      expect(retry.status).toBe(200);
+
+      const reloaded = await fixture.deps.getConversation(
+        PROJECT,
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        CONV,
+      );
+      expect(reloaded?.pendingQuestionId).toBeNull();
+      expect(reloaded?.pendingQueue).toHaveLength(1);
+    });
+
+    // R4.6: lane answer recording is session-only by spec non-goal, and the
+    // guarantee is structural — the project adapter has no lane branch and
+    // `ProjectAnswerRouteDeps` has no gate to divert to. A lane branch grown
+    // here would have to fail one of these.
+    describe("never enters the graph-workflow lane path (R4.6)", () => {
+      for (const role of ["iteration", "validator"] as const) {
+        it(`treats a ${role}-role project conversation as an ordinary conversation`, async () => {
+          await fixture.seedProjectConversation(
+            PROJECT,
+            seedConversation({ scope: "project", role }),
+          );
+          const { deps, drain } = makeProjectDeps();
+          // A gate the project adapter must never reach. It is absent from
+          // `ProjectAnswerRouteDeps`, so spreading it in is the only way to
+          // observe that it stays unreached.
+          const recordLaneAnswers = vi.fn(
+            async (): Promise<RecordAnswersResult> => ({ ok: true }),
+          );
+          const { POST } = createProjectAnswerHandlers({
+            ...deps,
+            recordLaneAnswers,
+          } as ProjectAnswerRouteDeps);
+
+          const res = await POST(
+            makeProjectRequest({ questionId: "q_b1", answers }),
+            { params: projectParams },
+          );
+
+          expect(res.status).toBe(200);
+          expect(recordLaneAnswers).not.toHaveBeenCalled();
+
+          // The ordinary path ran instead: the marker is consumed and the
+          // answers block is queued for the next turn — a lane divert would
+          // have recorded on the gate and queued nothing.
+          const reloaded = await fixture.deps.getConversation(
+            PROJECT,
+            PROJECT_CONVERSATION_SESSION_SENTINEL,
+            CONV,
+          );
+          expect(reloaded?.pendingQuestionId).toBeNull();
+          expect(reloaded?.pendingQueue).toHaveLength(1);
+          expect(drain).toHaveBeenCalled();
+        });
+      }
+
+      it("the session adapter still diverts the same role to the gate", async () => {
+        // Contrast, so the assertions above cannot pass because lane answering
+        // is broken everywhere.
+        await fixture.seedConversation(
+          PROJECT,
+          SESSION,
+          seedConversation({ role: "iteration" }),
+        );
+        const { deps, recordLaneAnswers, drain } = makeDeps();
+        const { POST } = createAnswerHandlers(deps);
+
+        const res = await POST(makeRequest({ questionId: "q_b1", answers }), {
+          params,
+        });
+
+        expect(res.status).toBe(200);
+        expect(recordLaneAnswers).toHaveBeenCalled();
+        expect(drain).not.toHaveBeenCalled();
+      });
     });
   });
 });

@@ -1,39 +1,24 @@
 import { escapeXmlAttr } from "@/lib/shared/xml";
 import type {
-  ConversationCompactStatus,
   ConversationListItem,
-  ConversationStatus,
+  ConversationMentionAttrs,
 } from "./schemas";
 
 /**
  * CamelCase attribute set behind a `<conversation-ref ... />` tag — the same
  * shape the prompt editor's `conversationMention` node stores, so a built ref
- * and a pasted chip round-trip through one attribute vocabulary. Absent values
- * are empty strings (the node persists every attribute as a string).
+ * and a pasted chip round-trip through one attribute vocabulary.
+ *
+ * Scope-discriminated (D1): the project variant has no `sessionName` field, so
+ * a reading agent never has to infer scope from an empty name and the internal
+ * sentinel has nowhere to sit.
  */
-export interface ConversationRefBuilderAttrs {
-  projectName: string;
-  projectPath: string;
-  sessionName: string;
-  worktreePath: string;
-  conversationId: string;
-  conversationName: string;
-  backend: "claude" | "codex";
-  backendRef: string;
-  /** Not carried on the wire — the serializer omits it. */
-  transcriptPath: string;
-  debugLogPath: string;
-  status: ConversationStatus;
-  lastActivityAt: string;
-  compactArtifactId: string;
-  compactStatus: ConversationCompactStatus;
-  compactCoveredSeq: string;
-  compactCreatedAt: string;
-}
+export type ConversationRefBuilderAttrs = ConversationMentionAttrs;
 
 const CONVERSATION_REF_ATTR_ORDER: ReadonlyArray<[string, string]> = [
   ["projectName", "project-name"],
   ["projectPath", "project-path"],
+  ["scope", "scope"],
   ["sessionName", "session-name"],
   ["worktreePath", "worktree-path"],
   ["conversationId", "conversation-id"],
@@ -91,8 +76,14 @@ export function buildConversationRefXml(
   const rawStatus = attrs["compactStatus"];
   const compactStatus =
     rawStatus === "fresh" || rawStatus === "stale" ? rawStatus : "none";
+  // The editor node stores every attribute as a string, so a project mention
+  // still carries `sessionName: ""`. The wire contract has no such field at
+  // project scope, so the serializer drops it rather than emitting an empty
+  // one for the parser to interpret.
+  const isProjectScope = attrs["scope"] === "project";
   const parts: string[] = ["<conversation-ref"];
   for (const [camel, kebab] of CONVERSATION_REF_ATTR_ORDER) {
+    if (camel === "sessionName" && isProjectScope) continue;
     if (camel === "compactStatus") {
       parts.push(`${kebab}="${compactStatus}"`);
       continue;
@@ -125,9 +116,11 @@ export function conversationListItemToMentionAttrs(
   item: ConversationListItem,
 ): ConversationRefBuilderAttrs {
   return {
+    ...(item.scope === "session"
+      ? { scope: "session" as const, sessionName: item.sessionName }
+      : { scope: "project" as const }),
     projectName: item.projectName,
     projectPath: item.projectPath,
-    sessionName: item.sessionName,
     worktreePath: item.worktreePath,
     conversationId: item.conversationId,
     conversationName: item.conversationName ?? "",

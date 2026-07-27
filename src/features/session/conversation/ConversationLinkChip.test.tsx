@@ -4,12 +4,15 @@ import { render, screen } from "@testing-library/react";
 import ConversationLinkChip from "./ConversationLinkChip";
 import type { ConversationRefAttrs } from "@/lib/conversations/schemas";
 
+type SessionRefAttrs = Extract<ConversationRefAttrs, { scope: "session" }>;
+
 function makeAttrs(
-  overrides: Partial<ConversationRefAttrs> = {},
+  overrides: Partial<SessionRefAttrs> = {},
 ): ConversationRefAttrs {
   return {
     "project-name": "my-app",
     "project-path": "/repos/my-app",
+    scope: "session",
     "session-name": "main",
     "worktree-path": "/repos/my-app/.worktrees/main",
     "conversation-id": "conv-123",
@@ -62,5 +65,33 @@ describe("ConversationLinkChip", () => {
   it("sets a tooltip showing project · session", () => {
     render(<ConversationLinkChip attrs={makeAttrs()} />);
     expect(screen.getByRole("link")).toHaveAttribute("title", "my-app · main");
+  });
+
+  it("labels a project conversation by scope, not by an absent session name", () => {
+    // The project variant carries no `session-name`, so reading the attribute
+    // unconditionally would render "my-app · undefined" (R1.3: user-visible
+    // labels).
+    render(
+      <ConversationLinkChip
+        attrs={{
+          "project-name": "my-app",
+          "project-path": "/repos/my-app",
+          scope: "project",
+          "worktree-path": "/repos/my-app",
+          "conversation-id": "conv-p1",
+          "conversation-name": "Project chat",
+          backend: "claude",
+          "backend-ref": "",
+          "debug-log-path": "",
+          status: "running",
+          "last-activity-at": "2024-06-01T12:00:00Z",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("link")).toHaveAttribute(
+      "title",
+      "my-app · project",
+    );
   });
 });

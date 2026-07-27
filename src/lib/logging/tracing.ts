@@ -170,6 +170,7 @@ export function withTracing<
       projectName,
       sessionName,
       conversationId,
+      requestPath: url.pathname,
     };
 
     return runWithTrace(traceContext, async () => {

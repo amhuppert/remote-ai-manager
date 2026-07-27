@@ -4,9 +4,11 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -288,6 +290,14 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       onShowPlaceholder,
     } = props;
     const editable = !disabled && !readOnly;
+    // The one place this chain converts a stored session name — which is the
+    // sentinel for a project conversation — into public scope (A5). Everything
+    // downstream addresses scope explicitly, so no popup can mistake the
+    // sentinel for a real session and build /sessions/__project__/… (R1.3).
+    const scopeRef = useMemo(
+      () => scopeRefFromStoreSessionName(sessionName),
+      [sessionName],
+    );
 
     const onSubmitRef = useRef(onSubmit);
     onSubmitRef.current = onSubmit;
@@ -556,7 +566,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             query={slashState.query}
             triggerChar={slashState.triggerChar}
             projectName={projectName}
-            sessionName={sessionName}
+            scopeRef={scopeRef}
             conversationId={conversationId}
             backend={backend}
             isWorkflowManagedConversation={isWorkflowManagedConversation}
@@ -570,7 +580,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             ref={filePopupRef}
             query={fileState.query}
             projectName={projectName}
-            sessionName={sessionName}
+            scopeRef={scopeRef}
             onSelect={(selection) => fileState.command(selection)}
             onClose={() => setFileState(null)}
           />

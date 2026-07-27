@@ -5,6 +5,7 @@
  * the sanctioned test id.
  */
 
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
 import { describe, expect, it } from "vitest";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import type {
@@ -39,7 +40,11 @@ function makeCreateInput(): ConversationBackendCreateInput {
     conversationId: "conv-testfake",
     projectPath: "/projects/fake",
     projectName: "fake",
-    sessionName: "fake-session",
+    conversationTarget: sessionConversationTarget(
+      "fake",
+      "fake-session",
+      "conv-testfake",
+    ),
     worktreePath: "/projects/fake/.worktrees/fake-session",
     persistedRef: null,
     sessionInstructions: [],

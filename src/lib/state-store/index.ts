@@ -45,6 +45,8 @@ export const getConversation = defaultStore.getConversation;
 export const getConversationById = defaultStore.getConversationById;
 export const getSessionConversations = defaultStore.getSessionConversations;
 export const getProjectConversation = defaultStore.getProjectConversation;
+export const getProjectConversationById =
+  defaultStore.getProjectConversationById;
 export const getProjectConversations = defaultStore.getProjectConversations;
 export const listAllProjectConversations =
   defaultStore.listAllProjectConversations;

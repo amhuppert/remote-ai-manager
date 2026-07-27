@@ -350,7 +350,7 @@ export async function loadGraphWorkflowLaneToolContext(
                   entry,
                   undefined,
                   undefined,
-                  { projectName, sessionName },
+                  { projectName, storeSessionName: sessionName },
                 ),
               workflowIdFactory: () => run.workflowId,
             });

@@ -278,7 +278,7 @@ export function createTicketCommandRunner(
         conversationId: input.conversationId,
         text: `/ticket failed: ${reason} — no ticket was created.`,
         projectName: input.projectName,
-        sessionName: scopeSessionName,
+        storeSessionName: scopeSessionName,
       });
     } catch (error) {
       failureNoticePersisted = false;
@@ -576,7 +576,7 @@ export function createTicketCommandRunner(
         conversationId: input.conversationId,
         text: `Created ticket ${identifier}: "${detail.title}". This conversation is attached to it.`,
         projectName: input.projectName,
-        sessionName: scopeSessionName,
+        storeSessionName: scopeSessionName,
       });
     } catch (error) {
       confirmationPersisted = false;

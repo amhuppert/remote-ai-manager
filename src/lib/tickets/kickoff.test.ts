@@ -39,7 +39,7 @@ interface Recorded {
     conversationId: string;
     text: string;
     projectName: string;
-    sessionName: string;
+    storeSessionName: string;
   }>;
 }
 
@@ -139,7 +139,7 @@ describe("createTicketKickoffQueuer", () => {
     expect(recorded.notices[0]).toMatchObject({
       conversationId: KICKOFF.conversationId,
       projectName: KICKOFF.projectName,
-      sessionName: KICKOFF.sessionName,
+      storeSessionName: KICKOFF.sessionName,
     });
     expect(recorded.notices[0]?.text).toContain("demo#12");
     expect(recorded.notices[0]?.text).toContain("kickoff");

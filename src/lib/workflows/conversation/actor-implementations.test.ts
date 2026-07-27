@@ -71,6 +71,10 @@ import { createLiveTicketContextProvider } from "@/lib/tickets/live-context";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import { createLockManager } from "@/lib/prompt/single-flight";
+import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
+import type { TranscriptBroadcastMeta } from "@/lib/prompt/transcript";
 
 // ---------------------------------------------------------------------------
 // Shared mock backend runtime
@@ -228,6 +232,7 @@ function createMockDeps(
     markQueuedDelivered: vi.fn(async () => {}),
     markQueuedPending: vi.fn(async () => {}),
     markQueuedFailed: vi.fn(async () => {}),
+    log: createCapturingLogger(),
     ...overrides,
   } as ActorImplementationDeps;
 }
@@ -936,6 +941,356 @@ describe("executePromptForMachine", () => {
     });
     expect(result.costUsd).toBe(0.05);
     expect(result.contentBlocks).toEqual([{ type: "text", text: "Hello!" }]);
+  });
+
+  // R1.3: an ORDINARY project turn — not an error path, not the ask route —
+  // must not emit the internal sentinel as diagnostic identity. The turn was
+  // handed the sentinel as `input.sessionName` (it is the runtime/state-store
+  // key), so every structured event that reported a session name leaked it:
+  // prompt.runtime_create, prompt.complete, prompt.mcp_seeded, and the rest.
+  describe("project-turn diagnostics (R1.3)", () => {
+    async function runProjectTurn() {
+      const log = createCapturingLogger();
+      setActorDeps(createMockDeps({ log }));
+
+      const input = makeProjectExecutePromptInput();
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+
+      const result = await executePromptForMachine(input);
+      return { log, result };
+    }
+
+    it("emits no sentinel in any structured log field of a normal turn", async () => {
+      const { log, result } = await runProjectTurn();
+
+      // The turn really ran — otherwise "no sentinel logged" is vacuous.
+      expect(result.error).toBeNull();
+      expect(log.entries.length).toBeGreaterThan(0);
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    it("reports scope:project with no sessionName key on the turn's own events", async () => {
+      const { log } = await runProjectTurn();
+
+      // prompt.complete is emitted by every completed turn; runtime_create by
+      // any turn that had to build a runtime. Both previously named the
+      // sentinel as `sessionName`.
+      const scoped = log.entries.filter(
+        (e) =>
+          e.message === "prompt.complete" || e.message === "prompt.runtime_create",
+      );
+      expect(scoped.length).toBeGreaterThan(0);
+      for (const entry of scoped) {
+        expect(entry.fields).toMatchObject({ scope: "project" });
+        expect(entry.fields).not.toHaveProperty("sessionName");
+      }
+    });
+
+    it("still reports the real session name for a session turn", async () => {
+      // The fix removes the sentinel, not the diagnostic: a session turn must
+      // remain attributable to its session.
+      const log = createCapturingLogger();
+      setActorDeps(createMockDeps({ log }));
+
+      const input = makeExecutePromptInput();
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+      await executePromptForMachine(input);
+
+      const complete = log.entries.find((e) => e.message === "prompt.complete");
+      expect(complete?.fields).toMatchObject({
+        scope: "session",
+        sessionName: input.sessionName,
+      });
+    });
+
+    // The turn's own log statements are not its only diagnostic sinks: the
+    // dispatch it performs hands identity to the runtime-replacement retry
+    // policy, which emits two more events from its own module. Those are
+    // covered here because the actor now routes them through the SAME injected
+    // logger — a module-scoped sink there would be invisible to this test and
+    // is exactly how the sentinel survived the previous fix.
+    it("emits scope:project from the retry policy's runtime-replacement event", async () => {
+      const log = createCapturingLogger();
+      setActorDeps(createMockDeps({ log }));
+
+      // A dead runtime whose prompt provably never reached the agent — the one
+      // shape the policy retries.
+      let status: "alive" | "dead" = "alive";
+      const dyingRuntime = createMockBackendRuntime();
+      Object.defineProperty(dyingRuntime, "status", { get: () => status });
+      mockFactory.createRuntime.mockResolvedValue(dyingRuntime);
+      mockSendTurn.mockImplementationOnce(() => {
+        status = "dead";
+        // Neutral seam: the delivery-safety mark plus a message the backend's
+        // own classifier calls retryable — no adapter-private error code.
+        throw markPromptNotDelivered(
+          new Error("No conversation found with session ID: sdk-session-1"),
+        );
+      });
+
+      const input = makeProjectExecutePromptInput();
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+      await executePromptForMachine(input);
+
+      const retry = log.entries.find(
+        (e) => e.message === "prompt.runtime_retry",
+      );
+      expect(retry).toBeDefined();
+      expect(retry?.fields).toMatchObject({ scope: "project" });
+      expect(retry?.fields).not.toHaveProperty("sessionName");
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    it("emits scope:project from the retry policy's continuation-contradiction event", async () => {
+      const log = createCapturingLogger();
+      setActorDeps(createMockDeps({ log }));
+
+      // An adapter bug: "clear" must imply a null ref. The policy normalizes
+      // and logs it — with the turn's identity.
+      mockSendTurn.mockResolvedValue({
+        ...defaultTurnResult,
+        backendRef: { backend: "claude", ref: "stale-ref" },
+        continuationDisposition: "clear",
+      });
+
+      const input = makeProjectExecutePromptInput();
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+      await executePromptForMachine(input);
+
+      const contradiction = log.entries.find(
+        (e) => e.message === "prompt.continuation_pair_contradiction",
+      );
+      expect(contradiction).toBeDefined();
+      expect(contradiction?.fields).toMatchObject({ scope: "project" });
+      expect(contradiction?.fields).not.toHaveProperty("sessionName");
+      expect(log.allFieldValues()).not.toContain(
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+      );
+    });
+
+    // The transcript module is the other downstream sink. The actor cannot
+    // assert what that module logs (it is stubbed here), but it owns the
+    // carrier: `TranscriptBroadcastMeta` names its session field
+    // `storeSessionName` precisely so no consumer can spread it into a payload
+    // or a log line as a public `sessionName`.
+    it("hands the transcript writer a store-named carrier, never a public sessionName", async () => {
+      const safeAppendTranscriptEntry = vi.fn(async () => {});
+      setActorDeps(createMockDeps({ safeAppendTranscriptEntry }));
+
+      const input = makeProjectExecutePromptInput();
+      registerConversationRuntime(
+        conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        ),
+        { abortController: new AbortController() },
+      );
+      await executePromptForMachine(input);
+
+      const metas = safeAppendTranscriptEntry.mock.calls
+        .map((call) => (call as unknown[])[2])
+        .filter((meta): meta is TranscriptBroadcastMeta => meta !== undefined);
+      expect(metas.length).toBeGreaterThan(0);
+      for (const meta of metas) {
+        expect(meta).not.toHaveProperty("sessionName");
+        expect(meta.storeSessionName).toBe(
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+        );
+      }
+    });
+
+    // The turn's resources are acquired BEFORE any of the events above, in
+    // `prepareTurnForMachine` — a stage `executePromptForMachine` never runs.
+    // Both of its sinks live in other modules: the conversation lock emits its
+    // own `conversation-lock.*` events, and the query semaphore echoes the
+    // label it is handed into `semaphore.*` events AND into its timeout Error
+    // message. Stubbing either dependency hides the leak, so the lock here is
+    // the PRODUCTION lock manager with an injected logger.
+    describe("turn resource acquisition", () => {
+      function makeProjectPrepareTurnInput(
+        overrides: Partial<PrepareTurnInput> = {},
+      ): PrepareTurnInput {
+        return makePrepareTurnInput({
+          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          worktreePath: "/projects/repo",
+          ...overrides,
+        });
+      }
+
+      function registerFor(input: PrepareTurnInput): string {
+        const key = conversationRuntimeKey(
+          input.projectPath,
+          input.sessionName,
+          input.conversationId,
+        );
+        registerConversationRuntime(key, {
+          abortController: new AbortController(),
+        });
+        return key;
+      }
+
+      it("emits scope:project from the production conversation lock", async () => {
+        const log = createCapturingLogger();
+        const lockManager = createLockManager(log);
+        setActorDeps(
+          createMockDeps({
+            acquireConversationLock: lockManager.acquireConversationLock,
+          }),
+        );
+
+        const input = makeProjectPrepareTurnInput();
+        const key = registerFor(input);
+        await prepareTurnForMachine(input);
+        getConversationRuntime(key)?.releaseConversationLock?.();
+
+        const lockEvents = log.entries.filter((e) =>
+          e.message.startsWith("conversation-lock."),
+        );
+        expect(lockEvents.map((e) => e.message)).toEqual([
+          "conversation-lock.acquired",
+          "conversation-lock.released",
+        ]);
+        for (const entry of lockEvents) {
+          expect(entry.fields).toMatchObject({
+            scope: "project",
+            conversationId: input.conversationId,
+          });
+          expect(entry.fields).not.toHaveProperty("sessionName");
+        }
+        expect(log.allFieldValues()).not.toContain(
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+        );
+      });
+
+      it("emits scope:project when the lock rejects a concurrent project turn", async () => {
+        const log = createCapturingLogger();
+        const lockManager = createLockManager(log);
+        setActorDeps(
+          createMockDeps({
+            acquireConversationLock: lockManager.acquireConversationLock,
+          }),
+        );
+
+        const input = makeProjectPrepareTurnInput();
+        registerFor(input);
+        await prepareTurnForMachine(input);
+        await expect(prepareTurnForMachine(input)).rejects.toThrow(/busy/i);
+
+        const rejected = log.entries.find(
+          (e) => e.message === "conversation-lock.rejected",
+        );
+        expect(rejected?.fields).toMatchObject({ scope: "project" });
+        expect(rejected?.fields).not.toHaveProperty("sessionName");
+        expect(log.allFieldValues()).not.toContain(
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+        );
+      });
+
+      // The semaphore's only turn-derived value is the label — it is the sole
+      // field the module logs and the sole interpolation in its timeout error.
+      // Asserting the exact label the actor constructs therefore closes that
+      // sink without needing to reach into another module's file logger.
+      it("hands the query semaphore a scope-discriminated label", async () => {
+        const labels: string[] = [];
+        setActorDeps(
+          createMockDeps({
+            acquireQuerySlot: vi.fn(async (label: string) => {
+              labels.push(label);
+              return vi.fn();
+            }),
+          }),
+        );
+
+        const input = makeProjectPrepareTurnInput();
+        registerFor(input);
+        await prepareTurnForMachine(input);
+
+        expect(labels).toEqual([`prompt:project:${input.conversationId}`]);
+        expect(labels[0]).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+      });
+
+      // The stage's own failure message is a public surface too: it propagates
+      // out of the turn and is published verbatim in an SSE `error` frame, and
+      // it was built by interpolating the runtime key — which embeds the store
+      // session name.
+      it("names no sentinel when the runtime is missing", async () => {
+        setActorDeps(createMockDeps());
+        const input = makeProjectPrepareTurnInput({
+          conversationId: "unregistered",
+        });
+
+        const err: unknown = await prepareTurnForMachine(input).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(Error);
+        const message = err instanceof Error ? err.message : "";
+        expect(message).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+        expect(message).toContain("unregistered");
+      });
+
+      it("still names the real session when a session turn takes its resources", async () => {
+        const log = createCapturingLogger();
+        const lockManager = createLockManager(log);
+        const labels: string[] = [];
+        setActorDeps(
+          createMockDeps({
+            acquireConversationLock: lockManager.acquireConversationLock,
+            acquireQuerySlot: vi.fn(async (label: string) => {
+              labels.push(label);
+              return vi.fn();
+            }),
+          }),
+        );
+
+        const input = makePrepareTurnInput();
+        registerFor(input);
+        await prepareTurnForMachine(input);
+
+        expect(labels).toEqual([`prompt:${input.sessionName}`]);
+        const acquired = log.entries.find(
+          (e) => e.message === "conversation-lock.acquired",
+        );
+        expect(acquired?.fields).toMatchObject({
+          scope: "session",
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+        });
+      });
+    });
   });
 
   // Design 4 (invoked-actor half): the runtime's construction-time persistence
@@ -4869,7 +5224,7 @@ describe("runTaskRunTurnForMachine", () => {
     ]);
     expect(broadcastMeta).toEqual({
       projectName: "repo",
-      sessionName: "test-session",
+      storeSessionName: "test-session",
     });
 
     expect(result.contentBlocks).toEqual([

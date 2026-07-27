@@ -61,6 +61,7 @@ const schema = new Schema({
       attrs: {
         projectName: { default: "" },
         projectPath: { default: "" },
+        scope: { default: "session" },
         sessionName: { default: "" },
         worktreePath: { default: "" },
         conversationId: { default: "" },
@@ -178,6 +179,7 @@ function convMention(
   overrides: Partial<{
     projectName: string;
     projectPath: string;
+    scope: "session" | "project";
     sessionName: string;
     worktreePath: string;
     conversationId: string;
@@ -197,6 +199,7 @@ function convMention(
   return schema.nodes["conversationMention"]!.create({
     projectName: overrides.projectName ?? "my-app",
     projectPath: overrides.projectPath ?? "/repos/my-app",
+    scope: overrides.scope ?? "session",
     sessionName: overrides.sessionName ?? "main",
     worktreePath: overrides.worktreePath ?? "/repos/my-app/.worktrees/main",
     conversationId: overrides.conversationId ?? "conv-123",
@@ -532,7 +535,7 @@ describe("serializePromptDoc", () => {
     });
 
     expect(result.prompt).toBe(
-      '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" read-command="cctl conversation read conv-123 --outline" />',
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" scope="session" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" compact-status="none" read-command="cctl conversation read conv-123 --outline" />',
     );
   });
 

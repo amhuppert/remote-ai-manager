@@ -53,6 +53,7 @@ describe("messageQueuedEventSchema — expanded with queued message view", () =>
   it("validates a payload carrying the queued message view", () => {
     const result = messageQueuedEventSchema.safeParse({
       type: "message-queued",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -68,6 +69,7 @@ describe("messageQueuedEventSchema — expanded with queued message view", () =>
   it("validates a legacy payload without the message field (optional)", () => {
     const result = messageQueuedEventSchema.safeParse({
       type: "message-queued",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -84,6 +86,7 @@ describe("messageQueueUpdatedEventSchema", () => {
   it("validates a payload carrying the queued message view", () => {
     const result = messageQueueUpdatedEventSchema.safeParse({
       type: "message-queue-updated",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -102,6 +105,7 @@ describe("messageQueueUpdatedEventSchema", () => {
   it("rejects a payload missing the message field", () => {
     const result = messageQueueUpdatedEventSchema.safeParse({
       type: "message-queue-updated",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",

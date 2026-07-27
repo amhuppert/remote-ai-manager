@@ -190,6 +190,12 @@ describe("section 4 production paths — migrated publishers go through the shar
       throw new Error("expected a message-queued event on the wire");
     }
     expect(wireEvent.projectName).toBe("p");
+    // A session-keyed enqueue emits the session variant, which is the only
+    // variant that carries a session name.
+    expect(wireEvent.scope).toBe("session");
+    if (wireEvent.scope !== "session") {
+      throw new Error("expected the session variant on the wire");
+    }
     expect(wireEvent.sessionName).toBe("s");
     expect(wireEvent.conversationId).toBe("conv-prod-1");
     // The expanded payload carries both the structured view and the text.

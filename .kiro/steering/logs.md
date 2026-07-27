@@ -6,9 +6,12 @@ Persistent data lives under config dir (`~/.config/cc` Linux, `~/Library/Applica
 <config-dir>/
 ├── logs/
 │   ├── global.log                              # NDJSON debug log (default sink)
-│   └── sessions/<projectSlug>__<sessionSlug>/
-│       ├── session.log                          # Session-scoped NDJSON
-│       └── conversations/<conversationSlug>.log # Conversation-scoped NDJSON
+│   ├── sessions/<projectSlug>__<sessionSlug>/
+│   │   ├── session.log                          # Session-scoped NDJSON
+│   │   └── conversations/<conversationSlug>.log # Conversation-scoped NDJSON
+│   └── projects/<projectSlug>/                  # Project conversations (no session)
+│       ├── project.log
+│       └── conversations/<conversationSlug>.log
 ├── config.json                                  # Global config
 ├── command-center.db                             # SQLite (WAL) — sessions/projects/conversations/jobs/notifications
 ├── transcripts/{conversationId}.jsonl           # Per-conversation
@@ -28,7 +31,12 @@ Every API request gets a trace context that auto-enriches log entries.
 
 - Conversation-scoped (`projectName + sessionName + conversationId`) → `logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log`
 - Session-scoped (`projectName + sessionName`) → `logs/sessions/<projectSlug>__<sessionSlug>/session.log`
+- Project conversation (`sessionName` is the internal sentinel) → `logs/projects/<projectSlug>/conversations/<conversationSlug>.log`, or `logs/projects/<projectSlug>/project.log` without a conversation id
 - Otherwise → `logs/global.log`
+
+A file path is a diagnostic identity a reader sees, so a project conversation
+does NOT route to `sessions/<projectSlug>__<sentinel>/…` (R1.3). Readers built on
+`discoverScopedLogPaths` walk both trees.
 
 Path components are sanitized (non-`[A-Za-z0-9._-]` → `_`, leading dots stripped, truncated to 80 chars with a SHA-256 suffix). On sanitization failure the logger falls back to the next-priority scope and emits a `logger.path.sanitize_failure` diagnostic.
 
@@ -42,6 +50,102 @@ Setting `CC_LOG_FILE` or `CC_LOG_SCOPED=0` collapses all writes to a single file
   "traceId": "uuid", "action": "...", "projectName": "...",
   "sessionName": "...", "conversationId": "..." }
 ```
+
+### Conversation scope in log fields
+
+Log fields are a PUBLIC identity surface (`project-conversation-parity` R1.3):
+the project sentinel `__project__` must never appear in one. A project
+conversation is session-less, so it emits `scope: "project"` and **no
+`sessionName` key at all** — an absent key rather than a placeholder, because
+there is no correct session value to report.
+
+**The sink enforces this, not the discipline below.** `buildEntry` in
+`logging/logger.ts` drops a sentinel-valued `sessionName` and substitutes
+`scope: "project"` (`refuseSentinelSessionIdentity`). It has to live there
+because the trace context stamps `sessionName` onto EVERY entry emitted inside a
+request — a project request leaks from log sites whose own call sites never
+mention a session, so no per-call-site audit can be complete. It is the logging
+analogue of the throw in `conversationTargetApiBase`; the logger never throws by
+contract, so it substitutes.
+
+Log-file ROUTING is resolved from the raw trace context, not from the sanitized
+entry, so the field guard cannot reach it. It has its own rule: a project
+conversation routes to the `logs/projects/` tree above, so the sentinel never
+occupies a path component either.
+
+The rest of this section is still how you WRITE a log site on a project path.
+The sink guarantees the output; deriving the scope at the call site is what makes
+the code say what it means, and it is what the R1.3 tests assert.
+
+Never log a session name taken from a session-keyed storage API: that value IS
+the sentinel for a project conversation. Carry a `ConversationScopeRef` (or
+`ConversationTarget`) through scope-invariant code, spread it into the log
+fields, and materialize the store key only at the storage call site via
+`storeSessionNameFromScopeRef` / `conversationTargetStoreSessionName`. If no
+sentinel-valued variable is ever bound, the leak cannot be written.
+
+This is not enforceable by the sentinel architecture test, which reads imports
+rather than emitted fields — a handler classified `internal-adapter` there leaked
+the sentinel through four log sites. Handlers under R1.3 therefore take their
+`Logger` through deps so a test can read what they actually emitted; use
+`createCapturingLogger()` from `@/lib/shared/testing/capturing-logger`. Assert
+both directions: no sentinel at project scope, and the real session name still
+present at session scope (the fix must remove the sentinel, not the diagnostic).
+
+**The whole turn path is the largest instance**, and it is a chain, not one
+module: the project entry synthesizes a sentinel `SessionState`, and that store
+key is then handed to every stage. Each stage derives one `scopeRef` at its top
+and spreads it:
+
+| Stage | Module | Events |
+| --- | --- | --- |
+| Prompt facade | `prompt/sdk-driver.ts` | `prompt.submit`, `prompt.complete`, `prompt.command_*`, `prompt.collab_*` |
+| Actor lifecycle | `workflows/conversation/manager.ts` | `conversation-manager.actor_started`, `.turn_rejected`, `.turn_failed`, `.ensure_and_drain` |
+| Resource acquisition | `prompt/single-flight.ts`, `shared/query-semaphore.ts` | `conversation-lock.{acquired,released,rejected}`, `semaphore.*` |
+| Turn runtime | `workflows/conversation/actor-implementations.ts` | `prompt.runtime_create`, `prompt.mcp_seeded`, `prompt.sdk_error`, `task_run.*` |
+| Retry policy | `workflows/conversation/with-runtime-replacement-retry.ts` | `prompt.runtime_retry`, `prompt.continuation_pair_contradiction` |
+| Transcript | `prompt/transcript.ts` | `documents-index.index_failed`, `notice_appended` |
+| Message queue | `prompt/queue.ts`, `conversations/message-queue-drain.ts` | `queue.accepted`, `queue.drain_*` |
+
+Three further project-reachable stages sit outside the turn and follow the same
+rule:
+
+| Stage | Module | Events |
+| --- | --- | --- |
+| Startup rehydration | `workflows/conversation/rehydration.ts` | `conversation-manager.rehydrated`, `queue.recover_failed` |
+| Workflow task run (project compaction, ticket generation) | `workflows/conversation/execute-workflow-task-run.ts` | `conversation.execute_workflow_task_run.{dispatch,finalized}` |
+| State-store reads | `state-store/accessors.ts` | `state.read.timing` |
+
+Three traps this chain teaches:
+
+- **Fixing a module's own log statements is not enough.** A stage also hands
+  identity to helpers that log from their own module. `withRuntimeReplacementRetry`
+  is the example: it took a `sessionName` in its `meta` and emitted it from a
+  module-scoped logger no test could read. It now takes a `ConversationScopeRef`
+  and its `Logger` through deps, and the actor passes its own — so one capturing
+  logger covers the turn and everything it dispatches through.
+- **Name the carrier for what it is.** `TranscriptBroadcastMeta` calls its field
+  `storeSessionName`, not `sessionName`, because every consumer spreads that meta
+  into a payload or a log line. A field named `sessionName` holding the sentinel
+  will eventually be spread onto a public surface; a field named
+  `storeSessionName` has to be deliberately renamed to get there. `AppendNoticeInput`
+  follows the same rule; so does `acquireConversationLock`, whose store key legitimately
+  keys the lock Map but never reaches its `conversation-lock.*` fields.
+- **A free-form label is a log field.** The query semaphore emits only the label
+  it is handed — into every `semaphore.*` event and into the text of its
+  queue-timeout `Error`, which reaches a client. Build such labels from the scope
+  ref (`prompt:<session>` / `prompt:project:<conversationId>`), never by
+  interpolating a storage name.
+- **A threshold hides a sink.** `state.read.timing` only fires above 5ms, so an
+  in-memory read never emitted it in a test and the leak went unobserved for six
+  review rounds. When a diagnostic is conditional, its test has to make the
+  condition true (`read-timing-scope.test.ts` wraps the repository read), not
+  assume the sink is unreachable.
+
+Scope of the rule: a log site is only a leak if the sentinel can REACH it. Most
+`sessionName` log fields in the codebase sit on session-only paths where a real
+session name is the correct value and must stay. When adding a log field on a
+path a project conversation can reach, derive the scope ref instead.
 
 ### Key events
 
@@ -182,7 +286,7 @@ Options shared across commands:
 --budgets <path> --assert-budgets   # report only; budget config + CI gate
 ```
 
-Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped per-session/per-conversation files under `logs/sessions/` are not auto-discovered — pass them explicitly with `--in`. Rotated backups (`global.log.1`, `global.log.2`, …) are likewise not auto-discovered, so default discovery sees only the active file; pass the backups explicitly (or a glob) with `--in` to analyze across rotations.
+Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped files under `logs/sessions/` and `logs/projects/` ARE auto-discovered (`discoverScopedLogPaths` walks both trees). Rotated backups (`global.log.1`, `global.log.2`, …) are likewise not auto-discovered, so default discovery sees only the active file; pass the backups explicitly (or a glob) with `--in` to analyze across rotations.
 
 ## Speedscope Export (hotspot aggregation)
 

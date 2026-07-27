@@ -8,6 +8,8 @@ import {
   type FileMentionPopupHandle,
 } from "@/components/session/prompt/PromptEditorFileMentionPopup";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 const mockFiles = [
   { path: "src/index.ts" },
@@ -39,7 +41,7 @@ function renderPopup(
         ref={ref}
         query=""
         projectName="proj"
-        sessionName="session-x"
+        scopeRef={{ scope: "session", sessionName: "session-x" }}
         onSelect={vi.fn()}
         {...overrides}
       />
@@ -201,7 +203,7 @@ describe("PromptEditorFileMentionPopup", () => {
 describe("PromptEditorFileMentionPopup (project-level conversations)", () => {
   it("scans the project root when no session exists", async () => {
     await act(async () => {
-      renderPopup({ sessionName: undefined });
+      renderPopup({ scopeRef: { scope: "project" } });
     });
     expect(mockUseProjectFilesQuery).toHaveBeenCalledWith({
       projectName: "proj",
@@ -209,5 +211,30 @@ describe("PromptEditorFileMentionPopup (project-level conversations)", () => {
     expect(
       screen.getByText((_, el) => el?.textContent === "src/index.ts"),
     ).toBeInTheDocument();
+  });
+
+  // R1.3: the project composer addresses this popup at project scope. Encoding
+  // that as "sessionName is undefined" let the sentinel through as a real
+  // session name, producing a /sessions/__project__/files URL and a
+  // session-keyed React Query key.
+  it("never builds a session-scoped file query for a project conversation", async () => {
+    await act(async () => {
+      renderPopup({
+        scopeRef: scopeRefFromStoreSessionName(
+          PROJECT_CONVERSATION_SESSION_SENTINEL,
+        ),
+      });
+    });
+
+    expect(mockUseProjectFilesQuery).toHaveBeenCalledWith({
+      projectName: "proj",
+    });
+    const [args] = mockUseProjectFilesQuery.mock.calls[0] as [
+      { projectName: string; sessionName?: string },
+    ];
+    expect(args.sessionName).toBeUndefined();
+    expect(JSON.stringify(args)).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
   });
 });
