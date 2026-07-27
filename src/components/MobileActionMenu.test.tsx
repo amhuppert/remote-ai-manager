@@ -19,20 +19,31 @@ describe("MobileActionMenu", () => {
     ).toBeInTheDocument();
   });
 
-  it("closes the menu when close button is clicked", () => {
+  it("portals the open overlay outside its render container", () => {
     const { container } = render(<MobileActionMenu {...baseProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+
+    const sheet =
+      document.body.querySelector<HTMLElement>('[data-open="true"]');
+    expect(sheet).toHaveAttribute("data-open", "true");
+    expect(container).not.toContainElement(sheet);
+  });
+
+  it("closes the menu when close button is clicked", () => {
+    render(<MobileActionMenu {...baseProps} />);
     // Open: the sheet exposes its state via data-open, the backdrop via .visible.
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
-    expect(container.querySelector('[data-open="true"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-open="true"]')).not.toBeNull();
     expect(
-      container.querySelector(".mobile-action-backdrop.visible"),
+      document.body.querySelector(".mobile-action-backdrop.visible"),
     ).not.toBeNull();
 
     // Close via button
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
-    expect(container.querySelector('[data-open="true"]')).toBeNull();
+    expect(document.body.querySelector('[data-open="true"]')).toBeNull();
     expect(
-      container.querySelector(".mobile-action-backdrop.visible"),
+      document.body.querySelector(".mobile-action-backdrop.visible"),
     ).toBeNull();
   });
 
