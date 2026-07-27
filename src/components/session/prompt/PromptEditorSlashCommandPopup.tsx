@@ -133,7 +133,11 @@ export const PromptEditorSlashCommandPopup = forwardRef<
 
   const capabilityScope = useMemo<AgentCapabilityScope>(
     () =>
-      conversationCapabilityScope({ scope: scopeRef, projectName, conversationId }),
+      conversationCapabilityScope({
+        scope: scopeRef,
+        projectName,
+        conversationId,
+      }),
     [scopeRef, projectName, conversationId],
   );
   const pluginsCascade =

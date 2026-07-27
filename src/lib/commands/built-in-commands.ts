@@ -137,7 +137,10 @@ export function filterCommandsForScope(
   { scope, isWorkflowManagedConversation }: CommandScopeFilterArgs,
 ): CommandItem[] {
   return items.filter((item) => {
-    if (scope.scope === "project" && SESSION_ONLY_COMMAND_NAMES.has(item.name)) {
+    if (
+      scope.scope === "project" &&
+      SESSION_ONLY_COMMAND_NAMES.has(item.name)
+    ) {
       return false;
     }
     return !(isWorkflowManagedConversation && item.name === "/ticket");

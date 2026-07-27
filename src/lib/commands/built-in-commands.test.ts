@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  BUILT_IN_COMMANDS,
-  filterCommandsForScope,
-} from "./built-in-commands";
+import { BUILT_IN_COMMANDS, filterCommandsForScope } from "./built-in-commands";
 import type { CommandItem } from "./schemas";
 
 const SESSION = { scope: "session", sessionName: "sess" } as const;
@@ -24,8 +21,7 @@ function names(args: {
 }): string[] {
   return filterCommandsForScope(args.items ?? BUILT_IN_COMMANDS, {
     scope: args.scope,
-    isWorkflowManagedConversation:
-      args.isWorkflowManagedConversation ?? false,
+    isWorkflowManagedConversation: args.isWorkflowManagedConversation ?? false,
   }).map((item) => item.name);
 }
 
@@ -76,9 +72,9 @@ describe("filterCommandsForScope", () => {
   });
 
   it("keeps a discovered reserved name in a session conversation", () => {
-    expect(
-      names({ scope: SESSION, items: [discovered("/commit")] }),
-    ).toEqual(["/commit"]);
+    expect(names({ scope: SESSION, items: [discovered("/commit")] })).toEqual([
+      "/commit",
+    ]);
   });
 
   it("withholds /ticket in a workflow-managed lane conversation", () => {

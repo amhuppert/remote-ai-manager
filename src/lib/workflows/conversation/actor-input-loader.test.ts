@@ -95,7 +95,11 @@ describe("loadActorInput (R4.3 / D5)", () => {
     beforeEach(async () => {
       await fixture.seedProjectConversation(
         PROJECT_PATH,
-        conversation({ scope: "project", agentBackend: "codex", promptCount: 2 }),
+        conversation({
+          scope: "project",
+          agentBackend: "codex",
+          promptCount: 2,
+        }),
       );
     });
 

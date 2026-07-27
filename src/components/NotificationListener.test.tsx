@@ -1522,9 +1522,7 @@ describe("NotificationListener", () => {
 
     // Delivered: the message is now a transcript row, so leaving the optimistic
     // stand-in behind would render it a second time as still-pending.
-    await waitFor(() =>
-      expect(optimisticQueueFor("conv-1")).toHaveLength(0),
-    );
+    await waitFor(() => expect(optimisticQueueFor("conv-1")).toHaveLength(0));
   });
 
   it("drops the optimistic queue entry when a SESSION queue row is cancelled or fails", async () => {
@@ -1560,9 +1558,7 @@ describe("NotificationListener", () => {
     }
 
     // Neither will ever be delivered, so neither has a row left to show.
-    await waitFor(() =>
-      expect(optimisticQueueFor("conv-1")).toHaveLength(0),
-    );
+    await waitFor(() => expect(optimisticQueueFor("conv-1")).toHaveLength(0));
   });
 
   it("keeps the optimistic queue entry while the row is still being delivered", async () => {

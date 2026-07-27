@@ -318,9 +318,7 @@ describe("project cockpit: conversation-local drafts (R3.3)", () => {
     await attachImage("for-c1.png");
 
     selectTab("c2");
-    await waitFor(() =>
-      expect(screen.queryByAltText("for-c1.png")).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByAltText("for-c1.png")).toBeNull());
 
     selectTab("c1");
     await waitFor(() => expect(screen.getByAltText("for-c1.png")).toBeTruthy());

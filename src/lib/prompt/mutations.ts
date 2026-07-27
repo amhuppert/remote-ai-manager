@@ -50,7 +50,10 @@ async function patchCachedDraft(
     c.id === target.conversationId ? { ...c, pendingPromptText: text } : c;
 
   if (target.scope === "session") {
-    const detailKey = sessionKeys.detail(target.projectName, target.sessionName);
+    const detailKey = sessionKeys.detail(
+      target.projectName,
+      target.sessionName,
+    );
     await queryClient.cancelQueries({ queryKey: detailKey });
     const previous = queryClient.getQueryData<SessionState>(detailKey);
     if (!previous) return;
@@ -114,7 +117,11 @@ export function useUpdatePendingPromptTextMutation(
         ...(scopeTarget ? conversationTargetKey(scopeTarget) : []),
       ]),
     },
-    mutationFn: ({ target, text, expectedText }: UpdatePendingPromptTextInput) =>
+    mutationFn: ({
+      target,
+      text,
+      expectedText,
+    }: UpdatePendingPromptTextInput) =>
       mutationFetch(pendingPromptUrl(target), "update-pending-prompt-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

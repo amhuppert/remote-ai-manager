@@ -568,8 +568,7 @@ export interface PendingPromptRouteDeps extends PendingPromptPersistenceDeps {
   ): Promise<SessionState | null>;
 }
 
-export interface ProjectPendingPromptRouteDeps
-  extends PendingPromptPersistenceDeps {
+export interface ProjectPendingPromptRouteDeps extends PendingPromptPersistenceDeps {
   resolveProjectPath(name: string): Promise<string | null>;
   getProjectConversation(
     projectPath: string,

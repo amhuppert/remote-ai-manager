@@ -98,7 +98,10 @@ function makeConversation(
 }
 
 /** A conversation as the server reports it while an agent waits for an answer. */
-function waitingConversation(id: string, questionId = "q_1"): ConversationState {
+function waitingConversation(
+  id: string,
+  questionId = "q_1",
+): ConversationState {
   return makeConversation(id, {
     status: "waiting_for_input",
     pendingQuestionId: questionId,
@@ -306,6 +309,8 @@ describe("project cockpit question panel (R4.2)", () => {
       fireEvent.click(screen.getByRole("button", { name: /^Send/ }));
     });
 
-    await waitFor(() => expect(screen.queryByTestId("prompt-send")).not.toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByTestId("prompt-send")).not.toBeNull(),
+    );
   });
 });

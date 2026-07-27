@@ -11,7 +11,13 @@
  */
 import * as matchers from "@testing-library/jest-dom/matchers";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type {
@@ -191,7 +197,9 @@ describe("project conversation capability drawer", () => {
       within(drawer).getByTestId("capability-row-reviewer"),
     );
     expect(within(row).getByText("Reviewer")).toBeInTheDocument();
-    expect(within(row).getByText("Set off at Conversation")).toBeInTheDocument();
+    expect(
+      within(row).getByText("Set off at Conversation"),
+    ).toBeInTheDocument();
   });
 
   it("writes an override back to the project-conversation layer", async () => {
@@ -201,7 +209,9 @@ describe("project conversation capability drawer", () => {
     const row = await waitFor(() =>
       within(drawer).getByTestId("capability-row-reviewer"),
     );
-    fireEvent.click(within(row).getByRole("switch", { name: "Enable Reviewer" }));
+    fireEvent.click(
+      within(row).getByRole("switch", { name: "Enable Reviewer" }),
+    );
 
     await waitFor(() => {
       expect(
@@ -223,7 +233,9 @@ describe("project conversation capability drawer", () => {
     expect(
       within(drawer).getByRole("button", { name: /Conversation/ }),
     ).toBeInTheDocument();
-    expect(within(drawer).queryByRole("button", { name: /Session/ })).toBeNull();
+    expect(
+      within(drawer).queryByRole("button", { name: /Session/ }),
+    ).toBeNull();
   });
 
   // The project composer mounts before any conversation exists and addresses it

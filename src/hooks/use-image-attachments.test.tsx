@@ -247,8 +247,8 @@ describe("useImageAttachments scoping (R3.3)", () => {
     });
 
     expect(settled.map((result) => result.error)).toEqual([null]);
-    expect(harness.current.pendingImages.map((image) => image.fileName)).toEqual(
-      ["c2-first.png"],
-    );
+    expect(
+      harness.current.pendingImages.map((image) => image.fileName),
+    ).toEqual(["c2-first.png"]);
   });
 });

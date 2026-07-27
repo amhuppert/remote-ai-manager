@@ -147,15 +147,12 @@ export function useImageAttachments(
     [],
   );
 
-  const commit = useCallback(
-    (owner: ScopeKey, next: ImageAttachment[]) => {
-      const merged = new Map(imagesByScopeRef.current);
-      merged.set(owner, next);
-      imagesByScopeRef.current = merged;
-      setImagesByScope(merged);
-    },
-    [],
-  );
+  const commit = useCallback((owner: ScopeKey, next: ImageAttachment[]) => {
+    const merged = new Map(imagesByScopeRef.current);
+    merged.set(owner, next);
+    imagesByScopeRef.current = merged;
+    setImagesByScope(merged);
+  }, []);
 
   useEffect(() => {
     return () => {

@@ -51,7 +51,8 @@ export function usePendingPromptPersistence({
   editorRef,
 }: UsePendingPromptPersistenceArgs): UsePendingPromptPersistenceResult {
   const conversationId = target?.conversationId ?? null;
-  const updatePendingPromptMutation = useUpdatePendingPromptTextMutation(target);
+  const updatePendingPromptMutation =
+    useUpdatePendingPromptTextMutation(target);
   const updatePendingPromptMutate = updatePendingPromptMutation.mutate;
   const hydratedConversationIdRef = useRef<string | null>(null);
   const lastPersistedPendingPromptRef = useRef<string | null>(null);
@@ -129,7 +130,8 @@ export function usePendingPromptPersistence({
 
     const initial = activeConversation.pendingPromptText ?? "";
     hydratedConversationIdRef.current = conversationId;
-    lastPersistedPendingPromptRef.current = activeConversation.pendingPromptText;
+    lastPersistedPendingPromptRef.current =
+      activeConversation.pendingPromptText;
     setPromptText(initial);
     const editorInstance = editorRef.current?.editor;
     if (editorInstance) {

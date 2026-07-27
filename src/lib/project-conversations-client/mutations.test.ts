@@ -1699,9 +1699,7 @@ describe("useSendProjectPrompt: full stream event set (R4.5)", () => {
       ?.find((c) => c.id === id);
   }
 
-  function renderSender(
-    options?: Parameters<typeof useSendProjectPrompt>[1],
-  ) {
+  function renderSender(options?: Parameters<typeof useSendProjectPrompt>[1]) {
     return renderHook(() => useSendProjectPrompt("proj", options), {
       wrapper: wrapperFor(client),
     });
@@ -1718,10 +1716,7 @@ describe("useSendProjectPrompt: full stream event set (R4.5)", () => {
   }
 
   it("records a streamed question on the originating conversation's durable fields", async () => {
-    seedList(
-      { ...okConversation, id: "c1" },
-      { ...okConversation, id: "c2" },
-    );
+    seedList({ ...okConversation, id: "c1" }, { ...okConversation, id: "c2" });
     const stream = scriptedStream();
     serveStreams(stream);
     const { result } = renderSender();
