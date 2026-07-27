@@ -1,8 +1,5 @@
 import { escapeXmlAttr } from "@/lib/shared/xml";
-import type {
-  ConversationListItem,
-  ConversationMentionAttrs,
-} from "./schemas";
+import type { ConversationListItem, ConversationMentionAttrs } from "./schemas";
 
 /**
  * CamelCase attribute set behind a `<conversation-ref ... />` tag — the same

@@ -138,10 +138,14 @@ export function createSessionCapabilityHandlers(deps: CapabilityRouteDeps) {
     const projectName = requireParam(params, "name");
     // A session-level route, so the conversation-shaped request-path derivation
     // cannot see its counterpart: the project's own capability route is it.
-    const sessionName = requirePublicSessionParam(params, "session", (project) => ({
-      kind: "project-route",
-      route: `/api/projects/${project}/agent-capabilities`,
-    }));
+    const sessionName = requirePublicSessionParam(
+      params,
+      "session",
+      (project) => ({
+        kind: "project-route",
+        route: `/api/projects/${project}/agent-capabilities`,
+      }),
+    );
     const projectPath = await resolveProjectPathOrThrow(deps, projectName);
     return { level: "session", projectName, projectPath, sessionName };
   });
@@ -154,15 +158,18 @@ export function createConversationCapabilityHandlers(
     const params = await ctx.params;
     const projectName = requireParam(params, "name");
     const conversationId = requireParam(params, "conversationId");
-    const sessionName = requirePublicSessionParam(params, "session", (project) =>
-      // Prefers the in-flight request path, so `/agent-capabilities/refresh`
-      // is named as itself rather than as its parent resource.
-      resolveProjectSentinelRefusalTarget(() => ({
-        kind: "project-route",
-        route: `/api/projects/${project}/conversations/${encodeURIComponent(
-          conversationId,
-        )}/agent-capabilities`,
-      })),
+    const sessionName = requirePublicSessionParam(
+      params,
+      "session",
+      (project) =>
+        // Prefers the in-flight request path, so `/agent-capabilities/refresh`
+        // is named as itself rather than as its parent resource.
+        resolveProjectSentinelRefusalTarget(() => ({
+          kind: "project-route",
+          route: `/api/projects/${project}/conversations/${encodeURIComponent(
+            conversationId,
+          )}/agent-capabilities`,
+        })),
     );
     const projectPath = await resolveProjectPathOrThrow(deps, projectName);
     return {

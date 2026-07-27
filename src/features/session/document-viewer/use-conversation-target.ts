@@ -58,7 +58,10 @@ export function pickDefaultTarget(
   // Activity fallback: ISO 8601 timestamps sort lexicographically.
   let mostRecent: SessionConversationListItem | null = null;
   for (const item of targetable) {
-    if (mostRecent === null || item.lastActivityAt > mostRecent.lastActivityAt) {
+    if (
+      mostRecent === null ||
+      item.lastActivityAt > mostRecent.lastActivityAt
+    ) {
       mostRecent = item;
     }
   }

@@ -570,7 +570,10 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
 
   it("falls back to project-level capabilities before the first conversation exists", async () => {
     await act(async () => {
-      renderPopup({ scopeRef: { scope: "project" }, conversationId: undefined });
+      renderPopup({
+        scopeRef: { scope: "project" },
+        conversationId: undefined,
+      });
     });
     expect(mockUseAgentCapabilityViewQuery).toHaveBeenCalledWith(
       { level: "project", projectName: "proj" },

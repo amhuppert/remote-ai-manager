@@ -646,9 +646,9 @@ describe("rejection notice SSE scoping", () => {
     );
 
     expect(deps.appendNotice).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.storeSessionName).toBe(
-      "__project__",
-    );
+    expect(
+      vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.storeSessionName,
+    ).toBe("__project__");
   });
 
   it("falls back to an empty sessionName when no scope info is available", async () => {
@@ -659,9 +659,9 @@ describe("rejection notice SSE scoping", () => {
       makeInput({ sessionName: null, parsed: { command: "merge", hint: "" } }),
     );
 
-    expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.storeSessionName).toBe(
-      "",
-    );
+    expect(
+      vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.storeSessionName,
+    ).toBe("");
   });
 });
 

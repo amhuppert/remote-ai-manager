@@ -210,7 +210,10 @@ function resolveScopeDir(
   return sessionDirPath(projectSlug, sessionSlug);
 }
 
-function conversationLogPath(scopeDir: string, conversationSlug: string): string {
+function conversationLogPath(
+  scopeDir: string,
+  conversationSlug: string,
+): string {
   return path.join(scopeDir, "conversations", `${conversationSlug}.log`);
 }
 
@@ -328,7 +331,8 @@ function resolveDestinations(
  */
 function refuseSentinelSessionIdentity(entry: Record<string, unknown>): void {
   const sessionName = entry["sessionName"];
-  if (typeof sessionName !== "string" || !isProjectSentinel(sessionName)) return;
+  if (typeof sessionName !== "string" || !isProjectSentinel(sessionName))
+    return;
   delete entry["sessionName"];
   entry["scope"] = "project";
 }

@@ -179,9 +179,10 @@ describe("cctl session-env inventory (R2.4)", () => {
 
   it("gives every classification a substantive reason", () => {
     for (const [command, entry] of Object.entries(CLI_SESSION_ENV_INVENTORY)) {
-      expect(entry.reason.length, `${command} needs a real reason`).toBeGreaterThan(
-        40,
-      );
+      expect(
+        entry.reason.length,
+        `${command} needs a real reason`,
+      ).toBeGreaterThan(40);
     }
   });
 });

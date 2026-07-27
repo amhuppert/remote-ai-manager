@@ -10,7 +10,7 @@ import { usePendingPromptPersistence } from "@/features/session/hooks/use-pendin
 import { useTddToggleMutation } from "@/lib/sessions/mutations";
 import { useSessionPageHandlers } from "@/features/session/hooks/use-session-page-handlers";
 import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecycle";
-import { canStopTurn } from "@/features/session/hooks/turn-activity";
+import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { isWorkflowLaneRole } from "@/lib/conversations/schemas";
 import { useSendPrompt } from "@/hooks/use-send-prompt";

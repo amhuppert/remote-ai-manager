@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
+import { StopIcon } from "@/components/icons";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import { presentConversationStatus } from "./conversation-status";
@@ -14,6 +15,10 @@ export interface ConversationPaneProps {
   projectName?: string;
   /** Active conversation status — surfaced as a header indicator (Req 12.2). */
   status?: ConversationStatus;
+  /** Whether the conversation on screen has a turn the user can stop (R5.1). */
+  canStop?: boolean;
+  /** Stop the turn running in the conversation on screen. */
+  onStop?: () => void;
   /** ConversationTabs slot (rendered above the header). */
   tabs?: ReactNode;
   /** ProjectTranscriptHost slot. */
@@ -39,6 +44,16 @@ const WORKTREE_BTN_CLASS =
   "bg-bg-base text-text-secondary font-mono text-[0.72rem] cursor-pointer " +
   "transition-[border-color,background,color] duration-150 ease-[ease] " +
   "hover:border-border-strong hover:bg-bg-surface hover:text-text-primary";
+
+// The session conversation header's Stop pill, unchanged: stopping a turn is
+// the same action at either scope, so it reads the same. `ml-auto` parks it at
+// the far end of the cockpit's execution-context header.
+const STOP_BTN_CLASS =
+  "ml-auto inline-flex h-[24px] cursor-pointer items-center gap-[6px] rounded-full " +
+  "border border-solid border-[var(--cc-red-soft-a45)] bg-[var(--cc-red-soft-a08)] px-[10px] " +
+  "font-mono text-[0.66rem] font-bold tracking-[0.08em] text-red uppercase " +
+  "transition-all duration-150 ease-[ease] hover:border-red hover:bg-[var(--cc-red-soft-a14)] " +
+  "hover:shadow-[0_0_12px_var(--cc-red-soft-a25)] max-768:px-[8px]";
 
 function ExternalGlyph(): React.JSX.Element {
   return (
@@ -68,6 +83,8 @@ export default function ConversationPane({
   agentBackend,
   projectName,
   status,
+  canStop = false,
+  onStop,
   tabs,
   transcript,
   composer,
@@ -110,6 +127,18 @@ export default function ConversationPane({
           >
             {statusPresentation.label}
           </Badge>
+        )}
+        {canStop && (
+          <button
+            type="button"
+            className={STOP_BTN_CLASS}
+            onClick={onStop}
+            title="Stop agent"
+            aria-label="Stop agent"
+          >
+            <StopIcon size={11} />
+            <span className="leading-none max-768:hidden">Stop</span>
+          </button>
         )}
       </header>
       <div className="flex min-h-0 flex-1 flex-col">{transcript}</div>

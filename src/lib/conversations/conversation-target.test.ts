@@ -137,7 +137,11 @@ describe("internal store adapter", () => {
 describe("public builders refuse the sentinel", () => {
   it("sessionConversationTarget rejects the sentinel as a session name", () => {
     expect(() =>
-      sessionConversationTarget("demo", PROJECT_CONVERSATION_SESSION_SENTINEL, "conv-1"),
+      sessionConversationTarget(
+        "demo",
+        PROJECT_CONVERSATION_SESSION_SENTINEL,
+        "conv-1",
+      ),
     ).toThrow();
   });
 

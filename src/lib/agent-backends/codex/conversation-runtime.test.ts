@@ -52,7 +52,9 @@ import { turnContinuationSchema } from "../errors";
 // ============================================================
 
 function makeCreateInput(
-  overrides?: Partial<ConversationBackendCreateInput> & { sessionName?: string },
+  overrides?: Partial<ConversationBackendCreateInput> & {
+    sessionName?: string;
+  },
 ): ConversationBackendCreateInput {
   const { sessionName, ...rest } = overrides ?? {};
   const conversationId = rest.conversationId ?? "conv-123";

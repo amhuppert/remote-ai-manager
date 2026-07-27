@@ -212,9 +212,12 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       const handler = withTracing(createAnswerHandlers(deps).POST);
 
       const res = await handler(
-        makeRequest({ questionId: "q_b1", answers }, {
-          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
-        }),
+        makeRequest(
+          { questionId: "q_b1", answers },
+          {
+            session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          },
+        ),
         {
           params: Promise.resolve({
             name: "repo",
@@ -657,9 +660,12 @@ describe("POST conversation answer (async consume + enqueue)", () => {
       const { deps, drain } = makeProjectDeps();
       const { POST } = createProjectAnswerHandlers(deps);
 
-      const res = await POST(makeProjectRequest({ questionId: "q_b1", answers }), {
-        params: projectParams,
-      });
+      const res = await POST(
+        makeProjectRequest({ questionId: "q_b1", answers }),
+        {
+          params: projectParams,
+        },
+      );
 
       expect(res.status).toBe(200);
 

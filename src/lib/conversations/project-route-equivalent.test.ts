@@ -64,7 +64,16 @@ function servesRoute(dir: string, operation: string): boolean {
 
 describe("projectRouteForSessionRequestPath", () => {
   it("names the project-shaped route for each conversation leaf, not the base", () => {
-    for (const leaf of ["read", "ask", "prompt", "messages", "rename"]) {
+    // `abort` joined this list with T7: a project turn is now stoppable, so a
+    // session-shaped stop request is told where to retry rather than refused.
+    for (const leaf of [
+      "read",
+      "ask",
+      "prompt",
+      "messages",
+      "rename",
+      "abort",
+    ]) {
       expect(
         projectRouteForSessionRequestPath(
           `/api/projects/demo/sessions/feature-x/conversations/conv-1/${leaf}`,
@@ -121,7 +130,7 @@ describe("projectRouteForSessionRequestPath", () => {
   });
 
   it("reports a conversation operation that has no project route as session-only", () => {
-    for (const leaf of ["fork", "abort", "debug-mode/logs"]) {
+    for (const leaf of ["fork", "debug-mode/logs"]) {
       expect(
         projectRouteForSessionRequestPath(
           `/api/projects/demo/sessions/feature-x/conversations/conv-1/${leaf}`,

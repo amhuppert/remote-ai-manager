@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { StopIcon } from "@/components/icons";
-import { canStopTurn } from "@/features/session/hooks/turn-activity";
+import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useSendingFor } from "@/stores/session-detail.store";

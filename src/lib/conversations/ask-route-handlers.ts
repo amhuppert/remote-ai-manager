@@ -130,10 +130,9 @@ async function registerAskBatch(
       role: conversation.role,
       activeTurnSource: conversation.activeTurnSource,
     });
-    return NextResponse.json(
-      { error: AUTONOMOUS_DENIAL } satisfies ApiError,
-      { status: 403 },
-    );
+    return NextResponse.json({ error: AUTONOMOUS_DENIAL } satisfies ApiError, {
+      status: 403,
+    });
   }
 
   return registerAskBatchAfterRoleGate(deps, request, {
@@ -331,8 +330,10 @@ async function registerAskBatchAfterRoleGate(
   }
 }
 
-export interface ProjectAskRouteDeps
-  extends Omit<AskRouteDeps, "getSession" | "resolveLaneAskPermission"> {
+export interface ProjectAskRouteDeps extends Omit<
+  AskRouteDeps,
+  "getSession" | "resolveLaneAskPermission"
+> {
   getProjectConversation(
     projectPath: string,
     conversationId: string,

@@ -810,3 +810,275 @@ describe("project cockpit: create-and-send provisional identity", () => {
     expect(composerBusy()).toBe(false);
   });
 });
+
+/**
+ * Stop for a project conversation (R5.1, R5.2). A project turn executes
+ * directly in the shared main worktree, so these drive the real cockpit to the
+ * point where a turn is running and assert what the user can actually do about
+ * it — and that doing it reaches only the conversation they aimed at.
+ */
+describe("project cockpit: stopping a running turn", () => {
+  /** The header Stop control for the conversation on screen. */
+  function stopButton(): HTMLElement | null {
+    return screen.queryByRole("button", { name: "Stop agent" });
+  }
+
+  it("offers no Stop while the conversation is idle", async () => {
+    vi.stubGlobal(
+      "fetch",
+      promptFetch(() => null),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1"])}>
+        <PageHarness openConversations={[makeConversation("c1")]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+    selectTab("c1");
+
+    expect(stopButton()).toBeNull();
+  });
+
+  it("stops the running turn through the project abort route (R5.1)", async () => {
+    const stream = scriptedStream();
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) => {
+        if (url.endsWith("/prompt")) {
+          posts.push(url);
+          return Promise.resolve(stream.response);
+        }
+        if (url.endsWith("/abort")) {
+          posts.push(url);
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return null;
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1"])}>
+        <PageHarness openConversations={[makeConversation("c1")]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+    selectTab("c1");
+    await typeAndSend("long running work");
+    await stream.push(textFrame("working"));
+
+    const stop = await waitFor(() => {
+      const btn = stopButton();
+      expect(btn).not.toBeNull();
+      return btn as HTMLElement;
+    });
+    fireEvent.click(stop);
+
+    // The project addressing shape: no session segment, and no sentinel.
+    await waitFor(() =>
+      expect(posts).toContain("/api/projects/proj/conversations/c1/abort"),
+    );
+    expect(posts.join(" ")).not.toContain("/sessions/");
+    expect(posts.join(" ")).not.toContain("__project__");
+
+    // The local in-flight state settles rather than waiting on a stream the
+    // aborted turn will never close.
+    await waitFor(() =>
+      expect(useSessionDetailStore.getState().inFlight["c1"]?.sending).toBe(
+        false,
+      ),
+    );
+    await waitFor(() => expect(composerBusy()).toBe(false));
+  });
+
+  it("leaves other project conversations' turns untouched (R5.2)", async () => {
+    const first = scriptedStream();
+    const second = scriptedStream();
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) => {
+        if (url.includes("/conversations/c1/prompt")) {
+          return Promise.resolve(first.response);
+        }
+        if (url.includes("/conversations/c2/prompt")) {
+          return Promise.resolve(second.response);
+        }
+        if (url.endsWith("/abort")) {
+          posts.push(url);
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return null;
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1", "c2"])}>
+        <PageHarness
+          openConversations={[makeConversation("c1"), makeConversation("c2")]}
+        />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    selectTab("c1");
+    await typeAndSend("first prompt");
+    await first.push(textFrame("first output"));
+
+    selectTab("c2");
+    await typeAndSend("second prompt");
+    await second.push(textFrame("second output"));
+
+    // Stop is scoped to the conversation on screen, so stopping from c2's tab
+    // stops c2 — and only c2.
+    const stop = await waitFor(() => {
+      const btn = stopButton();
+      expect(btn).not.toBeNull();
+      return btn as HTMLElement;
+    });
+    fireEvent.click(stop);
+
+    await waitFor(() =>
+      expect(posts).toEqual(["/api/projects/proj/conversations/c2/abort"]),
+    );
+    await waitFor(() =>
+      expect(useSessionDetailStore.getState().inFlight["c2"]?.sending).toBe(
+        false,
+      ),
+    );
+
+    // c1's turn is still streaming: its indicator, its optimistic prompt, and
+    // its streamed content all survive the stop aimed at c2.
+    expect(useSessionDetailStore.getState().inFlight["c1"]?.sending).toBe(true);
+    expect(assistantText("c1")).toEqual(["first output"]);
+    expect(userText("c1")).toEqual(["first prompt"]);
+    await first.push(textFrame("first output continues"));
+    expect(assistantText("c1")).toEqual([
+      "first output",
+      "first output continues",
+    ]);
+  });
+
+  it("settles the local turn when the server reports nothing was running (R5.2)", async () => {
+    const stream = scriptedStream();
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) => {
+        if (url.endsWith("/prompt")) return Promise.resolve(stream.response);
+        // 409: the turn had already ended server-side. The user still asked to
+        // stop, so the local state must not stay stuck on "sending".
+        if (url.endsWith("/abort")) {
+          return Promise.resolve(
+            jsonResponse({ error: "No running prompt to abort" }, 409),
+          );
+        }
+        return null;
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1"])}>
+        <PageHarness openConversations={[makeConversation("c1")]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+    selectTab("c1");
+    await typeAndSend("work");
+    await stream.push(textFrame("partial"));
+
+    const stop = await waitFor(() => {
+      const btn = stopButton();
+      expect(btn).not.toBeNull();
+      return btn as HTMLElement;
+    });
+    fireEvent.click(stop);
+
+    await waitFor(() =>
+      expect(useSessionDetailStore.getState().inFlight["c1"]?.sending).toBe(
+        false,
+      ),
+    );
+    // A user-initiated stop is not a prompt failure.
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("offers Stop for a turn this client did not start (R5.1)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      promptFetch(() => null),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1"])}>
+        <PageHarness
+          openConversations={[makeConversation("c1", { status: "running" })]}
+        />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+    selectTab("c1");
+
+    // A turn started from another tab, or recovered after a reload, is still
+    // the user's to stop — server status is the second source of "running".
+    expect(stopButton()).not.toBeNull();
+  });
+});
+
+/**
+ * Stop then resend in the same conversation. The stopped turn is still
+ * unwinding when the replacement starts, so both turns' teardown touches the
+ * same key — and only the live one may own it.
+ */
+describe("project cockpit: stop then resend", () => {
+  it("leaves the replacement turn running when the stopped turn unwinds (R5.2)", async () => {
+    const stopped = scriptedStream();
+    const replacement = scriptedStream();
+    const promptCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      promptFetch((url) => {
+        if (url.endsWith("/prompt")) {
+          promptCalls.push(url);
+          return Promise.resolve(
+            promptCalls.length === 1 ? stopped.response : replacement.response,
+          );
+        }
+        if (url.endsWith("/abort")) return Promise.resolve(jsonResponse({}));
+        return null;
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={seededClient(["c1"])}>
+        <PageHarness openConversations={[makeConversation("c1")]} />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+    selectTab("c1");
+
+    await typeAndSend("first attempt");
+    await stopped.push(textFrame("partial"));
+    fireEvent.click(
+      await waitFor(() => {
+        const btn = screen.queryByRole("button", { name: "Stop agent" });
+        expect(btn).not.toBeNull();
+        return btn as HTMLElement;
+      }),
+    );
+    await waitFor(() => expect(composerBusy()).toBe(false));
+
+    await typeAndSend("second attempt");
+    await waitFor(() => expect(promptCalls).toHaveLength(2));
+    expect(composerBusy()).toBe(true);
+
+    // The stopped turn's connection finally closes. Its teardown must not
+    // settle the key the replacement now owns.
+    await stopped.close();
+
+    expect(useSessionDetailStore.getState().inFlight["c1"]?.sending).toBe(true);
+    expect(composerBusy()).toBe(true);
+    await replacement.push(textFrame("replacement output"));
+    expect(assistantText("c1")).toContain("replacement output");
+  });
+});

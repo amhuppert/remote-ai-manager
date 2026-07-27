@@ -56,16 +56,10 @@ interface ReadTimingPayload {
   conversationId?: string;
 }
 
-export function createAccessors(
-  core: StateStoreCore,
-  log: Logger = logger,
-) {
+export function createAccessors(core: StateStoreCore, log: Logger = logger) {
   const { repos } = core;
 
-  function emitReadTiming(
-    start: number,
-    payload: ReadTimingPayload,
-  ): void {
+  function emitReadTiming(start: number, payload: ReadTimingPayload): void {
     const durationMs = +(performance.now() - start).toFixed(3);
     if (durationMs < STATE_READ_TIMING_LOG_THRESHOLD_MS) return;
     const { storeSessionName, ...rest } = payload;

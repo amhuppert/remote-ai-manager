@@ -55,9 +55,7 @@ function listFilesRecursive(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((name) => {
     const full = path.join(dir, name);
-    return statSync(full).isDirectory()
-      ? listFilesRecursive(full)
-      : [full];
+    return statSync(full).isDirectory() ? listFilesRecursive(full) : [full];
   });
 }
 

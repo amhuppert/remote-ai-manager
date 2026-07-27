@@ -428,7 +428,9 @@ describe("POST conversation ask", () => {
 });
 
 describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
-  function projectDeps(conversation: ConversationState = conv({ scope: "project" })) {
+  function projectDeps(
+    conversation: ConversationState = conv({ scope: "project" }),
+  ) {
     const send = vi.fn(() => true);
     const getProjectConversation = vi.fn(async () => conversation);
     const log = createCapturingLogger();
@@ -616,7 +618,9 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
       });
 
       expect(status).toBe(200);
-      const registered = log.entries.find((e) => e.message === "ask.registered");
+      const registered = log.entries.find(
+        (e) => e.message === "ask.registered",
+      );
       expect(registered?.fields).toMatchObject({
         scope: "project",
         conversationId: "conv-1",
@@ -636,7 +640,10 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
       },
       {
         name: "batch already pending",
-        conversation: conv({ scope: "project", pendingQuestionId: "q_existing" }),
+        conversation: conv({
+          scope: "project",
+          pendingQuestionId: "q_existing",
+        }),
         overrides: {},
         event: "ask.batch_already_pending",
       },
@@ -652,17 +659,16 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
         overrides: {},
         event: "ask.denied_autonomous",
       },
-    ])("emits no sentinel on the $name path", async ({
-      conversation,
-      overrides,
-      event,
-    }) => {
-      const { log } = await logsFor(conversation, { questions }, overrides);
+    ])(
+      "emits no sentinel on the $name path",
+      async ({ conversation, overrides, event }) => {
+        const { log } = await logsFor(conversation, { questions }, overrides);
 
-      const entry = log.entries.find((e) => e.message === event);
-      expect(entry?.fields).toMatchObject({ scope: "project" });
-      expect(entry?.fields).not.toHaveProperty("sessionName");
-    });
+        const entry = log.entries.find((e) => e.message === event);
+        expect(entry?.fields).toMatchObject({ scope: "project" });
+        expect(entry?.fields).not.toHaveProperty("sessionName");
+      },
+    );
 
     it("emits the sentinel in no field of any entry, whatever the path", async () => {
       for (const { conversation, overrides } of [
@@ -698,7 +704,9 @@ describe("createProjectAskQuestionHandlers (R2.4 / R1.1)", () => {
 
       await handlers.POST(makeRequest({ questions }), { params });
 
-      const registered = log.entries.find((e) => e.message === "ask.registered");
+      const registered = log.entries.find(
+        (e) => e.message === "ask.registered",
+      );
       expect(registered?.fields).toMatchObject({
         scope: "session",
         sessionName: "sess",

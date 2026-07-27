@@ -76,10 +76,7 @@ export async function runNotify(
       projectConversationTarget(project, conversation),
     )}/notifications`;
   } else {
-    return usageFailure(
-      "no session — pass --session or set CC_SESSION",
-      json,
-    );
+    return usageFailure("no session — pass --session or set CC_SESSION", json);
   }
 
   const title = values["title"];
