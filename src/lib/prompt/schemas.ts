@@ -39,6 +39,8 @@ export const pendingPromptRequestSchema = z.object({
   expectedText: z.string().optional(),
 });
 
+export type PendingPromptRequest = z.infer<typeof pendingPromptRequestSchema>;
+
 export const queueEnqueueRequestSchema = z
   .object({
     text: z.string().optional(),

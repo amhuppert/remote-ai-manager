@@ -35,6 +35,12 @@ export interface AddImageResult {
   error: string | null;
 }
 
+/** The conversation an attachment belongs to; `undefined` for a single-scope composer. */
+type ScopeKey = string | undefined;
+
+/** Shared empty result so an untouched scope keeps a stable array identity. */
+const NO_IMAGES: ImageAttachment[] = [];
+
 export interface UseImageAttachmentsReturn {
   pendingImages: ImageAttachment[];
   addImage: (file: File | Blob, fileName?: string) => Promise<AddImageResult>;
@@ -111,30 +117,62 @@ function readFileAsBase64(file: File | Blob): Promise<string> {
 
 export function useImageAttachments(
   initialImages: readonly ImagePayload[] = [],
+  /**
+   * Bind the attachment set to a scope (a conversation id). Attachments stay
+   * with the scope that was active when they were added, so a composer shared
+   * across conversations — the project cockpit's, which is one instance behind a
+   * tab strip — cannot carry one conversation's attachment onto another's
+   * prompt, and returning to a tab restores what was attached there. Omit for a
+   * composer that only ever serves one conversation.
+   */
+  scopeKey?: string,
 ): UseImageAttachmentsReturn {
-  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>(() =>
-    initialImages.map(attachmentFromPayload),
-  );
+  // Attachments for every scope this composer has served, keyed by scope. One
+  // map rather than an active set plus a stash: an attachment then has exactly
+  // one home, so a scope change is a lookup rather than a swap, and a read that
+  // resolves after the user moved on still has its own scope to land in.
+  const [imagesByScope, setImagesByScope] = useState<
+    ReadonlyMap<ScopeKey, ImageAttachment[]>
+  >(() => new Map([[scopeKey, initialImages.map(attachmentFromPayload)]]));
   const idCounter = useRef(initialImageCounter(initialImages));
   const addQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-  // Cleanup all object URLs on unmount
-  const pendingImagesRef = useRef(pendingImages);
-  useEffect(() => {
-    pendingImagesRef.current = pendingImages;
-  });
+  // Authoritative for writes: queued additions must see each other's results
+  // before React has re-rendered.
+  const imagesByScopeRef = useRef(imagesByScope);
+
+  const imagesFor = useCallback(
+    (owner: ScopeKey): ImageAttachment[] =>
+      imagesByScopeRef.current.get(owner) ?? NO_IMAGES,
+    [],
+  );
+
+  const commit = useCallback(
+    (owner: ScopeKey, next: ImageAttachment[]) => {
+      const merged = new Map(imagesByScopeRef.current);
+      merged.set(owner, next);
+      imagesByScopeRef.current = merged;
+      setImagesByScope(merged);
+    },
+    [],
+  );
+
   useEffect(() => {
     return () => {
-      for (const img of pendingImagesRef.current) {
-        URL.revokeObjectURL(img.previewUrl);
+      for (const images of imagesByScopeRef.current.values()) {
+        for (const image of images) URL.revokeObjectURL(image.previewUrl);
       }
     };
   }, []);
 
   const addImage = useCallback(
     (file: File | Blob, fileName?: string): Promise<AddImageResult> => {
+      // Ownership is captured when the user picks the file, not when the read
+      // resolves. Reading is asynchronous, so without this the attachment would
+      // land on whichever conversation happened to be active by then (R3.3).
+      const owner = scopeKey;
       const result = addQueueRef.current.then(async () => {
-        const error = validateImage(file, pendingImagesRef.current.length);
+        const error = validateImage(file, imagesFor(owner).length);
         if (error) return { attachment: null, error };
 
         let base64Data: string;
@@ -158,9 +196,7 @@ export function useImageAttachments(
           sizeBytes: file.size,
         };
 
-        const nextImages = [...pendingImagesRef.current, attachment];
-        pendingImagesRef.current = nextImages;
-        setPendingImages(nextImages);
+        commit(owner, [...imagesFor(owner), attachment]);
         return { attachment, error: null };
       });
       addQueueRef.current = result.then(
@@ -169,28 +205,31 @@ export function useImageAttachments(
       );
       return result;
     },
-    [],
+    [scopeKey, imagesFor, commit],
   );
 
-  const removeImage = useCallback((id: string) => {
-    const image = pendingImagesRef.current.find(
-      (candidate) => candidate.id === id,
-    );
-    if (image) URL.revokeObjectURL(image.previewUrl);
-    const nextImages = pendingImagesRef.current.filter(
-      (candidate) => candidate.id !== id,
-    );
-    pendingImagesRef.current = nextImages;
-    setPendingImages(nextImages);
-  }, []);
+  const removeImage = useCallback(
+    (id: string) => {
+      const image = imagesFor(scopeKey).find(
+        (candidate) => candidate.id === id,
+      );
+      if (image) URL.revokeObjectURL(image.previewUrl);
+      commit(
+        scopeKey,
+        imagesFor(scopeKey).filter((candidate) => candidate.id !== id),
+      );
+    },
+    [scopeKey, imagesFor, commit],
+  );
 
   const clearImages = useCallback(() => {
-    for (const image of pendingImagesRef.current) {
+    for (const image of imagesFor(scopeKey)) {
       URL.revokeObjectURL(image.previewUrl);
     }
-    pendingImagesRef.current = [];
-    setPendingImages([]);
-  }, []);
+    commit(scopeKey, []);
+  }, [scopeKey, imagesFor, commit]);
+
+  const pendingImages = imagesByScope.get(scopeKey) ?? NO_IMAGES;
 
   return {
     pendingImages,

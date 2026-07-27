@@ -15,6 +15,11 @@ import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { createPendingPromptRouteHandlers } from "@/lib/prompt/route-handlers";
+import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import { sessionConversationTarget } from "@/lib/conversations/conversation-target";
+
+/** Module-scoped so every render passes the SAME target the hook's effects key off. */
+const SESSION_TARGET = sessionConversationTarget("p", "s", "c");
 
 function wrapper(client: QueryClient) {
   const Wrapper = ({ children }: { children: React.ReactNode }) =>
@@ -41,9 +46,7 @@ describe("usePendingPromptPersistence", () => {
         const promptTextRef = useRef("");
         const editorRef = useRef(null);
         return usePendingPromptPersistence({
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: SESSION_TARGET,
           activeConversation: undefined,
           promptText: "",
           setPromptText: () => {},
@@ -91,9 +94,7 @@ describe("usePendingPromptPersistence", () => {
         promptTextRef.current = promptText;
         const editorRef = useRef<PromptEditorHandle | null>(editorHandle);
         usePendingPromptPersistence({
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: SESSION_TARGET,
           activeConversation,
           promptText,
           setPromptText,
@@ -153,9 +154,7 @@ describe("usePendingPromptPersistence", () => {
         promptTextRef.current = promptText;
         const editorRef = useRef(null);
         const persistence = usePendingPromptPersistence({
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: SESSION_TARGET,
           activeConversation,
           promptText,
           setPromptText,
@@ -222,6 +221,7 @@ describe("usePendingPromptPersistence", () => {
       setConversationPendingPromptText: store.setConversationPendingPromptText,
       clearConversationPendingPromptTextIfMatches:
         store.clearConversationPendingPromptTextIfMatches,
+      log: createCapturingLogger(),
     });
     const fetchSpy = vi.fn(
       async (input: string | URL | Request, init?: RequestInit) =>
@@ -255,9 +255,7 @@ describe("usePendingPromptPersistence", () => {
         promptTextRef.current = promptText;
         const editorRef = useRef(null);
         const persistence = usePendingPromptPersistence({
-          projectName: "p",
-          sessionName: "s",
-          conversationId: "c",
+          target: SESSION_TARGET,
           activeConversation,
           promptText,
           setPromptText,

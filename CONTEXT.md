@@ -41,6 +41,10 @@ locality); domain terms name the concepts the code is about.
   status (`isTerminalQueuedMessageStatus`). Nothing else can — the durable row
   leaves the active queue in the same write, so a stand-in left behind would
   render the delivered message a second time as still-queued.
+  `persistPendingPromptText` (`src/lib/prompt/route-handlers.ts`) is the same
+  shape for the conversation DRAFT: both adapters resolve into it, and it names
+  the store key `storeSessionName` so the sentinel is materialized at the write
+  and never bound to a name a log line could pick up.
 
 - **Conversation scope contract (agent environment)** — a spawned agent is told
   its scope EXPLICITLY. `buildSessionEnvContract`
@@ -164,6 +168,17 @@ locality); domain terms name the concepts the code is about.
   `logs/projects/<projectSlug>/…` instead of
   `logs/sessions/<projectSlug>__<sentinel>/…`; `discoverScopedLogPaths` walks
   both trees so moving the destination does not hide project logs from readers.
+
+- **Conversation draft** — unsent composer content, owned by the conversation
+  rather than by the composer. Text lives on the record as `pendingPromptText`,
+  so it is conversation-local by construction and survives a reload;
+  `usePendingPromptPersistence` (`src/hooks/`) is the one implementation of the
+  hydration gate, 500ms debounce, switch flush and unload beacon, and takes a
+  `ConversationTarget` so both scopes share it. Image attachments have no
+  persisted field and are held per conversation by `useImageAttachments`'
+  `scopeKey`. Both halves matter where ONE composer instance serves many
+  conversations — the project cockpit behind its tab strip — because there the
+  default is for a draft to follow the user to the next tab.
 
 - **Project-scope command refusals** — a slash command that needs a session
   branch or worktree is refused BY the project boundary, not by whatever

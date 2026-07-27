@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PromptComposer, {
   type ComposerQueueTurnState,
 } from "@/components/session/prompt/PromptComposer";
@@ -15,7 +15,9 @@ import {
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
+import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import {
   effortLevelSchema,
   type EffortLevel,
@@ -90,6 +92,13 @@ export type ProjectComposerSubmitResult =
   | { kind: "send"; input: UnifiedComposerSendInput };
 
 const DEFAULT_EFFORT: EffortLevel = "high";
+
+/**
+ * The attachment scope for the create-and-send path, which has no conversation
+ * id yet. Prefixed apart from the conversation keys so it can never collide with
+ * one.
+ */
+const NEW_CONVERSATION_ATTACHMENT_SCOPE = "new-conversation";
 
 function modelForBackend(
   backend: AgentBackendId,
@@ -220,6 +229,12 @@ export default function UnifiedComposer({
   const editorRef = useRef<PromptEditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const promptTextRef = useRef("");
+  // The draft flush reads this ref, and hydration writes the draft without going
+  // through the editor's change handler — so the ref tracks the state rather
+  // than only the keystrokes that produced it.
+  useEffect(() => {
+    promptTextRef.current = draft;
+  }, [draft]);
   const fireAndForgetRef = useRef(false);
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
@@ -243,8 +258,39 @@ export default function UnifiedComposer({
   const effortSupported = availableEffortLevels.length > 0;
   const selectedEffort = pickEffort(availableEffortLevels, effortPref);
 
+  // One composer instance serves every tab, so both halves of a draft — the
+  // text and the attachments — are bound to the conversation they were authored
+  // for. The text rides the conversation's persisted `pendingPromptText` (so it
+  // also survives a reload); the attachments are held per conversation in the
+  // attachment hook (R3.3 / D6).
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
-    useImageAttachments();
+    useImageAttachments(
+      undefined,
+      activeConversationId === null
+        ? NEW_CONVERSATION_ATTACHMENT_SCOPE
+        : `conversation:${activeConversationId}`,
+    );
+
+  // Stable identity required: the draft hook's flush and beacon effects key off
+  // the target. Null until the create-and-send path has a conversation to
+  // address, and the draft stays composer-local until then.
+  const draftTarget = useMemo(
+    () =>
+      activeConversationId === null
+        ? null
+        : projectConversationTarget(projectName, activeConversationId),
+    [projectName, activeConversationId],
+  );
+
+  const { handlePromptTextChange, suppressPendingPromptAutosaveAfterSubmit } =
+    usePendingPromptPersistence({
+      target: draftTarget,
+      activeConversation,
+      promptText: draft,
+      setPromptText: setDraft,
+      promptTextRef,
+      editorRef,
+    });
 
   const clearComposer = useCallback(() => {
     setDraft("");
@@ -253,7 +299,10 @@ export default function UnifiedComposer({
     setPromptPlaceholder(null);
     editorRef.current?.clear();
     clearImages();
-  }, [clearImages]);
+    // The persisted draft has to go with the visible one, or the next time this
+    // tab is selected the conversation rehydrates the text just consumed.
+    suppressPendingPromptAutosaveAfterSubmit();
+  }, [clearImages, suppressPendingPromptAutosaveAfterSubmit]);
 
   /**
    * Hand a refused submission's text back to the composer. The composer clears
@@ -386,7 +435,7 @@ export default function UnifiedComposer({
         fileInputRef={fileInputRef}
         promptText={draft}
         onPromptTextChange={(text) => {
-          setDraft(text);
+          handlePromptTextChange(text);
           promptTextRef.current = text;
           if (promptPlaceholder !== null) setPromptPlaceholder(null);
         }}
