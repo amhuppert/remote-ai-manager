@@ -27,6 +27,14 @@ export interface UsePendingPromptPersistenceArgs {
   setPromptText: (text: string) => void;
   promptTextRef: MutableRefObject<string>;
   editorRef: MutableRefObject<PromptEditorHandle | null>;
+  /**
+   * The composer mounted already holding this conversation's draft — the project
+   * cockpit lifts each tab's document into memory and remounts the composer per
+   * tab, so a reopened tab arrives with its text. That text is the same draft
+   * one flush ahead of the persisted copy, so hydrating over it would clear what
+   * the user typed. Omit for a composer that mounts empty.
+   */
+  mountedWithLocalDraft?: boolean;
 }
 
 export interface UsePendingPromptPersistenceResult {
@@ -49,6 +57,7 @@ export function usePendingPromptPersistence({
   setPromptText,
   promptTextRef,
   editorRef,
+  mountedWithLocalDraft,
 }: UsePendingPromptPersistenceArgs): UsePendingPromptPersistenceResult {
   const conversationId = target?.conversationId ?? null;
   const updatePendingPromptMutation =
@@ -110,9 +119,17 @@ export function usePendingPromptPersistence({
     });
   }, [cancelPendingPromptDebounce, updatePendingPromptMutate, target]);
 
+  // Consumed by the reset effect on its first run only, so the gate starts
+  // closed for the conversation the composer mounted with and open for every
+  // conversation it later switches to.
+  const localDraftAtMountRef = useRef(mountedWithLocalDraft === true);
+
   // --- Reset hydration gate when switching conversations ---
   useEffect(() => {
-    hydratedConversationIdRef.current = null;
+    hydratedConversationIdRef.current = localDraftAtMountRef.current
+      ? conversationId
+      : null;
+    localDraftAtMountRef.current = false;
     lastPersistedPendingPromptRef.current = null;
     cancelPendingPromptDebounce();
   }, [conversationId, cancelPendingPromptDebounce]);

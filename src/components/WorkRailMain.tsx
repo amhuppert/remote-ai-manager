@@ -26,6 +26,8 @@ interface WorkRailMainProps {
    * hosts pass their own overflow/flex classes instead.
    */
   contentClassName?: string;
+  /** Let the embedded conversation rail own the contextual `/` search command. */
+  enableRailSearchHotkey?: boolean;
   children: React.ReactNode;
 }
 
@@ -33,6 +35,7 @@ export default function WorkRailMain({
   projectName,
   sessionName,
   contentClassName,
+  enableRailSearchHotkey = true,
   children,
 }: WorkRailMainProps): React.JSX.Element {
   const sidebarCollapsed = useSidebarCollapsed();
@@ -55,6 +58,7 @@ export default function WorkRailMain({
         sessionName={sessionName ?? ""}
         activeConversationId=""
         showNewConversationButton={hasSessionContext}
+        enableSearchHotkey={enableRailSearchHotkey}
       />
       {sidebarCollapsed && (
         <WithTooltip label="Expand sidebar">

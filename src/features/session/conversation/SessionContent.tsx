@@ -8,6 +8,7 @@ import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
 import RightPane from "@/features/session/conversation/RightPane";
 import ConversationTabStrip from "@/features/session/tabs/ConversationTabStrip";
 import AddConversationMenu from "@/features/session/tabs/AddConversationMenu";
+import EmptyConversationWorkingSet from "@/features/session/tabs/EmptyConversationWorkingSet";
 import PanesGrid from "@/features/session/panes/PanesGrid";
 import { DocumentScopeProvider } from "@/components/conversation/document-scope";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
@@ -128,6 +129,17 @@ export default function SessionContent({
   const workingSet = openTabs?.workingSet ?? [];
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const showTabStrip = !isPanes && !!openTabs && workingSet.length > 0;
+  const showEmptyWorkingSet =
+    openTabs !== undefined && openTabs.hydrated && workingSet.length === 0;
+  const handleCloseTab = (id: string): void => {
+    if (!openTabs) return;
+    const closesFinalPane =
+      isPanes && workingSet.length === 1 && workingSet[0]?.id === id;
+    openTabs.closeTab(id);
+    if (closesFinalPane) {
+      onLayoutChange("conversation");
+    }
+  };
 
   return (
     <DocumentScopeProvider
@@ -183,7 +195,7 @@ export default function SessionContent({
               activeId={openTabs.activeId}
               isAtCap={openTabs.isAtCap}
               onActivate={openTabs.activate}
-              onClose={openTabs.closeTab}
+              onClose={handleCloseTab}
               onAddClick={() => setAddMenuOpen((o) => !o)}
             />
             {addMenuOpen && (
@@ -206,67 +218,76 @@ export default function SessionContent({
           the peek (`.peek__stage`) and per-panel (`.conversation-stage`)
           stages. Without it the overlay has no positioned ancestor. */}
         <div className={DOCKED_STAGE_CLASS}>
-          <div className={CONTENT_AREA_CLASS} data-layout={layout}>
-            {isPanes && openTabs ? (
-              // Panes replaces the single-conversation panel + diff with a
-              // full-width grid of every open conversation.
-              <PanesGrid
-                workingSet={workingSet}
-                activeId={openTabs.activeId}
-                isAtCap={openTabs.isAtCap}
-                addableConversations={openTabs.addableConversations}
-                onActivate={openTabs.activate}
-                onClose={openTabs.closeTab}
-                onAdd={openTabs.addTab}
-                // Fork-from-a-pane: land the new conversation in the working
-                // set and make it the composer's target.
-                onOpenConversation={(id) => {
-                  openTabs.addTab(id);
-                  openTabs.activate(id);
-                }}
-                // Open-full activates the conversation AND drops to the
-                // conversation-only layout so it fills the view.
-                onOpenFull={(id) => {
-                  openTabs.activate(id);
-                  onLayoutChange("conversation");
-                }}
-                onExit={() => onLayoutChange("conversation")}
-              />
-            ) : (
-              <>
-                <ConversationPanelContainer {...panelContainerProps} />
-
-                {(layout !== "conversation" ||
-                  mobilePanel === "diff" ||
-                  mobilePanel === "docs" ||
-                  mobilePanel === "specs") && (
-                  <RightPane
-                    projectName={projectName}
-                    sessionName={session.sessionName}
-                    worktreePath={session.worktreePath}
-                    targetBranch={targetBranch}
-                    conversationId={conversationId}
-                    conversationName={activeConversation?.name}
-                    archived={activeConversation?.archived}
+          {showEmptyWorkingSet && openTabs ? (
+            <EmptyConversationWorkingSet
+              addableConversations={openTabs.addableConversations}
+              onAdd={openTabs.addTab}
+            />
+          ) : (
+            <>
+              <div className={CONTENT_AREA_CLASS} data-layout={layout}>
+                {isPanes && openTabs ? (
+                  // Panes replaces the single-conversation panel + diff with a
+                  // full-width grid of every open conversation.
+                  <PanesGrid
+                    workingSet={workingSet}
+                    activeId={openTabs.activeId}
+                    isAtCap={openTabs.isAtCap}
+                    addableConversations={openTabs.addableConversations}
+                    onActivate={openTabs.activate}
+                    onClose={handleCloseTab}
+                    onAdd={openTabs.addTab}
+                    // Fork-from-a-pane: land the new conversation in the working
+                    // set and make it the composer's target.
+                    onOpenConversation={(id) => {
+                      openTabs.addTab(id);
+                      openTabs.activate(id);
+                    }}
+                    // Open-full activates the conversation AND drops to the
+                    // conversation-only layout so it fills the view.
+                    onOpenFull={(id) => {
+                      openTabs.activate(id);
+                      onLayoutChange("conversation");
+                    }}
+                    onExit={() => onLayoutChange("conversation")}
                   />
-                )}
+                ) : (
+                  <>
+                    <ConversationPanelContainer {...panelContainerProps} />
 
-                {mobilePanel === "info" && (
-                  <MobileInfoPanel
-                    session={session}
-                    activeConversation={activeConversation}
-                    conversationId={conversationId}
-                    statusDotClass={statusDotClass}
-                    displayStatus={displayStatus}
-                    contextPercent={contextPercent}
-                    buildContext={buildContext}
-                  />
-                )}
-              </>
-            )}
-          </div>
+                    {(layout !== "conversation" ||
+                      mobilePanel === "diff" ||
+                      mobilePanel === "docs" ||
+                      mobilePanel === "specs") && (
+                      <RightPane
+                        projectName={projectName}
+                        sessionName={session.sessionName}
+                        worktreePath={session.worktreePath}
+                        targetBranch={targetBranch}
+                        conversationId={conversationId}
+                        conversationName={activeConversation?.name}
+                        archived={activeConversation?.archived}
+                      />
+                    )}
 
-          <div className={PROMPT_SLOT_CLASS}>{promptInputSlot}</div>
+                    {mobilePanel === "info" && (
+                      <MobileInfoPanel
+                        session={session}
+                        activeConversation={activeConversation}
+                        conversationId={conversationId}
+                        statusDotClass={statusDotClass}
+                        displayStatus={displayStatus}
+                        contextPercent={contextPercent}
+                        buildContext={buildContext}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className={PROMPT_SLOT_CLASS}>{promptInputSlot}</div>
+            </>
+          )}
         </div>
       </div>
     </DocumentScopeProvider>

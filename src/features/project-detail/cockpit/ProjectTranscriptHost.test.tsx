@@ -1,15 +1,47 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QueryClient,
   QueryClientProvider,
   type QueryKey,
 } from "@tanstack/react-query";
-import { render, screen, cleanup } from "@testing-library/react";
+import { fireEvent, render, screen, cleanup } from "@testing-library/react";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import ProjectTranscriptHost from "./ProjectTranscriptHost";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
+
+// The virtualized list needs browser layout measurements that jsdom cannot
+// provide; the flat renderer keeps this integration test on the real row path.
+vi.mock("react-virtuoso", async () => {
+  const React = await import("react");
+  type VirtuosoMockProps = {
+    data?: unknown[];
+    itemContent?: (index: number, item: unknown) => React.ReactNode;
+    components?: { Footer?: () => React.ReactNode };
+  };
+  const Virtuoso = React.forwardRef(function VirtuosoMock(
+    props: VirtuosoMockProps,
+    ref: React.Ref<unknown>,
+  ) {
+    const { data = [], itemContent, components } = props;
+    React.useImperativeHandle(ref, () => ({ scrollToIndex: () => {} }));
+    const Footer = components?.Footer;
+    return (
+      <div data-testid="virtuoso-mock">
+        {data.map((item, index) => (
+          <div key={index} data-index={index}>
+            {itemContent?.(index, item)}
+          </div>
+        ))}
+        {Footer ? <Footer /> : null}
+      </div>
+    );
+  });
+  return { Virtuoso };
+});
 
 function renderSeeded(
   ui: React.ReactElement,
@@ -20,9 +52,11 @@ function renderSeeded(
   });
   for (const [key, value] of entries) client.setQueryData(key, value);
   return render(
-    <div style={{ height: 400 }}>
-      <QueryClientProvider client={client}>{ui}</QueryClientProvider>
-    </div>,
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      <div style={{ height: 400 }}>
+        <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+      </div>
+    </HotkeyProvider>,
   );
 }
 
@@ -124,5 +158,43 @@ describe("ProjectTranscriptHost", () => {
       [[projectConversationKeys.messages("proj", "c1"), []]],
     );
     expect(screen.queryByText("No messages yet")).toBeNull();
+  });
+
+  it("collapses and expands every thinking block in the active project transcript", () => {
+    const messagesWithThinking: TranscriptMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", text: "Inspect the project transcript path." },
+          { type: "text", text: "The path is shared." },
+        ],
+        timestamp: null,
+      },
+    ];
+    renderSeeded(
+      <ProjectTranscriptHost
+        projectName="proj"
+        conversationId="c1"
+        selectedBackend="claude"
+      />,
+      [[projectConversationKeys.messages("proj", "c1"), messagesWithThinking]],
+    );
+
+    const toggle = screen.getByRole("button", { name: /thinking/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.keyDown(document, {
+      key: "C",
+      code: "KeyC",
+      shiftKey: true,
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.keyDown(document, {
+      key: "E",
+      code: "KeyE",
+      shiftKey: true,
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
   });
 });

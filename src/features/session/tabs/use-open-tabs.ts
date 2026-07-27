@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocalStorageValue } from "@react-hookz/web";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import { closeTabSelection } from "@/lib/shared/close-tab-selection";
 import {
   MAX_OPEN_TABS,
   emptyModel,
@@ -241,26 +242,21 @@ export function useOpenTabs(input: UseOpenTabsInput): OpenTabsApi {
   const addTab = useCallback(
     (id: string) => {
       if (isAtCap) return;
+      commit((base) => openInSet(base, id));
       onOpenConversation({ conversationId: id });
     },
-    [isAtCap, onOpenConversation],
+    [commit, isAtCap, onOpenConversation],
   );
 
   const closeTab = useCallback(
     (id: string) => {
       if (id === activeConversationId) {
         // Closing the active tab: activate a neighbor FIRST (the entry before
-        // it in display order, else the entry after it), then remove it, so the
-        // page is never left without an active conversation (Requirement 2.8).
-        const index = model.tabs.indexOf(id);
-        const neighbor =
-          index > 0
-            ? model.tabs[index - 1]
-            : index >= 0
-              ? model.tabs[index + 1]
-              : undefined;
-        if (neighbor !== undefined) {
-          onOpenConversation({ conversationId: neighbor });
+        // it in display order, else the entry after it), then remove it. Closing
+        // the only tab has no neighbor and leaves the working set empty.
+        const nextSelection = closeTabSelection(model.tabs, id);
+        if (nextSelection !== null) {
+          onOpenConversation({ conversationId: nextSelection });
         }
       }
       commit((base) => closeTabInModel(base, id));

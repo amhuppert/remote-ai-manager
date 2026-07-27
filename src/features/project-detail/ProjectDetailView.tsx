@@ -16,6 +16,7 @@ import {
   useCancelDeleteSession,
 } from "@/stores/sessions.store";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { formatHotkeyDisplay, HOTKEY_REGISTRY } from "@/lib/shared/hotkeys";
 import { PlusIcon } from "@/components/icons";
 import {
   EmptyState,
@@ -392,7 +393,7 @@ export default function ProjectDetailView({
                     </span>
                     New session
                     <span className="ml-[6px] rounded-[3px] bg-black/[0.18] px-[5px] py-px text-[0.62rem] opacity-80 max-768:hidden">
-                      ⌘N
+                      {formatHotkeyDisplay(HOTKEY_REGISTRY.newSession.keys)}
                     </span>
                   </button>
                 </div>

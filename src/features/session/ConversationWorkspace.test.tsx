@@ -11,6 +11,25 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type { SessionDiff } from "@/lib/git/schemas";
 import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
+import type { HotkeyInvocation } from "@/lib/hotkeys/dispatcher";
+import type { HotkeyId } from "@/lib/shared/hotkeys";
+
+function keyboardInvocation(
+  id: HotkeyId,
+  event: KeyboardEvent,
+): HotkeyInvocation {
+  return {
+    id,
+    event,
+    context: {
+      editable: false,
+      overlayOpen: false,
+      promptId: null,
+    },
+    source: "keyboard",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Shared mocks
@@ -645,6 +664,85 @@ describe("ConversationWorkspace", () => {
       expect(abortPromptMock).toHaveBeenCalled();
       // No SSE stream is active in this scenario (sending=false).
       expect(abortClientMock).not.toHaveBeenCalled();
+    });
+
+    it("registers literal Control+. for the same available stop action", () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          { ...baseSession.conversations[0]!, status: "running" },
+        ],
+      };
+      renderPage();
+      const registration = vi
+        .mocked(useAppHotkey)
+        .mock.calls.find(([id]) => id === "stopTurn");
+
+      expect(registration?.[2]).toMatchObject({ enabled: true });
+      act(() => {
+        const event = new KeyboardEvent("keydown", {
+          key: ".",
+          ctrlKey: true,
+        });
+        registration?.[1](event, keyboardInvocation("stopTurn", event));
+      });
+      expect(abortPromptMock).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("registers focus and session view commands against the workspace store", () => {
+    renderPage();
+    const registrations = new Map(
+      vi
+        .mocked(useAppHotkey)
+        .mock.calls.map(([id, callback]) => [id, callback]),
+    );
+
+    expect([...registrations.keys()]).toEqual(
+      expect.arrayContaining([
+        "focusComposer",
+        "viewConversation",
+        "viewDiff",
+        "viewDocuments",
+        "viewAlignment",
+        "viewSpecs",
+        "viewArtifact",
+        "viewPrevious",
+      ]),
+    );
+    expect(
+      vi
+        .mocked(useAppHotkey)
+        .mock.calls.findLast(([id]) => id === "viewPrevious")?.[2],
+    ).toMatchObject({ enabled: false });
+
+    act(() => {
+      const event = new KeyboardEvent("keydown");
+      registrations.get("viewDocuments")?.(
+        event,
+        keyboardInvocation("viewDocuments", event),
+      );
+    });
+    expect(useSessionDetailStore.getState()).toMatchObject({
+      layout: "diff",
+      mobilePanel: "docs",
+      rightPaneTab: "docs",
+    });
+    expect(
+      vi
+        .mocked(useAppHotkey)
+        .mock.calls.findLast(([id]) => id === "viewPrevious")?.[2],
+    ).toMatchObject({ enabled: true });
+
+    act(() => {
+      const event = new KeyboardEvent("keydown");
+      vi.mocked(useAppHotkey).mock.calls.findLast(
+        ([id]) => id === "viewPrevious",
+      )?.[1](event, keyboardInvocation("viewPrevious", event));
+    });
+    expect(useSessionDetailStore.getState()).toMatchObject({
+      layout: "conversation",
+      mobilePanel: "chat",
     });
   });
 

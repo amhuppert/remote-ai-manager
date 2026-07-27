@@ -28,6 +28,12 @@ describe("CommandConsole", () => {
     expect(input.getAttribute("placeholder")).toMatch(/filter sessions/i);
   });
 
+  it("does not advertise a removed global focus shortcut", () => {
+    render(<CommandConsole {...defaults()} />);
+
+    expect(screen.queryByText("⌘K")).not.toBeInTheDocument();
+  });
+
   it("renders one chip per token with key/value text", () => {
     const tokens: FilterToken[] = [
       { cat: "status", key: "is", value: "running" },

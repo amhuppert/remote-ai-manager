@@ -35,6 +35,7 @@ const MIGRATED_UTILITY_FIRST = [
   "src/features/session/tabs/**/*.{ts,tsx}",
   "src/features/session/dialogs/**/*.{ts,tsx}",
   "src/components/mcp/**/*.{ts,tsx}",
+  "src/components/hotkeys/**/*.{ts,tsx}",
   "src/components/HotkeyHelpModal.tsx",
   "src/components/GlobalHotkeyHelp.tsx",
   "src/components/BranchSelector.tsx",

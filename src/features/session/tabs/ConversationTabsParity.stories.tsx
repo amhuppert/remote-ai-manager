@@ -99,7 +99,7 @@ export const Surface: Story = {
           title="active-tab"
           status="running"
           active
-          hotkeyHint="⌘1"
+          hotkeyHint="G 1"
           onActivate={noop}
           onClose={noop}
         />
@@ -108,7 +108,7 @@ export const Surface: Story = {
           title="inactive-tab-with-a-very-long-name-that-truncates"
           status="waiting_for_input"
           active={false}
-          hotkeyHint="⌘2"
+          hotkeyHint="G 2"
           onActivate={noop}
           onClose={noop}
         />

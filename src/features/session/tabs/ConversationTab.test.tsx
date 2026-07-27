@@ -15,7 +15,7 @@ function renderTab(overrides: Partial<ConversationTabProps> = {}): {
       title="Conversation A"
       status="running"
       active={false}
-      hotkeyHint="⌘1"
+      hotkeyHint="G 1"
       onActivate={onActivate}
       onClose={onClose}
       {...overrides}
@@ -29,7 +29,7 @@ describe("ConversationTab", () => {
     renderTab();
 
     expect(screen.getByText("Conversation A")).toBeInTheDocument();
-    expect(screen.getByText("⌘1")).toBeInTheDocument();
+    expect(screen.getByText("G 1")).toBeInTheDocument();
 
     const tab = screen.getByRole("tab");
     const dot = tab.querySelector("[data-status]");
@@ -40,7 +40,7 @@ describe("ConversationTab", () => {
   it("omits the hotkey hint when not provided", () => {
     renderTab({ hotkeyHint: undefined });
 
-    expect(screen.queryByText(/⌘/)).not.toBeInTheDocument();
+    expect(screen.queryByText("G 1")).not.toBeInTheDocument();
   });
 
   it("marks the active tab via aria-selected and data-active", () => {

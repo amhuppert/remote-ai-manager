@@ -197,7 +197,7 @@ export default function ConversationTabStrip({
               title={tabTitle(conversation)}
               status={conversation.status}
               active={conversation.id === activeId}
-              hotkeyHint={index < 9 ? `⌘${index + 1}` : undefined}
+              hotkeyHint={index < 9 ? `G ${index + 1}` : undefined}
               onActivate={onActivate}
               onClose={onClose}
               isEditing={editingId === conversation.id}

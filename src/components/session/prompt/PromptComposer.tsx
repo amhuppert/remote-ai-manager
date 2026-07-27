@@ -46,6 +46,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
@@ -188,6 +189,8 @@ interface PromptComposerProps {
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   promptText: string;
   onPromptTextChange: (text: string) => void;
+  initialDocument?: SerializedPromptDoc;
+  onDocumentChange?: (document: SerializedPromptDoc) => void;
   onSendPrompt: () => void;
   pendingImages: ImageAttachment[];
   inlineMarkerIds: string[];
@@ -239,6 +242,8 @@ export default function PromptComposer({
   fileInputRef,
   promptText,
   onPromptTextChange,
+  initialDocument,
+  onDocumentChange,
   onSendPrompt,
   pendingImages,
   inlineMarkerIds,
@@ -456,12 +461,14 @@ export default function PromptComposer({
               ref={editorRef}
               conversationId={conversationId}
               value={promptText}
+              initialDocument={initialDocument}
               onChange={onPromptTextChange}
-              onDocumentChange={(document) =>
+              onDocumentChange={(document) => {
                 setHasSerializedContent(
                   document.prompt.trim() !== "" || document.images.length > 0,
-                )
-              }
+                );
+                onDocumentChange?.(document);
+              }}
               onSubmit={handlePrimaryAction}
               pendingImages={pendingImages}
               onAddImage={async (file) => {

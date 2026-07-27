@@ -28,6 +28,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ProjectPromptError } from "@/lib/project-conversations-client/mutations";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 import type { FilterToken } from "../components/filter-tokens";
 import { detectComposerMode } from "./detect-composer-mode";
 import { parseFilterDraft, replaceTokenByCat } from "./parse-filter-draft";
@@ -75,6 +76,13 @@ export interface UnifiedComposerProps {
    * button offers to queue rather than send.
    */
   queueTurnState?: ComposerQueueTurnState;
+  /**
+   * The tab's in-memory composer document, lifted so a closed-and-reopened tab
+   * comes back with what was typed in it. Distinct from the conversation's
+   * persisted draft below, which is what survives a reload.
+   */
+  initialDocument?: SerializedPromptDoc;
+  onDocumentChange?: (document: SerializedPromptDoc) => void;
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
   lastUsedModelId?: string;
   lastUsedEffort?: string;
@@ -196,6 +204,8 @@ export default function UnifiedComposer({
   tokens,
   onTokensChange,
   onSendPrompt,
+  initialDocument,
+  onDocumentChange,
   onRunCommand,
   lastUsedModelId,
   lastUsedEffort,
@@ -211,7 +221,7 @@ export default function UnifiedComposer({
     lastUsedModelId,
     lastUsedEffort,
   ]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDocument?.prompt ?? "");
   const [modelPref, setModelPref] = useState(() =>
     modelForBackend(agentBackend, lastUsedModelId, backendDefaults),
   );
@@ -228,7 +238,7 @@ export default function UnifiedComposer({
   );
   const editorRef = useRef<PromptEditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const promptTextRef = useRef("");
+  const promptTextRef = useRef(initialDocument?.prompt ?? "");
   // The draft flush reads this ref, and hydration writes the draft without going
   // through the editor's change handler — so the ref tracks the state rather
   // than only the keystrokes that produced it.
@@ -265,11 +275,25 @@ export default function UnifiedComposer({
   // attachment hook (R3.3 / D6).
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments(
-      undefined,
+      initialDocument?.images ?? [],
       activeConversationId === null
         ? NEW_CONVERSATION_ATTACHMENT_SCOPE
         : `conversation:${activeConversationId}`,
     );
+
+  // The lifted tab document tracks the attachments too, so reopening a closed
+  // tab restores what was attached to it, not just the text.
+  useEffect(() => {
+    if (!onDocumentChange || !editorRef.current) return;
+    onDocumentChange(editorRef.current.serialize(pendingImages));
+  }, [onDocumentChange, pendingImages]);
+
+  // The cockpit remounts this composer per tab, so a reopened tab arrives with
+  // its lifted document already in hand. Read once at mount: the persisted draft
+  // must not hydrate over text the user can see.
+  const [mountedWithLocalDraft] = useState(
+    () => (initialDocument?.prompt ?? "") !== "",
+  );
 
   // Stable identity required: the draft hook's flush and beacon effects key off
   // the target. Null until the create-and-send path has a conversation to
@@ -290,7 +314,31 @@ export default function UnifiedComposer({
       setPromptText: setDraft,
       promptTextRef,
       editorRef,
+      mountedWithLocalDraft,
     });
+
+  // Switching tabs keeps this composer mounted — the attachment scope map and
+  // the per-conversation draft hook both depend on that — so the tab's lifted
+  // document is re-seeded here rather than by a remount. It is the same draft as
+  // the conversation's persisted copy but ahead of it by the autosave debounce,
+  // so it wins; an empty one defers to the hook's hydration.
+  const seededDraftKeyRef = useRef(
+    activeConversationId ?? NEW_CONVERSATION_ATTACHMENT_SCOPE,
+  );
+  useEffect(() => {
+    const draftKey = activeConversationId ?? NEW_CONVERSATION_ATTACHMENT_SCOPE;
+    if (seededDraftKeyRef.current === draftKey) return;
+    seededDraftKeyRef.current = draftKey;
+    const text = initialDocument?.prompt ?? "";
+    if (text === "") return;
+    // Marks the conversation hydrated, so the persisted draft cannot land on top
+    // of the text the user is looking at.
+    handlePromptTextChange(text);
+    promptTextRef.current = text;
+    editorRef.current?.editor?.commands.setContent(
+      deserializePromptDoc({ prompt: text, images: [] }),
+    );
+  }, [activeConversationId, initialDocument, handlePromptTextChange]);
 
   const clearComposer = useCallback(() => {
     setDraft("");
@@ -302,7 +350,10 @@ export default function UnifiedComposer({
     // The persisted draft has to go with the visible one, or the next time this
     // tab is selected the conversation rehydrates the text just consumed.
     suppressPendingPromptAutosaveAfterSubmit();
-  }, [clearImages, suppressPendingPromptAutosaveAfterSubmit]);
+    // The lifted tab document is the other copy of the same draft; leaving it
+    // behind would restore the consumed text when the tab is reopened.
+    onDocumentChange?.({ prompt: "", images: [] });
+  }, [clearImages, onDocumentChange, suppressPendingPromptAutosaveAfterSubmit]);
 
   /**
    * Hand a refused submission's text back to the composer. The composer clears
@@ -388,9 +439,9 @@ export default function UnifiedComposer({
     onSendPrompt,
   ]);
 
-  // Voice dictation with the same wiring as session conversations: the Alt+V
-  // hotkey, transcribed-text insertion, and stop-and-submit on Enter while
-  // recording all come from useVoiceWiring.
+  // Voice dictation with the same wiring as session conversations: the
+  // Ctrl+Shift+. hotkey, transcribed-text insertion, and stop-and-submit on
+  // Enter while recording all come from useVoiceWiring.
   const handleSendPromptAsync = useCallback(async () => {
     handleSendPrompt();
   }, [handleSendPrompt]);
@@ -407,14 +458,9 @@ export default function UnifiedComposer({
     setPromptText: setDraft,
     clearPlaceholder: useCallback(() => setPromptPlaceholder(null), []),
     clearImages,
-    isPromptFocused: useCallback(
-      () => editorRef.current?.editor?.isFocused ?? false,
-      [],
-    ),
   });
 
-  // The composer is the project page's command console (registry: mod+k).
-  useAppHotkey("focusCommandConsole", () => {
+  useAppHotkey("focusComposer", () => {
     editorRef.current?.focus();
   });
 
@@ -434,6 +480,8 @@ export default function UnifiedComposer({
         editorRef={editorRef}
         fileInputRef={fileInputRef}
         promptText={draft}
+        initialDocument={initialDocument}
+        onDocumentChange={onDocumentChange}
         onPromptTextChange={(text) => {
           handlePromptTextChange(text);
           promptTextRef.current = text;

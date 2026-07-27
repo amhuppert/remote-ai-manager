@@ -272,6 +272,17 @@ describe("ProjectDetailView", () => {
     expect(screen.getByTitle("Open the Workflow Builder")).toBeInTheDocument();
   });
 
+  it("shows the current create-session shortcut on the New session button", async () => {
+    seedSessions(makeSessions(1));
+    renderWithQuery(projectDetailView());
+
+    const button = await screen.findByRole("button", {
+      name: /New session/,
+    });
+    expect(button).toHaveTextContent("C then S");
+    expect(button).not.toHaveTextContent("⌘N");
+  });
+
   it("renders a Tickets entry opening /tickets pre-filtered to the project (ticket-system Req 9.5)", async () => {
     seedSessions(makeSessions(1));
     const makeTicket = (

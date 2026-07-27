@@ -111,6 +111,11 @@ function readFileAsBase64(file: File | Blob): Promise<string> {
   });
 }
 
+function revokePreviewUrl(previewUrl: string): void {
+  if (!previewUrl.startsWith("blob:")) return;
+  URL.revokeObjectURL(previewUrl);
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -157,7 +162,7 @@ export function useImageAttachments(
   useEffect(() => {
     return () => {
       for (const images of imagesByScopeRef.current.values()) {
-        for (const image of images) URL.revokeObjectURL(image.previewUrl);
+        for (const image of images) revokePreviewUrl(image.previewUrl);
       }
     };
   }, []);
@@ -210,7 +215,7 @@ export function useImageAttachments(
       const image = imagesFor(scopeKey).find(
         (candidate) => candidate.id === id,
       );
-      if (image) URL.revokeObjectURL(image.previewUrl);
+      if (image) revokePreviewUrl(image.previewUrl);
       commit(
         scopeKey,
         imagesFor(scopeKey).filter((candidate) => candidate.id !== id),
@@ -221,7 +226,7 @@ export function useImageAttachments(
 
   const clearImages = useCallback(() => {
     for (const image of imagesFor(scopeKey)) {
-      URL.revokeObjectURL(image.previewUrl);
+      revokePreviewUrl(image.previewUrl);
     }
     commit(scopeKey, []);
   }, [scopeKey, imagesFor, commit]);

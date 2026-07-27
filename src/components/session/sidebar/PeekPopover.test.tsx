@@ -228,7 +228,7 @@ describe("PeekPopover", () => {
     expect(await screen.findByTitle("Voice input")).toBeInTheDocument();
   });
 
-  it("starts voice recording from the Alt+V hotkey inside the popover", async () => {
+  it("starts voice recording from the voice control inside the popover", async () => {
     vi.useRealTimers();
     vi.stubGlobal(
       "fetch",
@@ -262,9 +262,9 @@ describe("PeekPopover", () => {
     renderPeek();
 
     const editor = screen.getByLabelText("Reply text");
-    await screen.findByTitle("Voice input");
+    const voiceButton = await screen.findByTitle("Voice input");
     await user.click(editor);
-    fireEvent.keyDown(document, { key: "v", code: "KeyV", altKey: true });
+    await user.click(voiceButton);
 
     await waitFor(() => {
       expect(getUserMedia).toHaveBeenCalledTimes(1);

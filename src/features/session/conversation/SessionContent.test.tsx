@@ -384,18 +384,27 @@ describe("SessionContent", () => {
       ).not.toBeNull();
     });
 
-    it("does not render the strip when openTabs is present but the working set is empty", () => {
-      const { container } = renderWithQuery(
+    it("replaces the stale conversation and composer with the empty working-set state", () => {
+      const { container, getByRole, getByText } = renderWithQuery(
         <SessionContent
           {...makeProps({
             layout: "split",
             openTabs: makeOpenTabs({ workingSet: [] }),
+            promptInputSlot: <div data-testid="composer-slot" />,
           })}
         />,
       );
       expect(
         container.querySelector('[data-testid="stub-tab-strip"]'),
       ).toBeNull();
+      expect(
+        container.querySelector('[data-testid="stub-conversation-panel"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector('[data-testid="composer-slot"]'),
+      ).toBeNull();
+      expect(getByText("No conversations open")).toBeInTheDocument();
+      expect(getByRole("button", { name: "Add conversation" })).toHaveFocus();
     });
 
     it("maximizing a pane activates it and drops to the conversation-only layout (not the diff-split layout)", () => {

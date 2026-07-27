@@ -7,6 +7,10 @@ import ToastHost from "@/components/ToastHost";
 import DevToolsGate from "@/components/DevToolsGate";
 import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
 import QuickTicketHost from "@/components/quick-ticket/QuickTicketHost";
+import {
+  HotkeyProvider,
+  HotkeyRouteReset,
+} from "@/components/hotkeys/HotkeyProvider";
 import "@/app/globals.css";
 
 const anybody = Anybody({
@@ -62,16 +66,19 @@ export default function RootLayout({
       </head>
       <body>
         <Providers>
-          <UiTooltipProvider>
-            {children}
-            <QuickTicketHost />
-          </UiTooltipProvider>
-          <NotificationListener />
-          <ToastHost />
+          <HotkeyProvider>
+            <HotkeyRouteReset />
+            <UiTooltipProvider>
+              {children}
+              <QuickTicketHost />
+            </UiTooltipProvider>
+            <NotificationListener />
+            <ToastHost />
 
-          <DevToolsGate />
-          <ReactScanInstrumentation />
-          <GlobalHotkeyHelp />
+            <DevToolsGate />
+            <ReactScanInstrumentation />
+            <GlobalHotkeyHelp />
+          </HotkeyProvider>
         </Providers>
       </body>
     </html>

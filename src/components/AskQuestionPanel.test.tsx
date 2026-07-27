@@ -2,7 +2,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 
 function makeQuestion(
   overrides: Partial<AskQuestionItem> = {},
@@ -286,6 +288,38 @@ describe("AskQuestionPanel", () => {
     // The rail lists both; clicking the inactive one navigates via the prop.
     fireEvent.click(screen.getByText("Second?"));
     expect(onNavigate).toHaveBeenCalledWith(1);
+  });
+
+  it("owns J/K while maximized and restores background shortcuts when minimized", () => {
+    const onNavigate = vi.fn();
+    const nextMessage = vi.fn();
+    const dispatcher = createHotkeyDispatcher();
+    dispatcher.register("nextMessage", nextMessage);
+
+    render(
+      <HotkeyProvider dispatcher={dispatcher}>
+        <AskQuestionPanel
+          questions={[
+            makeQuestion(),
+            makeQuestion({ id: "b", question: "Second?" }),
+          ]}
+          questionId="batch-1"
+          currentIndex={0}
+          onNavigate={onNavigate}
+          onSubmit={vi.fn()}
+        />
+      </HotkeyProvider>,
+    );
+
+    fireEvent.keyDown(document.body, { key: "j", code: "KeyJ" });
+
+    expect(onNavigate).toHaveBeenCalledWith(1);
+    expect(nextMessage).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, { key: "Escape", code: "Escape" });
+    fireEvent.keyDown(document.body, { key: "j", code: "KeyJ" });
+
+    expect(nextMessage).toHaveBeenCalledOnce();
   });
 });
 

@@ -842,7 +842,7 @@ body:has([data-cc-modal-scrim]) .app *::after {
   }
 }
 
-/* ---- Dev tools visibility (Shift+D toggle) ---- */
+/* ---- Dev tools visibility ---- */
 nextjs-portal {
   display: none !important;
 }

@@ -1,124 +1,227 @@
-# Research & Design Decisions
+# Research and Design Decisions
 
 ## Summary
-- **Feature**: `hotkey-support`
-- **Discovery Scope**: New Feature (greenfield hotkey system integrating with existing components)
-- **Key Findings**:
-  - `react-hotkeys-hook` v5.2.4 provides `mod` for cross-platform modifiers, built-in input filtering, scopes, and TypeScript-first types — covers all infrastructure needs
-  - All target action functions already exist (`toggleRecording`, `handlePrevMessage`/`handleNextMessage`, `scrollToMessage`, `navigateFile`/`navigateHunk`, `toggleCollapsed`) — this is a wiring + infrastructure task
-  - Existing modal pattern (`ConfirmDialog`) and `<kbd>` styling in `globals.css` provide reusable patterns for the help modal
 
-## Research Log
+- **Feature:** `hotkey-support`
+- **Scope:** Expand and redesign the existing shortcut system across global,
+  session, project, ticket, workflow, conversation, and diff contexts.
+- **Primary finding:** Per-component key matching cannot reliably provide
+  contextual leaders, prompt-focused one-shot activation, overlay precedence,
+  duplicate detection, and a context-aware launcher. CC needs a small central
+  dispatcher with feature-owned callback registration.
+- **Ergonomics finding:** Common operations fit three mnemonic families:
+  `G` for go/navigation, `C` for create, and `V` for views. High-frequency local
+  actions remain single keys.
+- **Conflict finding:** App-level browser-native `Mod` shortcuts and new `Alt`
+  bindings should be avoided. The user explicitly chose to retain the full
+  prompt-focused readline set, including its Windows/Linux browser overlaps,
+  and adjust AeroSpace for its `Alt+F` conflict.
 
-### react-hotkeys-hook API and Capabilities
-- **Context**: Need to verify the library covers all requirements (cross-platform, input filtering, centralized config, TypeScript)
-- **Sources Consulted**: [npm](https://www.npmjs.com/package/react-hotkeys-hook), [GitHub](https://github.com/JohannesKlauss/react-hotkeys-hook), [Official docs](https://react-hotkeys-hook.vercel.app/)
-- **Findings**:
-  - v5.2.4 (Feb 2026), zero runtime dependencies, peer deps: React >= 16.8
-  - `mod` modifier maps to Cmd on macOS, Ctrl on Windows/Linux — single definition works cross-platform
-  - `enableOnFormTags` option (boolean or `FormTags[]`) controls per-hotkey input filtering — default suppresses in input/textarea/select
-  - `HotkeysProvider` + `useHotkeysContext` enables multi-scope management with `enableScope`/`disableScope`/`toggleScope`
-  - Supports key sequences via `>` syntax (e.g., `g>i`) with configurable timeout
-  - `Options.description` field for metadata, but no built-in help overlay
-  - Hook returns a ref for element-scoped hotkeys; unattached = global (document-level)
-  - `Options.enabled` accepts boolean or function for conditional activation
-  - `Options.preventDefault` accepts boolean or function
-- **Implications**: Library covers requirements 1–3 (registry, cross-platform, input filtering) with minimal custom code. Scopes are available but not essential for initial implementation — simple `enabled` conditions suffice.
+## Existing-Application Review
 
-### Key Binding Conflict Analysis
-- **Context**: Must avoid conflicts with browser and OS shortcuts on macOS and Linux
-- **Sources Consulted**: MDN keyboard shortcuts reference, browser documentation
-- **Findings**:
-  - **Browser shortcuts to avoid** (Ctrl/Cmd variants): T (new tab), W (close tab), N (new window), L (address bar), S (save), P (print), F (find), H (history), J (downloads), D (bookmark), R (reload)
-  - **OS shortcuts to avoid**: Cmd+Space (Spotlight), Cmd+Tab (app switch), Super key (Linux), Ctrl+Alt+T (terminal)
-  - **Safe single-key shortcuts** (suppressed in inputs by default): `j`, `k`, `b`, `n`, `[`, `]`, `Home`, `End`, `?`
-  - **Safe modifier shortcuts**: `Alt+V` (unused in all major browsers), `Shift+N` (no conflict)
-  - **Note**: `Home`/`End` may scroll the page when no input focused — must use `preventDefault`
-- **Implications**: Selected key bindings align with established conventions (GitHub uses `j`/`k` for navigation, `?` for help, `b` for sidebar toggle) and avoid all known browser/OS conflicts.
+The implementation review found several categories of keyboard behavior:
 
-### Existing Codebase Integration Points
-- **Context**: Understand how to wire hotkeys to existing action functions
-- **Sources Consulted**: Codebase exploration of SessionDetailPage, DiffPanel, ConversationSidebar, VoiceRecordButton
-- **Findings**:
-  - **Message navigation**: `handlePrevMessage()`, `handleNextMessage()`, `scrollToMessage(index)` in `SessionDetailPage.tsx` (lines 174–195)
-  - **Voice toggle**: `toggleRecording()` returned from `useVoiceRecorder` hook, guarded by `isAvailable`, `isProcessing`, and `state` checks
-  - **Sidebar toggle**: `toggleCollapsed()` in `ConversationSidebar.tsx` (lines 47–53), already persists to localStorage
-  - **Diff file nav**: `navigateFile(dir)` in `DiffPanel.tsx` (lines 49–83), auto-expands collapsed files
-  - **Diff change nav**: `navigateHunk(dir)` in `DiffPanel.tsx` (lines 85–109)
-  - **Keyboard event patterns**: Components use `useCallback` + `useEffect` with `document.addEventListener` for global keys; `onKeyDown` props for element-scoped keys
-  - **Modal pattern**: `ConfirmDialog.tsx` uses `modal-overlay` + `modal` CSS classes, z-index 200, Escape to close, click-outside to close
-  - **Kbd styling**: `.cmd-footer kbd` style in `globals.css` (lines 3360–3370) provides existing `<kbd>` element rendering
-- **Implications**: All handlers are already `useCallback`-wrapped and stable. Voice state needs to be accessible from the hotkey binding site — either lift the hook call or expose toggle via a ref/callback prop.
+1. Prompt-native controls already implemented by the editor extension:
+   `Mod+Enter`, `Ctrl+A/E/U/K/W`, and `Alt+B/F/D`.
+2. Existing app shortcuts distributed across mounted features, including
+   message and diff navigation, sidebar control, voice, thinking expansion, and
+   developer controls.
+3. Common actions with mouse affordances but no coherent keyboard path:
+   global/project navigation, creating sessions/conversations/workflows,
+   switching workspace views, selecting open conversations, contextual search,
+   focusing the prompt, quick ticket capture, panes, and closing the active
+   conversation tab.
+4. Low-frequency actions whose direct key cost exceeded their value: clear
+   prompt, developer tools, and exit panes.
 
-## Architecture Pattern Evaluation
+The action implementations already lived in their domain components and stores.
+The feature therefore needed a dispatch and registration layer, not a central
+domain-action service.
 
-| Option | Description | Strengths | Risks / Limitations | Notes |
-|--------|-------------|-----------|---------------------|-------|
-| Per-component useHotkeys | Each component calls useHotkeys with keys from registry | Simple, colocated, no new abstractions | Key definitions scattered across files without registry | Selected with registry indirection |
-| Global HotkeyBinder component | Single component receives all handlers as props | All bindings in one place | Prop drilling, tight coupling to all features | Rejected — poor scalability |
-| Context-based action dispatch | Central context provides dispatch, hotkeys call dispatch | Decoupled from components | Over-engineered for current scope, adds indirection | Rejected — YAGNI |
+## Shortcut Inventory Decisions
 
-**Selected**: Per-component `useHotkeys` calls with a centralized registry object that provides key strings and metadata. Each component imports the registry entry for its hotkeys and passes the `.keys` value to `useHotkeys`. A thin `useAppHotkey` wrapper standardizes the pattern and enables future key customization.
+### Added or Standardized
 
-## Design Decisions
+| Task family | Decision |
+|---|---|
+| Discoverability | `?` opens help; `.` opens a searchable command launcher |
+| Global/project navigation | `G H/P/S/C/T/R/A` |
+| Open-conversation navigation | `G 1` … `G 9`, `G J`, `G K` |
+| Creation | `C S/C/W/T` |
+| Workspace views | `V V/C/D/O/A/S/R/P`; project `V S/C`; tickets `V B/L` |
+| Local focus | `I` focuses the composer; `/` focuses contextual search |
+| Conversation tab close | `X`, with safe neighbor selection and draft handling |
+| Prompt access to app commands | Literal `Ctrl+;` arms one complete shortcut |
 
-### Decision: Registry Data Structure
-- **Context**: Need a single source of truth for all hotkey definitions (Req 1)
-- **Alternatives Considered**:
-  1. Array of definitions — iterate to find by ID
-  2. Record keyed by ID — direct lookup, type-safe keys
-- **Selected Approach**: `Record<HotkeyId, HotkeyDefinition>` with a string literal union for IDs
-- **Rationale**: Type-safe lookup by ID, IDE autocomplete, no runtime iteration needed for binding
-- **Trade-offs**: Adding a hotkey requires updating both the registry and the union type
-- **Follow-up**: If user-configurable keys are added later, the registry can merge user overrides onto defaults
+### Retained
 
-### Decision: Custom useAppHotkey Hook vs Direct useHotkeys
-- **Context**: Want consistent behavior and future-proof key customization (Req 1.3)
-- **Alternatives Considered**:
-  1. Call `useHotkeys` directly everywhere — simplest but duplicates options
-  2. Custom `useAppHotkey(id, callback, overrides?)` wrapper — adds indirection layer
-- **Selected Approach**: Custom `useAppHotkey` hook that looks up the registry entry by ID and delegates to `useHotkeys`
-- **Rationale**: Single place to change key bindings, consistent `preventDefault` and `enableOnFormTags` behavior, future customization point
-- **Trade-offs**: One extra abstraction layer; marginal complexity
-- **Follow-up**: When user-configurable keys are added, `useAppHotkey` can read from a merged config (defaults + user overrides)
+| Behavior | Decision |
+|---|---|
+| Message movement | Keep `J`/`K`; use `G G` and `Shift+G` for first/latest |
+| Sidebar | Keep `B` |
+| Diff review | Keep `[`/`]` and `N`/`Shift+N` |
+| Thinking blocks | Keep exact `Shift+E` expand-all and `Shift+C` collapse-all |
+| Prompt editing | Keep `Ctrl+A/E/U/K/W` and `Alt+B/F/D` |
+| Prompt submit | Keep `Mod+Enter` |
+| Contextual search | Keep `/`; it intentionally shadows Firefox Quick Find only when app shortcuts are eligible, while `Mod+F` remains native |
 
-### Decision: Scopes vs Enabled Conditions
-- **Context**: Some hotkeys should only work when specific panels are visible (Req 7, 8)
-- **Alternatives Considered**:
-  1. `HotkeysProvider` scopes — activate/deactivate scope groups based on panel visibility
-  2. Per-hotkey `enabled` option — conditionally enable based on component state/props
-- **Selected Approach**: Per-hotkey `enabled` option, no scopes for initial implementation
-- **Rationale**: Scopes add provider complexity and require managing active scope state. The `enabled` option is simpler and sufficient — each component knows its own visibility. Scopes can be adopted later if the hotkey count grows significantly.
-- **Trade-offs**: No centralized scope toggling; each component manages its own enabled state
-- **Follow-up**: If scope management becomes needed, `HotkeysProvider` can be added without breaking existing hotkeys
+### Reassigned or Moved to the Launcher
 
-### Decision: Platform Display Symbols
-- **Context**: Help modal must show correct modifier symbols per platform (Req 2.3)
-- **Alternatives Considered**:
-  1. Parse `navigator.platform` or `navigator.userAgentData` at runtime
-  2. CSS-based approach with `@supports` or media queries
-- **Selected Approach**: Runtime `navigator.platform` check (or `navigator.userAgentData.platform`) with a utility function that maps `mod` → `⌘` on macOS, `Ctrl` on Linux/Windows
-- **Rationale**: Simple, reliable, matches how react-hotkeys-hook internally detects platform
-- **Trade-offs**: SSR renders without platform info — must use client-side detection
-- **Follow-up**: Utility function can be extended for Windows if needed
+| Previous approach | Current decision | Reason |
+|---|---|---|
+| `Alt+V` voice toggle | `Ctrl+Shift+.` | Avoid a new app-level `Alt` conflict and pair voice with stop |
+| Home/End message boundaries | `G G` / `Shift+G` | Preserve native caret and page navigation |
+| Direct clear-prompt shortcut | Launcher only | Destructive and infrequent |
+| Direct developer-tools shortcut | Launcher only | Development-only and infrequent |
+| Direct exit-panes shortcut | Launcher only | Contextual and infrequent; `V P` enters panes |
+| Browser-like modified tab close | `X` | Avoid stealing `Mod+W` from the browser |
 
-### Decision: Voice Toggle Hotkey in Input Fields
-- **Context**: Voice toggle should work even when the user is typing in the prompt textarea (Req 4.1)
-- **Alternatives Considered**:
-  1. `enableOnFormTags: true` — allows the hotkey in all form fields
-  2. `enableOnFormTags: ['textarea']` — only in textareas
-- **Selected Approach**: `enableOnFormTags: true` for the voice toggle hotkey, since `Alt+V` uses a modifier and won't conflict with normal typing
-- **Rationale**: Users are most likely to want voice input while focused on the prompt textarea
-- **Trade-offs**: None significant — `Alt+V` doesn't produce a typeable character
+## Architecture Evaluation
 
-## Risks & Mitigations
-- **Risk**: `Home`/`End` keys may conflict with text cursor movement if focus state is ambiguous → **Mitigation**: Default input filtering suppresses these when a text field is focused
-- **Risk**: International keyboard layouts may produce different characters for `[`, `]`, `?` → **Mitigation**: react-hotkeys-hook uses both `key` and `code` for matching; revisit if user reports arise
-- **Risk**: `useHotkeys` calls in components that unmount may leave stale listeners → **Mitigation**: react-hotkeys-hook handles cleanup via React effect lifecycle automatically
+| Option | Strengths | Limitations | Outcome |
+|---|---|---|---|
+| Direct `react-hotkeys-hook` in each component | Small local diff; library handles basic combos | No single arbitration point; difficult exact fallthrough, prompt one-shot, contextual duplicates, and overlay precedence | Superseded |
+| One global component containing every action | Central event control | Couples root UI to every feature and requires prop drilling/store reach-through | Rejected |
+| Central dispatcher plus feature registration | One keyboard state machine; actions stay in domain; shared availability powers help/launcher | Requires a small custom matcher and registration lifecycle | Selected |
+
+The selected approach separates deterministic keyboard mechanics from feature
+judgment:
+
+- the catalog parses keys and supplies metadata;
+- the dispatcher matches sequences and resolves registrations;
+- the provider supplies DOM context and lifecycle cancellation;
+- mounted features own callbacks and availability;
+- discovery surfaces query the dispatcher.
+
+`react-hotkeys-hook` was useful for the initial implementation, but it is not
+the runtime engine for the enhanced system.
+
+## Sequence Semantics Research
+
+### Normal Leaders
+
+A one-second timeout gives ordinary `G`, `C`, and `V` sequences enough time to
+remain comfortable without leaving CC visibly stuck in a leader state. A prefix
+is consumed only if it can begin an available command. An invalid final stroke
+is not consumed, allowing browser or page behavior to continue.
+
+This availability-first rule matters for numbered tabs: `G 8` must not reserve
+`8` when only three tabs exist.
+
+### Prompt One-Shot
+
+Ordinary single-letter and leader shortcuts must remain disabled while editing.
+A dedicated one-shot activation avoids a mode toggle and avoids requiring the
+user to blur the prompt:
+
+- literal `Ctrl+;` arms one command;
+- no timeout is used because prompt composition can involve pauses;
+- both activation keys must be released before the next stroke is accepted;
+- direct keys and leader sequences share the normal catalog;
+- invalid input cancels and falls through;
+- `Escape` and repeated activation explicitly cancel;
+- prompt identity ties the state to the originating editor.
+
+The release guard is required because browsers can emit another keydown while
+Control or semicolon remains depressed. Without it, the activation itself can
+be misread as the first armed stroke.
+
+### Contextual Reuse
+
+`V S` has two meanings that are never valid simultaneously:
+
+- session workspace: specs;
+- project workspace: sessions.
+
+Availability-based matching permits this ergonomic reuse. The dispatcher still
+fails closed if two eligible registrations appear, converting a mounting or
+scope defect into a logged no-op rather than an unpredictable action.
+
+## Conflict Review
+
+### Browser and Operating System
+
+The review treated these common browser/OS families as reserved:
+
+- `Mod+T`, `Mod+W`, `Mod+N`, `Mod+L`;
+- `Mod+R`, `Mod+P`, `Mod+S`, `Mod+F`;
+- `Mod+H`, `Mod+J`, `Mod+D`;
+- `Mod+1` … `Mod+9`;
+- OS app switching, launchers, and workspace controls.
+
+CC avoids these with unmodified local keys and mnemonic leaders. The explicit
+exception is the prompt editor's literal readline set:
+`Ctrl+A/E/U/K/W` and `Alt+B/F/D`. On Windows/Linux, this can shadow browser
+actions such as close tab, address/search, view source, or the browser menu,
+but only while the prompt handles the applicable editing key. `Mod+Enter`
+remains a prompt-native submit convention rather than a global app command.
+
+### AeroSpace
+
+The user's AeroSpace configuration was considered as part of the conflict
+review. Its `Alt+F` mapping overlaps readline forward-word motion. The user
+chose to adjust AeroSpace rather than change the editing binding. No app
+command outside the prompt-native readline set uses `Alt`.
+
+### Editable Fields and Overlays
+
+Single keys and leaders are unsafe in text fields, so ordinary matching excludes
+them whenever an input, textarea, select, contenteditable, or textbox role has
+focus. Only the catalog entries explicitly allowed in editables—stop and
+voice—remain directly active.
+
+Dialogs, popovers, menus, and similar overlays have stronger keyboard ownership
+than background app commands. Overlay state cancels pending sequences and
+suppresses background dispatch, leaving Escape, arrows, Enter, Tab, and typing
+to the active overlay. An overlay-local command may remain eligible only while
+its owning control is focused; this permits voice input in prompt surfaces that
+are themselves rendered inside a dialog.
+
+## Close-Tab Research
+
+Session and project working sets have different persistence risks but should
+share selection behavior. The chosen neighbor rule is:
+
+1. select the previous tab;
+2. if none, select the next tab;
+3. if none, enter the explicit empty state.
+
+Project conversation drafts previously needed stronger isolation for safe
+keyboard close. Drafts are now keyed by conversation ID, including images.
+A non-empty draft requires confirmation. The project store captures exact tab
+ordering and focus before optimistic removal so an API failure can restore the
+same UI and draft rather than merely reopening the conversation at a different
+position.
+
+## Discovery Research
+
+A static shortcut list would incorrectly imply that every command is usable
+everywhere. The dispatcher already knows registration and availability, so help
+and launcher should consume that runtime view:
+
+- “Available here” teaches the active surface;
+- “All commands” is the complete reference and labels unavailable entries;
+- launcher search includes only executable commands;
+- keyless commands remain fully keyboard accessible;
+- prompt-native readline bindings appear in the complete reference even though
+  they are not dispatcher commands.
+
+## Historical Note
+
+The first version of this specification selected a per-component
+`react-hotkeys-hook` wrapper, declared sequences and provider scopes out of
+scope, used `Alt+V` for voice, and used Home/End for message boundaries. That
+design was appropriate for the original 11-shortcut scope but is superseded by
+the approved enhanced-hotkey requirements. It is retained here only as design
+history; the current behavior is defined by `requirements.md`, `design.md`, and
+`src/lib/shared/hotkeys.ts`.
 
 ## References
-- [react-hotkeys-hook docs](https://react-hotkeys-hook.vercel.app/) — API reference and usage patterns
-- [react-hotkeys-hook GitHub](https://github.com/JohannesKlauss/react-hotkeys-hook) — Source, issues, TypeScript types
-- [npm: react-hotkeys-hook](https://www.npmjs.com/package/react-hotkeys-hook) — v5.2.4, 2M weekly downloads
-- [MDN KeyboardEvent.key](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key) — Key values reference
-- [GitHub keyboard shortcuts](https://docs.github.com/en/get-started/accessibility/keyboard-shortcuts) — Precedent for `j`/`k`/`?`/`b` conventions
+
+- `src/lib/shared/hotkeys.ts` — authoritative catalog and display helpers
+- `src/lib/hotkeys/dispatcher.ts` — matching and state semantics
+- `src/components/hotkeys/HotkeyProvider.tsx` — DOM context and lifecycle
+- `src/lib/prompt-editor/terminal-hotkeys-extension.ts` — readline editing
+- [MDN: KeyboardEvent.key](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key)
+- [WAI-ARIA APG: Dialog Modal Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
+- [WAI-ARIA APG: Combobox Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/combobox/)

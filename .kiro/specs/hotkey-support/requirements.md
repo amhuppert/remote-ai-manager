@@ -1,81 +1,215 @@
 # Requirements Document
 
 ## Introduction
-CC needs a first-class keyboard shortcut system that lets users perform common actions without reaching for the mouse. The system must be centralized and declarative — all hotkey definitions live in a single registry that drives both runtime binding and a user-facing discovery UI. The initial set of hotkeys covers voice recording, conversation navigation, sidebar toggling, and diff panel navigation. The architecture must make adding future hotkeys trivial and lay the groundwork for eventual user-configurable key bindings.
+
+Command Center (CC) needs a coherent keyboard command system for its common
+navigation, creation, conversation, review, and view-management workflows. The
+system must preserve ordinary browser and text-editing behavior, remain usable
+while the conversation prompt is focused, expose contextual availability, and
+make every command discoverable from one catalog.
+
+The authoritative command catalog is `src/lib/shared/hotkeys.ts`. This
+specification describes the behavior and design constraints that catalog and
+its dispatcher must satisfy.
 
 ## Requirements
 
-### Requirement 1: Centralized Hotkey Registry
-**Objective:** As a developer, I want all hotkey definitions declared in a single, centralized registry, so that adding or modifying shortcuts requires changes in one place and the registry can power both runtime binding and UI display.
+### Requirement 1: Central Command Catalog
+
+**Objective:** As a developer, I want command metadata defined in one place, so
+runtime dispatch, the command launcher, keyboard help, keycap hints, and tests
+cannot drift apart.
 
 #### Acceptance Criteria
-1. The CC app shall define all keyboard shortcuts in a single declarative registry data structure.
-2. Each registry entry shall include at minimum: a unique identifier, a human-readable label, a description, the key combination string, and a category grouping.
-3. When a new hotkey is added to the registry, the CC app shall automatically make it available at runtime and in the discovery UI without additional wiring.
 
-### Requirement 2: Cross-Platform Key Binding
-**Objective:** As a user on macOS or Linux, I want hotkeys to work correctly on my platform, so that I don't have to remember platform-specific modifier keys.
+1. CC shall define each app command in `HOTKEY_REGISTRY` with a unique ID,
+   label, description, category, and either a key binding or `null`.
+2. CC shall derive runtime sequence matching and discovery UI content from the
+   same registry.
+3. CC shall permit commands without direct keys so rarely used actions remain
+   available from the command launcher without consuming global key space.
+4. CC shall render key combinations with platform-appropriate modifier labels.
+5. CC shall expose prompt-native editing shortcuts in the complete shortcut
+   reference without registering them as app commands.
 
-#### Acceptance Criteria
-1. The CC app shall use a platform-adaptive modifier key (`Cmd` on macOS, `Ctrl` on Linux) for shortcuts that require a primary modifier.
-2. The CC app shall assign default key bindings that do not conflict with well-known browser shortcuts (e.g., `Ctrl+T`, `Ctrl+W`, `Ctrl+L`, `Cmd+Q`) or OS-level shortcuts on macOS and Linux.
-3. The hotkey discovery UI shall display key bindings using the correct modifier symbol for the user's current platform (e.g., `⌘` on macOS, `Ctrl` on Linux).
+### Requirement 2: Central Context-Aware Dispatch
 
-### Requirement 3: Input Focus Filtering
-**Objective:** As a user, I want hotkeys to not interfere with normal text input, so that typing in the prompt textarea or other input fields works as expected.
-
-#### Acceptance Criteria
-1. While a text input, textarea, or contenteditable element is focused, the CC app shall suppress non-modifier hotkeys (single-key shortcuts like `j`, `k`, `?`) to prevent interference with typing.
-2. While a text input is focused, the CC app shall still allow modifier-based shortcuts (e.g., `Alt+V`) that do not conflict with standard text editing operations.
-3. When no input element is focused, the CC app shall process all registered hotkeys normally.
-
-### Requirement 4: Voice Recording Toggle
-**Objective:** As a user, I want to start and stop voice recording with a keyboard shortcut, so that I can dictate prompts without clicking the microphone button.
+**Objective:** As a user, I want the same keys to perform only the action valid
+for my current context, so shortcuts remain predictable across CC views.
 
 #### Acceptance Criteria
-1. When the user presses the designated voice toggle hotkey, the CC app shall start voice recording if currently idle, or stop recording if currently recording.
-2. While voice recording is unavailable (health check fails), the CC app shall ignore the voice toggle hotkey without displaying an error.
-3. While voice transcription is processing, the CC app shall ignore the voice toggle hotkey until processing completes.
 
-### Requirement 5: Conversation Message Navigation
-**Objective:** As a user, I want to navigate between messages in a conversation using the keyboard, so that I can review conversation history without scrolling manually.
+1. CC shall process app shortcuts through one document-level capture-phase
+   dispatcher owned by a root provider.
+2. Feature components shall register command callbacks and availability
+   predicates by catalog ID rather than attaching independent global keyboard
+   engines.
+3. CC shall support direct shortcuts and multi-stroke sequences.
+4. The `G`, `C`, and `V` leaders shall wait up to 1 second for their next
+   stroke during ordinary, non-editable use.
+5. When a leader continuation does not match an available command, CC shall
+   cancel the pending sequence without consuming the unmatched key.
+6. CC shall allow a key sequence to have different commands in mutually
+   exclusive contexts, such as `V` then `S` for session specs or project
+   sessions.
+7. If more than one registered callback for the same command is available in a
+   context, CC shall fail closed, log the ambiguity, and invoke neither.
+8. While a dialog, popover, menu, or equivalent overlay is open, CC shall
+   suppress background app shortcuts and let the overlay own keyboard input;
+   only commands explicitly registered by the focused overlay surface may
+   remain active.
+9. CC shall ignore repeated, composing, IME-process, and AltGraph key events
+   that cannot be matched safely.
 
-#### Acceptance Criteria
-1. When the user presses the next-message hotkey, the CC app shall scroll to and highlight the next message in the conversation.
-2. When the user presses the previous-message hotkey, the CC app shall scroll to and highlight the previous message in the conversation.
-3. When the user presses the go-to-start hotkey, the CC app shall scroll to the first message in the conversation.
-4. When the user presses the go-to-end hotkey, the CC app shall scroll to the last message in the conversation.
-5. While the conversation is at the first message, the CC app shall not respond to the previous-message hotkey.
-6. While the conversation is at the last message, the CC app shall not respond to the next-message hotkey.
+### Requirement 3: Prompt-Focused One-Shot Activation
 
-### Requirement 6: Conversations Sidebar Toggle
-**Objective:** As a user, I want to expand and collapse the conversations list panel with a hotkey, so that I can maximize screen space for the active conversation.
-
-#### Acceptance Criteria
-1. When the user presses the sidebar toggle hotkey, the CC app shall collapse the conversations sidebar if it is currently expanded.
-2. When the user presses the sidebar toggle hotkey, the CC app shall expand the conversations sidebar if it is currently collapsed.
-3. When the sidebar is toggled via hotkey, the CC app shall persist the new state to localStorage so it survives page reloads.
-
-### Requirement 7: Diff Panel File Navigation
-**Objective:** As a user reviewing code changes, I want to jump between files in the diff panel using the keyboard, so that I can efficiently review multi-file diffs.
-
-#### Acceptance Criteria
-1. When the user presses the next-file hotkey while the diff panel is visible, the CC app shall scroll to the next file in the diff list.
-2. When the user presses the previous-file hotkey while the diff panel is visible, the CC app shall scroll to the previous file in the diff list.
-3. When navigating to a collapsed file, the CC app shall expand it before scrolling to it.
-
-### Requirement 8: Diff Panel Change Navigation
-**Objective:** As a user reviewing code changes, I want to jump between individual changes (hunks) within the diff panel, so that I can focus on each modification.
+**Objective:** As a user writing a prompt, I want to invoke one app shortcut
+without blurring or modifying my draft, so I can operate CC without leaving the
+composer.
 
 #### Acceptance Criteria
-1. When the user presses the next-change hotkey while the diff panel is visible, the CC app shall scroll to the next diff hunk.
-2. When the user presses the previous-change hotkey while the diff panel is visible, the CC app shall scroll to the previous diff hunk.
 
-### Requirement 9: Hotkey Discovery UI
-**Objective:** As a user, I want a way to view all available keyboard shortcuts, so that I can learn and remember the hotkeys.
+1. While an identified CC prompt editor has focus, pressing literal
+   `Control+;` shall arm app shortcuts for exactly one complete command.
+2. The activation shall work as `Control+;` on every platform; it shall not map
+   to `Command+;` on macOS.
+3. CC shall wait for both activation keys to be released before accepting the
+   armed command, preventing held keys from becoming the next stroke.
+4. The armed state shall have no timeout.
+5. The armed state shall accept direct shortcuts and complete `G`, `C`, or `V`
+   sequences using the same contextual catalog as ordinary dispatch.
+6. Pressing `Escape` or pressing `Control+;` again shall cancel the armed state.
+7. An invalid or unavailable next stroke shall cancel the armed state without
+   preventing the input's native behavior, so the character can still reach
+   the prompt.
+8. Arming, executing, or canceling one-shot mode shall preserve prompt focus,
+   draft contents, attachments, and caret/selection.
+9. CC shall cancel a pending one-shot when focus leaves the originating prompt,
+   a pointer interaction occurs, composition starts, an overlay opens, the
+   route changes, or the window loses focus.
+10. CC shall show a compact awaiting-shortcut HUD while ordinary leader mode or
+    prompt one-shot mode is pending.
+
+### Requirement 4: Editable-Field Safety and Prompt Editing
+
+**Objective:** As a user, I want app commands and editing controls to coexist
+without breaking familiar prompt editing.
 
 #### Acceptance Criteria
-1. When the user presses the help hotkey (e.g., `?`), the CC app shall display a modal listing all registered keyboard shortcuts grouped by category.
-2. Each entry in the discovery modal shall display the shortcut's human-readable label, key combination (with platform-correct modifier symbols), and description.
-3. When the user presses `Escape` or clicks outside the modal, the CC app shall close the hotkey discovery modal.
-4. The discovery modal shall derive its content entirely from the centralized hotkey registry, requiring no separate maintenance.
+
+1. While any editable field has focus, CC shall suppress ordinary single-key
+   and leader shortcuts unless one-shot mode is armed.
+2. `Control+.` shall remain available in the prompt to stop an active turn.
+3. `Control+Shift+.` shall remain available in the prompt to start or stop
+   voice recording when voice input is available.
+4. Prompt submission shall retain its platform-adaptive `Mod+Enter` binding.
+5. Prompt editing shall retain the readline-style bindings `Control+A`,
+   `Control+E`, `Control+U`, `Control+K`, `Control+W`, `Alt+B`, `Alt+F`, and
+   `Alt+D`.
+6. CC shall not assign any other app action to an `Alt`-modified shortcut.
+
+### Requirement 5: Discovery and Command Execution
+
+**Objective:** As a user, I want to find and run commands without memorizing
+every binding.
+
+#### Acceptance Criteria
+
+1. Pressing `?` shall open keyboard help when app shortcuts are eligible.
+2. Keyboard help shall offer “Available here” and “All commands” views.
+3. The complete help view shall include descriptions, structured keycaps,
+   unavailable-context labels, launcher-only commands, and prompt-editing
+   shortcuts.
+4. Pressing `.` shall open a searchable command launcher containing commands
+   available in the current context.
+5. The launcher shall support arrow-key selection, `Enter` execution, pointer
+   selection, and `Escape` dismissal.
+6. Clear prompt, toggle developer tools, and exit panes shall be launcher-only
+   commands with no direct global binding.
+
+### Requirement 6: Navigation, Conversation, and Review Commands
+
+**Objective:** As a user, I want ergonomic keyboard access to high-frequency
+movement and review tasks.
+
+#### Acceptance Criteria
+
+1. `G H`, `G P`, `G S`, `G C`, `G T`, `G R`, and `G A` shall perform the
+   corresponding global or project-scoped navigation command when available.
+2. `G 1` through `G 9` shall activate the corresponding open conversation, and
+   a missing numbered slot shall leave the final digit unconsumed.
+3. `G J` and `G K` shall activate the next and previous open conversations.
+4. `I` shall focus the active prompt, `/` shall focus the current contextual
+   search/filter, and `B` shall toggle the conversation sidebar.
+5. `J`, `K`, `G G`, and `Shift+G` shall navigate to the next, previous, first,
+   and latest messages.
+6. `[` and `]` shall navigate changed files, and `N` and `Shift+N` shall
+   navigate diff hunks, only while a relevant diff surface is active.
+7. `Shift+E` and `Shift+C` shall expand and collapse all thinking blocks in the
+   active conversation without changing those established bindings.
+
+### Requirement 7: Creation and View Commands
+
+**Objective:** As a user, I want mnemonic sequences for common creation and
+workspace-switching actions.
+
+#### Acceptance Criteria
+
+1. `C S`, `C C`, `C W`, and `C T` shall create a session, conversation,
+   workflow, or quick ticket in contexts that support the action.
+2. `V V` shall return to the previous view when that view history exists.
+3. Session workspaces shall support `V C`, `V D`, `V O`, `V A`, `V S`, `V R`,
+   and `V P` for conversation, diff, documents, alignment, specs, artifact, and
+   panes views.
+4. Project workspaces shall use `V S` for sessions and `V C` for conversations.
+5. Ticket workspaces shall use `V B` and `V L` for board and list views.
+6. Commands unavailable in the current context shall neither execute nor
+   reserve the user's unmatched final key.
+
+### Requirement 8: Safe Conversation Tab Closing
+
+**Objective:** As a user, I want `X` to close the active conversation tab
+without losing drafts or leaving tab focus in an invalid state.
+
+#### Acceptance Criteria
+
+1. `X` shall close the active conversation tab only while an eligible session
+   or project conversation workspace is active.
+2. Closing an active tab shall select its previous neighbor, otherwise its next
+   neighbor, otherwise the explicit empty state.
+3. Closing the last tab in a session panes layout shall exit panes.
+4. A project prompt draft shall be scoped to its conversation rather than
+   leaking between tabs.
+5. Closing a project tab with a non-empty text or image draft shall require
+   confirmation before discarding the draft.
+6. A project close shall optimistically update the working set while retaining
+   an exact ordering-and-focus snapshot.
+7. If project close persistence fails, CC shall restore the tab ordering,
+   active tab, and draft, notify the user, and log the failure.
+8. A successful project close shall remove that conversation's saved draft
+   while allowing already-running work to continue.
+
+### Requirement 9: Conflict and Ergonomics Policy
+
+**Objective:** As a user, I want shortcuts that are comfortable and do not
+steal well-known browser, operating-system, or window-manager commands.
+
+#### Acceptance Criteria
+
+1. High-frequency actions shall prefer easy single keys or short mnemonic
+   leader sequences over multi-modifier chords.
+2. Outside the prompt-focused readline bindings in Requirement 4.5, CC shall
+   not replace browser-native close-tab, new-tab, address-bar, refresh, print,
+   save, page-find, or history modifier chords.
+3. Conversation-tab close shall use `X`, not browser-native `Mod+W`.
+4. CC shall avoid new `Alt` assignments because of browser, terminal, and
+   window-manager variability.
+5. The readline bindings in Requirement 4.5 are explicit prompt-focused
+   exceptions to the browser, operating-system, and window-manager conflict
+   policy. This includes `Control+E/K/U/W` and `Alt+F` conflicts on
+   Windows/Linux, plus the reviewed AeroSpace `Alt+F` conflict; the user has
+   chosen to retain the editing bindings and adjust AeroSpace where needed.
+6. User-configurable shortcut remapping is outside this feature's scope.
+7. `/` contextual search is an intentional exception for Firefox Quick Find
+   while app shortcuts are eligible; it shall remain suppressed in editable
+   fields and overlays, and browser-native `Mod+F` shall remain untouched.

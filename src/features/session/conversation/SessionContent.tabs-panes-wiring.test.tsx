@@ -309,6 +309,28 @@ describe("SessionContent tabs/panes wiring", () => {
       expect(openTabs.closeTab).toHaveBeenCalledWith("conv-b");
       expect(openTabs.activate).not.toHaveBeenCalled();
     });
+
+    it("returns to conversation layout when the final pane is closed", () => {
+      const openTabs = makeOpenTabs({
+        workingSet: [TAB_A],
+        activeId: "conv-a",
+      });
+      const onLayoutChange = vi.fn();
+      renderWithQuery(
+        <SessionContent
+          {...makeProps({ layout: "panes", openTabs, onLayoutChange })}
+        />,
+      );
+
+      fireEvent.click(
+        within(paneByTitle("Alpha")).getByRole("button", {
+          name: "Close pane",
+        }),
+      );
+
+      expect(openTabs.closeTab).toHaveBeenCalledWith("conv-a");
+      expect(onLayoutChange).toHaveBeenCalledWith("conversation");
+    });
   });
 
   describe("panes toolbar", () => {
@@ -342,7 +364,7 @@ describe("SessionContent tabs/panes wiring", () => {
     });
   });
 
-  // The ⌘1–9 activation shortcut (8.1) is intentionally NOT re-exercised here:
+  // The G 1–9 activation shortcut (8.1) is intentionally NOT re-exercised here:
   // it is covered by use-tab-pane-keyboard.test.tsx (the hook) + task 7.1 (its
   // mount in ConversationWorkspace) + the live test 8.1. Close-without-stopping
   // -the-agent (2.7/4.8) holds structurally because openTabs.closeTab only

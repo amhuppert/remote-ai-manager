@@ -13,6 +13,8 @@ import {
 import SessionsPanel from "./SessionsPanel";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { FilterToken } from "../components/filter-tokens";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 
 vi.mock(
   "next/link",
@@ -137,6 +139,46 @@ describe("SessionsPanel search", () => {
     expect(
       screen.getByText(/Nothing matches “zzz-nomatch”/),
     ).toBeInTheDocument();
+  });
+
+  it("focuses and selects the contextual search with /", () => {
+    renderPanel(
+      <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+        <Harness />
+      </HotkeyProvider>,
+    );
+    const search = screen.getByLabelText("Search sessions");
+    fireEvent.change(search, { target: { value: "auth" } });
+    search.blur();
+
+    fireEvent.keyDown(document, { key: "/", code: "Slash" });
+
+    expect(search).toHaveFocus();
+    expect(search).toHaveValue("auth");
+    expect((search as HTMLInputElement).selectionStart).toBe(0);
+    expect((search as HTMLInputElement).selectionEnd).toBe(4);
+  });
+
+  it("leaves / available when the sessions panel is hidden", () => {
+    const dispatcher = createHotkeyDispatcher();
+    renderPanel(
+      <HotkeyProvider dispatcher={dispatcher}>
+        <SessionsPanel
+          hidden
+          projectName="proj"
+          sessions={sessions}
+          tokens={[]}
+          onTokensChange={vi.fn()}
+        />
+      </HotkeyProvider>,
+    );
+
+    expect(
+      dispatcher
+        .getCommands()
+        .find((command) => command.definition.id === "focusContextSearch")
+        ?.available,
+    ).toBe(false);
   });
 });
 

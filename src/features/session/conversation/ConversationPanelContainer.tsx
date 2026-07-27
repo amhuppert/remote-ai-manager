@@ -10,7 +10,7 @@ import { useOpenMobileSidebar } from "@/stores/session-detail.store";
 import { useCollabPassageVisibility } from "@/features/session/hooks/use-collab-passage-visibility";
 import { useCollabRowRenderer } from "@/features/session/hooks/use-collab-row-renderer";
 import { useMessageRowRenderer } from "@/features/session/hooks/use-message-row-renderer";
-import { useThinkingBlockExpansionHotkeys } from "@/features/session/hooks/use-thinking-block-expansion-hotkeys";
+import { useThinkingBlockExpansionHotkeys } from "@/hooks/use-thinking-block-expansion-hotkeys";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import type { ConversationState } from "@/lib/conversations/schemas";

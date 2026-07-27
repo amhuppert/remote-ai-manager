@@ -18,8 +18,12 @@ import {
 } from "@testing-library/react";
 import ProjectCockpit from "./ProjectCockpit";
 import SessionsPanel from "./SessionsPanel";
+import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import { createHotkeyDispatcher } from "@/lib/hotkeys/dispatcher";
 import { resolveProjectComposerSubmit } from "../composer/UnifiedComposer";
 import { _useCockpitViewStore } from "./use-cockpit-view-state";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type {
   ConversationState,
@@ -45,6 +49,66 @@ function withClient(ui: React.ReactElement) {
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   return <QueryClientProvider client={client}>{ui}</QueryClientProvider>;
+}
+
+function withHotkeys(ui: React.ReactElement) {
+  return (
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      {withClient(ui)}
+    </HotkeyProvider>
+  );
+}
+
+function withHotkeyLauncher(ui: React.ReactElement) {
+  return (
+    <HotkeyProvider dispatcher={createHotkeyDispatcher()}>
+      {withClient(ui)}
+      <GlobalHotkeyHelp />
+    </HotkeyProvider>
+  );
+}
+
+function pressSequence(...strokes: [key: string, code: string][]) {
+  for (const [key, code] of strokes) {
+    fireEvent.keyDown(document, { key, code });
+  }
+}
+
+function pastePlainText(target: HTMLElement, text: string) {
+  fireEvent.paste(target, {
+    clipboardData: {
+      getData: (type: string) => (type === "text/plain" ? text : ""),
+    },
+  });
+}
+
+function openCommandLauncherFromPrompt(prompt: HTMLElement) {
+  prompt.focus();
+  fireEvent.keyDown(prompt, {
+    key: ";",
+    code: "Semicolon",
+    ctrlKey: true,
+  });
+  fireEvent.keyUp(prompt, {
+    key: ";",
+    code: "Semicolon",
+    ctrlKey: true,
+  });
+  fireEvent.keyUp(prompt, {
+    key: "Control",
+    code: "ControlLeft",
+  });
+  fireEvent.keyDown(prompt, { key: ".", code: "Period" });
+}
+
+function runCloseTabFromLauncher() {
+  const search = screen.getByRole("combobox", {
+    name: "Search commands",
+  });
+  fireEvent.change(search, {
+    target: { value: "Close conversation tab" },
+  });
+  fireEvent.keyDown(search, { key: "Enter", code: "Enter" });
 }
 
 function makeConversation(
@@ -128,6 +192,7 @@ beforeEach(() => {
       }) as DOMRect;
   }
   _useCockpitViewStore.getState()._reset();
+  useToastStoreForTesting.setState({ toasts: [] });
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -257,6 +322,366 @@ describe("project page: empty ↔ populated cockpit transition", () => {
     expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
     await waitFor(() =>
       expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
+    );
+  });
+});
+
+describe("project page: conversation working-set keyboard navigation", () => {
+  it("activates by position and cycles with wrapping only in the conversations view", async () => {
+    render(
+      withHotkeys(
+        <PageHarness
+          openConversations={[
+            makeConversation("alpha"),
+            makeConversation("beta"),
+            makeConversation("gamma"),
+          ]}
+        />,
+      ),
+    );
+    showConversationsView();
+
+    const alpha = await screen.findByRole("tab", { name: /alpha/ });
+    const beta = screen.getByRole("tab", { name: /beta/ });
+    const gamma = screen.getByRole("tab", { name: /gamma/ });
+    expect(alpha).toHaveAttribute("aria-selected", "true");
+
+    pressSequence(["g", "KeyG"], ["2", "Digit2"]);
+    expect(beta).toHaveAttribute("aria-selected", "true");
+
+    pressSequence(["g", "KeyG"], ["j", "KeyJ"]);
+    expect(gamma).toHaveAttribute("aria-selected", "true");
+    pressSequence(["g", "KeyG"], ["j", "KeyJ"]);
+    expect(alpha).toHaveAttribute("aria-selected", "true");
+    pressSequence(["g", "KeyG"], ["k", "KeyK"]);
+    expect(gamma).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(
+      within(screen.getByRole("tablist", { name: "Project view" })).getByRole(
+        "tab",
+        { name: /Sessions/ },
+      ),
+    );
+    pressSequence(["g", "KeyG"], ["1", "Digit1"]);
+    showConversationsView();
+    expect(screen.getByRole("tab", { name: /gamma/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("switches project views with V S and V C", () => {
+    render(
+      withHotkeys(
+        <PageHarness openConversations={[makeConversation("alpha")]} />,
+      ),
+    );
+
+    pressSequence(["v", "KeyV"], ["c", "KeyC"]);
+    expect(
+      within(screen.getByRole("tablist", { name: "Project view" })).getByRole(
+        "tab",
+        { name: /Conversations/ },
+      ),
+    ).toHaveAttribute("aria-selected", "true");
+
+    pressSequence(["v", "KeyV"], ["s", "KeyS"]);
+    expect(
+      within(screen.getByRole("tablist", { name: "Project view" })).getByRole(
+        "tab",
+        { name: /Sessions/ },
+      ),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("toggles the embedded conversations rail with B", () => {
+    const { container } = render(
+      withHotkeys(
+        <PageHarness openConversations={[makeConversation("alpha")]} />,
+      ),
+    );
+    showConversationsView();
+    const cockpit = container.querySelector(
+      "[data-rail-collapsed]",
+    ) as HTMLElement;
+    expect(cockpit).toHaveAttribute("data-rail-collapsed", "false");
+
+    fireEvent.keyDown(document, { key: "b", code: "KeyB" });
+    expect(cockpit).toHaveAttribute("data-rail-collapsed", "true");
+  });
+});
+
+describe("project page: conversation-scoped drafts and close", () => {
+  it("restores each conversation's draft when switching tabs", async () => {
+    render(
+      withClient(
+        <PageHarness
+          openConversations={[
+            makeConversation("alpha"),
+            makeConversation("beta"),
+          ]}
+        />,
+      ),
+    );
+    showConversationsView();
+    const editor = (await screen.findByTestId("prompt-input")) as HTMLElement;
+    pastePlainText(editor, "alpha draft");
+    expect(editor).toHaveTextContent("alpha draft");
+
+    fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+    const betaEditor = await screen.findByTestId("prompt-input");
+    expect(betaEditor).toHaveTextContent("");
+    pastePlainText(betaEditor, "beta draft");
+
+    fireEvent.click(screen.getByRole("tab", { name: /alpha/ }));
+    expect(await screen.findByTestId("prompt-input")).toHaveTextContent(
+      "alpha draft",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+    expect(await screen.findByTestId("prompt-input")).toHaveTextContent(
+      "beta draft",
+    );
+  });
+
+  it("asks before closing a dirty tab and keeps its draft when cancelled", async () => {
+    render(
+      withClient(
+        <PageHarness openConversations={[makeConversation("alpha")]} />,
+      ),
+    );
+    showConversationsView();
+    pastePlainText(await screen.findByTestId("prompt-input"), "keep me");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close alpha" }));
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "Discard draft and close tab?",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("tab", { name: /alpha/ })).toBeInTheDocument();
+    expect(await screen.findByTestId("prompt-input")).toHaveTextContent(
+      "keep me",
+    );
+  });
+
+  it("closes the active clean tab with X and selects its previous neighbor", async () => {
+    const fetchSpy = vi.mocked(fetch);
+    fetchSpy.mockImplementation(async (input) => {
+      const url = String(input);
+      return new Response(
+        JSON.stringify(
+          url.endsWith("/open") ? { ok: true } : { available: false },
+        ),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    });
+    render(
+      withHotkeys(
+        <PageHarness
+          openConversations={[
+            makeConversation("alpha"),
+            makeConversation("beta"),
+            makeConversation("gamma"),
+          ]}
+        />,
+      ),
+    );
+    showConversationsView();
+    fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+    const editor = await screen.findByTestId("prompt-input");
+    editor.focus();
+    fireEvent.keyDown(editor, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(editor, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(editor, {
+      key: "Control",
+      code: "ControlLeft",
+    });
+    fireEvent.keyDown(editor, { key: "x", code: "KeyX" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: /beta/ })).toBeNull(),
+    );
+    expect(screen.getByRole("tab", { name: /alpha/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-input")).toHaveFocus(),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/proj/conversations/beta/open",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ open: false }),
+      }),
+    );
+  });
+
+  it("focuses the replacement prompt after launcher-invoked clean close", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      return new Response(
+        JSON.stringify(
+          url.endsWith("/open") ? { ok: true } : { available: false },
+        ),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    });
+    render(
+      withHotkeyLauncher(
+        <PageHarness
+          openConversations={[
+            makeConversation("alpha"),
+            makeConversation("beta"),
+          ]}
+        />,
+      ),
+    );
+    showConversationsView();
+    fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+    openCommandLauncherFromPrompt(await screen.findByTestId("prompt-input"));
+    runCloseTabFromLauncher();
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: /beta/ })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-input")).toHaveFocus(),
+    );
+    expect(screen.getByRole("tab", { name: /alpha/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("focuses the replacement prompt after confirming launcher-invoked dirty close", async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      return new Response(
+        JSON.stringify(
+          url.endsWith("/open") ? { ok: true } : { available: false },
+        ),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    });
+    render(
+      withHotkeyLauncher(
+        <PageHarness
+          openConversations={[
+            makeConversation("alpha"),
+            makeConversation("beta"),
+          ]}
+        />,
+      ),
+    );
+    showConversationsView();
+    fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+    const editor = await screen.findByTestId("prompt-input");
+    pastePlainText(editor, "unsent draft");
+    openCommandLauncherFromPrompt(editor);
+    runCloseTabFromLauncher();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Discard draft and close",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: /beta/ })).toBeNull(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("prompt-input")).toHaveFocus(),
+    );
+    expect(screen.getByRole("tab", { name: /alpha/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("restores exact ordering, focus, and draft when close persistence fails", async () => {
+    const fetchSpy = vi.mocked(fetch);
+    fetchSpy.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/open")) throw new Error("network unavailable");
+      return new Response(JSON.stringify({ available: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    render(
+      withHotkeys(
+        <PageHarness
+          openConversations={[
+            makeConversation("alpha"),
+            makeConversation("beta"),
+            makeConversation("gamma"),
+          ]}
+        />,
+      ),
+    );
+    showConversationsView();
+    fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+    const editor = await screen.findByTestId("prompt-input");
+    pastePlainText(editor, "unsent draft");
+    editor.focus();
+    fireEvent.keyDown(editor, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(editor, {
+      key: ";",
+      code: "Semicolon",
+      ctrlKey: true,
+    });
+    fireEvent.keyUp(editor, {
+      key: "Control",
+      code: "ControlLeft",
+    });
+    fireEvent.keyDown(editor, { key: "x", code: "KeyX" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Discard draft and close" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /beta/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    const tabs = screen.getAllByRole("tab", {
+      name: /alpha|beta|gamma/,
+    });
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      expect.stringContaining("alpha"),
+      expect.stringContaining("beta"),
+      expect.stringContaining("gamma"),
+    ]);
+    const restoredEditor = await screen.findByTestId("prompt-input");
+    expect(restoredEditor).toHaveTextContent("unsent draft");
+    await waitFor(() => expect(restoredEditor).toHaveFocus());
+    expect(useToastStoreForTesting.getState().toasts.at(-1)?.message).toBe(
+      "Couldn’t close conversation. The tab and draft were restored.",
     );
   });
 });

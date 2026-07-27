@@ -10,6 +10,7 @@ import type { TranscriptExtensionRowData } from "@/components/conversation/conve
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+import { useThinkingBlockExpansionHotkeys } from "@/hooks/use-thinking-block-expansion-hotkeys";
 import { stripProposalFencesFromContent } from "@/features/project-detail/spawn-card/derive-spawn-cards";
 import {
   noopRenderSpawnCardRow,
@@ -65,6 +66,7 @@ export default function ProjectTranscriptHost({
   renderSpawnCardRow = noopRenderSpawnCardRow,
   pendingQueue,
 }: ProjectTranscriptHostProps): React.JSX.Element {
+  const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
   const extensionRows = useMemo<SpawnExtensionRow[]>(
     () =>
       (spawnCards ?? []).map((card) => ({
@@ -98,11 +100,12 @@ export default function ProjectTranscriptHost({
           isLast={isLast}
           selectedBackend={selectedBackend}
           worktreePath={worktreePath}
+          thinkingExpansionCommand={thinkingExpansionCommand}
           lastMessageExtras={null}
         />
       );
     },
-    [selectedBackend, worktreePath],
+    [selectedBackend, thinkingExpansionCommand, worktreePath],
   );
 
   return (

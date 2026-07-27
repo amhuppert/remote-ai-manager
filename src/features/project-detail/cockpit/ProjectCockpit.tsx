@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -15,8 +16,13 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversa
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import { IconButton } from "@/components/ui/IconButton";
 import { WithTooltip } from "@/components/ui/WithTooltip";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { useQuickTicketConversationRegistration } from "@/components/quick-ticket/useQuickTicketConversationRegistration";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { cn } from "@/lib/ui/cn";
+import type { SerializedPromptDoc } from "@/lib/prompt-editor";
+import { createClientLogger } from "@/lib/logging/client-logger";
+import { pushToast } from "@/stores/toast.store";
 import {
   useSendProjectPrompt,
   useCreateProjectConversation,
@@ -34,6 +40,11 @@ import type {
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
 import { canStopTurn } from "@/lib/conversations/turn-activity";
 import { useConversationSpawnCards } from "@/features/project-detail/spawn-card/useConversationSpawnCards";
+import { useOrderedConversationHotkeys } from "@/hooks/use-ordered-conversation-hotkeys";
+import {
+  scheduleActivePromptFocus,
+  shouldRestoreActivePromptFocus,
+} from "@/lib/hotkeys/prompt-focus";
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
 import ConversationPane from "./ConversationPane";
@@ -52,9 +63,18 @@ import {
   useFocusTab,
   useWorkspaceView,
   useSetWorkspaceView,
+  useBeginCloseTab,
+  useRestoreCloseSnapshot,
   useToggleRail,
   useSetRailCollapsed,
 } from "./use-cockpit-view-state";
+import {
+  deleteProjectDraft,
+  hasProjectDraftContent,
+  projectDraftKey,
+  setProjectDraft,
+  type ProjectDraftMap,
+} from "./project-draft-map";
 // Imported for the preserved `plc-rise-fade` entry keyframe (referenced by the
 // cockpit's entry-animation utility) and the preserved diff slide-over residual.
 import "./styles/cockpit.css";
@@ -172,6 +192,8 @@ const PANE_EMPTY_CLASS =
 const PANE_COMPOSER_CLASS =
   "shrink-0 px-md py-md max-768:py-sm border-x-0 border-b-0 border-t border-solid border-border-dim bg-bg-base";
 
+const logger = createClientLogger("project-cockpit");
+
 function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
   return (
     <svg
@@ -224,8 +246,15 @@ export default function ProjectCockpit({
   const setActiveTab = useSetActiveTab();
   const focusTab = useFocusTab();
   const setWorkspaceView = useSetWorkspaceView();
+  const beginCloseTab = useBeginCloseTab();
+  const restoreCloseSnapshot = useRestoreCloseSnapshot();
   const toggleRail = useToggleRail();
   const setRailCollapsed = useSetRailCollapsed();
+  const [drafts, setDrafts] = useState<ProjectDraftMap>(() => new Map());
+  const [closeConfirmTargetId, setCloseConfirmTargetId] = useState<
+    string | null
+  >(null);
+  const restorePromptFocusAfterCloseRef = useRef(false);
 
   const [mobilePane, setMobilePane] = useState<MobilePane>("chat");
   const handleMobilePane = useCallback(
@@ -304,6 +333,13 @@ export default function ProjectCockpit({
       }),
     [openTabIds, byId],
   );
+  const orderedTabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
+  useOrderedConversationHotkeys({
+    orderedIds: orderedTabIds,
+    activeId: activeTabId,
+    activate: setActiveTab,
+    enabled: workspaceView === "conversations",
+  });
 
   const activeConversation =
     activeTabId !== null ? byId.get(activeTabId) : undefined;
@@ -359,11 +395,97 @@ export default function ProjectCockpit({
     );
   }, [createConversation, selectedBackend, focusTab]);
 
-  const handleClose = useCallback(
+  useAppHotkey("newConversation", handleNewChat, {
+    enabled: !createConversation.isPending,
+  });
+  useAppHotkey("viewSessions", () => setWorkspaceView("sessions"));
+  useAppHotkey("viewConversation", () => setWorkspaceView("conversations"));
+  useAppHotkey("toggleSidebar", toggleRail, {
+    enabled: workspaceView === "conversations",
+  });
+
+  const persistClose = useCallback(
     (id: string) => {
-      closeConversation.mutate(id);
+      const restorePromptFocus = restorePromptFocusAfterCloseRef.current;
+      const snapshot = beginCloseTab(id);
+      if (snapshot === null) {
+        restorePromptFocusAfterCloseRef.current = false;
+        return;
+      }
+      if (restorePromptFocus) scheduleActivePromptFocus();
+      logger.info("project.conversation_tab.close_started", {
+        projectName,
+        conversationId: id,
+      });
+      closeConversation.mutate(id, {
+        onSuccess: () => {
+          setDrafts((current) => deleteProjectDraft(current, id));
+          restorePromptFocusAfterCloseRef.current = false;
+          logger.info("project.conversation_tab.close_succeeded", {
+            projectName,
+            conversationId: id,
+          });
+        },
+        onError: (error) => {
+          restoreCloseSnapshot(snapshot);
+          if (restorePromptFocus) scheduleActivePromptFocus();
+          restorePromptFocusAfterCloseRef.current = false;
+          pushToast(
+            "Couldn’t close conversation. The tab and draft were restored.",
+          );
+          logger.error("project.conversation_tab.close_failed", {
+            projectName,
+            conversationId: id,
+            errorName: error.name,
+            errorMessage: error.message,
+          });
+        },
+      });
     },
-    [closeConversation],
+    [beginCloseTab, closeConversation, projectName, restoreCloseSnapshot],
+  );
+
+  const requestClose = useCallback(
+    (id: string) => {
+      if (closeConversation.isPending) return;
+      const document = drafts.get(id);
+      if (document && hasProjectDraftContent(document)) {
+        setCloseConfirmTargetId(id);
+        return;
+      }
+      persistClose(id);
+    },
+    [closeConversation.isPending, drafts, persistClose],
+  );
+
+  useAppHotkey(
+    "closeConversationTab",
+    (event, invocation) => {
+      restorePromptFocusAfterCloseRef.current = shouldRestoreActivePromptFocus(
+        event.target,
+        invocation.context,
+      );
+      if (activeTabId !== null) requestClose(activeTabId);
+    },
+    {
+      enabled:
+        workspaceView === "conversations" &&
+        activeTabId !== null &&
+        !closeConversation.isPending,
+    },
+  );
+
+  const composerDraftKey = projectDraftKey(activeTabId);
+  const initialComposerDocument = drafts.get(composerDraftKey);
+  const handleComposerDocumentChange = useCallback(
+    (document: SerializedPromptDoc) => {
+      setDrafts((current) =>
+        hasProjectDraftContent(document)
+          ? setProjectDraft(current, composerDraftKey, document)
+          : deleteProjectDraft(current, composerDraftKey),
+      );
+    },
+    [composerDraftKey],
   );
 
   // A create-and-send turn has no tab to report on until the conversation it
@@ -487,6 +609,8 @@ export default function ProjectCockpit({
       onDismissError={handleDismissError}
       lastUsedModelId={lastUserTurnAgentSettings.modelId}
       lastUsedEffort={lastUserTurnAgentSettings.effort}
+      initialDocument={initialComposerDocument}
+      onDocumentChange={handleComposerDocumentChange}
       onRunCommand={onRunCommand}
       onSendPrompt={handleSendPrompt}
       queueTurnState={queueTurnState}
@@ -518,7 +642,7 @@ export default function ProjectCockpit({
             tabs={tabs}
             activeTabId={activeTabId}
             onSelect={setActiveTab}
-            onClose={handleClose}
+            onClose={requestClose}
             onNewChat={handleNewChat}
             creating={createConversation.isPending}
           />
@@ -669,6 +793,22 @@ export default function ProjectCockpit({
         tokens={tokens}
         onTokensChange={onTokensChange}
         {...(onBranch ? { onBranch } : {})}
+      />
+      <ConfirmDialog
+        open={closeConfirmTargetId !== null}
+        title="Discard draft and close tab?"
+        message={`Closing "${closeConfirmTargetId ? (byId.get(closeConfirmTargetId)?.name ?? "Conversation") : "Conversation"}" removes it from this working set and discards its unsent draft. Running work continues.`}
+        confirmLabel="Discard draft and close"
+        danger
+        onConfirm={() => {
+          const targetId = closeConfirmTargetId;
+          setCloseConfirmTargetId(null);
+          if (targetId !== null) persistClose(targetId);
+        }}
+        onCancel={() => {
+          restorePromptFocusAfterCloseRef.current = false;
+          setCloseConfirmTargetId(null);
+        }}
       />
     </div>
   );

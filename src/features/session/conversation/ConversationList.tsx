@@ -24,6 +24,7 @@ import { formatRelativeTime } from "@/lib/shared/format-relative-time";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
@@ -194,6 +195,9 @@ export default function ConversationList({
       },
     });
   }, [createConvoMutation, isFinished, projectName, sessionName, router]);
+  useAppHotkey("newConversation", handleNewConversation, {
+    enabled: !createConvoMutation.isPending && !isFinished,
+  });
 
   const handleDelete = useCallback(() => {
     setShowDeleteConfirm(false);

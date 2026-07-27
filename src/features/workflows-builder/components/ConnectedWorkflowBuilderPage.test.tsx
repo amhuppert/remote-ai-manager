@@ -10,6 +10,11 @@ import {
 } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { HotkeyProvider } from "@/components/hotkeys/HotkeyProvider";
+import {
+  createHotkeyDispatcher,
+  type HotkeyDispatcher,
+} from "@/lib/hotkeys/dispatcher";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -20,6 +25,11 @@ import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import ConnectedWorkflowBuilderPage, {
   resolveDefinitionClientSide,
 } from "./ConnectedWorkflowBuilderPage";
+
+const workflowMutationState = vi.hoisted(() => ({
+  create: vi.fn(),
+  createPending: false,
+}));
 
 vi.mock(
   "next/link",
@@ -131,8 +141,8 @@ vi.mock("@/lib/config/queries", () => ({
 vi.mock("@/lib/workflows/mutations", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/workflows/mutations")>()),
   useScopedCreateWorkflowDefinitionMutation: () => ({
-    mutateAsync: vi.fn(),
-    isPending: false,
+    mutateAsync: workflowMutationState.create,
+    isPending: workflowMutationState.createPending,
   }),
   useScopedUpdateWorkflowDefinitionMutation: () => ({
     mutateAsync: vi.fn(),
@@ -172,22 +182,34 @@ function resetStore() {
   });
 }
 
-function renderPage() {
+function renderPage(dispatcher?: HotkeyDispatcher) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const page = (
     <QueryClientProvider client={qc}>
       <ConnectedWorkflowBuilderPage
         scope={{ kind: "project", projectName: "test-project" }}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+  return render(
+    dispatcher === undefined ? (
+      page
+    ) : (
+      <HotkeyProvider dispatcher={dispatcher}>{page}</HotkeyProvider>
+    ),
   );
 }
 
 describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () => {
   beforeEach(() => {
     resetStore();
+    workflowMutationState.createPending = false;
+    workflowMutationState.create.mockReset();
+    workflowMutationState.create.mockResolvedValue({
+      item: { id: "created-workflow" },
+    });
   });
 
   it("does not accept unused backend-default pass-through props", () => {
@@ -234,6 +256,37 @@ describe("ConnectedWorkflowBuilderPage — workflow-settings chrome button", () 
     expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
       "context-plan",
     );
+  });
+
+  it("creates a workflow with C W when creation is available", async () => {
+    const dispatcher = createHotkeyDispatcher();
+    renderPage(dispatcher);
+
+    await act(async () => {
+      fireEvent.keyDown(document, { key: "c" });
+      fireEvent.keyDown(document, { key: "w" });
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(workflowMutationState.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Workflow 2",
+        }),
+      );
+    });
+  });
+
+  it("marks new workflow unavailable while creation is pending", () => {
+    workflowMutationState.createPending = true;
+    const dispatcher = createHotkeyDispatcher();
+    renderPage(dispatcher);
+
+    expect(
+      dispatcher
+        .getCommands()
+        .find((command) => command.definition.id === "newWorkflow")?.available,
+    ).toBe(false);
   });
 });
 

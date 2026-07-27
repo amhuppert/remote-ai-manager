@@ -195,8 +195,6 @@ export default function CommandConsole({
         <div className="ml-md flex shrink-0 gap-[6px] max-768:hidden">
           {!focused ? (
             <>
-              <kbd className={hintKbd}>⌘K</kbd>
-              <span className={cn(hintWord, "px-[2px] pr-[6px]")}>focus</span>
               <kbd className={hintKbd}>/</kbd>
               <span className={cn(hintWord, "px-[2px] pr-[6px]")}>actions</span>
               <kbd className={hintKbd}>:</kbd>

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { closeTabSelection } from "@/lib/shared/close-tab-selection";
 import { reconcileOpenTabs } from "./reconcile-open-tabs";
 
 export type CockpitWorkspaceView = "sessions" | "conversations";
@@ -23,6 +24,13 @@ interface CockpitViewState {
   entering: boolean;
 }
 
+export interface CockpitCloseSnapshot {
+  openTabIds: string[];
+  activeTabId: string | null;
+  workspaceView: CockpitWorkspaceView;
+  entering: boolean;
+}
+
 interface CockpitViewActions {
   /** Reconcile tab view-state against the server's open-conversation ids. */
   reconcileTabs(serverOpenIds: readonly string[]): void;
@@ -30,6 +38,8 @@ interface CockpitViewActions {
   /** Focus a tab, appending it optimistically if not already tracked. */
   focusTab(id: string): void;
   setWorkspaceView(view: CockpitWorkspaceView): void;
+  beginCloseTab(id: string): CockpitCloseSnapshot | null;
+  restoreCloseSnapshot(snapshot: CockpitCloseSnapshot): void;
   toggleRail(): void;
   setRailCollapsed(collapsed: boolean): void;
   clearEntering(): void;
@@ -48,7 +58,7 @@ const initialState: CockpitViewState = {
 };
 
 const useCockpitViewStore = create<CockpitViewStore>()(
-  immer((set) => ({
+  immer((set, get) => ({
     ...initialState,
 
     reconcileTabs: (serverOpenIds) =>
@@ -88,6 +98,36 @@ const useCockpitViewStore = create<CockpitViewStore>()(
     setWorkspaceView: (view) =>
       set((state) => {
         state.workspaceView = view;
+      }),
+
+    beginCloseTab: (id) => {
+      const current = get();
+      if (!current.openTabIds.includes(id)) return null;
+      const snapshot: CockpitCloseSnapshot = {
+        openTabIds: [...current.openTabIds],
+        activeTabId: current.activeTabId,
+        workspaceView: current.workspaceView,
+        entering: current.entering,
+      };
+      set((state) => {
+        if (state.activeTabId === id) {
+          state.activeTabId = closeTabSelection(state.openTabIds, id);
+        }
+        state.openTabIds = state.openTabIds.filter((tabId) => tabId !== id);
+        if (state.openTabIds.length === 0) {
+          state.activeTabId = null;
+          state.entering = false;
+        }
+      });
+      return snapshot;
+    },
+
+    restoreCloseSnapshot: (snapshot) =>
+      set((state) => {
+        state.openTabIds = [...snapshot.openTabIds];
+        state.activeTabId = snapshot.activeTabId;
+        state.workspaceView = snapshot.workspaceView;
+        state.entering = snapshot.entering;
       }),
 
     toggleRail: () =>
@@ -134,6 +174,10 @@ export const useSetActiveTab = () => useCockpitViewStore((s) => s.setActiveTab);
 export const useFocusTab = () => useCockpitViewStore((s) => s.focusTab);
 export const useSetWorkspaceView = () =>
   useCockpitViewStore((s) => s.setWorkspaceView);
+export const useBeginCloseTab = () =>
+  useCockpitViewStore((s) => s.beginCloseTab);
+export const useRestoreCloseSnapshot = () =>
+  useCockpitViewStore((s) => s.restoreCloseSnapshot);
 export const useToggleRail = () => useCockpitViewStore((s) => s.toggleRail);
 export const useSetRailCollapsed = () =>
   useCockpitViewStore((s) => s.setRailCollapsed);

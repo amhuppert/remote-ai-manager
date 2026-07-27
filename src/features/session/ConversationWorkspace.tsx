@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { deriveSessionStatus } from "@/lib/sessions/derived";
 import { isSessionNotFoundError } from "@/lib/sessions/queries";
@@ -38,6 +38,8 @@ import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-a
 import { CONVERSATIONS_LAYOUT_STORAGE_KEY } from "@/features/session/conversations-page-state";
 import { type OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import { useTabPaneKeyboard } from "@/features/session/tabs/use-tab-pane-keyboard";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
+import type { RightPaneTab } from "@/stores/session-detail/types";
 
 export interface ConversationWorkspaceProps {
   projectName: string;
@@ -262,15 +264,12 @@ export default function ConversationWorkspace({
     if (store.sending) abortClient();
     void abortPrompt();
   }, [store.sending, abortClient, abortPrompt]);
+  useAppHotkey("stopTurn", handleStopPrompt, { enabled: canStop });
   useClearInputHotkey({
     editorRef: local.editorRef,
     setPromptText: local.setPromptText,
     clearPlaceholder: store.clearPlaceholder,
     clearImages: local.clearImages,
-    isPromptFocused: useCallback(
-      () => local.editorRef.current?.editor?.isFocused ?? false,
-      [local.editorRef],
-    ),
   });
 
   const handleLayoutChange = useCallback(
@@ -280,13 +279,76 @@ export default function ConversationWorkspace({
     [store],
   );
 
-  // Bind tab-activation (mod+1…9) and panes-exit (Escape) shortcuts. On the
-  // per-conversation route `openTabs` is undefined: the empty working set plus
-  // the non-panes layout make both shortcuts inert.
+  useAppHotkey("focusComposer", () => local.editorRef.current?.focus(), {
+    enabled: !isReadOnly,
+  });
+
+  type SessionView = "conversation" | "panes" | RightPaneTab;
+  const [previousView, setPreviousView] = useState<SessionView | null>(null);
+  const currentView = (
+    store.layout === "conversation" || store.layout === "panes"
+      ? store.layout
+      : store.rightPaneTab
+  ) satisfies SessionView;
+  const applyView = useCallback(
+    (view: SessionView) => {
+      if (view === "conversation") {
+        store.switchMobilePanel("chat");
+        handleLayoutChange("conversation");
+        return;
+      }
+      if (view === "panes") {
+        store.switchMobilePanel("chat");
+        handleLayoutChange("panes");
+        return;
+      }
+
+      store.switchRightPaneTab(view);
+      if (view === "docs") {
+        store.switchMobilePanel("docs");
+      } else if (view === "specs") {
+        store.switchMobilePanel("specs");
+      } else {
+        store.switchMobilePanel("diff");
+      }
+      handleLayoutChange("diff");
+    },
+    [handleLayoutChange, store],
+  );
+  const selectView = useCallback(
+    (view: SessionView) => {
+      if (view === currentView) return;
+      setPreviousView(currentView);
+      applyView(view);
+    },
+    [applyView, currentView],
+  );
+
+  useAppHotkey("viewConversation", () => selectView("conversation"));
+  useAppHotkey("viewDiff", () => selectView("diff"));
+  useAppHotkey("viewDocuments", () => selectView("docs"));
+  useAppHotkey("viewAlignment", () => selectView("alignment"));
+  useAppHotkey("viewSpecs", () => selectView("specs"));
+  useAppHotkey("viewArtifact", () => selectView("artifact"));
+  useAppHotkey(
+    "viewPrevious",
+    () => {
+      if (!previousView) return;
+      setPreviousView(currentView);
+      applyView(previousView);
+    },
+    { enabled: previousView !== null },
+  );
+
+  // On the per-conversation route `openTabs` is undefined: the empty working
+  // set keeps working-set navigation inert.
   useTabPaneKeyboard({
     workingSet: openTabs?.workingSet ?? [],
+    activeId: openTabs?.activeId ?? null,
     activate: openTabs?.activate ?? (() => {}),
+    closeTab: openTabs?.closeTab ?? (() => {}),
     layout: store.layout,
+    onEnterPanes: () => handleLayoutChange("panes"),
     onExitPanes: () => handleLayoutChange("conversation"),
   });
 

@@ -45,6 +45,7 @@ import {
   type DraftMap,
   type QuestionStatus,
 } from "@/components/ask-question-logic";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface AskQuestionPanelProps {
   questions: AskQuestionItem[];
@@ -528,6 +529,7 @@ export default function AskQuestionPanel({
 }: AskQuestionPanelProps) {
   const showKbd = !compact;
   const [view, setView] = useState<"max" | "banner">("max");
+  useOverlayScope(view === "max");
   const [drafts, setDrafts] = useState<DraftMap>(() => initDraftMap(questions));
   const [ctxOpen, setCtxOpen] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(questions.map((q, i) => [questionKey(q, i), true])),

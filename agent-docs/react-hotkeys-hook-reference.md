@@ -1,5 +1,8 @@
 # react-hotkeys-hook Reference Guide for AI Agents
 
+> **Historical reference.** Command Center no longer depends on this package.
+> See `.kiro/specs/hotkey-support/design.md` for the current dispatcher.
+
 <Overview>
 `react-hotkeys-hook` (v5.x) is a React hook library for declarative keyboard shortcut handling. It provides `useHotkeys` to bind key combinations, sequences, and single keys to callbacks — with support for focus scoping via refs, global scopes via context, form tag integration, and cross-platform modifier handling. ESM-only since v5.
 </Overview>

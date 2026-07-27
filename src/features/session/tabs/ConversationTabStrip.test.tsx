@@ -123,12 +123,12 @@ describe("ConversationTabStrip", () => {
     ]);
   });
 
-  it("shows ⌘1..⌘N hotkey hints for the first tabs (2.3)", () => {
+  it("shows G then 1..9 hotkey hints for the first tabs", () => {
     renderStrip();
 
-    expect(screen.getByText("⌘1")).toBeInTheDocument();
-    expect(screen.getByText("⌘2")).toBeInTheDocument();
-    expect(screen.getByText("⌘3")).toBeInTheDocument();
+    expect(screen.getByText("G 1")).toBeInTheDocument();
+    expect(screen.getByText("G 2")).toBeInTheDocument();
+    expect(screen.getByText("G 3")).toBeInTheDocument();
   });
 
   it("falls back to a placeholder title for unnamed conversations", () => {
