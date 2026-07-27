@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { activeConversationSchema } from "@/lib/active-conversations/schemas";
+import { activeConversationHref } from "@/lib/active-conversations/row-helpers";
+import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
+import { describeActiveRow } from "@/components/session/sidebar/ConversationSidebar.helpers";
 import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
 import { contextArtifactsBaseUrl } from "@/lib/context-artifacts/queries";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import {
   projectSentinelRefusalMessage,
   refuseProjectSentinelSessionParam,
@@ -14,18 +19,27 @@ import {
   conversationTargetLogFields,
   conversationTargetScopeLabel,
   projectConversationTarget,
+  scopeRefFromStoreSessionName,
+  scopeRefSessionName,
 } from "./conversation-target";
+import { conversationListItemSchema } from "./schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 
 /**
  * Non-leakage assertion for `__project__` (R1.3 / A5).
  *
- * The sentinel is an INTERNAL state-store + runtime adapter value. This test
- * pins that boundary from two directions:
+ * The sentinel is an INTERNAL state-store + runtime adapter value. R1.3
+ * enumerates exactly four public surface classes it must stay off — URL paths
+ * and query strings; HTTP request and response bodies; React Query cache keys;
+ * and strings rendered in the user interface. That list is exhaustive: server
+ * logs, traces, and other diagnostic sinks are A5-internal and deliberately NOT
+ * asserted here (the log SINK's own guard lives in
+ * `logging/sentinel-sink-guard.test.ts`). This test pins the boundary from two
+ * directions:
  *
- * 1. Behaviourally, over the public identity surfaces a project conversation
- *    flows through: URL builders, React Query keys, diagnostic identity,
- *    user-visible labels, and the refusal message itself.
+ * 1. Behaviourally, over the four enumerated surface classes a project
+ *    conversation flows through: URL/href builders, response-body schemas and
+ *    refusal payloads, query-key factories, and user-visible labels.
  * 2. Structurally, by requiring every module that reaches for the sentinel to
  *    carry an explicit classification below. A new unclassified importer fails
  *    the test, so the next leak has to be argued for rather than absorbed.
@@ -141,6 +155,11 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   ["lib/agent-capabilities/schemas.ts", "refusal-guard"],
   // The listed session variant refuses a sentinel-valued `sessionName`.
   ["lib/conversations/schemas.ts", "refusal-guard"],
+  // The active-conversations response body's session variant refuses a
+  // sentinel-valued `sessionName`, mirroring `conversationListItemSchema`:
+  // both lists are public payloads a producer could otherwise hand a store
+  // key as a session identity.
+  ["lib/active-conversations/schemas.ts", "refusal-guard"],
 
   ["features/project-detail/ProjectDetailView.tsx", "client-prop"],
   ["features/project-detail/composer/UnifiedComposer.tsx", "client-prop"],
@@ -179,6 +198,57 @@ function importsSentinelModule(source: string): boolean {
 
 const target = projectConversationTarget("demo", "conv-1");
 
+/**
+ * Shared fields for the active-conversations response fixtures below. Built
+ * once so the session-variant refusal case differs from the accepted project
+ * row ONLY in scope identity — the refusal is then attributable to the
+ * sentinel, not to an unrelated field.
+ */
+const activeRowSharedFields = {
+  id: "conv-1",
+  name: null,
+  status: "running",
+  lastActivityAt: "2026-01-01T00:00:00.000Z",
+  projectName: "demo",
+  projectPath: "/tmp/demo",
+  agentBackend: "claude",
+  summary: null,
+  pendingQuestion: null,
+  pendingQuestionId: null,
+  pendingQuestions: null,
+  forkedFrom: null,
+  debugActive: false,
+  role: null,
+  worktreePath: "/tmp/demo",
+  lastActivitySummary: null,
+  unread: false,
+  pendingApproval: null,
+} as const;
+
+const activeProjectRow = activeConversationSchema.parse({
+  ...activeRowSharedFields,
+  scope: "project",
+  open: true,
+});
+
+/** A listed conversation row (`GET /api/conversations/all` response body). */
+const listItemSharedFields = {
+  projectName: "demo",
+  projectPath: "/tmp/demo",
+  worktreePath: "/tmp/demo",
+  conversationId: "conv-1",
+  conversationName: null,
+  summary: null,
+  firstPromptSnippet: null,
+  backend: "claude",
+  backendRef: null,
+  transcriptPath: null,
+  debugLogPath: null,
+  status: "running",
+  lastActivityAt: "2026-01-01T00:00:00.000Z",
+  archived: false,
+} as const;
+
 describe("project sentinel stays off public identity surfaces", () => {
   it("never appears in a public URL built from a project target", () => {
     expect(conversationTargetApiBase(target)).not.toContain(
@@ -192,16 +262,92 @@ describe("project sentinel stays off public identity surfaces", () => {
     );
   });
 
+  it("never appears in the project row's navigation href (path or query string)", () => {
+    const href = activeConversationHref(activeProjectRow);
+    expect(href).toBe("/projects/demo?focus=conv-1");
+    expect(href).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+  });
+
   it("never appears in a React Query key built from a project target", () => {
     for (const key of [
       conversationTargetKey(target),
       contextArtifactKeys.list(target),
       contextArtifactKeys.detail(target, "a1"),
+      projectConversationKeys.list("demo"),
+      projectConversationKeys.messages("demo", "conv-1"),
+      agentCapabilityKeys.projectConversation("demo", "conv-1", "mcp"),
     ]) {
       expect(JSON.stringify(key)).not.toContain(
         PROJECT_CONVERSATION_SESSION_SENTINEL,
       );
     }
+  });
+
+  it("is stripped by the client scope derivation before reaching keys or labels", () => {
+    // The primitive every session-shaped component chain (composer, sidebar
+    // peek, capability drawer) converts its stored session name with: at
+    // project scope the derived ref has no session name AT ALL, so downstream
+    // keys and labels have no field for the sentinel to occupy.
+    const ref = scopeRefFromStoreSessionName(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+    expect(ref).toEqual({ scope: "project" });
+    expect(scopeRefSessionName(ref)).toBeUndefined();
+  });
+
+  it("cannot occupy a session name in the active-conversations response body", () => {
+    // `GET /api/conversations/active` is parsed with this schema on the
+    // client, so a producer that leaks a store key as a session identity fails
+    // validation instead of rendering `__project__` in the sidebar.
+    const sentinelRow = {
+      ...activeRowSharedFields,
+      scope: "session",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      branchName: null,
+    };
+    expect(activeConversationSchema.safeParse(sentinelRow).success).toBe(false);
+    // The refusal is sentinel-specific, not a vacuous session-variant reject.
+    expect(
+      activeConversationSchema.safeParse({
+        ...sentinelRow,
+        sessionName: "auth-work",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("cannot occupy a session name in the addressable-conversations response body", () => {
+    const sentinelItem = {
+      ...listItemSharedFields,
+      scope: "session",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+    };
+    expect(conversationListItemSchema.safeParse(sentinelItem).success).toBe(
+      false,
+    );
+    expect(
+      conversationListItemSchema.safeParse({
+        ...sentinelItem,
+        sessionName: "auth-work",
+      }).success,
+    ).toBe(true);
+    // The project variant has no field for a session name to occupy at all.
+    const projectItem = conversationListItemSchema.parse({
+      ...listItemSharedFields,
+      scope: "project",
+    });
+    expect(JSON.stringify(projectItem)).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
+  });
+
+  it("never appears in a sidebar row descriptor for a project conversation", () => {
+    // Everything the rail renders for a row — group header, context label,
+    // search haystack, href — comes from this descriptor.
+    const descriptor = describeActiveRow(activeProjectRow);
+    expect(descriptor.contextLabel).toBe("main");
+    expect(JSON.stringify(descriptor)).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
   });
 
   it("never appears in diagnostic identity or a user-visible label", () => {
