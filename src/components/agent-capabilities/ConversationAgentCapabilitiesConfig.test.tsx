@@ -71,7 +71,7 @@ describe("ConversationAgentCapabilitiesConfig", () => {
     render(
       <ConversationAgentCapabilitiesConfig
         projectName="remote-ai-manager"
-        sessionName="configurable-capabilities"
+        scope={{ scope: "session", sessionName: "configurable-capabilities" }}
         conversationId="conv-1"
       />,
     );
@@ -167,4 +167,9 @@ describe("ConversationAgentCapabilitiesConfig", () => {
       ).toHaveTextContent("conversation");
     }
   });
+
+  // Project-scope behaviour is covered in
+  // `ConversationAgentCapabilitiesConfig.project-scope.test.tsx`, which mounts
+  // the real panels over a stubbed network boundary — the cascade it has to
+  // resolve is a request, and a stand-in panel cannot prove which one was made.
 });

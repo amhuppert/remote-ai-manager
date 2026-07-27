@@ -12,6 +12,7 @@ function makeProps(
   return {
     projectName: "proj",
     sessionName: "sess",
+    scope: { scope: "session", sessionName: "sess" },
     conversationId: "conv-1",
     activeConversation: undefined,
     onAttachClick: vi.fn(),

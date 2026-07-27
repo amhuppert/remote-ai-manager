@@ -528,6 +528,9 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
     expect(screen.queryByText("/review")).toBeNull();
   });
 
+  // Which commands a project conversation may be offered is covered in
+  // `PromptEditorSlashCommandPopup.project-scope.test.tsx`, over the real
+  // command-discovery query with only the network boundary stubbed.
   it("hides session-only built-ins before a session exists", async () => {
     await act(async () => {
       renderPopup({ scopeRef: { scope: "project" } });
@@ -535,7 +538,6 @@ describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
     expect(screen.getByText("/spec")).toBeInTheDocument();
     expect(screen.queryByText("/collab")).toBeNull();
     expect(screen.queryByText("/commit")).toBeNull();
-    expect(screen.queryByText("/ticket")).toBeNull();
   });
 
   it("does not fetch session-scoped commands at project scope", async () => {

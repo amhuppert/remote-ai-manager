@@ -1,6 +1,14 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   backendLabel,
   getModelsForBackend,
@@ -272,6 +280,14 @@ export default function PromptComposer({
 }: PromptComposerProps): React.JSX.Element {
   const cancelOptimisticQueueEntry = useCancelOptimisticQueueEntry();
   const setQueueError = useSetQueueError();
+  // The composer is handed the session-keyed storage name, which is the
+  // sentinel for a project conversation. Converting it to explicit scope once,
+  // here, is what lets the capability surfaces below address the
+  // project-conversation cascade instead of inferring scope from the name (D1).
+  const scope = useMemo(
+    () => scopeRefFromStoreSessionName(sessionName),
+    [sessionName],
+  );
   const { containerRef, onFocus, onBlur, setControlActive } =
     useComposerFocus();
 
@@ -540,6 +556,7 @@ export default function PromptComposer({
           <PromptDesktopToolbar
             projectName={projectName}
             sessionName={sessionName}
+            scope={scope}
             conversationId={conversationId}
             activeConversation={activeConversation}
             onAttachClick={() => fileInputRef.current?.click()}
@@ -599,7 +616,7 @@ export default function PromptComposer({
               <div className={MOBILE_PROMPT_ROW_CLASS}>
                 <ConversationAgentCapabilitiesConfig
                   projectName={projectName}
-                  sessionName={sessionName}
+                  scope={scope}
                   conversationId={conversationId}
                   disabled={isReadOnly}
                   disabledTooltip={
