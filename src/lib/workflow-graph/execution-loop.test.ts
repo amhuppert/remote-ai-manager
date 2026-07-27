@@ -3943,7 +3943,12 @@ describe("execution loop", () => {
     expect(result.status).toBe("aborted");
   });
 
-  it("allows terminal fan-in to reach final publish when no context merge is planned", async () => {
+  it("converges a terminal fan-in through a context merge and publishes only after its work completes (ticket #28)", async () => {
+    // Replaces the pre-#28 pin of design decision 9 (publish first, run the
+    // terminal context on the session lane afterward): final publish is the
+    // delivery point, so the terminal fan-in's lanes converge via a
+    // context_merge and the terminal context runs on the merged worktree lane
+    // BEFORE anything publishes.
     const definition = createTestDefinition(
       ["source-a", "source-b", "terminal"],
       [
@@ -3991,9 +3996,13 @@ describe("execution loop", () => {
         contextId: "terminal",
         execution: initial,
         now: () => "2026-03-27T11:55:00.000Z",
-        generateJoinId: () => "context-join-must-not-be-created",
+        generateJoinId: () => "context-join-planned",
       }),
-    ).toBeNull();
+    ).toMatchObject({
+      kind: "context_merge",
+      contextId: "terminal",
+      targetLaneId: "lane-a",
+    });
 
     let terminalScheduled = false;
     const callOrder: string[] = [];
@@ -4001,9 +4010,18 @@ describe("execution loop", () => {
       async (
         runInput: Parameters<JoinRunner["run"]>[0],
       ): ReturnType<JoinRunner["run"]> => {
-        const join = harness.getCurrent().joins[runInput.joinId];
-        expect(join?.kind).toBe("final_publish");
-        callOrder.push("final-publish");
+        const current = harness.getCurrent();
+        const join = current.joins[runInput.joinId];
+        if (join?.kind === "final_publish") {
+          // The #28 invariant at the delivery point: no context may still
+          // have unfinished tasks when a final publish starts.
+          expect(current.contextStates.terminal?.completedTaskCount).toBe(1);
+          callOrder.push("final-publish");
+        } else {
+          expect(join?.kind).toBe("context_merge");
+          expect(join?.contextId).toBe("terminal");
+          callOrder.push("context-merge");
+        }
         await runInput.mutateActive((execution) =>
           applyJoinProgress(
             execution,
@@ -4022,11 +4040,11 @@ describe("execution loop", () => {
       scheduleEligibleContexts: async () => {
         callOrder.push("scheduler");
         const current = harness.getCurrent();
-        const finalPublishSucceeded = Object.values(current.joins).some(
+        const contextMerge = Object.values(current.joins).find(
           (join) =>
-            join.kind === "final_publish" && join.status === "succeeded",
+            join.kind === "context_merge" && join.status === "succeeded",
         );
-        if (!finalPublishSucceeded || terminalScheduled) {
+        if (!contextMerge || terminalScheduled) {
           return {
             execution: current,
             scheduled: { kind: "none" },
@@ -4035,8 +4053,14 @@ describe("execution loop", () => {
 
         terminalScheduled = true;
         const next = structuredClone(current);
+        const mergedLane = next.executionLanes[contextMerge.targetLaneId]!;
         next.activeContextIds = ["terminal"];
-        next.contextStates.terminal!.status = "running";
+        const terminal = next.contextStates.terminal!;
+        terminal.status = "running";
+        terminal.isolation = "worktree";
+        terminal.laneId = mergedLane.laneId;
+        terminal.worktreePath = mergedLane.worktreePath;
+        terminal.branchName = mergedLane.branchName;
         harness.setCurrent(next);
         return {
           execution: next,
@@ -4068,21 +4092,29 @@ describe("execution loop", () => {
       execution: initial,
     });
 
-    expect(joinRunSpy).toHaveBeenCalledTimes(1);
-    expect(callOrder.indexOf("scheduler")).toBeLessThan(
+    expect(joinRunSpy).toHaveBeenCalledTimes(2);
+    expect(callOrder.indexOf("context-merge")).toBeLessThan(
       callOrder.indexOf("final-publish"),
     );
-    const finalPublish = result.joins[joinRunSpy.mock.calls[0]![0].joinId];
-    expect(finalPublish).toMatchObject({
-      kind: "final_publish",
-      contextId: null,
-      targetLaneId: "__session__",
+    const contextMerge = Object.values(result.joins).find(
+      (join) => join.kind === "context_merge",
+    );
+    expect(contextMerge).toMatchObject({
+      contextId: "terminal",
+      targetLaneId: "lane-a",
       sourceLaneIds: ["lane-a", "lane-b"],
       status: "succeeded",
     });
-    expect(
-      Object.values(result.joins).some((join) => join.kind === "context_merge"),
-    ).toBe(false);
+    const finalPublish = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish",
+    );
+    expect(finalPublish).toMatchObject({
+      contextId: null,
+      targetLaneId: "__session__",
+      sourceLaneIds: ["lane-a"],
+      status: "succeeded",
+    });
+    expect(result.contextStates.terminal?.laneId).toBe("lane-a");
     expect(result.contextStates.terminal?.status).toBe("completed");
     expect(result.status).toBe("completed");
   });

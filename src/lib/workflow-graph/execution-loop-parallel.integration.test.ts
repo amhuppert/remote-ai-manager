@@ -16,6 +16,7 @@ import {
   type JoinRunner,
 } from "@/lib/workflow-graph/join-runner";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
+import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-join";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -3053,5 +3054,369 @@ describe("execution loop — parallel integration", () => {
       pendingUserInputRecord,
     );
     expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
+  });
+
+  it("scenario 19: a terminal fan-in context converges its source lanes and runs BEFORE the final publish (ticket #28 / F25)", async () => {
+    // Incident shape: two parallel lanes fan into one terminal sweep context.
+    // The final publish is the delivery point (the delivery gate fires there),
+    // so it must never start while the sweep's tasks are unstarted. Before the
+    // fix, the loop treated the wait-for-join terminal context as quiescence
+    // and published 33ms after the sweep went ready.
+    _resetActiveLoopsForTesting();
+
+    const definition = {
+      ...createParallelDefinition(["ctx-a", "ctx-b", "ctx-sweep"]),
+      edges: [
+        {
+          id: "edge-a-sweep",
+          sourceContextId: "ctx-a",
+          targetContextId: "ctx-sweep",
+        },
+        {
+          id: "edge-b-sweep",
+          sourceContextId: "ctx-b",
+          targetContextId: "ctx-sweep",
+        },
+      ],
+    };
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.status = "completed";
+            cs.completedTaskCount = 1;
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) {
+            ts.status = "completed";
+            ts.completedAt = "2026-03-27T12:01:00.000Z";
+          }
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
+    const mergeRunner: GraphMergeRunner = {
+      async run() {
+        return buildSuccessMergeOutput();
+      },
+    };
+    // Probe: the invariant under test. Whenever a final_publish join starts,
+    // record every context that still has unfinished tasks — the fixed engine
+    // must never let this list be non-empty.
+    const realJoinRunner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock,
+      mergeMutex,
+    });
+    const incompleteAtFinalPublish: string[][] = [];
+    const joinRunner: JoinRunner = {
+      async run(input) {
+        const execution = repository.read();
+        const join = execution?.joins[input.joinId];
+        if (execution && join?.kind === "final_publish") {
+          const incomplete = Object.values(execution.contextStates)
+            .filter((cs) => cs.completedTaskCount < cs.totalTaskCount)
+            .map((cs) => cs.contextId)
+            .sort();
+          if (incomplete.length > 0) {
+            incompleteAtFinalPublish.push(incomplete);
+          }
+        }
+        return realJoinRunner.run(input);
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex,
+      sessionGitLock,
+      mergeRunner,
+      joinRunner,
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    // The invariant: the terminal join never starts while any context still
+    // has unstarted tasks — before the fix this recorded ["ctx-sweep"].
+    expect(incompleteAtFinalPublish).toEqual([]);
+
+    expect(result.status).toBe("completed");
+    for (const contextId of ["ctx-a", "ctx-b", "ctx-sweep"]) {
+      const cs = result.contextStates[contextId];
+      expect(cs?.status).toBe("completed");
+      expect(cs?.completedTaskCount).toBe(cs?.totalTaskCount);
+    }
+
+    // The sweep's source lanes converged through a context_merge so the sweep
+    // ran on the merged worktree lane before anything was published.
+    const contextMerge = Object.values(result.joins).find(
+      (join) => join.kind === "context_merge" && join.contextId === "ctx-sweep",
+    );
+    expect(contextMerge?.status).toBe("succeeded");
+    const sweepLaneId = result.contextStates["ctx-sweep"]?.laneId;
+    expect(sweepLaneId).toBe(contextMerge?.targetLaneId);
+    expect(result.executionLanes[sweepLaneId ?? ""]?.kind).toBe("worktree");
+
+    // The final publish then lands the one converged lane on the session.
+    const finalJoin = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish",
+    );
+    expect(finalJoin?.status).toBe("succeeded");
+    expect(finalJoin?.sourceLaneIds).toEqual([contextMerge?.targetLaneId]);
+  });
+
+  it("scenario 20: a stale pending final_publish restored on resume is superseded while a source-eligible context has unstarted tasks (ticket #28)", async () => {
+    // Halt/resume half of the #28 invariant: a final_publish join persisted
+    // before a halt window must not be claimed and run on resume while a
+    // context with unstarted tasks is still startable. The engine supersedes
+    // the stale join and re-plans, so the sweep runs before delivery.
+    _resetActiveLoopsForTesting();
+
+    const definition = {
+      ...createParallelDefinition(["ctx-a", "ctx-b", "ctx-sweep"]),
+      edges: [
+        {
+          id: "edge-a-sweep",
+          sourceContextId: "ctx-a",
+          targetContextId: "ctx-sweep",
+        },
+        {
+          id: "edge-b-sweep",
+          sourceContextId: "ctx-b",
+          targetContextId: "ctx-sweep",
+        },
+      ],
+    };
+    const session = createSession();
+    const initial = createInitialExecution(definition);
+    for (const contextId of ["ctx-a", "ctx-b"]) {
+      const cs = initial.contextStates[contextId]!;
+      cs.status = "completed";
+      cs.completedTaskCount = 1;
+      cs.iterationCount = 1;
+      cs.isolation = "worktree";
+      cs.laneId = contextId;
+      cs.worktreePath = `/repo/.worktrees/session-1.${contextId}`;
+      cs.branchName = `csm/session-1-${contextId}`;
+      const ts = initial.taskStates[`task-${contextId}`]!;
+      ts.status = "completed";
+      ts.completedAt = "2026-03-27T12:01:00.000Z";
+      initial.executionLanes[contextId] = {
+        laneId: contextId,
+        kind: "worktree",
+        status: "active",
+        worktreePath: `/repo/.worktrees/session-1.${contextId}`,
+        branchName: `csm/session-1-${contextId}`,
+        includedContextIds: [contextId],
+        lastCommittingContextId: contextId,
+        commitSnapshots: [],
+        createdAt: "2026-03-27T12:00:00.000Z",
+        updatedAt: "2026-03-27T12:01:00.000Z",
+      };
+    }
+    initial.executionLanes[SESSION_LANE_ID] = {
+      laneId: SESSION_LANE_ID,
+      kind: "session",
+      status: "active",
+      worktreePath: session.worktreePath,
+      branchName: session.branchName,
+      includedContextIds: [],
+      lastCommittingContextId: null,
+      commitSnapshots: [],
+      createdAt: "2026-03-27T12:00:00.000Z",
+      updatedAt: "2026-03-27T12:00:00.000Z",
+    };
+    initial.joins["join-stale"] = {
+      joinId: "join-stale",
+      kind: "final_publish",
+      contextId: null,
+      targetLaneId: SESSION_LANE_ID,
+      sourceLaneIds: ["ctx-a", "ctx-b"],
+      mergedSourceLaneIds: [],
+      status: "pending",
+      errorMessage: null,
+      conflicts: null,
+      conflictGuidance: null,
+      createdAt: "2026-03-27T12:01:30.000Z",
+      updatedAt: "2026-03-27T12:01:30.000Z",
+      completedAt: null,
+    };
+
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return session;
+      },
+    });
+
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.status = "completed";
+            cs.completedTaskCount = 1;
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) {
+            ts.status = "completed";
+            ts.completedAt = "2026-03-27T12:02:00.000Z";
+          }
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const mergeMutex = createPerSessionMergeMutex();
+    const sessionGitLock = createSessionGitLock({
+      acquireSessionLock: () => () => {},
+    });
+    const mergeRunner: GraphMergeRunner = {
+      async run() {
+        return buildSuccessMergeOutput();
+      },
+    };
+    const realJoinRunner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock,
+      mergeMutex,
+    });
+    const incompleteAtFinalPublish: string[][] = [];
+    const joinRunner: JoinRunner = {
+      async run(input) {
+        const execution = repository.read();
+        const join = execution?.joins[input.joinId];
+        if (execution && join?.kind === "final_publish") {
+          const incomplete = Object.values(execution.contextStates)
+            .filter((cs) => cs.completedTaskCount < cs.totalTaskCount)
+            .map((cs) => cs.contextId)
+            .sort();
+          if (incomplete.length > 0) {
+            incompleteAtFinalPublish.push(incomplete);
+          }
+        }
+        return realJoinRunner.run(input);
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex,
+      sessionGitLock,
+      mergeRunner,
+      joinRunner,
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+        resolveHead: async () => null,
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return session;
+      },
+    });
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    // The stale pre-halt join never ran while the sweep's tasks were
+    // unstarted — before the fix it was claimed and published immediately.
+    expect(incompleteAtFinalPublish).toEqual([]);
+
+    expect(result.status).toBe("completed");
+    expect(result.contextStates["ctx-sweep"]?.status).toBe("completed");
+
+    // The stale join was superseded without merging anything…
+    expect(result.joins["join-stale"]?.status).toBe("failed");
+    expect(result.joins["join-stale"]?.mergedSourceLaneIds).toEqual([]);
+
+    // …and a fresh final publish delivered the converged lane instead, after
+    // the sweep ran on it.
+    const contextMerge = Object.values(result.joins).find(
+      (join) => join.kind === "context_merge" && join.contextId === "ctx-sweep",
+    );
+    expect(contextMerge?.status).toBe("succeeded");
+    expect(result.contextStates["ctx-sweep"]?.laneId).toBe(
+      contextMerge?.targetLaneId,
+    );
+    const freshFinalPublish = Object.values(result.joins).find(
+      (join) => join.kind === "final_publish" && join.joinId !== "join-stale",
+    );
+    expect(freshFinalPublish?.status).toBe("succeeded");
+    expect(freshFinalPublish?.sourceLaneIds).toEqual([
+      contextMerge?.targetLaneId,
+    ]);
   });
 });

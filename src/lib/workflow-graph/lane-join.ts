@@ -1,5 +1,6 @@
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
@@ -90,13 +91,13 @@ export function pickJoinTarget(
  * not already reach a common target via a succeeded join. Returns null when
  * no join is required.
  *
- * Terminal downstreams (contexts with no outgoing graph edges) never receive
- * a context_merge: per accepted design decision 9, a final verification
- * context that depends on multiple worktree lanes must run against the
- * post-publish session lane, not on a worktree target lane chosen by a
- * context_merge. Returning null here lets the loop fall through to
- * `planFinalPublishJoin`, which converges the unpublished worktree lanes
- * onto the session lane first.
+ * Terminal downstreams (contexts with no outgoing graph edges) receive a
+ * context_merge like any other fan-in, so their work runs on the converged
+ * worktree lane BEFORE the final publish. This supersedes accepted design
+ * decision 9 ("final verification runs after publish"), which predates the
+ * delivery gate: final publish is the delivery point, so deferring a
+ * terminal context until after publish lets a candidate that structurally
+ * excludes that context's work merge (ticket #28 / F25).
  */
 export function planContextJoin(
   input: PlanContextJoinInput,
@@ -115,11 +116,6 @@ export function planContextJoin(
     sourceLaneIds.add(upstream.laneId);
   }
   if (sourceLaneIds.size < 2) return null;
-
-  const hasOutgoingEdge = definition.edges.some(
-    (edge) => edge.sourceContextId === contextId,
-  );
-  if (!hasOutgoingEdge) return null;
 
   // If the source lanes already reach a common target via succeeded joins
   // there is nothing to plan.
@@ -156,6 +152,23 @@ export function planContextJoin(
     updatedAt: timestamp,
     completedAt: null,
   };
+}
+
+/**
+ * Contexts whose planned work has not fully run: fewer completed tasks than
+ * total tasks. Task-based on purpose — a context whose status lags behind its
+ * finished tasks (e.g. parked awaiting collaboration delivery) is legitimately
+ * done, while a never-started context holds unfinished work no lane can carry
+ * yet. This is the same predicate the execution loop's completion invariant
+ * uses to refuse `completed`, so publish-safety and completion-safety cannot
+ * drift apart.
+ */
+export function findContextsWithUnfinishedTasks(
+  execution: GraphWorkflowExecution,
+): GraphWorkflowExecutionContextState[] {
+  return Object.values(execution.contextStates).filter(
+    (state) => state.completedTaskCount < state.totalTaskCount,
+  );
 }
 
 /**
@@ -210,12 +223,19 @@ export function findBusyJoinSourceLaneIds(
  * A terminal lane is **unpublished** when it does not reach the session lane
  * via a succeeded prior join (final or context).
  *
- * Returns null when nothing terminal remains to publish.
+ * Returns null when nothing terminal remains to publish, and refuses to plan
+ * at all while any context still has unfinished tasks: the final publish is
+ * the delivery point, so publishing around outstanding work would deliver a
+ * candidate that structurally excludes it (ticket #28 / F25). A stuck context
+ * then surfaces through the loop's completion invariant as a halt instead of
+ * an incomplete delivery.
  */
 export function planFinalPublishJoin(
   input: PlanFinalPublishJoinInput,
 ): GraphWorkflowExecutionJoinState | null {
   const { execution, sessionLaneId, now, generateJoinId } = input;
+
+  if (findContextsWithUnfinishedTasks(execution).length > 0) return null;
 
   const consumedLaneIds = new Set<string>();
   for (const join of Object.values(execution.joins ?? {})) {
