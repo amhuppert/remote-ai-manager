@@ -169,7 +169,13 @@ function recordingFetch(
         body = init.body;
       }
     }
-    if (method !== "GET") requests.push({ url, method, body });
+    // An accepted submission also clears the durable composer draft with a
+    // write to `/pending-prompt` (covered by project-cockpit-drafts.test.tsx).
+    // Keep those out of `requests` so the assertions below stay about the
+    // delivery path — queue versus prompt — which is what this suite pins.
+    if (method !== "GET" && !url.endsWith("/pending-prompt")) {
+      requests.push({ url, method, body });
+    }
     return route(url, init) ?? jsonResponse({ available: false });
   }) as typeof fetch;
   return { fetch: stub, requests };
