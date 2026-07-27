@@ -67,6 +67,11 @@ describe("DeliveryGateAdapter", () => {
   let sequence: number;
   let queueLabels: string[];
   let policyAdmitted: ReturnType<typeof vi.fn>;
+  let requestedApprovals: Array<{
+    specId: string;
+    revisionId: string;
+    workflowExecutionId: string;
+  }>;
 
   beforeEach(() => {
     db = _createTestDb();
@@ -80,9 +85,14 @@ describe("DeliveryGateAdapter", () => {
     sequence = 0;
     queueLabels = [];
     policyAdmitted = vi.fn();
+    requestedApprovals = [];
     const eventsRepo = createSpecEventsRepo(db);
 
     deps = {
+      async requestDeliveryApproval(input) {
+        requestedApprovals.push(input);
+      },
+      getProjectDisplayName: () => "Delivery Gate Project",
       deliveryRepo,
       reviewRepo: createSpecReviewRepo(db),
       specsRepo: createSpecsRepo(db, writeQueue),
@@ -266,7 +276,147 @@ describe("DeliveryGateAdapter", () => {
       unmet: expect.arrayContaining([
         expect.objectContaining({ outcome: "gate_blocked" }),
       ]),
-      instruction: expect.stringMatching(/human.*approve/i),
+      instruction: expect.stringMatching(/approve delivery in spec studio/i),
+    });
+  });
+
+  describe("delivery-approval reachability (F17/F19)", () => {
+    function withoutDeliveryApproval() {
+      seedExistingProof();
+      db.prepare("DELETE FROM spec_gate_admissions WHERE execution_id = ?").run(
+        executionId,
+      );
+    }
+
+    it("auto-fires exactly one approval request on the approval-discriminated refusal and presents it as approval_required", async () => {
+      withoutDeliveryApproval();
+
+      const result = await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(requestedApprovals).toEqual([
+        {
+          specId,
+          revisionId,
+          workflowExecutionId,
+        },
+      ]);
+      expect(result).toMatchObject({
+        status: "refused",
+        refusalCode: "approval_required",
+        spec: {
+          specSlug: "delivery-gate",
+          specName: "Delivery Gate",
+          projectName: "Delivery Gate Project",
+        },
+      });
+    });
+
+    it("still returns the refusal when the approval request dep throws", async () => {
+      withoutDeliveryApproval();
+      deps.requestDeliveryApproval = async () => {
+        throw new Error("notification pipeline down");
+      };
+
+      const result = await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(result).toMatchObject({
+        status: "refused",
+        refusalCode: "approval_required",
+      });
+    });
+
+    it("never requests approval from the terminal-state refusal, even with approval missing", async () => {
+      withoutDeliveryApproval();
+      db.prepare(
+        "UPDATE spec_executions SET state = 'abandoned', abandoned_reason = ? WHERE id = ?",
+      ).run("Terminal execution.", executionId);
+
+      const result = await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(result).toMatchObject({ status: "refused" });
+      expect(requestedApprovals).toEqual([]);
+      if (result.status === "refused") {
+        expect(result.refusalCode).toBeUndefined();
+      }
+    });
+
+    it("never requests approval from the exploratory-shipping refusal, even with approval missing", async () => {
+      withoutDeliveryApproval();
+      db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
+        '{"preset":"exploratory"}',
+        specId,
+      );
+
+      const result = await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(result).toMatchObject({ status: "refused" });
+      expect(requestedApprovals).toEqual([]);
+      if (result.status === "refused") {
+        expect(result.refusalCode).toBeUndefined();
+      }
+    });
+
+    it("never requests approval from the invalid-scope refusal, even with approval missing", async () => {
+      withoutDeliveryApproval();
+      db.prepare("UPDATE spec_executions SET scope_json = ? WHERE id = ?").run(
+        JSON.stringify({
+          selectedTaskIds: [],
+          selectedCriterionIds: [],
+          exclusionDispositions: [],
+        }),
+        executionId,
+      );
+
+      const result = await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(result).toMatchObject({ status: "refused" });
+      expect(requestedApprovals).toEqual([]);
+      if (result.status === "refused") {
+        expect(result.refusalCode).toBeUndefined();
+      }
+    });
+
+    it("never requests approval from the unmet-criteria refusal, which carries spec but no refusalCode", async () => {
+      selectPendingCriterion();
+
+      const result = await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(result).toMatchObject({
+        status: "refused",
+        spec: {
+          specSlug: "delivery-gate",
+          specName: "Delivery Gate",
+          projectName: "Delivery Gate Project",
+        },
+      });
+      expect(requestedApprovals).toEqual([]);
+      if (result.status === "refused") {
+        expect(result.refusalCode).toBeUndefined();
+      }
+    });
+
+    it("never requests approval under the Notify dial or once the approval is already granted", async () => {
+      seedExistingProof();
+      db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
+        '{"preset":"contract-bearing","overrides":{"delivery":"notify"}}',
+        specId,
+      );
+      db.prepare("DELETE FROM spec_gate_admissions WHERE execution_id = ?").run(
+        executionId,
+      );
+      const notifyResult = await createDeliveryGate(deps).evaluate(gateInput());
+
+      db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
+        '{"preset":"contract-bearing"}',
+        specId,
+      );
+      seedDeliveryAdmission(db);
+      const approvedResult =
+        await createDeliveryGate(deps).evaluate(gateInput());
+
+      expect(notifyResult).toMatchObject({ status: "pass" });
+      expect(approvedResult).toMatchObject({ status: "pass" });
+      expect(requestedApprovals).toEqual([]);
     });
   });
 
@@ -362,8 +512,29 @@ describe("DeliveryGateAdapter", () => {
   });
 
   it("13.11 accepts commit proof only while the evidence commit remains in candidate history", async () => {
-    setCriterionStrategy(criteria.proven, ["commit"]);
-    seedExistingProof("ancestor-sha", "commit");
+    // A commit-only strategy is unrepresentable after the machine-kind
+    // invariant, so the ancestry rule is pinned on the commit half of a
+    // commit+validator strategy: the validator evidence stays tree-fresh in
+    // both phases, isolating the commit's candidate-history freshness.
+    setCriterionStrategy(criteria.proven, ["commit", "validator_verdict"]);
+    seedExistingProof();
+    deliveryRepo.insertEvidence(
+      evidenceRow({
+        id: "evidence-commit-proof",
+        criterionId: criteria.proven,
+        kind: "commit",
+        evaluatedState: {
+          commitSha: "ancestor-sha",
+          relevantPaths: [],
+        },
+      }),
+    );
+    db.prepare(
+      "UPDATE spec_proof_verdicts SET evidence_ids_json = ? WHERE id = ?",
+    ).run(
+      JSON.stringify(["evidence-existing-proof", "evidence-commit-proof"]),
+      "verdict-existing-proof",
+    );
     const gate = createDeliveryGate(deps);
 
     const valid = await gate.evaluate(gateInput());
@@ -372,10 +543,9 @@ describe("DeliveryGateAdapter", () => {
     ).run(
       JSON.stringify({
         commitSha: "unrelated-sha",
-        relevantPaths: ["src/feature.ts"],
-        relevantTreeHash: "tree-relevant-stable",
+        relevantPaths: [],
       }),
-      "evidence-existing-proof",
+      "evidence-commit-proof",
     );
     const stale = await gate.evaluate(gateInput());
 
@@ -771,6 +941,20 @@ function seedSpecState(db: Db): void {
     delivered_by_execution_id: priorExecutionId,
     created_at: now,
     updated_at: now,
+  });
+}
+
+function seedDeliveryAdmission(db: Db): void {
+  createSpecReviewRepo(db).insertGateAdmission({
+    id: "admission-delivery-regranted",
+    spec_id: specId,
+    gate: "delivery",
+    basis: "human_approval",
+    approval_id: "approval-delivery-current",
+    revision_id: revisionId,
+    execution_id: executionId,
+    actor_json: JSON.stringify({ kind: "human" }),
+    created_at: now,
   });
 }
 

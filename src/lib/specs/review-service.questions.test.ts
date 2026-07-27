@@ -46,8 +46,9 @@ beforeEach(() => {
   const writeQueue = createWriteQueue();
   specs = createSpecsRepo(db, writeQueue);
   reviewRepo = createSpecReviewRepo(db);
+  const specEvents = createSpecEventsRepo(db);
   const events = createSpecEventsPublisher({
-    appendInTransaction: createSpecEventsRepo(db).appendInTransaction,
+    appendInTransaction: specEvents.appendInTransaction,
     publish: () => ({ delivered: true }),
   });
   idSequence = 0;
@@ -57,6 +58,7 @@ beforeEach(() => {
     review: reviewRepo,
     links: createSpecLinksRepo(db),
     events,
+    attention: specEvents,
     newId(prefix: string) {
       idSequence += 1;
       return `${prefix}-${idSequence}`;
@@ -441,7 +443,7 @@ describe("ReviewService questions, assumptions, and policy", () => {
     });
     expect(changed).toMatchObject({
       ok: true,
-      value: { gatePolicy: { preset: "exploratory" } },
+      value: { spec: { gatePolicy: { preset: "exploratory" } } },
     });
     expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([
       expect.objectContaining({ id: "existing-approval", validity: "valid" }),

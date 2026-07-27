@@ -10,7 +10,6 @@ import type { EvidenceKind } from "./schemas";
 
 const candidate: CandidateState = {
   commitSha: "candidate-sha",
-  surfaceId: "spec-studio-v2",
 };
 
 const createProbes = (
@@ -41,37 +40,36 @@ const evidence = (
     commitSha: "evidence-sha",
     relevantPaths: ["src/feature.ts"],
     relevantTreeHash: "candidate-tree",
+    // Retained-historical field: kept parseable on persisted rows but never
+    // read by any dispatch path — its presence must not affect evaluation.
     surfaceId: "spec-studio-v2",
   },
   ...overrides,
 });
 
 describe("evaluateEvidenceFreshness", () => {
-  it.each(["commit", "diff"] as const)(
-    "13.11 keeps %s evidence valid only when it is in candidate history",
-    async (kind) => {
-      const valid = await evaluateEvidenceFreshness(
-        evidence(kind),
-        candidate,
-        createProbes({ ancestors: ["evidence-sha->candidate-sha"] }),
-      );
-      const stale = await evaluateEvidenceFreshness(
-        evidence(kind),
-        candidate,
-        createProbes(),
-      );
+  it("13.11 keeps commit evidence valid only when it is in candidate history", async () => {
+    const valid = await evaluateEvidenceFreshness(
+      evidence("commit"),
+      candidate,
+      createProbes({ ancestors: ["evidence-sha->candidate-sha"] }),
+    );
+    const stale = await evaluateEvidenceFreshness(
+      evidence("commit"),
+      candidate,
+      createProbes(),
+    );
 
-      expect(valid).toEqual({
-        status: "valid",
-        basis: "candidate_history",
-      });
-      expect(stale).toEqual({
-        status: "stale",
-        reason: "not_in_candidate_history",
-        action: "attach evidence that resolves into the delivery candidate",
-      });
-    },
-  );
+    expect(valid).toEqual({
+      status: "valid",
+      basis: "candidate_history",
+    });
+    expect(stale).toEqual({
+      status: "stale",
+      reason: "not_in_candidate_history",
+      action: "produce evidence that resolves into the delivery candidate",
+    });
+  });
 
   it.each(["test_run", "validator_verdict"] as const)(
     "13.9 keeps %s evidence valid across a pure rebase with an identical relevant tree",
@@ -114,39 +112,6 @@ describe("evaluateEvidenceFreshness", () => {
     },
   );
 
-  it.each(["screenshot", "human_signoff"] as const)(
-    "13.12 keeps %s evidence valid while its captured surface is unchanged",
-    async (kind) => {
-      const result = await evaluateEvidenceFreshness(
-        evidence(kind),
-        candidate,
-        createProbes(),
-      );
-
-      expect(result).toEqual({
-        status: "valid",
-        basis: "unchanged_surface",
-      });
-    },
-  );
-
-  it.each(["screenshot", "human_signoff"] as const)(
-    "13.12 marks %s evidence stale when its captured surface changed",
-    async (kind) => {
-      const result = await evaluateEvidenceFreshness(
-        evidence(kind),
-        { ...candidate, surfaceId: "spec-studio-v3" },
-        createProbes(),
-      );
-
-      expect(result).toEqual({
-        status: "stale",
-        reason: "surface_changed",
-        action: "revalidate, recapture, or explicitly waive the criterion",
-      });
-    },
-  );
-
   it("13.11 does not let identical trees override commit ancestry", async () => {
     const result = await evaluateEvidenceFreshness(
       evidence("commit"),
@@ -161,7 +126,7 @@ describe("evaluateEvidenceFreshness", () => {
     expect(result).toEqual({
       status: "stale",
       reason: "not_in_candidate_history",
-      action: "attach evidence that resolves into the delivery candidate",
+      action: "produce evidence that resolves into the delivery candidate",
     });
   });
 
@@ -199,7 +164,50 @@ describe("evaluateEvidenceFreshness", () => {
     });
   });
 
-  it("requires evaluated tree state for code-evaluated evidence", async () => {
+  it.each(["test_run", "validator_verdict"] as const)(
+    "F24 treats ingested %s evidence with a lane commitSha as fresh when it is in candidate history",
+    async (kind) => {
+      const result = await evaluateEvidenceFreshness(
+        evidence(kind, {
+          evaluatedState: {
+            commitSha: "evidence-sha",
+            relevantPaths: [],
+          },
+        }),
+        candidate,
+        createProbes({ ancestors: ["evidence-sha->candidate-sha"] }),
+      );
+
+      expect(result).toEqual({
+        status: "valid",
+        basis: "candidate_history",
+      });
+    },
+  );
+
+  it.each(["test_run", "validator_verdict"] as const)(
+    "F24 marks ingested %s evidence stale when its lane commit is not in candidate history",
+    async (kind) => {
+      const result = await evaluateEvidenceFreshness(
+        evidence(kind, {
+          evaluatedState: {
+            commitSha: "evidence-sha",
+            relevantPaths: [],
+          },
+        }),
+        candidate,
+        createProbes(),
+      );
+
+      expect(result).toEqual({
+        status: "stale",
+        reason: "not_in_candidate_history",
+        action: "produce evidence that resolves into the delivery candidate",
+      });
+    },
+  );
+
+  it("marks machine evidence with neither commit nor tree state stale as missing_commit_state", async () => {
     const result = await evaluateEvidenceFreshness(
       evidence("test_run", {
         evaluatedState: {
@@ -212,26 +220,33 @@ describe("evaluateEvidenceFreshness", () => {
 
     expect(result).toEqual({
       status: "stale",
-      reason: "missing_relevant_tree_state",
-      action: "rerun validation against the delivery candidate",
+      reason: "missing_commit_state",
+      action: "produce evidence that resolves into the delivery candidate",
     });
   });
 
-  it("requires captured surface state for non-deterministic evidence", async () => {
+  it("still routes machine evidence with tree state through the tree-identity check", async () => {
     const result = await evaluateEvidenceFreshness(
-      evidence("screenshot", {
+      evidence("validator_verdict", {
         evaluatedState: {
-          relevantPaths: [],
+          commitSha: "evidence-sha",
+          relevantPaths: ["src/feature.ts"],
+          relevantTreeHash: "old-tree",
         },
       }),
       candidate,
-      createProbes(),
+      // The evidence sha IS an ancestor: the tree route must still win and
+      // report the tree drift rather than fall back to ancestry freshness.
+      createProbes({
+        ancestors: ["evidence-sha->candidate-sha"],
+        treeHashes: { "candidate-sha:src/feature.ts": "changed-tree" },
+      }),
     );
 
     expect(result).toEqual({
       status: "stale",
-      reason: "missing_surface_state",
-      action: "recapture evidence against the current surface",
+      reason: "relevant_tree_changed",
+      action: "rerun validation against the delivery candidate",
     });
   });
 });

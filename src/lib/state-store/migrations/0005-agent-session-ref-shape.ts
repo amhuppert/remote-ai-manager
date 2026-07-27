@@ -7,6 +7,7 @@ import {
   enforceCurrentSchemaCompatibility,
   publishSchemaCompatibilityBarrier,
 } from "../schema-compatibility";
+import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import type { StateMigration } from "./types";
 import { getErrorMessage } from "@/lib/shared/errors";
 
@@ -276,11 +277,17 @@ export const agentSessionRefShape: StateMigration = {
     // racing old-build write serializes entirely before or after the breaking
     // rewrite, and no older build can observe canonical bytes without the
     // compatibility version that refuses its reader.
+    //
+    // The in-transaction recheck witnesses the BUILD's known version, not
+    // this migration's own cutover version: a same-build replay after a
+    // later breaking migration stamped a higher version (crash-replay or a
+    // racing worker finishing the chain first) must converge idempotently,
+    // while a genuinely newer build's advance still refuses (0006 precedent).
     const migrateAll = context.db.transaction(() => {
       enforceCurrentSchemaCompatibility(
         context.db,
         context.db.name,
-        MIGRATION_SCHEMA_VERSION,
+        KNOWN_SCHEMA_VERSION,
       );
       migrateTable(context.db, "conversations");
       migrateTable(context.db, "project_conversations");

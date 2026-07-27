@@ -522,7 +522,32 @@ function buildMaximalExecution(): unknown {
           activeJoinIds: ["join-1"],
           haltReason: { type: "aborted" },
           pendingHaltReason: { type: "aborted" },
-          secondaryHaltReasons: [{ type: "aborted" }],
+          secondaryHaltReasons: [
+            { type: "aborted" },
+            // Maximal delivery-gate halt inside an archived history event:
+            // the optional approval-presentation extension (refusalCode +
+            // strict spec deep-link block) must survive the archive round
+            // trip too, not only the active-execution row.
+            {
+              type: "delivery_gate_failed",
+              unmet: [
+                {
+                  criterionId: "spec-execution-1:gate:1",
+                  criterionHandle: "audit-log",
+                  outcome: "gate_blocked",
+                  reason: "The delivery gate requires human approval.",
+                },
+              ],
+              instruction:
+                "Approve delivery in Spec Studio, then resume the merge.",
+              refusalCode: "approval_required",
+              spec: {
+                specSlug: "audit-log",
+                specName: "Audit Log",
+                projectName: "command-center",
+              },
+            },
+          ],
         },
         preReset: true,
       },
@@ -546,6 +571,26 @@ function buildMaximalExecution(): unknown {
         engine: "codex",
         cause: "stall",
         message: "Prompt execution stalled: no agent activity for 1200000ms",
+      },
+      // Maximal delivery-gate halt: refusalCode + the complete strict spec
+      // block must round-trip through this independent archived fixture.
+      {
+        type: "delivery_gate_failed",
+        unmet: [
+          {
+            criterionId: "spec-execution-1:gate:1",
+            criterionHandle: "audit-log",
+            outcome: "gate_blocked",
+            reason: "The delivery gate requires human approval.",
+          },
+        ],
+        instruction: "Approve delivery in Spec Studio, then resume the merge.",
+        refusalCode: "approval_required",
+        spec: {
+          specSlug: "audit-log",
+          specName: "Audit Log",
+          projectName: "command-center",
+        },
       },
     ],
     pendingCollaborations: {

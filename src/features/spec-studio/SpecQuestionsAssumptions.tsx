@@ -16,18 +16,16 @@ import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { buildSpecReadCommand } from "@/lib/prompt-editor/spec-reference-contract";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
-import type {
-  SpecAssumptionView,
-  SpecDetailView,
-  SpecQuestionView,
-} from "@/lib/specs/queries";
 import {
-  specAssumptionRowSchema,
-  specQuestionRowSchema,
-  type ActorProvenance,
-  type SpecAssumptionDisposition,
-  type SpecAssumptionRow,
-  type SpecQuestionRow,
+  specAssumptionViewSchema,
+  specQuestionViewSchema,
+  type SpecAssumptionView,
+  type SpecDetailView,
+  type SpecQuestionView,
+} from "@/lib/specs/queries";
+import type {
+  ActorProvenance,
+  SpecAssumptionDisposition,
 } from "@/lib/specs/schemas";
 
 const logger = createClientLogger("spec-studio-questions");
@@ -470,19 +468,19 @@ export default function SpecQuestionsAssumptionsPanel({
   } | null>(null);
   const answerQuestion = useSpecActionMutation<
     AnswerQuestionPanelInput,
-    SpecQuestionRow
-  >(projectName, detail.spec.slug, "answer-question", specQuestionRowSchema, {
+    SpecQuestionView
+  >(projectName, detail.spec.slug, "answer-question", specQuestionViewSchema, {
     specId: detail.spec.id,
     eventTypes: ["spec-attention-changed"],
   });
   const disposeAssumption = useSpecActionMutation<
     DisposeAssumptionPanelInput,
-    SpecAssumptionRow
+    SpecAssumptionView
   >(
     projectName,
     detail.spec.slug,
     "dispose-assumption",
-    specAssumptionRowSchema,
+    specAssumptionViewSchema,
     { specId: detail.spec.id, eventTypes: ["spec-attention-changed"] },
   );
 

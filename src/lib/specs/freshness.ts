@@ -14,7 +14,6 @@ export interface GitProbes {
 
 export interface CandidateState {
   commitSha: string;
-  surfaceId?: string;
 }
 
 export interface LaterVerdictApplicability {
@@ -41,17 +40,13 @@ export interface CandidateValidationFact {
 export type FreshnessBasis =
   | "candidate_history"
   | "identical_relevant_tree"
-  | "unchanged_surface"
   | "pre_merge_candidate_validation";
 
 export type StaleReason =
   | "abandoned_run_applicability_unestablished"
   | "missing_commit_state"
   | "not_in_candidate_history"
-  | "missing_relevant_tree_state"
   | "relevant_tree_changed"
-  | "missing_surface_state"
-  | "surface_changed"
   | "candidate_validation_failed"
   | "candidate_validation_not_for_candidate"
   | "candidate_validation_tree_changed";
@@ -61,7 +56,7 @@ export type FreshnessResult =
   | { status: "stale"; reason: StaleReason; action: string };
 
 const ATTACH_CANDIDATE_EVIDENCE =
-  "attach evidence that resolves into the delivery candidate";
+  "produce evidence that resolves into the delivery candidate";
 const RERUN_VALIDATION = "rerun validation against the delivery candidate";
 const RERUN_DETERMINISTIC_VALIDATION =
   "rerun deterministic validation against the delivery candidate";
@@ -114,18 +109,10 @@ async function evaluateHistoryEvidence(
 
 async function evaluateTreeEvidence(
   evidence: FreshnessEvidence,
+  evaluatedTreeHash: string,
   candidate: CandidateState,
   probes: GitProbes,
 ): Promise<FreshnessResult> {
-  const evaluatedTreeHash = evidence.evaluatedState.relevantTreeHash;
-  if (!evaluatedTreeHash) {
-    return {
-      status: "stale",
-      reason: "missing_relevant_tree_state",
-      action: RERUN_VALIDATION,
-    };
-  }
-
   const candidateTreeHash = await probes.relevantTreeHash(
     candidate.commitSha,
     evidence.evaluatedState.relevantPaths,
@@ -141,29 +128,6 @@ async function evaluateTreeEvidence(
   };
 }
 
-function evaluateSurfaceEvidence(
-  evidence: FreshnessEvidence,
-  candidate: CandidateState,
-): FreshnessResult {
-  const capturedSurfaceId = evidence.evaluatedState.surfaceId;
-  if (!capturedSurfaceId || !candidate.surfaceId) {
-    return {
-      status: "stale",
-      reason: "missing_surface_state",
-      action: "recapture evidence against the current surface",
-    };
-  }
-  if (capturedSurfaceId === candidate.surfaceId) {
-    return { status: "valid", basis: "unchanged_surface" };
-  }
-
-  return {
-    status: "stale",
-    reason: "surface_changed",
-    action: "revalidate, recapture, or explicitly waive the criterion",
-  };
-}
-
 export async function evaluateEvidenceFreshness(
   evidence: FreshnessEvidence,
   candidate: CandidateState,
@@ -176,14 +140,19 @@ export async function evaluateEvidenceFreshness(
 
   switch (evidence.kind) {
     case "commit":
-    case "diff":
       return evaluateHistoryEvidence(evidence, candidate, probes);
     case "test_run":
-    case "validator_verdict":
-      return evaluateTreeEvidence(evidence, candidate, probes);
-    case "screenshot":
-    case "human_signoff":
-      return evaluateSurfaceEvidence(evidence, candidate);
+    case "validator_verdict": {
+      // Merge-time candidate validation stamps a relevant tree hash and keeps
+      // the strong tree-identity check. Ingested in-run machine evidence only
+      // carries the lane commit it validated; ancestry into the candidate is
+      // the same standard commit evidence already meets. Rows with neither
+      // (legacy sha-less ingests) stay honestly stale via missing_commit_state.
+      const evaluatedTreeHash = evidence.evaluatedState.relevantTreeHash;
+      return evaluatedTreeHash !== undefined
+        ? evaluateTreeEvidence(evidence, evaluatedTreeHash, candidate, probes)
+        : evaluateHistoryEvidence(evidence, candidate, probes);
+    }
   }
 }
 

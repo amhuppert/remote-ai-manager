@@ -99,9 +99,23 @@ export async function createProductionSpecRouteServices(
     delivery: deliveryRepo,
     links: linksRepo,
     events,
+    attention: eventsRepo,
     notifier,
     policyNotifier: notifier,
   });
+
+  const getWorkflowExecutionStatus = (workflowExecutionId: string) => {
+    for (const workflow of workflowExecutions.listActive().values()) {
+      if (workflow.id === workflowExecutionId) {
+        return Promise.resolve(workflow.status);
+      }
+    }
+    // A cleared run leaves the active slot but keeps its terminal status in
+    // the archive; only a truly deleted execution reports null.
+    return Promise.resolve(
+      archivedWorkflowExecutions.findStatusByExecutionId(workflowExecutionId),
+    );
+  };
 
   const evidenceRef: { current?: EvidenceService } = {};
   const ingest = createEvidenceIngestService({
@@ -125,6 +139,7 @@ export async function createProductionSpecRouteServices(
       );
       return record === null ? [] : readCompiledOriginMap(record.definition);
     },
+    getWorkflowExecutionStatus,
   });
   const ingestExecutionEvidence = (executionId: string) =>
     ingest.ingestAuthoritatively(executionId);
@@ -202,17 +217,6 @@ export async function createProductionSpecRouteServices(
         job?.executionId === expectedExecution.workflowExecutionId &&
         job.candidateValidation?.validationRef === ref.validationRef
       );
-    },
-    async contentObjectExists(ref) {
-      try {
-        await getTicketContentStore().read(ref.objectKey);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async humanActorExists(ref) {
-      return ref.actorId === "operator";
     },
     async isEvidenceFresh(evidenceRow) {
       let rawState: unknown;
@@ -374,18 +378,10 @@ export async function createProductionSpecRouteServices(
     nextId: () => randomUUID(),
     now: () => new Date().toISOString(),
     ingestExecutionEvidence,
-    getWorkflowExecutionStatus(workflowExecutionId) {
-      for (const workflow of workflowExecutions.listActive().values()) {
-        if (workflow.id === workflowExecutionId) {
-          return Promise.resolve(workflow.status);
-        }
-      }
-      // A cleared run leaves the active slot but keeps its terminal status in
-      // the archive; only a truly deleted execution reports null.
-      return Promise.resolve(
-        archivedWorkflowExecutions.findStatusByExecutionId(workflowExecutionId),
-      );
+    async sessionExists(sessionName) {
+      return (await getSession(projectPath, sessionName)) !== null;
     },
+    getWorkflowExecutionStatus,
     getPublishedMerge(workflowExecutionId) {
       return Promise.resolve(
         jobsRepo.findLatestPublishedMergeByExecutionId(workflowExecutionId),

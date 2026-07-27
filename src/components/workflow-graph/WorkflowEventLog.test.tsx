@@ -152,6 +152,47 @@ describe("WorkflowEventLog collapsing of redundant same-status events", () => {
     expect(screen.getAllByText("Plan · started")).toHaveLength(2);
     expect(screen.getByText("Plan · halted")).toBeInTheDocument();
   });
+
+  it("renders the delivery-approval halt as its headline only — no remediation link in the log", async () => {
+    const { execution, events } = executionWithHistory([
+      {
+        occurredAt: "2026-04-02T08:00:00.000Z",
+        event: {
+          type: "graph-workflow-status",
+          ...EVENT_BASE,
+          workflowStatus: "halted",
+          activeContextIds: [],
+          activeBatchIds: [],
+          activeJoinIds: [],
+          haltReason: {
+            type: "delivery_gate_failed",
+            unmet: [],
+            instruction:
+              "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+            refusalCode: "approval_required",
+            spec: {
+              specSlug: "audit-log",
+              specName: "Audit Log",
+              projectName: "command-center",
+            },
+          },
+          pendingHaltReason: null,
+          secondaryHaltReasons: [],
+        },
+      },
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    await userEvent.click(screen.getByText("Workflow halted"));
+
+    expect(
+      screen.getByText("Delivery gate — waiting on your approval"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Open the merge gate/ }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("WorkflowEventLog rendering of lane/join events", () => {

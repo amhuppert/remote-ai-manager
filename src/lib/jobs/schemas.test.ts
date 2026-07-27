@@ -187,6 +187,37 @@ describe("jobStatusEventSchema", () => {
       haltReason,
     });
 
+    // Rows persisted before the approval presentation existed carry neither
+    // refusalCode nor spec — they must keep parsing unchanged.
+    expect(parsed.haltReason).toEqual(haltReason);
+  });
+
+  it("round-trips the delivery-gate approval presentation fields", () => {
+    const haltReason = {
+      type: "delivery_gate_failed" as const,
+      unmet: [
+        {
+          criterionId: "spec-execution-1:gate:1",
+          criterionHandle: "audit-log",
+          outcome: "gate_blocked",
+          reason: "The delivery gate requires human approval.",
+        },
+      ],
+      instruction: "Approve delivery in Spec Studio, then resume the merge.",
+      refusalCode: "approval_required" as const,
+      spec: {
+        specSlug: "audit-log",
+        specName: "Audit Log",
+        projectName: "command-center",
+      },
+    };
+
+    const parsed = jobStatusEventSchema.parse({
+      ...base,
+      status: "failed",
+      haltReason,
+    });
+
     expect(parsed.haltReason).toEqual(haltReason);
   });
 

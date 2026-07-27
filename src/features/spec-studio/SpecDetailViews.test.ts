@@ -29,6 +29,12 @@ describe("initialDetailViewForDeepLink", () => {
       "overview",
     );
   });
+
+  it("routes the delivery gate deep link to controls so the merge gate mounts", () => {
+    expect(initialDetailViewForDeepLink("delivery", "native-sdd")).toBe(
+      "controls",
+    );
+  });
 });
 
 describe("selectEvidenceRevision", () => {
@@ -55,7 +61,7 @@ describe("selectEvidenceRevision", () => {
             ? {
                 payload: {
                   ...entry.version.payload,
-                  validationStrategy: { kinds: ["screenshot" as const] },
+                  validationStrategy: { kinds: ["validator_verdict" as const] },
                 },
               }
             : {}),

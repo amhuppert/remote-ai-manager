@@ -1,11 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import { cn } from "@/lib/ui/cn";
 
 const haltCardBase =
   "w-full bg-[var(--cc-red-a06)] border border-[var(--cc-red-border)] border-l-[3px] border-l-red rounded-sm py-sm px-md flex flex-col gap-[6px] text-text-secondary text-[0.74rem] leading-[1.45]";
+
+// Attention variant: a run waiting on a human sign-off must not read as a
+// failure, so the approval halt swaps the red chrome for amber.
+const haltCardAttention =
+  "w-full bg-[var(--cc-amber-a09)] border border-[var(--cc-amber-border)] border-l-[3px] border-l-amber rounded-sm py-sm px-md flex flex-col gap-[6px] text-text-secondary text-[0.74rem] leading-[1.45]";
 
 const haltPathsClass =
   "list-none p-0 m-0 flex flex-col gap-[2px] font-mono text-[0.7rem] [&_li]:text-text-secondary [&_code]:inline-block [&_code]:min-w-[1.5em] [&_code]:text-amber [&_code]:mr-[6px]";
@@ -18,6 +24,15 @@ interface FormattedHaltReason {
   headline: string;
   detail: ReactNode | null;
   action: string | null;
+  /**
+   * Deep link to the surface that can clear the halt (`?el=` contract — it
+   * retries after the target page loads, unlike a raw hash). Hosts decide how
+   * to render it; the one-line surfaces (status bar, event log) stay
+   * headline-only.
+   */
+  actionHref?: string;
+  /** "attention" = waiting on a human act, not a failure. Default "blocked". */
+  tone?: "blocked" | "attention";
 }
 
 function renderDirtyPathList(
@@ -49,7 +64,26 @@ export function formatGraphWorkflowHaltReason(
   options: FormatHaltReasonOptions = {},
 ): FormattedHaltReason {
   switch (reason.type) {
-    case "delivery_gate_failed":
+    case "delivery_gate_failed": {
+      const actionHref =
+        reason.spec !== undefined
+          ? `/specs/${encodeURIComponent(reason.spec.projectName)}/${encodeURIComponent(reason.spec.specSlug)}?el=delivery`
+          : undefined;
+      if (reason.refusalCode === "approval_required") {
+        return {
+          headline: "Delivery gate — waiting on your approval",
+          detail: (
+            <p>
+              {reason.spec !== undefined
+                ? `${reason.spec.specName} requires a human delivery approval before this run can publish.`
+                : "This run requires a human delivery approval before it can publish."}
+            </p>
+          ),
+          action: "Approve delivery in Spec Studio, then resume this workflow.",
+          ...(actionHref !== undefined ? { actionHref } : {}),
+          tone: "attention",
+        };
+      }
       return {
         headline: `Delivery gate refused publish — ${reason.unmet.length} unmet criterion/criteria`,
         detail: (
@@ -63,7 +97,9 @@ export function formatGraphWorkflowHaltReason(
           </ul>
         ),
         action: reason.instruction,
+        ...(actionHref !== undefined ? { actionHref } : {}),
       };
+    }
     case "merge_precondition_failed":
       return {
         headline: `Cannot merge into ${reason.targetBranch} — ${reason.totalDirtyCount} uncommitted change(s)`,
@@ -190,9 +226,19 @@ export default function ContextHaltCard({
 }: ContextHaltCardProps) {
   const [expanded, setExpanded] = useState(false);
   const formatted = formatGraphWorkflowHaltReason(primary);
+  const attention = formatted.tone === "attention";
   return (
-    <div className={cn(haltCardBase, "mb-md")} role="alert">
-      <div className="text-[0.8rem] font-semibold tracking-[0.01em] text-red">
+    <div
+      className={cn(attention ? haltCardAttention : haltCardBase, "mb-md")}
+      role="alert"
+      data-tone={attention ? "attention" : "blocked"}
+    >
+      <div
+        className={cn(
+          "text-[0.8rem] font-semibold tracking-[0.01em]",
+          attention ? "text-amber" : "text-red",
+        )}
+      >
         {formatted.headline}
       </div>
       {formatted.detail && (
@@ -207,6 +253,14 @@ export default function ContextHaltCard({
         <div className="text-[0.72rem] text-text-tertiary italic">
           {formatted.action}
         </div>
+      )}
+      {formatted.actionHref && (
+        <Link
+          href={formatted.actionHref}
+          className="w-fit text-[0.72rem] font-semibold text-cyan hover:underline"
+        >
+          Open the merge gate →
+        </Link>
       )}
       {secondary.length > 0 && (
         <div className="mt-[2px]">

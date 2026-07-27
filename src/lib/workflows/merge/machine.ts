@@ -514,9 +514,14 @@ export const mergeMachine = setup({
             actions: assign({
               error: ({ event }) => {
                 const output = event.output;
-                return output.status === "refused"
-                  ? formatDeliveryGateRefusal(output)
-                  : "Delivery gate refused merge";
+                if (output.status !== "refused") {
+                  return "Delivery gate refused merge";
+                }
+                // Waiting on a human approval is not an unmet-criteria
+                // failure: say what the run waits on, not a pseudo-criterion.
+                return output.refusalCode === "approval_required"
+                  ? `Delivery gate is waiting on human delivery approval. ${output.instruction}`
+                  : formatDeliveryGateRefusal(output);
               },
               haltReason: ({ event }) => {
                 const output = event.output;
@@ -525,6 +530,10 @@ export const mergeMachine = setup({
                   type: "delivery_gate_failed" as const,
                   unmet: output.unmet,
                   instruction: output.instruction,
+                  ...(output.refusalCode !== undefined
+                    ? { refusalCode: output.refusalCode }
+                    : {}),
+                  ...(output.spec !== undefined ? { spec: output.spec } : {}),
                 };
               },
               completedAt: () => new Date().toISOString(),

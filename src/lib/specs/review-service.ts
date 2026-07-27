@@ -9,7 +9,9 @@ import {
   specGatePolicySchema,
   type ActorProvenance,
   type Spec,
+  type SpecAuthoringStage,
   type SpecGate,
+  type SpecGatePolicy,
   type SpecApprovalRow,
   type SpecAssumptionRow,
   type SpecCommentRow,
@@ -17,6 +19,7 @@ import {
   type SpecRevision,
 } from "@/lib/specs/schemas";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type {
@@ -25,15 +28,23 @@ import type {
 } from "@/lib/state-store/specs-repo";
 import { stableStringify } from "@/lib/state-store/serialization";
 
+import { draftAuthoringSequence } from "./authoring-sequence";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
 } from "./events";
+import { formatBareElementHandle } from "./handles";
 import { COMBINED_APPROVAL_DIAL, resolveDial } from "./policy";
 import type {
   SpecPolicyAdmissionNotice,
   SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
+import {
+  currentExecution,
+  latestRevision,
+  validateApprovalRequest,
+  EXECUTION_SCOPED_GATES,
+} from "./gate-projection";
 import { loadProposalState } from "./review-state";
 import {
   approveElement,
@@ -44,6 +55,9 @@ import {
   signOffRevision as evaluateSignOffRevision,
   type TransitionRefusal,
 } from "./transitions";
+import type { SpecPolicyChangeResult } from "./view-schemas";
+
+export type { SpecPolicyChangeResult };
 import { markWaiversStaleAtSignOffInTransaction } from "./waiver-staleness";
 
 const logger = createLogger("specs.review-service");
@@ -173,14 +187,31 @@ export type ProposeAssumptionInput = z.infer<
 export const requestApprovalInputSchema = reviewIdentitySchema
   .extend({
     gate: specGateSchema,
-    subject: z.string().min(1),
+    /**
+     * Omitted, the server resolves it: an execution gate's subject is the
+     * gate itself, and an authoring gate with one outstanding subject uses
+     * it. Only an ambiguous ask is refused, listing the candidates.
+     */
+    subject: z.string().min(1).optional(),
   })
   .strict();
 export type RequestApprovalInput = z.infer<typeof requestApprovalInputSchema>;
 
 export const approvalRequestReceiptSchema = requestApprovalInputSchema
   .omit({ specId: true, actor: true })
-  .extend({ attentionId: z.string().min(1) })
+  .extend({
+    /** Always the resolved subject, even when the request omitted one. */
+    subject: z.string().min(1),
+    attentionId: z.string().min(1),
+    /**
+     * True when this ask was already open: the receipt names the request that
+     * exists rather than issuing a second Needs You entry for the same
+     * approval (R10.9). The caller learns its request landed either way.
+     */
+    alreadyRequested: z.boolean(),
+    /** The element the approval is for, or null for plan and gate subjects. */
+    elementId: z.string().min(1).nullable(),
+  })
   .strict();
 export type ApprovalRequestReceipt = z.infer<
   typeof approvalRequestReceiptSchema
@@ -252,7 +283,9 @@ export interface ReviewService {
   disposeAssumption(
     input: DisposeAssumptionInput,
   ): Promise<ReviewResult<SpecAssumptionRow>>;
-  changePolicy(input: ChangeSpecPolicyInput): Promise<ReviewResult<Spec>>;
+  changePolicy(
+    input: ChangeSpecPolicyInput,
+  ): Promise<ReviewResult<SpecPolicyChangeResult>>;
 }
 
 export interface SpecApprovalRequestNotice {
@@ -302,10 +335,18 @@ export interface ReviewServiceDeps {
   review: SpecReviewRepo;
   delivery: Pick<
     SpecDeliveryRepo,
-    "findExecutionById" | "findWaiversBySpecId" | "saveWaiver"
+    | "findExecutionById"
+    | "findExecutionsBySpecId"
+    | "findWaiversBySpecId"
+    | "saveWaiver"
   >;
   links: Pick<SpecLinksRepo, "findBySpecId">;
   events: SpecEventsPublisher;
+  /**
+   * Read side of the durable attention log. An approval request is recorded as
+   * an event, so recognising a repeat of the same ask means reading it back.
+   */
+  attention: Pick<SpecEventsRepo, "findApprovalRequest">;
   notifier?: SpecReviewNotifier;
   /** Post-hoc notices for Notify-dial policy-admitted sign-offs (R11.2). */
   policyNotifier?: SpecPolicyAdmissionNotifier;
@@ -508,15 +549,27 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     });
   }
 
+  /**
+   * R25.10: the audit question "which dials governed this transition?" is
+   * answerable only if the change records both sides plus the stage the open
+   * draft stayed pinned at. The acting human rides the event's actor column.
+   */
   function appendPolicyEvent(
     spec: Spec,
+    previousPolicy: SpecGatePolicy,
+    pinnedAuthoringStage: SpecAuthoringStage | null,
     actor: ActorProvenance,
     occurredAt: string,
   ): PreparedSpecEventPublication {
     return deps.events.appendInTransaction({
       actor,
       durableEventType: "spec-changed",
-      durablePayload: { kind: "policy-changed", policy: spec.gatePolicy },
+      durablePayload: {
+        kind: "policy-changed",
+        previousPolicy,
+        policy: spec.gatePolicy,
+        pinnedAuthoringStage,
+      },
       sseEvent: {
         type: "spec-changed",
         kind: "policy-changed",
@@ -1017,11 +1070,114 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
+
+          // A request is a durable claim on a human's attention, so it is
+          // validated against the same gate projection the status read
+          // reports rather than against the caller's word (R10.9, R24.1).
+          const revisions = repo.listRevisions(target.spec.id);
+          const current = latestRevision(revisions);
+          const snapshot =
+            current === null ? null : repo.getRevisionSnapshot(current.id);
+          const run = currentExecution(
+            deps.delivery.findExecutionsBySpecId(target.spec.id),
+          );
+          const validation = validateApprovalRequest({
+            spec: target.spec,
+            requestedRevisionId: target.revision.id,
+            currentRevisionId: current?.id ?? null,
+            snapshot,
+            baseSnapshot:
+              snapshot === null || snapshot.revision.basedOnRevisionId === null
+                ? null
+                : repo.getRevisionSnapshot(snapshot.revision.basedOnRevisionId),
+            executionSnapshot:
+              run === null
+                ? null
+                : run.revision_id === snapshot?.revision.id
+                  ? snapshot
+                  : repo.getRevisionSnapshot(run.revision_id),
+            approvals: deps.review.findApprovalsBySpecId(target.spec.id),
+            admissions: deps.review.findGateAdmissionsBySpecId(target.spec.id),
+            currentExecution: run,
+            revisionNumberById: new Map(
+              revisions.map((revision) => [revision.id, revision.number]),
+            ),
+            gate: parsed.gate,
+            subject: parsed.subject ?? null,
+          });
+          if (!validation.ok) {
+            return {
+              result: {
+                ok: false,
+                refusal: validation.refusal,
+              } satisfies ReviewResult<ApprovalRequestReceipt>,
+              prepared: [],
+            };
+          }
+          // The durable identity and every notice carry the RESOLVED subject,
+          // so an omitted-subject ask and its explicit repeat converge on one
+          // Needs You entry.
+          const subject = validation.approval.subject;
+
+          // A per-run gate is asked once per run, not once per revision: the
+          // run the request covers belongs to its identity (R24.1). Its
+          // identity revision is canonicalized to the run's pinned revision —
+          // the only revision that run can ever be approved against — so the
+          // gate auto-fire (which names the pin) and the CLI (which names the
+          // latest revision) converge on one durable ask under an open
+          // amendment instead of opening two Needs You entries.
+          const requestExecutionId = EXECUTION_SCOPED_GATES.has(parsed.gate)
+            ? (run?.id ?? null)
+            : null;
+          const identityRevisionId =
+            requestExecutionId !== null && run !== null
+              ? run.revision_id
+              : target.revision.id;
+          const existing = deps.attention.findApprovalRequest({
+            specId: target.spec.id,
+            revisionId: identityRevisionId,
+            gate: parsed.gate,
+            subject,
+            executionId: requestExecutionId,
+          });
+          if (existing !== null) {
+            // Rebuild the notice so the notifier runs on every repeat: it
+            // dedupes on the stable attention id, so re-invocation is an
+            // idempotent ensure — and the only way a Needs You row lost to a
+            // notifier crash after the first commit can ever be recovered.
+            requestedNotice = {
+              specId: target.spec.id,
+              specSlug: target.spec.slug,
+              specName: target.spec.name,
+              projectPath: target.spec.projectPath,
+              gate: parsed.gate,
+              subject,
+              gateRequestId: existing.attentionId,
+              occurredAt,
+            };
+            return {
+              result: {
+                ok: true,
+                value: {
+                  attentionId: existing.attentionId,
+                  revisionId: identityRevisionId,
+                  gate: parsed.gate,
+                  subject,
+                  elementId: validation.approval.elementId,
+                  alreadyRequested: true,
+                },
+              } satisfies ReviewResult<ApprovalRequestReceipt>,
+              prepared: [],
+            };
+          }
+
           const value: ApprovalRequestReceipt = {
             attentionId: newId("attention"),
-            revisionId: target.revision.id,
+            revisionId: identityRevisionId,
             gate: parsed.gate,
-            subject: parsed.subject,
+            subject,
+            elementId: validation.approval.elementId,
+            alreadyRequested: false,
           };
           requestedNotice = {
             specId: target.spec.id,
@@ -1029,7 +1185,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             specName: target.spec.name,
             projectPath: target.spec.projectPath,
             gate: parsed.gate,
-            subject: parsed.subject,
+            subject,
             gateRequestId: value.attentionId,
             occurredAt,
           };
@@ -1045,6 +1201,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                   revisionId: value.revisionId,
                   gate: value.gate,
                   subject: value.subject,
+                  executionId: requestExecutionId,
                   active: true,
                 },
                 sseEvent: {
@@ -1071,6 +1228,9 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         revisionId: parsed.revisionId,
         gate: parsed.gate,
         ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? { alreadyRequested: transaction.result.value.alreadyRequested }
+          : { refusalCode: transaction.result.refusal.code }),
       });
       return transaction.result;
     },
@@ -1122,7 +1282,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               result: refused(
                 "amendment_required",
                 [
-                  `A${current.number} is cited by approved content and cannot change in place.`,
+                  `${formatBareElementHandle({
+                    kind: "assumption",
+                    number: current.number,
+                  })} is cited by approved content and cannot change in place.`,
                 ],
                 "Open an amendment and update the cited content before changing this disposition.",
               ),
@@ -1180,18 +1343,30 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
+          // R25.1/R25.4: only an open draft is a subject of staging, and even
+          // it keeps the stage it opened at — the draft is read here to report
+          // what it still owes, never to restage it.
+          const openDraft = repo.findDraft(current.id);
           const decision = evaluatePolicyChange({
             actor: parsed.actor,
             currentPolicy: current.gatePolicy,
             proposedPolicy: parsed.proposedPolicy,
             hardConfirmed: parsed.hardConfirmed,
+            ...(openDraft === null
+              ? {}
+              : {
+                  openDraft: {
+                    revisionNumber: openDraft.number,
+                    authoringStage: openDraft.authoringStage,
+                  },
+                }),
           });
           if (!decision.ok) {
             return {
               result: {
                 ok: false,
                 refusal: decision.refusal,
-              } as ReviewResult<Spec>,
+              } as ReviewResult<SpecPolicyChangeResult>,
               prepared: [],
             };
           }
@@ -1200,9 +1375,35 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             gatePolicy: parsed.proposedPolicy,
             updatedAt: occurredAt,
           });
+          const draftSnapshot =
+            openDraft === null ? null : repo.getRevisionSnapshot(openDraft.id);
+          const authoringSequence =
+            draftSnapshot === null
+              ? null
+              : draftAuthoringSequence({
+                  policy: spec.gatePolicy,
+                  snapshot: draftSnapshot,
+                  baseSnapshot:
+                    draftSnapshot.revision.basedOnRevisionId === null
+                      ? null
+                      : repo.getRevisionSnapshot(
+                          draftSnapshot.revision.basedOnRevisionId,
+                        ),
+                });
           return {
-            result: { ok: true, value: spec } as ReviewResult<Spec>,
-            prepared: [appendPolicyEvent(spec, parsed.actor, occurredAt)],
+            result: {
+              ok: true,
+              value: { spec, authoringSequence },
+            } as ReviewResult<SpecPolicyChangeResult>,
+            prepared: [
+              appendPolicyEvent(
+                spec,
+                current.gatePolicy,
+                openDraft?.authoringStage ?? null,
+                parsed.actor,
+                occurredAt,
+              ),
+            ],
           };
         },
       );

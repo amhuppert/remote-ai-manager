@@ -1,8 +1,18 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn, userEvent, within } from "storybook/test";
 
-import { ExecutionPanel, IntegrityBanner, PolicyDialog } from "./SpecControls";
-import { denseSpecControlsDetailFixture } from "./SpecControls.fixtures";
+import {
+  AbandonSpecPanel,
+  ExecutionPanel,
+  IntegrityBanner,
+  PolicyDialog,
+} from "./SpecControls";
+import {
+  approvedAwaitingProofSpecControlsDetailFixture,
+  denseSpecControlsDetailFixture,
+  policyImpactDraftFixture,
+  specControlsDetailFixture,
+} from "./SpecControls.fixtures";
 
 const meta = {
   title: "Specs/Studio/PolicyAndExecutionControls",
@@ -47,6 +57,24 @@ export const LooseningConfirmation: Story = {
   },
 };
 
+export const TighteningConfirmation: Story = {
+  args: { currentPolicy: { preset: "exploratory" } },
+  play: async () => {
+    await userEvent.click(
+      within(document.body).getByRole("radio", { name: /Contract-bearing/ }),
+    );
+  },
+};
+
+export const PolicyImpactOnOpenDraft: Story = {
+  args: { openDraft: policyImpactDraftFixture("design") },
+  play: async () => {
+    await userEvent.click(
+      within(document.body).getByRole("radio", { name: /Exploratory/ }),
+    );
+  },
+};
+
 export const ScopeSelection: Story = {
   render: () => (
     <ExecutionPanel
@@ -83,6 +111,8 @@ export const DefinitionReview: Story = {
   ),
 };
 
+/** Waived + delivered-elsewhere mix on the merge gate, with the per-row proof
+ *  chips and the split proof-recorded/merged-proof counter. */
 export const RunningExecution: Story = {
   render: () => (
     <ExecutionPanel
@@ -99,6 +129,73 @@ export const RunningExecution: Story = {
       onAbandonExecution={fn()}
     />
   ),
+};
+
+/** The delivery approval is still pending, so the merge gate shows the
+ *  human Approve button beside the awaiting-proof criterion row. */
+export const MergeGateApprovalPending: Story = {
+  render: () => (
+    <ExecutionPanel
+      detail={specControlsDetailFixture("running")}
+      projectName="command-center"
+      pendingAction={null}
+      error={null}
+      onStart={fn()}
+      onGrantWaiver={fn()}
+      onSetDisposition={fn()}
+      onGrantGateApproval={fn()}
+      onApproveExecutionStart={fn()}
+      onCaptureScopeAmendment={fn()}
+      onAbandonExecution={fn()}
+    />
+  ),
+};
+
+/** Delivery already approved by a human: proof chips carry the remaining
+ *  demand and the counter separates recorded proof from merged proof. */
+export const MergeGateApprovedAwaitingProof: Story = {
+  render: () => (
+    <ExecutionPanel
+      detail={approvedAwaitingProofSpecControlsDetailFixture()}
+      projectName="command-center"
+      pendingAction={null}
+      error={null}
+      onStart={fn()}
+      onGrantWaiver={fn()}
+      onSetDisposition={fn()}
+      onGrantGateApproval={fn()}
+      onApproveExecutionStart={fn()}
+      onCaptureScopeAmendment={fn()}
+      onAbandonExecution={fn()}
+    />
+  ),
+};
+
+export const AbandonSpec: Story = {
+  render: () => (
+    <AbandonSpecPanel
+      slug="native-sdd"
+      abandonedAt={null}
+      abandonedReason={null}
+      pending={false}
+      error={null}
+      onAbandonSpec={fn()}
+    />
+  ),
+};
+
+export const AbandonSpecConfirmation: Story = {
+  ...AbandonSpec,
+  play: async () => {
+    const body = within(document.body);
+    await userEvent.click(
+      body.getByRole("button", { name: "Abandon whole spec" }),
+    );
+    await userEvent.type(
+      body.getByRole("textbox", { name: "Spec abandonment reason" }),
+      "Superseded by the ticket-native rewrite.",
+    );
+  },
 };
 
 export const IntegrityMismatch: Story = {

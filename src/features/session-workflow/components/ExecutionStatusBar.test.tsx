@@ -168,6 +168,36 @@ const longJoinFailure: GraphWorkflowHaltReason = {
 };
 
 describe("ExecutionStatusBar halt display", () => {
+  it("stays a terse headline-only chip for the delivery-approval halt — remediation lives on the card and dialog", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({
+          haltReason: {
+            type: "delivery_gate_failed",
+            unmet: [],
+            instruction:
+              "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+            refusalCode: "approval_required",
+            spec: {
+              specSlug: "audit-log",
+              specName: "Audit Log",
+              projectName: "command-center",
+            },
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Delivery gate — waiting on your approval",
+    );
+    expect(
+      screen.queryByRole("link", { name: /Open the merge gate/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+  });
+
   it("keeps the bar to a one-line summary: headline visible, detail withheld", () => {
     render(
       <ExecutionStatusBar

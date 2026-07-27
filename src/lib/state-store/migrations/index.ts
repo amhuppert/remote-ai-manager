@@ -7,6 +7,7 @@ import { agentSessionRefShape } from "./0005-agent-session-ref-shape";
 import { codexRunsToAgentRuns } from "./0006-codex-runs-to-agent-runs";
 import { moveMachineSnapshotsToSidecar } from "./0007-move-machine-snapshots-to-sidecar";
 import { addSpecAuthoringStage } from "./0008-add-spec-authoring-stage";
+import { narrowEvidenceKinds } from "./0009-narrow-evidence-kinds";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -23,6 +24,7 @@ export const migrations: readonly StateMigration[] = [
   codexRunsToAgentRuns,
   moveMachineSnapshotsToSidecar,
   addSpecAuthoringStage,
+  narrowEvidenceKinds,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

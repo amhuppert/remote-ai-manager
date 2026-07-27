@@ -48,7 +48,7 @@ function appearsBefore(first: Element, second: Element): boolean {
 }
 
 describe("SpecDetailViews", () => {
-  it("uses only the prototype's three primary views on the overview surface", async () => {
+  it("uses the prototype's four primary views on the overview surface", async () => {
     const user = userEvent.setup();
     renderDetailViews();
 
@@ -57,12 +57,12 @@ describe("SpecDetailViews", () => {
       "Overview",
       "Traceability",
       "History",
+      "Controls",
     ]);
     expect(tablist).toContainElement(
       screen.getByRole("tab", { name: "Overview" }),
     );
     expect(screen.getByText("Overview document")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Controls" })).toBeNull();
     expect(screen.queryByLabelText("Spec decision surfaces")).toBeNull();
     expect(screen.queryByText("Decision surfaces")).toBeNull();
     expect(screen.queryByRole("button", { name: "Open evidence" })).toBeNull();
@@ -72,6 +72,32 @@ describe("SpecDetailViews", () => {
 
     await user.click(screen.getByRole("tab", { name: "History" }));
     expect(screen.getByRole("heading", { name: "History" })).toBeVisible();
+  });
+
+  it("navigates to Controls from the primary view strip", async () => {
+    const user = userEvent.setup();
+    renderDetailViews();
+
+    await user.click(screen.getByRole("tab", { name: "Controls" }));
+
+    // The controls workflow renders inside the tabbed layout with the shared
+    // back header, not as a dead-end early return without navigation.
+    expect(screen.getByRole("heading", { name: "Controls" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Gate policy" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Back to native-sdd" }),
+    ).toBeVisible();
+    expect(screen.getByRole("tablist", { name: "Spec views" })).toBeVisible();
+  });
+
+  it("renders ?view=controls inside the tabbed layout with the back header", () => {
+    renderDetailViews("controls");
+
+    expect(screen.getByRole("heading", { name: "Gate policy" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Back to native-sdd" }),
+    ).toBeVisible();
+    expect(screen.getByRole("tablist", { name: "Spec views" })).toBeVisible();
   });
 
   it("gives the primary view navigation an accessible name", () => {

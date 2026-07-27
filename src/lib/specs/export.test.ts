@@ -176,7 +176,13 @@ describe("canonical spec export and verification", () => {
       }),
     ]);
     expect(JSON.parse(first.manifest)).toMatchObject({
-      formatVersion: 1,
+      formatVersion: 2,
+      elementOrdering: {
+        scope: "revision",
+        sortKeys: ["position", "elementId"],
+        nesting: "parentElementId",
+        omittedPositionOnCreate: "append",
+      },
       spec: { id: specId, slug: "portable-spec" },
       revisions: [
         {

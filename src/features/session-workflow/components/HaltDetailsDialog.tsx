@@ -11,10 +11,12 @@ import {
 } from "@/components/ui/Dialog";
 import { IconButton } from "@/components/ui/IconButton";
 import { CloseIcon } from "@/components/icons";
+import Link from "next/link";
 import { formatGraphWorkflowHaltReason } from "@/components/workflow-graph/ContextHaltCard";
 import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import type { ConflictDecisionInput, ConflictEntry } from "@/lib/jobs/schemas";
+import { cn } from "@/lib/ui/cn";
 
 // Full read view for an execution halt. The status bar shows only a one-line
 // summary (so a long failure can never grow the bar); everything else — the
@@ -53,12 +55,21 @@ export default function HaltDetailsDialog({
   const formatted = formatGraphWorkflowHaltReason(primary, {
     omitConflictFiles: hasConflictRecovery,
   });
+  // "attention" = the run waits on a human act (delivery approval); the read
+  // view keeps its structure but must not present the wait as a failure.
+  const attention = formatted.tone === "attention";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="wide" aria-describedby={undefined}>
         <header className="mb-xs flex items-center gap-[10px]">
-          <span className="min-w-0 flex-1 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-red uppercase">
+          <span
+            className={cn(
+              "min-w-0 flex-1 font-mono text-[0.7rem] font-semibold tracking-[0.08em] uppercase",
+              attention ? "text-amber" : "text-red",
+            )}
+            data-tone={attention ? "attention" : "blocked"}
+          >
             Execution halted
           </span>
           <Badge subtle layoutClassName="shrink-0">
@@ -83,6 +94,14 @@ export default function HaltDetailsDialog({
             <div className="text-[0.74rem] text-text-tertiary italic">
               {formatted.action}
             </div>
+          )}
+          {formatted.actionHref && (
+            <Link
+              href={formatted.actionHref}
+              className="w-fit text-[0.74rem] font-semibold text-cyan hover:underline"
+            >
+              Open the merge gate →
+            </Link>
           )}
           {hasConflictRecovery && (
             <JoinConflictRecoveryCard

@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  explainInvalidElementHandle,
+  formatBareElementHandle,
   formatElementHandle,
   formatSpecSlug,
   parseElementHandle,
   parseSpecSlug,
   toDeepLinkElementId,
+  type BareElementHandle,
 } from "./handles";
 
 describe("spec handle grammar", () => {
@@ -107,5 +110,88 @@ describe("spec handle grammar", () => {
 
   it("rejects a malformed context slug for a bare handle", () => {
     expect(() => parseElementHandle("R3", "Native-SDD")).toThrow();
+  });
+});
+
+describe("slug-free handle formatting", () => {
+  it.each<[BareElementHandle, string]>([
+    [{ kind: "requirement", requirementNumber: 3 }, "R3"],
+    [{ kind: "criterion", requirementNumber: 3, criterionNumber: 2 }, "R3.2"],
+    [{ kind: "decision", number: 4 }, "D4"],
+    [{ kind: "task", number: 5 }, "T5"],
+    [{ kind: "question", number: 6 }, "Q6"],
+    [{ kind: "assumption", number: 7 }, "A7"],
+  ])("formats %j as %s without needing a spec slug", (handle, expected) => {
+    expect(formatBareElementHandle(handle)).toBe(expected);
+  });
+
+  it("produces the same bare handle the qualified formatter does", () => {
+    expect(formatBareElementHandle({ kind: "question", number: 12 })).toBe(
+      formatElementHandle(
+        { slug: parseSpecSlug("native-sdd"), kind: "question", number: 12 },
+        "bare",
+      ),
+    );
+  });
+
+  it("refuses a number outside the grammar rather than emitting an unaddressable handle", () => {
+    expect(() =>
+      formatBareElementHandle({ kind: "question", number: 0 }),
+    ).toThrow();
+  });
+});
+
+describe("invalid element handle explanations", () => {
+  it.each(["c2", "R0", "R3.0", "1", ""])(
+    "states the handle grammar with concrete examples for %j",
+    (input) => {
+      const explanation = explainInvalidElementHandle(input);
+
+      expect(explanation).toContain("R1.2");
+      expect(explanation).toContain("D3");
+      expect(explanation).toContain("T4");
+      expect(explanation).toContain("Q1");
+      expect(explanation).toContain("A2");
+    },
+  );
+
+  it.each(["requirement-1", "native-sdd-criterion-2", "task_7"])(
+    "says %j looks like an element id rather than a handle",
+    (input) => {
+      expect(explainInvalidElementHandle(input)).toContain(
+        "looks like an element id",
+      );
+    },
+  );
+
+  it("names the real handle when the value is a known element id", () => {
+    const explanation = explainInvalidElementHandle(
+      "requirement-1",
+      new Map([
+        ["requirement-1", "R1"],
+        ["criterion-1", "R1.2"],
+      ]),
+    );
+
+    expect(explanation).toContain("requirement-1");
+    expect(explanation).toContain("is an element id");
+    expect(explanation).toContain("R1");
+    expect(explanation).not.toContain("looks like an element id");
+  });
+
+  it("falls back to the grammar when a known-element map has no entry", () => {
+    const explanation = explainInvalidElementHandle(
+      "c2",
+      new Map([["requirement-1", "R1"]]),
+    );
+
+    expect(explanation).not.toContain("is an element id");
+    expect(explanation).toContain("R1.2");
+  });
+
+  it("reads the element-id signal through a slug-qualified value", () => {
+    expect(explainInvalidElementHandle("native-sdd/requirement-1")).toContain(
+      "looks like an element id",
+    );
   });
 });

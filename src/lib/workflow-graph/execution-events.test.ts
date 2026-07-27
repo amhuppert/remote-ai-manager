@@ -1934,4 +1934,79 @@ describe("event derivation is pure — delivery is deferred to deliver()", () =>
       expect.objectContaining({ kind: "approval-pending" }),
     );
   });
+
+  describe("delivery-gate halt presentation dedup", () => {
+    // The status-event equality contract is "no observable presentation
+    // change is suppressed": halt surfaces render refusalCode and the spec
+    // block, so a change in either must re-fire even when unmet/instruction
+    // are unchanged (a mid-run spec rename must reach the card).
+    const baseReason = {
+      type: "delivery_gate_failed" as const,
+      unmet: [],
+      instruction: "Approve delivery in Spec Studio, then resume the merge.",
+      refusalCode: "approval_required" as const,
+      spec: {
+        specSlug: "audit-log",
+        specName: "Audit Log",
+        projectName: "command-center",
+      },
+    };
+
+    function statusEventsBetween(
+      previousReason:
+        | typeof baseReason
+        | Omit<typeof baseReason, "refusalCode" | "spec">,
+      nextReason:
+        | typeof baseReason
+        | Omit<typeof baseReason, "refusalCode" | "spec">,
+    ) {
+      const publisher = createGraphWorkflowExecutionEventPublisher({
+        broadcast: vi.fn(),
+        now: () => "2026-07-20T00:00:00.000Z",
+      });
+      const previousExecution = createWorkflowExecution({
+        status: "halted",
+        haltReason: previousReason,
+      });
+      const nextExecution = createWorkflowExecution({
+        ...previousExecution,
+        haltReason: nextReason,
+      });
+      const delivery = publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      });
+      return delivery.events.filter(
+        (entry) => entry.event.type === "graph-workflow-status",
+      );
+    }
+
+    it("suppresses the status event when the full halt presentation is unchanged", () => {
+      expect(statusEventsBetween(baseReason, { ...baseReason })).toHaveLength(
+        0,
+      );
+    });
+
+    it("re-fires when refusalCode appears even though unmet and instruction are unchanged", () => {
+      const {
+        refusalCode: _refusalCode,
+        spec: _spec,
+        ...withoutPresentation
+      } = baseReason;
+      expect(statusEventsBetween(withoutPresentation, baseReason)).toHaveLength(
+        1,
+      );
+    });
+
+    it("re-fires when the spec presentation changes, e.g. a mid-run rename", () => {
+      expect(
+        statusEventsBetween(baseReason, {
+          ...baseReason,
+          spec: { ...baseReason.spec, specName: "Audit Log v2" },
+        }),
+      ).toHaveLength(1);
+    });
+  });
 });

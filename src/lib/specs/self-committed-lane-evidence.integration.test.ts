@@ -119,13 +119,15 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       sha: SELF_SHA,
     });
 
+    // Production ordering: the context completes on its passing validation
+    // FIRST; the commit phase then adopts the self-committed lane HEAD and
+    // the snapshot-diff derivation publishes the lane-commit event after it.
     workflowEvents.appendMany(
       PROJECT_PATH,
       SESSION_NAME,
       WORKFLOW_EXECUTION_ID,
       AT,
       [
-        ...derived.events,
         graphWorkflowExecutionEventSchema.parse({
           occurredAt: AT,
           event: {
@@ -145,6 +147,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
             },
           },
         }),
+        ...derived.events,
       ],
     );
 
@@ -186,8 +189,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
         );
       },
       mergeValidationFactExists: async () => false,
-      contentObjectExists: async () => false,
-      humanActorExists: async () => false,
+
       isEvidenceFresh: async () => true,
       routeStrategyInadequacy: async () => undefined,
       routeWaiverRequestToHuman: async () => ({ attentionId: "unused" }),
@@ -204,6 +206,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       evidenceService,
       writeQueue: createWriteQueue(),
       loadOriginMap: async () => originMap(),
+      getWorkflowExecutionStatus: async () => "running",
     });
 
     const first = await ingest.ingestAuthoritatively(SPEC_EXECUTION_ID);
@@ -221,25 +224,35 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
 
     const evidenceRows = db
       .prepare(
-        `SELECT kind, criterion_element_id, ref_json FROM spec_evidence
+        `SELECT kind, criterion_element_id, ref_json, evaluated_state_json
+           FROM spec_evidence
           ORDER BY id ASC`,
       )
       .all() as Array<{
       kind: string;
       criterion_element_id: string;
       ref_json: string;
+      evaluated_state_json: string;
     }>;
     expect(
       evidenceRows.map((row) => [row.kind, row.criterion_element_id]),
     ).toEqual([
-      ["commit", "criterion-1"],
       ["test_run", "criterion-1"],
       ["validator_verdict", "criterion-1"],
+      ["commit", "criterion-1"],
     ]);
-    expect(JSON.parse(evidenceRows[0]!.ref_json)).toEqual({
+    expect(JSON.parse(evidenceRows[2]!.ref_json)).toEqual({
       type: "git_object",
       objectId: SELF_SHA,
     });
+    // Adopted-snapshot sha correlation (F24): the validation evidence is
+    // stamped with the same self-committed HEAD the commit phase adopted.
+    for (const row of evidenceRows.slice(0, 2)) {
+      expect(JSON.parse(row.evaluated_state_json)).toEqual({
+        commitSha: SELF_SHA,
+        relevantPaths: [],
+      });
+    }
 
     // The proof verdict cites the test_run + validator_verdict evidence the
     // ingest attached (the rerun shape: those kinds were present; changedCode

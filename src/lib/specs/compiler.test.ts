@@ -7,6 +7,7 @@ import type { ExecutionScope } from "./scope-validation";
 import {
   compileSpecExecutionPlan,
   readCompiledContextContract,
+  readCompiledOriginMap,
 } from "./compiler";
 
 const timestamp = "2026-07-18T12:00:00.000Z";
@@ -56,7 +57,7 @@ const snapshot: SpecRevisionSnapshot = {
     revisionElement("criterion-3", "criterion", 1, "requirement-2", 4, {
       kind: "criterion",
       text: "Unselected work is absent from lane briefs.",
-      validationStrategy: { kinds: ["human_signoff"] },
+      validationStrategy: { kinds: ["validator_verdict"] },
     }),
     revisionElement("task-1", "task", 1, null, 5, {
       kind: "task",
@@ -653,6 +654,84 @@ describe("compileSpecExecutionPlan", () => {
         (task) => task.id === "spec-task-task-2",
       )?.metadata,
     ).toHaveProperty("specCriterionBriefs");
+  });
+
+  it("normalizes persisted origin-map strategies that carry dropped evidence kinds", () => {
+    // Execution pins compiled before the vocabulary narrowed carry six-kind
+    // strategy metadata; the read boundary must strip dropped kinds and keep
+    // every strategy machine-provable without rewriting the pinned bytes.
+    const definition = compileSpecExecutionPlan({
+      spec: { id: "spec-native-sdd", slug: "native-sdd", name: "Native SDD" },
+      revisionSnapshot: snapshot,
+      scope,
+      scopeHash: "scope-hash-legacy",
+      approvalRequired: false,
+    });
+    const legacyDefinition = {
+      ...definition,
+      tasks: definition.tasks.map((task) =>
+        task.id === "spec-task-task-1"
+          ? {
+              ...task,
+              metadata: {
+                ...task.metadata,
+                specValidationStrategies: JSON.stringify({
+                  "criterion-1": { kinds: ["test_run", "screenshot"] },
+                }),
+              },
+            }
+          : {
+              ...task,
+              metadata: {
+                ...task.metadata,
+                specValidationStrategies: JSON.stringify({
+                  "criterion-2": {
+                    kinds: ["human_signoff"],
+                    note: "Captured before the vocabulary narrowed.",
+                  },
+                }),
+              },
+            },
+      ),
+    };
+
+    const origins = readCompiledOriginMap(legacyDefinition);
+
+    // A surviving machine kind needs no fallback; only a zero-machine list
+    // gains validator_verdict.
+    expect(origins[0]?.validationStrategies["criterion-1"]).toEqual({
+      kinds: ["test_run"],
+    });
+    expect(origins[1]?.validationStrategies["criterion-2"]).toEqual({
+      kinds: ["validator_verdict"],
+      note: "Captured before the vocabulary narrowed.",
+    });
+  });
+
+  it("throws a typed error on malformed origin-map strategy metadata", () => {
+    const definition = compileSpecExecutionPlan({
+      spec: { id: "spec-native-sdd", slug: "native-sdd", name: "Native SDD" },
+      revisionSnapshot: snapshot,
+      scope,
+      scopeHash: "scope-hash-malformed",
+      approvalRequired: false,
+    });
+    const malformed = {
+      ...definition,
+      tasks: definition.tasks.map((task) => ({
+        ...task,
+        metadata: {
+          ...task.metadata,
+          specValidationStrategies: JSON.stringify({
+            "criterion-1": { kinds: "not-a-list" },
+          }),
+        },
+      })),
+    };
+
+    expect(() => readCompiledOriginMap(malformed)).toThrow(
+      /specValidationStrategies/,
+    );
   });
 });
 

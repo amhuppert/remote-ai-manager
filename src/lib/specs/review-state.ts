@@ -4,6 +4,11 @@ import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecsRepoTransaction } from "@/lib/state-store/specs-repo";
 
+import {
+  bareElementHandleSchema,
+  formatBareElementHandle,
+  type BareElementHandle,
+} from "./handles";
 import type { Spec, SpecRevisionSnapshot } from "./schemas";
 import type {
   RevisionSnapshot as LintRevisionSnapshot,
@@ -12,26 +17,59 @@ import type {
 import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
 import type { SignOffReviewSnapshot } from "./transitions";
 
-function elementHandle(
+/**
+ * Renders through the handle module's formatter, so a number the grammar does
+ * not admit yields no handle rather than a string the handle parser rejects.
+ */
+function bareHandle(handle: BareElementHandle): string | null {
+  const parsed = bareElementHandleSchema.safeParse(handle);
+  return parsed.success ? formatBareElementHandle(parsed.data) : null;
+}
+
+/**
+ * The one derivation of an element's handle from a revision snapshot — which
+ * element gets which number. Returns null when the element has no addressable
+ * handle: sections, and rows whose own number (or whose parent requirement's
+ * number) was never allocated. Such elements are addressed by their element id
+ * instead.
+ */
+export function elementHandleInSnapshot(
   snapshot: SpecRevisionSnapshot,
   elementId: string,
-): string {
+): string | null {
   const row = snapshot.elements.find(({ element }) => element.id === elementId);
-  if (row === undefined) return elementId;
+  if (row === undefined) return null;
   const { element } = row;
-  if (element.kind === "section") return element.id;
+  if (element.kind === "section" || element.number === null) return null;
   if (element.kind === "criterion") {
     const parent = snapshot.elements.find(
       ({ element: candidate }) => candidate.id === element.parentElementId,
     )?.element;
-    return parent?.number === null || parent?.number === undefined
-      ? element.id
-      : `R${parent.number}.${element.number}`;
+    return parent === undefined || parent.number === null
+      ? null
+      : bareHandle({
+          kind: "criterion",
+          requirementNumber: parent.number,
+          criterionNumber: element.number,
+        });
   }
-  if (element.number === null) return element.id;
-  if (element.kind === "requirement") return `R${element.number}`;
-  if (element.kind === "decision") return `D${element.number}`;
-  return `T${element.number}`;
+  if (element.kind === "requirement") {
+    return bareHandle({
+      kind: "requirement",
+      requirementNumber: element.number,
+    });
+  }
+  if (element.kind === "decision") {
+    return bareHandle({ kind: "decision", number: element.number });
+  }
+  return bareHandle({ kind: "task", number: element.number });
+}
+
+function elementHandle(
+  snapshot: SpecRevisionSnapshot,
+  elementId: string,
+): string {
+  return elementHandleInSnapshot(snapshot, elementId) ?? elementId;
 }
 
 export function toLintSnapshot(
@@ -53,7 +91,13 @@ export function toLintSnapshot(
       continue;
     }
     const existing = assumptionsByElement.get(assumption.element_id) ?? [];
-    existing.push({ id: assumption.id, handle: `A${assumption.number}` });
+    existing.push({
+      id: assumption.id,
+      handle: formatBareElementHandle({
+        kind: "assumption",
+        number: assumption.number,
+      }),
+    });
     assumptionsByElement.set(assumption.element_id, existing);
   }
 
@@ -145,7 +189,7 @@ export function loadProposalState(
   );
   const assumptions = review.findAssumptionsBySpecId(spec.id).map((row) => ({
     assumptionId: row.id,
-    handle: `A${row.number}`,
+    handle: formatBareElementHandle({ kind: "assumption", number: row.number }),
     disposition: row.disposition,
   }));
   const materializedTasks = links
@@ -195,7 +239,7 @@ export function loadProposalState(
     approvedElements,
     questions: review.findQuestionsBySpecId(spec.id).map((row) => ({
       questionId: row.id,
-      handle: `Q${row.number}`,
+      handle: formatBareElementHandle({ kind: "question", number: row.number }),
       status: row.status,
     })),
     assumptions,

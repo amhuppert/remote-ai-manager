@@ -13,6 +13,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import BetterSqlite3 from "better-sqlite3";
+import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import { codexRunsToAgentRuns } from "./0006-codex-runs-to-agent-runs";
 
 type Db = InstanceType<typeof BetterSqlite3>;
@@ -260,7 +261,7 @@ describe("0006-codex-runs-to-agent-runs", () => {
         description TEXT NOT NULL
       );
       INSERT INTO schema_migrations (version, description)
-      VALUES (2, 'future breaking migration');
+      VALUES (${KNOWN_SCHEMA_VERSION + 1}, 'future breaking migration');
     `);
 
     await expect(runUp(db)).rejects.toThrow(/schema version|refus/i);

@@ -180,9 +180,26 @@ function renderRevisionMarkdown(
   ].join("\n\n");
 }
 
+/**
+ * The ordering contract the repository enforces, stated in the export so a
+ * reader of a bundle does not have to infer it from the rows (R24.12).
+ * `position` is one global order per revision — not a per-parent order — and
+ * nesting is read from the parent element alone.
+ */
+const ELEMENT_ORDERING_CONTRACT = {
+  scope: "revision",
+  sortKeys: ["position", "elementId"],
+  nesting: "parentElementId",
+  omittedPositionOnCreate: "append",
+} as const;
+
 function manifestFor(state: SpecExportState): unknown {
   return {
-    formatVersion: 1,
+    // 2 adds elementOrdering. `spec verify --against` compares whole bundles,
+    // so a format change makes an older bundle differ for a spec whose content
+    // never moved; the version is what tells those two cases apart.
+    formatVersion: 2,
+    elementOrdering: ELEMENT_ORDERING_CONTRACT,
     spec: state.spec,
     revisions: state.revisions.map(({ snapshot }) => {
       const handles = new Map(

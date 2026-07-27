@@ -1,12 +1,13 @@
+import { COMBINED_APPROVAL_DIAL } from "./schemas";
 import type {
+  ResolvedGateDial,
   SpecGate,
-  SpecGateDial,
   SpecGatePolicy,
   SpecGatePreset,
 } from "./schemas";
 
-export const COMBINED_APPROVAL_DIAL = "combined-approval";
-export type ResolvedGateDial = SpecGateDial | typeof COMBINED_APPROVAL_DIAL;
+export { COMBINED_APPROVAL_DIAL };
+export type { ResolvedGateDial };
 
 const PRESET_DIALS: Record<
   SpecGatePreset,
@@ -46,6 +47,19 @@ export function resolveDial(
   }
 
   return resolved;
+}
+
+/**
+ * The one answer to "does this dial make the transition a human act?". Gate
+ * asks for the approval per subject and the combined dial collapses them into
+ * one sign-off, but both still require a human; Notify and Off do not. Every
+ * surface that decides whether approvals are involved — the transition
+ * preconditions, the remaining-sequence projection, and the confirmation
+ * preview — reads it here, because a second copy would let the modal promise
+ * an operator something the server refuses.
+ */
+export function dialRequiresHumanApproval(dial: ResolvedGateDial): boolean {
+  return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
 }
 
 export function isExploratoryShippingRefused(policy: SpecGatePolicy): boolean {

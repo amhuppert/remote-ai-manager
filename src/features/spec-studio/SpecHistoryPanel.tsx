@@ -476,7 +476,7 @@ export function buildSpecHistory(
       label: `${gate} admitted by ${admissionBasisLabel(admission.basis)}`,
       detail:
         "This policy admission is not a human approval and remains auditable.",
-      occurredAt: admission.created_at,
+      occurredAt: admission.createdAt,
       href: null,
       priority: 40,
     });
@@ -491,10 +491,10 @@ export function buildSpecHistory(
       tone: presentation.tone,
       label: presentation.label,
       detail:
-        execution.session_name === null
+        execution.sessionName === null
           ? `Execution ${execution.id}`
-          : `Session ${execution.session_name}`,
-      occurredAt: execution.delivered_at ?? execution.created_at,
+          : `Session ${execution.sessionName}`,
+      occurredAt: execution.deliveredAt ?? execution.createdAt,
       href: null,
       priority: 35,
     });

@@ -10,6 +10,7 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+import { evidenceEvaluatedStateSchema } from "@/lib/specs/schemas";
 import {
   buildTraceabilityGraph,
   SpecEvidencePanel,
@@ -18,6 +19,7 @@ import {
   type CriterionProofView,
   type TraceabilityInput,
 } from "./SpecEvidenceLintTrace";
+import { executionViewFixture } from "./SpecControls.fixtures";
 
 const NOW = "2026-07-18T12:00:00.000Z";
 
@@ -41,12 +43,13 @@ function proofViews(): CriterionProofView[] {
             eventId: 7,
             contextId: "validation",
           }),
-          evaluated_state_json: JSON.stringify({
-            commitHash: "abc123",
-            relevantTreeHash: "tree123",
-            surfaceHash: null,
-            mergeCandidateRef: null,
-          }),
+          evaluated_state_json: JSON.stringify(
+            evidenceEvaluatedStateSchema.parse({
+              commitSha: "abc123",
+              relevantPaths: ["src/lib/alias.ts"],
+              relevantTreeHash: "tree123",
+            }),
+          ),
           producer_json: JSON.stringify({ kind: "agent" }),
           execution_id: "execution-1",
           source_event_id: 7,
@@ -75,7 +78,7 @@ function proofViews(): CriterionProofView[] {
       elementId: "criterion-2",
       handle: "R1.2",
       text: "The stale chip is visible.",
-      validationStrategy: { kinds: ["screenshot"] },
+      validationStrategy: { kinds: ["validator_verdict"] },
       evidence: [],
       verdicts: [],
       waiver: null,
@@ -97,7 +100,7 @@ function proofViews(): CriterionProofView[] {
       elementId: "criterion-4",
       handle: "R2.2",
       text: "Stale proof is distinguished from current proof.",
-      validationStrategy: { kinds: ["screenshot"] },
+      validationStrategy: { kinds: ["validator_verdict"] },
       evidence: [],
       verdicts: [
         {
@@ -121,7 +124,7 @@ function proofViews(): CriterionProofView[] {
       elementId: "criterion-5",
       handle: "R2.3",
       text: "A waiver is shown separately from proof.",
-      validationStrategy: { kinds: ["human_signoff"] },
+      validationStrategy: { kinds: ["validator_verdict"] },
       evidence: [],
       verdicts: [],
       waiver: {
@@ -206,7 +209,7 @@ describe("SpecEvidencePanel", () => {
     expect(
       within(pending).getByText("Nothing proves this criterion yet."),
     ).toBeTruthy();
-    expect(within(pending).getByText("Screenshot")).toBeTruthy();
+    expect(within(pending).getByText("Validator verdict")).toBeTruthy();
   });
 
   it("summarizes in-scope readiness and groups compact criterion states by requirement", () => {
@@ -385,24 +388,11 @@ describe("TraceabilityGraph", () => {
       },
     ],
     executions: [
-      {
-        id: "execution-1",
-        spec_id: "spec-1",
-        revision_id: "revision-1",
-        scope_json: JSON.stringify({
-          selectedTaskIds: ["task-1"],
-          selectedCriterionIds: ["criterion-1"],
-          exclusionDispositions: [],
-        }),
-        state: "running",
-        workflow_definition_id: "workflow-definition-1",
-        workflow_execution_id: "workflow-execution-1",
-        session_name: "native-sdd-run",
-        delivered_at: null,
-        abandoned_reason: null,
-        created_at: NOW,
-        updated_at: NOW,
-      },
+      executionViewFixture({
+        workflowExecutionId: "workflow-execution-1",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }),
     ],
     criteria: proofViews().slice(0, 1),
     findings: [

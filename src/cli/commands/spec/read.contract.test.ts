@@ -1,10 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+
+import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   createSpecRouteHandlers,
   type SpecRouteDeps,
 } from "@/lib/specs/route-handlers";
+import {
+  loadSpecExportState,
+  renderCanonicalBundle,
+  verifyExportState,
+  type CanonicalSpecBundle,
+} from "@/lib/specs/export";
 import { computeSpecMeasuresReport } from "@/lib/specs/measures";
+import { narrowEvidenceKinds } from "@/lib/state-store/migrations/0009-narrow-evidence-kinds";
+import { stableStringify } from "@/lib/state-store/serialization";
+import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
+import { createSpecsRepo } from "@/lib/state-store/specs-repo";
+import { _createTestDb } from "@/lib/state-store/state-db";
+import { createWriteQueue } from "@/lib/state-store/write-queue";
 import type {
   Spec,
   SpecApprovalRow,
@@ -16,6 +31,7 @@ import type {
   SpecQuestionRow,
   SpecRevision,
   SpecRevisionSnapshot,
+  SpecWaiverRow,
 } from "@/lib/specs/schemas";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
@@ -163,6 +179,78 @@ const snapshot: SpecRevisionSnapshot = {
   ],
 };
 
+// An approved predecessor whose requirements gate was admitted, so the draft
+// amendment above it can be shown as pending while its history stays visible.
+const approvedPredecessor: SpecRevision = {
+  id: "revision-0",
+  specId: spec.id,
+  number: 1,
+  state: "approved",
+  authoringStage: "requirements",
+  basedOnRevisionId: null,
+  contentHash: "approved-hash",
+  proposedAt: CREATED_AT,
+  approvedAt: CREATED_AT,
+  createdAt: CREATED_AT,
+};
+
+const priorRequirementsAdmission: SpecGateAdmissionRow = {
+  id: "admission-1",
+  spec_id: spec.id,
+  gate: "requirements",
+  basis: "human_approval",
+  approval_id: null,
+  revision_id: approvedPredecessor.id,
+  execution_id: null,
+  actor_json: JSON.stringify({ kind: "human" }),
+  created_at: CREATED_AT,
+};
+
+// A spec execution as `spec start` leaves it: compiled definition, parked at
+// definition review, no workflow lane behind it.
+const parkedExecution: SpecExecutionRow = {
+  id: "execution-1",
+  spec_id: spec.id,
+  revision_id: revision.id,
+  scope_json: JSON.stringify({
+    selectedTaskIds: ["task-1"],
+    selectedCriterionIds: ["criterion-1"],
+    exclusionDispositions: [],
+  }),
+  state: "definition_review",
+  workflow_definition_id: "workflow-def-1",
+  workflow_execution_id: null,
+  session_name: "feature-session",
+  delivered_at: null,
+  abandoned_reason: null,
+  created_at: CREATED_AT,
+  updated_at: CREATED_AT,
+};
+
+// The state `awaitingDefinitionApproval` leaves behind: the workflow execution
+// is linked precisely because the compiled definition is parked for a human.
+const definitionApprovalExecution: SpecExecutionRow = {
+  ...parkedExecution,
+  id: "execution-2",
+  workflow_execution_id: "workflow-execution-9",
+};
+
+const runningExecution: SpecExecutionRow = {
+  ...parkedExecution,
+  id: "execution-3",
+  state: "running",
+  workflow_execution_id: "workflow-execution-3",
+};
+
+// A run pinned to the approved predecessor. The detail view scopes gate
+// admissions to the revisions its runs pinned, so an admission is only
+// reportable when some run pins the revision it was recorded against.
+const predecessorExecution: SpecExecutionRow = {
+  ...parkedExecution,
+  id: "execution-4",
+  revision_id: approvedPredecessor.id,
+};
+
 const question: SpecQuestionRow = {
   id: "question-1",
   spec_id: spec.id,
@@ -206,6 +294,54 @@ const bundle = {
   manifest: '{"formatVersion":1,"spec":{"slug":"native-sdd"}}\n',
 };
 
+// A second spec in the same project, under a different preset, so a
+// project-wide search has more than one spec to reconcile and the per-hit
+// preset cannot be read off the first spec by accident.
+const siblingSpec: Spec = {
+  ...spec,
+  id: "spec-2",
+  slug: "audit-log",
+  name: "Audit Log",
+  gatePolicy: { preset: "fast-path" },
+};
+
+const siblingRevision: SpecRevision = {
+  ...revision,
+  id: "revision-2",
+  specId: siblingSpec.id,
+};
+
+const siblingSnapshot: SpecRevisionSnapshot = {
+  revision: siblingRevision,
+  elements: [
+    {
+      element: {
+        id: "requirement-2",
+        specId: siblingSpec.id,
+        kind: "requirement",
+        number: 1,
+        parentElementId: null,
+        createdAt: CREATED_AT,
+      },
+      version: {
+        revisionId: siblingRevision.id,
+        elementId: "requirement-2",
+        position: 0,
+        payload: {
+          kind: "requirement",
+          statement: "Durable audit entries survive a restart.",
+          priority: "must",
+          risk: "medium",
+        },
+        payloadHash: "requirement-2-hash",
+        elementVersion: 1,
+        createdAt: CREATED_AT,
+        updatedAt: CREATED_AT,
+      },
+    },
+  ],
+};
+
 function createDeps(): SpecRouteDeps {
   return {
     async resolveProjectPath(name) {
@@ -235,7 +371,7 @@ function createDeps(): SpecRouteDeps {
     findCommentsByRevision() {
       return [];
     },
-    findGateAdmissionsByRevision() {
+    findGateAdmissionsBySpecId() {
       return [] as SpecGateAdmissionRow[];
     },
     findLinksBySpecId() {
@@ -260,7 +396,17 @@ function createDeps(): SpecRouteDeps {
       return [];
     },
     async reconcileExecution(_projectPath, execution) {
-      return execution;
+      // Mirrors production: a linked lane parked at definition review reports
+      // the workflow's pre-start status; an unlinked run has no lane at all.
+      return {
+        execution,
+        workflowStatus:
+          execution.workflow_execution_id === null
+            ? null
+            : execution.state === "definition_review"
+              ? ("pending" as const)
+              : ("running" as const),
+      };
     },
     async ingestExecutionEvidenceBestEffort() {},
     findCriterionDispositionsByExecution() {
@@ -274,6 +420,12 @@ function createDeps(): SpecRouteDeps {
     },
     findWaiverForCriterionRevision() {
       return null;
+    },
+    findWaiverById() {
+      return null;
+    },
+    findWaiversByRevision() {
+      return [] as SpecWaiverRow[];
     },
     async exportSpec() {
       return bundle;
@@ -307,6 +459,22 @@ function makeHost(
     files?: Record<string, string>;
     tampered?: boolean;
     measuresSlug?: boolean;
+    /** Seed an approved predecessor whose requirements gate was admitted. */
+    priorAdmission?: boolean;
+    executions?: readonly SpecExecutionRow[];
+    /** Workflow lane status the reconcile read reports, keyed by execution. */
+    laneStatus?: Record<
+      string,
+      "pending" | "running" | "paused" | "completed" | "halted" | "aborted"
+    >;
+    /** Seed a second spec so project-wide search spans more than one. */
+    sibling?: boolean;
+    /** Pin the seeded draft at this authoring stage. */
+    draftStage?: SpecRevision["authoringStage"];
+    /** Gate preset the seeded spec carries. */
+    preset?: Spec["gatePolicy"]["preset"];
+    /** Freeze the seeded revision as proposed, so no draft is open. */
+    proposed?: boolean;
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -315,13 +483,72 @@ function makeHost(
   const requests: RecordedRequest[] = [];
   const written = new Map<string, string>();
   const baseDeps = createDeps();
+  const amendedDraft: SpecRevision = {
+    ...revision,
+    number: 2,
+    basedOnRevisionId: approvedPredecessor.id,
+  };
+  const stagedRevision: SpecRevision = {
+    ...revision,
+    ...(options.draftStage === undefined
+      ? {}
+      : { authoringStage: options.draftStage }),
+    ...(options.proposed === true
+      ? { state: "proposed" as const, proposedAt: CREATED_AT }
+      : {}),
+  };
+  const seededSpec: Spec =
+    options.preset === undefined
+      ? spec
+      : { ...spec, gatePolicy: { preset: options.preset } };
   const handlers = createSpecRouteHandlers({
     ...baseDeps,
-    async resolveSpec(projectPath, slug) {
+    async listSpecs() {
+      return options.sibling ? [seededSpec, siblingSpec] : [seededSpec];
+    },
+    async resolveSpec(_projectPath, slug) {
       if (options.measuresSlug && slug === "measures") {
-        return { ...spec, slug: "measures" };
+        return { ...seededSpec, slug: "measures" };
       }
-      return baseDeps.resolveSpec(projectPath, slug);
+      if (options.sibling && slug === siblingSpec.slug) return siblingSpec;
+      return slug === seededSpec.slug ? seededSpec : null;
+    },
+    async listRevisions(specId) {
+      if (options.sibling && specId === siblingSpec.id) {
+        return [siblingRevision];
+      }
+      return options.priorAdmission
+        ? [approvedPredecessor, amendedDraft]
+        : [stagedRevision];
+    },
+    async getRevisionSnapshot(revisionId) {
+      if (options.sibling && revisionId === siblingRevision.id) {
+        return siblingSnapshot;
+      }
+      if (!options.priorAdmission) {
+        return revisionId === revision.id
+          ? { ...snapshot, revision: stagedRevision }
+          : null;
+      }
+      if (revisionId === approvedPredecessor.id) {
+        return { revision: approvedPredecessor, elements: [] };
+      }
+      return revisionId === revision.id
+        ? { ...snapshot, revision: amendedDraft }
+        : null;
+    },
+    findGateAdmissionsBySpecId() {
+      return options.priorAdmission ? [priorRequirementsAdmission] : [];
+    },
+    findExecutionsBySpecId() {
+      return [...(options.executions ?? [])];
+    },
+    async reconcileExecution(_projectPath, execution) {
+      const base = await baseDeps.reconcileExecution(_projectPath, execution);
+      const override = options.laneStatus?.[execution.id];
+      return override === undefined
+        ? base
+        : { ...base, workflowStatus: override };
     },
     async verifySpec() {
       return options.tampered
@@ -367,6 +594,14 @@ function makeHost(
       const context = { params: Promise.resolve({ name, slug }) };
 
       if (slug === "") return handlers.listSpecsGET(request, context);
+      // Project-scoped reads sit under the `-` namespace. A static sibling of
+      // [slug] would win over it and make a spec of that same slug unreachable;
+      // `-` is not a legal slug, so nothing can collide with it.
+      if (slug === "-" && tail === "search") {
+        return handlers.searchProjectSpecsGET(request, {
+          params: Promise.resolve({ name }),
+        });
+      }
       if (tail === "summary")
         return handlers.getSpecSummaryGET(request, context);
       if (tail === "status") return handlers.getSpecStatusGET(request, context);
@@ -437,6 +672,66 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
+  it("shows executions and gate admissions in the domain shape without losing state or workflow linkage", async () => {
+    const host = makeHost({
+      executions: [predecessorExecution],
+      priorAdmission: true,
+    });
+    const result = await runCli(
+      ["spec", "show", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const detail = JSON.parse(result.stdout).spec;
+    // state + workflow linkage are what make a parked run diagnosable; the
+    // scope arrives as the object it is, never as a JSON string to re-parse.
+    expect(detail.executions).toEqual([
+      {
+        id: "execution-4",
+        specId: spec.id,
+        revisionId: approvedPredecessor.id,
+        revisionNumber: 1,
+        state: "definition_review",
+        workflowDefinitionId: "workflow-def-1",
+        workflowExecutionId: null,
+        scope: {
+          selectedTaskIds: ["task-1"],
+          selectedCriterionIds: ["criterion-1"],
+          exclusionDispositions: [],
+        },
+        sessionName: "feature-session",
+        deliveredAt: null,
+        abandonedReason: null,
+        createdAt: CREATED_AT,
+        updatedAt: CREATED_AT,
+        // This fixture serves no snapshot for the pinned revision, so the
+        // per-criterion projection is honestly empty rather than guessed.
+        deliveryProjection: [],
+      },
+    ]);
+    expect(detail.gateAdmissions).toEqual([
+      {
+        id: "admission-1",
+        specId: spec.id,
+        gate: "requirements",
+        basis: "human_approval",
+        approvalId: null,
+        revisionId: approvedPredecessor.id,
+        revisionNumber: 1,
+        executionId: null,
+        actor: { kind: "human" },
+        createdAt: CREATED_AT,
+      },
+    ]);
+    const snakeCased = [...detail.executions, ...detail.gateAdmissions].flatMap(
+      (row: Record<string, unknown>) =>
+        Object.keys(row).filter((key) => key.includes("_")),
+    );
+    expect(snakeCased).toEqual([]);
+  });
+
   it("keeps the measures project endpoint distinct from a legal measures spec slug", async () => {
     const host = makeHost({ measuresSlug: true });
     const shown = await runCli(
@@ -496,6 +791,80 @@ describe("cctl spec read verbs against seeded read routes", () => {
     ]);
   });
 
+  it("renders every remaining authoring stage and its concluding gate", async () => {
+    const host = makeHost({ draftStage: "requirements" });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // "this spec still walks three stages" must be readable here rather than
+    // inferred from transitions.ts.
+    expect(text.stdout).toContain(
+      "remaining authoring stages (draft revision 1 pinned at requirements):",
+    );
+    expect(text.stdout).toContain(
+      "  requirements: dial gate — concluded by propose, human sign-off required",
+    );
+    expect(text.stdout).toContain(
+      "  design: dial gate — concluded by propose, human sign-off required",
+    );
+    expect(text.stdout).toContain(
+      "  plan: dial gate — concluded by propose, human sign-off required",
+    );
+    expect(text.stdout).toContain(
+      "  next: cctl spec propose native-sdd — human sign-off required; gates consulted: requirements (gate)",
+    );
+
+    expect(
+      JSON.parse(structured.stdout).status.authoringSequence,
+    ).toMatchObject({
+      pinnedStage: "requirements",
+      stages: [
+        { stage: "requirements", concludedBy: "propose" },
+        { stage: "design", concludedBy: "propose" },
+        { stage: "plan", concludedBy: "propose" },
+      ],
+      nextTransition: { stage: "requirements", action: "propose" },
+    });
+  });
+
+  it("names the advance command for a stage its dial concludes without review", async () => {
+    const host = makeHost({
+      draftStage: "requirements",
+      preset: "exploratory",
+    });
+    const result = await runCli(
+      ["spec", "status", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "  requirements: dial notify — concluded by advance",
+    );
+    expect(result.stdout).toContain(
+      "  next: cctl spec advance native-sdd --from requirements",
+    );
+  });
+
+  it("says no draft is open rather than implying a stage sequence", async () => {
+    const result = await runCli(
+      ["spec", "status", "native-sdd"],
+      baseEnv,
+      makeHost({ proposed: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "remaining authoring stages: none — the current revision is not an open draft",
+    );
+  });
+
   it("renders plan graph facts in status text", async () => {
     const result = await runCli(
       ["spec", "status", "native-sdd"],
@@ -514,6 +883,207 @@ describe("cctl spec read verbs against seeded read routes", () => {
       "touched surfaces: src/cli/commands/spec/read.contract.test.ts",
     );
     expect(result.stdout).toContain("criterion coverage: R1.1");
+  });
+
+  it("qualifies an executing phase whose executions have launched no workflow lane", async () => {
+    const host = makeHost({ executions: [parkedExecution] });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "phase: executing (1 execution parked with no workflow lane launched)",
+    );
+    // The park is its own line, not something to infer from the gate block.
+    expect(text.stdout).toContain(
+      "execution-1: definition_review — no workflow lane launched",
+    );
+    expect(text.stdout).toContain("cctl workflow start workflow-def-1");
+
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      executions: [
+        {
+          id: "execution-1",
+          state: "definition_review",
+          workflowDefinitionId: "workflow-def-1",
+          workflowExecutionId: null,
+          laneState: "not_launched",
+          actsNext: "agent",
+        },
+      ],
+    });
+  });
+
+  it("reports a definition-review run whose lane is linked as parked for a human, not running", async () => {
+    const host = makeHost({ executions: [definitionApprovalExecution] });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // Linking the lane is what parks the compiled definition for a human, so
+    // linkage alone must never be reported as progress.
+    expect(text.stdout).not.toMatch(/workflow lanes? running/);
+    expect(text.stdout).toContain(
+      "phase: executing (1 execution parked awaiting human approval of the compiled definition)",
+    );
+    expect(text.stdout).toContain(
+      "execution-2: definition_review — parked awaiting human approval of the compiled definition (workflow lane workflow-execution-9 is not running); next: a human approves it in Spec Studio",
+    );
+
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      executions: [
+        {
+          id: "execution-2",
+          state: "definition_review",
+          workflowDefinitionId: "workflow-def-1",
+          workflowExecutionId: "workflow-execution-9",
+          laneState: "awaiting_definition_approval",
+          actsNext: "human",
+        },
+      ],
+    });
+  });
+
+  it("counts only running spec executions as running lanes", async () => {
+    const host = makeHost({
+      executions: [runningExecution, definitionApprovalExecution],
+    });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "phase: executing (1 workflow lane running, 1 execution parked awaiting human approval of the compiled definition)",
+    );
+    expect(text.stdout).toContain(
+      "execution-3: running — workflow lane workflow-execution-3",
+    );
+  });
+
+  it("reports a running execution whose workflow lane completed as awaiting the delivering merge", async () => {
+    const host = makeHost({
+      executions: [runningExecution],
+      laneStatus: { "execution-3": "completed" },
+    });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // The lane finished; calling it running hides that only the session's
+    // delivering merge remains.
+    expect(text.stdout).not.toMatch(/workflow lanes? running/);
+    expect(text.stdout).toContain(
+      "phase: executing (1 workflow lane completed awaiting the delivering merge)",
+    );
+    expect(text.stdout).toContain(
+      "execution-3: running — workflow lane workflow-execution-3 completed; delivery lands when the session's delivering merge publishes",
+    );
+
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      executions: [
+        {
+          id: "execution-3",
+          state: "running",
+          workflowStatus: "completed",
+          laneState: "merge_pending",
+        },
+      ],
+    });
+  });
+
+  it("reports a halted workflow lane as needing attention, not running", async () => {
+    const host = makeHost({
+      executions: [runningExecution],
+      laneStatus: { "execution-3": "halted" },
+    });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).not.toMatch(/workflow lanes? running/);
+    expect(text.stdout).toContain(
+      "phase: executing (1 workflow lane halted awaiting attention)",
+    );
+    expect(text.stdout).toContain(
+      "execution-3: running — workflow lane workflow-execution-3 halted; resolve the halt from the workflow surface, then resume it",
+    );
+  });
+
+  it("reads executions off the status projection without a second detail request", async () => {
+    const host = makeHost({ executions: [definitionApprovalExecution] });
+    const result = await runCli(
+      ["spec", "status", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/status",
+    ]);
+  });
+
+  it("omits the executions section for a spec with no active run", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "status", "native-sdd"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("phase: draft");
+    expect(result.stdout).not.toContain("executions:");
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/status",
+    ]);
+  });
+
+  it("reads a gate as pending on the current revision and its earlier admission as history", async () => {
+    const host = makeHost({ priorAdmission: true });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "requirements: pending on current revision (gate)",
+    );
+    expect(text.stdout).toContain(
+      "    history: admitted on rev 1 by human (basis human_approval)",
+    );
+    // A prior revision's admission must never read as today's gate state.
+    expect(text.stdout).not.toMatch(/requirements: admitted/);
+
+    const gates = JSON.parse(structured.stdout).status.gates as Array<{
+      gate: string;
+      state: string;
+      priorAdmissions: Array<{ revisionNumber: number; basis: string }>;
+    }>;
+    const requirements = gates.find((gate) => gate.gate === "requirements");
+    expect(requirements?.state).toBe("pending");
+    expect(requirements?.priorAdmissions).toEqual([
+      expect.objectContaining({ revisionNumber: 1, basis: "human_approval" }),
+    ]);
   });
 
   it("gets qualified and bare element handles", async () => {
@@ -612,6 +1182,104 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(JSON.parse(result.stdout).search.results).toEqual([
       expect.objectContaining({ handle: "R1", kind: "requirement" }),
     ]);
+    expect(JSON.parse(result.stdout).scope).toBe("spec");
+  });
+
+  it("searches every spec in the project under --all", async () => {
+    const host = makeHost({ sibling: true });
+    const result = await runCli(
+      ["spec", "search", "--all", "durable", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    // Namespaced under `-` so the route cannot shadow a spec slugged "search".
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/specs/demo/-/search",
+    );
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.scope).toBe("project");
+    expect(envelope.search.results).toEqual([
+      expect.objectContaining({
+        slug: "audit-log",
+        name: "Audit Log",
+        preset: "fast-path",
+        matchCount: 1,
+      }),
+      expect.objectContaining({
+        slug: "native-sdd",
+        name: "Native SDD",
+        preset: "contract-bearing",
+        matchCount: 1,
+      }),
+    ]);
+  });
+
+  it("reports slug, title, phase, preset, and a match summary per hit in text", async () => {
+    const result = await runCli(
+      ["spec", "search", "--all", "durable"],
+      baseEnv,
+      makeHost({ sibling: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "audit-log\tdraft\tfast-path\t1 element match\tAudit Log",
+    );
+    expect(result.stdout).toContain(
+      "native-sdd\tdraft\tcontract-bearing\t1 element match\tNative SDD",
+    );
+    expect(result.stdout).toContain(
+      "  R1\trequirement\tSpecs are durable product objects.",
+    );
+  });
+
+  it("reports a slug-or-name-only hit as a hit with no element matches", async () => {
+    const result = await runCli(
+      ["spec", "search", "--all", "audit-log"],
+      baseEnv,
+      makeHost({ sibling: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      "audit-log\tdraft\tfast-path\tname or slug match, 0 element matches\tAudit Log",
+    );
+  });
+
+  it("says no matches rather than printing an empty project-wide result", async () => {
+    const result = await runCli(
+      ["spec", "search", "--all", "nothing-matches-this"],
+      baseEnv,
+      makeHost({ sibling: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("no matches");
+  });
+
+  it("refuses --all with a slug, naming both search shapes", async () => {
+    const result = await runCli(
+      ["spec", "search", "--all", "native-sdd", "durable"],
+      baseEnv,
+      makeHost({ sibling: true }),
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("cctl spec search --all <query>");
+    expect(result.stderr).toContain("cctl spec search <slug> <query>");
+  });
+
+  it("names the project-wide shape when a bare query has no slug", async () => {
+    const result = await runCli(
+      ["spec", "search", "durable"],
+      baseEnv,
+      makeHost({ sibling: true }),
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("cctl spec search --all <query>");
   });
 
   it("exports the canonical bundle and writes --out", async () => {
@@ -672,6 +1340,71 @@ describe("cctl spec read verbs against seeded read routes", () => {
     });
   });
 
+  it("states the handle grammar when spec get is given an element id", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "get", "native-sdd/requirement-1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("looks like an element id");
+    expect(result.stderr).toContain("R<n>.<m> for a criterion");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("names the missing slug when spec get is given a bare handle", async () => {
+    const host = makeHost();
+    const result = await runCli(["spec", "get", "R1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(2);
+    // R1 is a valid handle; only the slug this command needs is absent, so the
+    // refusal must not deny the grammar it then quotes back as an example.
+    expect(result.stderr).not.toContain("is not a valid element handle");
+    expect(result.stderr).toContain("missing its spec slug");
+    expect(result.stderr).toContain("<slug>/R1");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  // The project-wide search route used to sit beside [slug] as a static
+  // `search` segment, which Next resolves first — so this read reached the
+  // search handler and got a 200 the detail parser rejected as
+  // `invalid_response`. Under the `-` namespace the slug reaches its own route.
+  it("reads a spec slugged 'search' as a spec rather than the project search route", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "show", "search", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(new URL(host.requests[0]?.url ?? "").pathname).toBe(
+      "/api/specs/demo/search",
+    );
+    expect(result.stderr).not.toContain("invalid_response");
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: false,
+      error: "Spec not found",
+    });
+  });
+
+  it("refuses an invalid slug positional on spec get instead of throwing", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      ["spec", "get", "Bad_Slug", "R1"],
+      baseEnv,
+      host,
+    );
+
+    // The handle grammar is probed against a stand-in slug, so the caller's own
+    // slug has to be validated separately or it reaches the parser unchecked.
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("invalid spec slug");
+    expect(result.stderr).not.toContain("Invalid spec slug:");
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("rejects malformed slugs, handles, and --against files before network", async () => {
     const host = makeHost({ files: { "/tmp/bad.json": "not json" } });
     for (const argv of [
@@ -694,5 +1427,515 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(group.stdout).toContain("spec get");
     expect(leaf.stdout).toContain("cctl spec get <slug>/<handle>");
     expect(host.requests).toHaveLength(0);
+  });
+
+  it("names gate policy as mutable and human-only in the spec family help", async () => {
+    const host = makeHost();
+    const group = await runCli(["spec", "--help"], baseEnv, host);
+
+    expect(group.exitCode).toBe(0);
+    expect(group.stdout).toContain("Spec Studio");
+    expect(group.stdout).toContain("human_act_required");
+    expect(group.stdout).toMatch(/gate policy/i);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("teaches the two-step start lifecycle in spec start help", async () => {
+    const host = makeHost();
+    const start = await runCli(["spec", "start", "--help"], baseEnv, host);
+
+    expect(start.exitCode).toBe(0);
+    expect(start.stdout).toContain("definition_review");
+    expect(start.stdout).toContain("cctl workflow start");
+    expect(start.stdout).toContain("workflow start");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("separates the human-only whole-spec abandon from the agent-reachable execution abandon", async () => {
+    const host = makeHost();
+    const abandon = await runCli(["spec", "abandon", "--help"], baseEnv, host);
+
+    expect(abandon.exitCode).toBe(0);
+    expect(abandon.stdout).toContain("human_act_required");
+    expect(abandon.stdout).toContain("--execution");
+    expect(abandon.stdout).toMatch(/Spec Studio/);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("disambiguates capture from amend in both commands' help", async () => {
+    const host = makeHost();
+    const capture = await runCli(["spec", "capture", "--help"], baseEnv, host);
+    const amend = await runCli(["spec", "amend", "--help"], baseEnv, host);
+
+    expect(capture.exitCode).toBe(0);
+    expect(capture.stdout).toMatch(/during a running execution/i);
+    expect(capture.stdout).toContain("spec amend");
+
+    expect(amend.exitCode).toBe(0);
+    expect(amend.stdout).toMatch(/after .*approv/i);
+    expect(amend.stdout).toContain("spec capture");
+    expect(host.requests).toHaveLength(0);
+  });
+});
+
+/**
+ * The export -> migrate -> verify contract, persistence-backed (design.md §6):
+ * a real pre-narrowing SQLite world, the real 0009 migration, and the real
+ * export/verify boundary behind the real routes — not simulated bundles. The
+ * frozen legacy seed below matches what an old build persisted; the current
+ * build's strict read path cannot load it, which is pinned explicitly and is
+ * why the affected spec's OLD bundle is reconstructed from the frozen seed
+ * values rather than exported live.
+ */
+describe("cctl spec verify --against across migration 0009", () => {
+  const LEGACY_PROJECT = "/repos/legacy-cli";
+  const AFFECTED_SPEC_ID = "spec-affected-cli";
+  const CLEAN_SPEC_ID = "spec-clean-cli";
+  const AFFECTED_REVISION_ID = "revision-affected-cli";
+  const CLEAN_REVISION_ID = "revision-clean-cli";
+  const AT = "2026-07-01T00:00:00.000Z";
+  const NOTE_MARKER =
+    "[migration 0009] Evidence kinds screenshot could not machine-prove this criterion after the vocabulary narrowed; a validator verdict is now required.";
+
+  const LEGACY_CRITERION_PAYLOAD = {
+    kind: "criterion",
+    text: "The exported bundle stays canonical.",
+    validationStrategy: { kinds: ["screenshot"] },
+  };
+
+  interface LegacyElement {
+    id: string;
+    kind: "requirement" | "criterion";
+    number: number;
+    parentElementId: string | null;
+    position: number;
+    payload: Record<string, unknown>;
+  }
+
+  const AFFECTED_ELEMENTS: LegacyElement[] = [
+    {
+      id: "requirement-affected",
+      kind: "requirement",
+      number: 1,
+      parentElementId: null,
+      position: 0,
+      payload: {
+        kind: "requirement",
+        statement: "Legacy strategies narrow without losing integrity.",
+        priority: "must",
+        risk: "medium",
+      },
+    },
+    {
+      id: "criterion-affected",
+      kind: "criterion",
+      number: 1,
+      parentElementId: "requirement-affected",
+      position: 1,
+      payload: LEGACY_CRITERION_PAYLOAD,
+    },
+  ];
+
+  const CLEAN_ELEMENTS: LegacyElement[] = [
+    {
+      id: "requirement-clean",
+      kind: "requirement",
+      number: 1,
+      parentElementId: null,
+      position: 0,
+      payload: {
+        kind: "requirement",
+        statement: "Untouched specs keep matching their old bundles.",
+        priority: "must",
+        risk: "low",
+      },
+    },
+    {
+      id: "criterion-clean",
+      kind: "criterion",
+      number: 1,
+      parentElementId: "requirement-clean",
+      position: 1,
+      payload: {
+        kind: "criterion",
+        text: "The clean bundle round-trips.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+    },
+  ];
+
+  function sha256(value: unknown): string {
+    return createHash("sha256").update(stableStringify(value)).digest("hex");
+  }
+
+  function contentHashOf(elements: readonly LegacyElement[]): string {
+    return sha256({
+      authoringStage: "plan",
+      elements: elements.map((element) => ({
+        elementId: element.id,
+        kind: element.kind,
+        number: element.number,
+        parentElementId: element.parentElementId,
+        position: element.position,
+        payload: element.payload,
+      })),
+    });
+  }
+
+  type Db = ReturnType<typeof _createTestDb>;
+  const openDbs: Db[] = [];
+
+  afterEach(() => {
+    while (openDbs.length > 0) openDbs.pop()?.close();
+  });
+
+  function seedLegacyCliWorld(): Db {
+    const db = _createTestDb({ inMemory: true });
+    openDbs.push(db);
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
+      LEGACY_PROJECT,
+    );
+    const insertSpec = db.prepare(
+      `INSERT INTO specs (
+         id, project_path, slug, name, gate_policy_json,
+         abandoned_at, abandoned_reason, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, '{"preset":"contract-bearing"}', NULL, NULL, ?, ?)`,
+    );
+    insertSpec.run(
+      AFFECTED_SPEC_ID,
+      LEGACY_PROJECT,
+      "legacy-evidence",
+      "Legacy evidence",
+      AT,
+      AT,
+    );
+    insertSpec.run(
+      CLEAN_SPEC_ID,
+      LEGACY_PROJECT,
+      "clean-spec",
+      "Clean spec",
+      AT,
+      AT,
+    );
+    const insertRevision = db.prepare(
+      `INSERT INTO spec_revisions (
+         id, spec_id, number, state, authoring_stage, based_on_revision_id,
+         content_hash, proposed_at, approved_at, created_at
+       ) VALUES (?, ?, 1, 'approved', 'plan', NULL, ?, ?, ?, ?)`,
+    );
+    insertRevision.run(
+      AFFECTED_REVISION_ID,
+      AFFECTED_SPEC_ID,
+      contentHashOf(AFFECTED_ELEMENTS),
+      AT,
+      AT,
+      AT,
+    );
+    insertRevision.run(
+      CLEAN_REVISION_ID,
+      CLEAN_SPEC_ID,
+      contentHashOf(CLEAN_ELEMENTS),
+      AT,
+      AT,
+      AT,
+    );
+    const insertElement = db.prepare(
+      `INSERT INTO spec_elements (
+         id, spec_id, kind, number, parent_element_id, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const insertVersion = db.prepare(
+      `INSERT INTO spec_element_versions (
+         revision_id, element_id, position, payload_json, payload_hash,
+         element_version, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+    );
+    for (const [specId, revisionId, elements] of [
+      [AFFECTED_SPEC_ID, AFFECTED_REVISION_ID, AFFECTED_ELEMENTS],
+      [CLEAN_SPEC_ID, CLEAN_REVISION_ID, CLEAN_ELEMENTS],
+    ] as const) {
+      for (const element of elements) {
+        insertElement.run(
+          element.id,
+          specId,
+          element.kind,
+          element.number,
+          element.parentElementId,
+          AT,
+        );
+        insertVersion.run(
+          revisionId,
+          element.id,
+          element.position,
+          stableStringify(element.payload),
+          sha256(element.payload),
+          AT,
+          AT,
+        );
+      }
+    }
+    return db;
+  }
+
+  function makePersistenceHost(
+    db: Db,
+    files: Map<string, string>,
+  ): CliHost & { written: Map<string, string> } {
+    const specs = createSpecsRepo(db, createWriteQueue());
+    const review = createSpecReviewRepo(db);
+    const exportDeps = { specs, review };
+    const handlers = createSpecRouteHandlers({
+      ...createDeps(),
+      async resolveProjectPath(name) {
+        return name === "demo" ? LEGACY_PROJECT : null;
+      },
+      listSpecs: () => specs.listByProject(LEGACY_PROJECT),
+      async resolveSpec(_projectPath, slug) {
+        const all = await specs.listByProject(LEGACY_PROJECT);
+        return all.find((candidate) => candidate.slug === slug) ?? null;
+      },
+      async exportSpec(specId) {
+        return renderCanonicalBundle(
+          await loadSpecExportState(exportDeps, specId),
+        );
+      },
+      async verifySpec(specId) {
+        return verifyExportState(await loadSpecExportState(exportDeps, specId));
+      },
+    });
+    const written = new Map<string, string>();
+    return {
+      written,
+      async fetch(url, init) {
+        const segments = new URL(url).pathname.split("/").filter(Boolean);
+        const name = decodeURIComponent(segments[2] ?? "");
+        const slug = decodeURIComponent(segments[3] ?? "");
+        const tail = segments[4];
+        const request = new Request(url, {
+          method: init.method,
+          headers: init.headers,
+        });
+        const context = { params: Promise.resolve({ name, slug }) };
+        if (tail === "export") {
+          return handlers.getSpecExportGET(request, context);
+        }
+        if (tail === "verify") {
+          return handlers.getSpecVerifyGET(request, context);
+        }
+        throw new Error(`unexpected route in migration contract test: ${url}`);
+      },
+      async readTextFile(filePath) {
+        return files.get(filePath) ?? null;
+      },
+      async readFileBytes() {
+        return null;
+      },
+      async writeTextFile(filePath, content) {
+        written.set(filePath, content);
+      },
+      async sleep() {},
+      platform: "darwin",
+      homedir: "/Users/test",
+    };
+  }
+
+  const bundleShapeSchema = z
+    .object({
+      markdownFiles: z.array(
+        z.object({ path: z.string(), content: z.string() }).strict(),
+      ),
+      manifest: z.string(),
+    })
+    .strict();
+
+  const manifestShapeSchema = z
+    .object({
+      formatVersion: z.number(),
+      revisions: z.array(
+        z
+          .object({
+            contentHash: z.string().nullable(),
+            elements: z.array(
+              z.object({ id: z.string(), payloadHash: z.string() }).loose(),
+            ),
+          })
+          .loose(),
+      ),
+    })
+    .loose();
+
+  /**
+   * Reconstruct the bundle an old build exported for the frozen legacy seed.
+   * The bundle FORMAT is unchanged by the migration (formatVersion stays 2 —
+   * the content changed, not the manifest shape), so the old bytes differ from
+   * the current export only where migration 0009 rewrote persisted content:
+   * the criterion's strategy payload, its payload hash, and the revision
+   * content hash. Every patched value comes from the frozen seed constants
+   * and the frozen hash helper — nothing is invented.
+   */
+  function reconstructPreNarrowingBundle(
+    current: CanonicalSpecBundle,
+  ): CanonicalSpecBundle {
+    const legacyContentHash = contentHashOf(AFFECTED_ELEMENTS);
+    const manifest = manifestShapeSchema.parse(JSON.parse(current.manifest));
+    expect(manifest.formatVersion).toBe(2);
+    const revision = manifest.revisions[0];
+    if (revision === undefined) throw new Error("manifest revision missing");
+    const migratedContentHash = revision.contentHash;
+    if (migratedContentHash === null) throw new Error("content hash missing");
+    revision.contentHash = legacyContentHash;
+    const criterionEntry = revision.elements.find(
+      (element) => element.id === "criterion-affected",
+    );
+    if (criterionEntry === undefined) throw new Error("criterion missing");
+    criterionEntry["payload"] = LEGACY_CRITERION_PAYLOAD;
+    criterionEntry.payloadHash = sha256(LEGACY_CRITERION_PAYLOAD);
+
+    const markdownFiles = current.markdownFiles.map((file) => {
+      expect(file.content).toContain(
+        `Validation strategy: validator_verdict\n\n${NOTE_MARKER}`,
+      );
+      expect(file.content).toContain(`- Content hash: ${migratedContentHash}`);
+      const content = file.content
+        .replace(
+          `Validation strategy: validator_verdict\n\n${NOTE_MARKER}`,
+          "Validation strategy: screenshot",
+        )
+        .replace(
+          `- Content hash: ${migratedContentHash}`,
+          `- Content hash: ${legacyContentHash}`,
+        );
+      expect(content).not.toContain(NOTE_MARKER);
+      return { ...file, content };
+    });
+    return { markdownFiles, manifest: `${stableStringify(manifest)}\n` };
+  }
+
+  it("proves affected old bundles mismatch at exit 1 while unaffected old bundles still match", async () => {
+    const db = seedLegacyCliWorld();
+    const files = new Map<string, string>();
+    const host = makePersistenceHost(db, files);
+    const specs = createSpecsRepo(db, createWriteQueue());
+    const review = createSpecReviewRepo(db);
+
+    // (1) Export the old bundles. The unaffected spec exports through the
+    // real boundary; the affected spec CANNOT — the strict read path refuses
+    // pre-narrowing rows, so a current build can never re-render the old
+    // bytes. That refusal is the reason its old bundle is reconstructed from
+    // the frozen seed after migration.
+    const cleanExport = await runCli(
+      [
+        "spec",
+        "export",
+        "clean-spec",
+        "--out",
+        "/tmp/clean-old.json",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(cleanExport.exitCode).toBe(0);
+    const oldCleanRaw = host.written.get("/tmp/clean-old.json");
+    if (oldCleanRaw === undefined) throw new Error("clean export not written");
+    expect(
+      manifestShapeSchema.parse(
+        JSON.parse(bundleShapeSchema.parse(JSON.parse(oldCleanRaw)).manifest),
+      ).formatVersion,
+    ).toBe(2);
+    await expect(
+      loadSpecExportState({ specs, review }, AFFECTED_SPEC_ID),
+    ).rejects.toThrow();
+
+    // (2) Migrate the persisted state for real.
+    await narrowEvidenceKinds.up({
+      name: narrowEvidenceKinds.name,
+      context: { db, configDir: null },
+    });
+
+    // (3) Plain integrity passes post-migration: hashes were recomputed
+    // consistently with the rewritten payloads.
+    for (const slug of ["legacy-evidence", "clean-spec"]) {
+      const verified = await runCli(
+        ["spec", "verify", slug, "--json"],
+        baseEnv,
+        host,
+      );
+      expect(verified.exitCode).toBe(0);
+      expect(JSON.parse(verified.stdout)).toMatchObject({
+        ok: true,
+        report: { ok: true },
+      });
+    }
+
+    // (4) The affected spec's pre-narrowing bundle mismatches at exit 1: the
+    // canonical content genuinely changed under the approved vocabulary
+    // migration, and the remedy is re-exporting.
+    const affectedExport = await runCli(
+      ["spec", "export", "legacy-evidence", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(affectedExport.exitCode).toBe(0);
+    const currentAffected = bundleShapeSchema.parse(
+      JSON.parse(affectedExport.stdout).bundle,
+    );
+    const oldAffected = reconstructPreNarrowingBundle(currentAffected);
+    files.set("/tmp/affected-old.json", JSON.stringify(oldAffected));
+    const mismatch = await runCli(
+      [
+        "spec",
+        "verify",
+        "legacy-evidence",
+        "--against",
+        "/tmp/affected-old.json",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(mismatch.exitCode).toBe(1);
+    expect(JSON.parse(mismatch.stdout)).toMatchObject({
+      ok: false,
+      error: "spec legacy-evidence differs from /tmp/affected-old.json",
+      details: { against: "/tmp/affected-old.json" },
+    });
+
+    // (5) The unaffected spec's genuinely-old bundle still matches at exit 0
+    // — no formatVersion bump falsely invalidates untouched specs.
+    files.set("/tmp/clean-old.json", oldCleanRaw);
+    const stillMatches = await runCli(
+      [
+        "spec",
+        "verify",
+        "clean-spec",
+        "--against",
+        "/tmp/clean-old.json",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(stillMatches.exitCode).toBe(0);
+    expect(JSON.parse(stillMatches.stdout)).toMatchObject({
+      ok: true,
+      against: "/tmp/clean-old.json",
+    });
+
+    // The remedy works: a fresh post-migration export matches itself.
+    files.set("/tmp/affected-fresh.json", JSON.stringify(currentAffected));
+    const freshMatches = await runCli(
+      [
+        "spec",
+        "verify",
+        "legacy-evidence",
+        "--against",
+        "/tmp/affected-fresh.json",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+    expect(freshMatches.exitCode).toBe(0);
   });
 });

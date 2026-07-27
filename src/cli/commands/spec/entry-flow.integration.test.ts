@@ -24,6 +24,41 @@ import type { CliEnv, CliHost, FetchInit } from "../../shared";
 const PROJECT_PATH = "/repos/native-entry";
 const ELEMENT_FILE = "/tmp/native-entry-element.json";
 const SECOND_ELEMENT_FILE = "/tmp/native-entry-second-element.json";
+const BATCH_FILE = "/tmp/native-entry-batch.json";
+const STALE_BATCH_FILE = "/tmp/native-entry-stale-batch.json";
+
+/**
+ * A batch that updates the created requirement and adds a criterion under it.
+ * `baseElementVersion` is stated per element, so `stale` moves only the first
+ * element's expectation while the second stays a create.
+ */
+function batchDocument(baseElementVersion: number): string {
+  return JSON.stringify([
+    {
+      elementId: "requirement-1",
+      kind: "requirement",
+      parentElementId: null,
+      payload: {
+        kind: "requirement",
+        statement: "Audit events are durable and queryable.",
+        priority: "must",
+        risk: "high",
+      },
+      baseElementVersion,
+    },
+    {
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-1",
+      payload: {
+        kind: "criterion",
+        text: "Every audit event survives a restart.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: null,
+    },
+  ]);
+}
 
 const env: CliEnv = {
   CC_SERVER_URL: "http://cc.test",
@@ -92,7 +127,7 @@ describe("native /spec first-save visibility", () => {
         authoring.lintDraft(specId, revisionId),
       findApprovalsBySpecId: review.findApprovalsBySpecId,
       findCommentsByRevision: () => [],
-      findGateAdmissionsByRevision: review.findGateAdmissionsByRevision,
+      findGateAdmissionsBySpecId: review.findGateAdmissionsBySpecId,
       findLinksBySpecId: () => [],
       getLinkedTickets: async () => [],
       findQuestionsBySpecId: review.findQuestionsBySpecId,
@@ -100,12 +135,17 @@ describe("native /spec first-save visibility", () => {
       findExecutionsBySpecId: () => [],
       findTaskClaimsBySpecId: () => [],
       findWorkflowEventsByExecution: () => [],
-      reconcileExecution: async (_projectPath, execution) => execution,
+      reconcileExecution: async (_projectPath, execution) => ({
+        execution,
+        workflowStatus: null,
+      }),
       ingestExecutionEvidenceBestEffort: async () => undefined,
       findCriterionDispositionsByExecution: () => [],
       findEvidenceByCriterionRevision: () => [],
       findProofVerdictsByCriterionRevision: () => [],
       findWaiverForCriterionRevision: () => null,
+      findWaiverById: () => null,
+      findWaiversByRevision: () => [],
       exportSpec: async () => ({ markdownFiles: [], manifest: "{}\n" }),
       verifySpec: async () => ({
         ok: true,
@@ -143,6 +183,14 @@ describe("native /spec first-save visibility", () => {
             params: Promise.resolve({ name: segments[2] ?? "" }),
           });
         }
+        if (segments[4] === "edit-context") {
+          return readHandlers.getSpecEditContextGET(request, {
+            params: Promise.resolve({
+              name: segments[2] ?? "",
+              slug: segments[3] ?? "",
+            }),
+          });
+        }
         return readHandlers.getSpecGET(request, {
           params: Promise.resolve({
             name: segments[2] ?? "",
@@ -165,6 +213,8 @@ describe("native /spec first-save visibility", () => {
             },
           });
         }
+        if (filePath === BATCH_FILE) return batchDocument(1);
+        if (filePath === STALE_BATCH_FILE) return batchDocument(7);
         if (filePath === SECOND_ELEMENT_FILE) {
           return JSON.stringify({
             elementId: "requirement-2",
@@ -331,6 +381,28 @@ describe("native /spec first-save visibility", () => {
     });
   });
 
+  it("reopens the spec's editable draft through spec amend", async () => {
+    const created = await runCli(
+      createArgs(["--file", ELEMENT_FILE]),
+      env,
+      host,
+    );
+    expect(created.exitCode).toBe(0);
+
+    const amended = await runCli(
+      ["spec", "amend", "audit-log", "--json"],
+      env,
+      host,
+    );
+
+    expect(amended.exitCode).toBe(0);
+    // openAmendment is idempotent: an already-open draft comes back unchanged.
+    expect(JSON.parse(amended.stdout)).toMatchObject({
+      ok: true,
+      revision: { number: 1, state: "draft", authoringStage: "requirements" },
+    });
+  });
+
   it("keeps subsequent element-granular draft saves landing in the created spec", async () => {
     const created = await runCli(
       createArgs(["--file", ELEMENT_FILE]),
@@ -372,5 +444,68 @@ describe("native /spec first-save visibility", () => {
         ({ version }) => version.payload.statement,
       ),
     ).toEqual(["Audit events are durable.", "Audit events are queryable."]);
+  });
+
+  async function currentElementIds(): Promise<string[]> {
+    const shown = await runCli(
+      ["spec", "show", "audit-log", "--json"],
+      env,
+      host,
+    );
+    expect(shown.exitCode).toBe(0);
+    const body = JSON.parse(shown.stdout) as {
+      spec: {
+        currentRevision: { elements: Array<{ element: { id: string } }> };
+      };
+    };
+    return body.spec.currentRevision.elements.map(({ element }) => element.id);
+  }
+
+  it("lands an array --file as one batch of element-granular writes", async () => {
+    expect(
+      (await runCli(createArgs(["--file", ELEMENT_FILE]), env, host)).exitCode,
+    ).toBe(0);
+
+    const batched = await runCli(
+      ["spec", "draft", "audit-log", "--file", BATCH_FILE, "--json"],
+      env,
+      host,
+    );
+
+    expect(batched.exitCode).toBe(0);
+    expect(JSON.parse(batched.stdout).batch.written).toMatchObject([
+      {
+        index: 0,
+        elementId: "requirement-1",
+        handle: "R1",
+        version: { elementVersion: 2 },
+      },
+      {
+        index: 1,
+        elementId: "criterion-1",
+        handle: "R1.1",
+        version: { elementVersion: 1 },
+      },
+    ]);
+    expect(await currentElementIds()).toEqual(["requirement-1", "criterion-1"]);
+  });
+
+  it("refuses the whole batch when one element's base version is stale and writes nothing", async () => {
+    expect(
+      (await runCli(createArgs(["--file", ELEMENT_FILE]), env, host)).exitCode,
+    ).toBe(0);
+
+    const refused = await runCli(
+      ["spec", "draft", "audit-log", "--file", STALE_BATCH_FILE],
+      env,
+      host,
+    );
+
+    expect(refused.exitCode).toBe(1);
+    expect(refused.stderr).toContain("[0] requirement-1: stale_element");
+    expect(refused.stderr).toContain("element is at version 1");
+    // All-or-nothing: the second element was a legal create and still must not
+    // survive the refusal.
+    expect(await currentElementIds()).toEqual(["requirement-1"]);
   });
 });

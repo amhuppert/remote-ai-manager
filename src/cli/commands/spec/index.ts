@@ -10,9 +10,11 @@ import {
   runSpecStatus,
   runSpecVerify,
 } from "./read";
+import { runSpecSchema } from "./schema";
 import {
   runSpecAbandon,
   runSpecAdvance,
+  runSpecAmend,
   runSpecAnswer,
   runSpecAssume,
   runSpecCapture,
@@ -45,9 +47,11 @@ export async function runSpec(
       status: (next) => runSpecStatus(next, flags, values, env, host),
       get: (next) => runSpecGet(next, flags, values, env, host),
       search: (next) => runSpecSearch(next, flags, values, env, host),
+      schema: (next) => Promise.resolve(runSpecSchema(next, flags, values)),
       export: (next) => runSpecExport(next, flags, values, env, host),
       verify: (next) => runSpecVerify(next, flags, values, env, host),
       create: (next) => runSpecCreate(next, flags, values, env, host),
+      amend: (next) => runSpecAmend(next, flags, values, env, host),
       draft: (next) => runSpecDraft(next, flags, values, env, host),
       propose: (next) => runSpecPropose(next, flags, values, env, host),
       advance: (next) => runSpecAdvance(next, flags, values, env, host),

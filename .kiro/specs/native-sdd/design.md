@@ -50,7 +50,7 @@
 
 ### Allowed Dependencies
 
-- `specs` domain → state-store repos + write queue, `events/publication.ts`, git plumbing (`src/lib/git/`), workflow-graph public services (definition create/validate/read), tickets service (graduate/materialize), content-store (screenshot/source snapshots), notifications service.
+- `specs` domain → state-store repos + write queue, `events/publication.ts`, git plumbing (`src/lib/git/`), workflow-graph public services (definition create/validate/read), tickets service (graduate/materialize), content-store (source snapshots), notifications service.
 - Merge domain defines the `DeliveryGateEvaluator` **port**; the spec adapter is injected at composition (`graph-merge-runner` wiring). Merge code never imports `specs`.
 - Workflow domain gains schema fields + guards only; `origin`/`sourceLink` values are opaque strings. Workflow code never imports `specs`.
 - Prompt-editor registry entries for spec types may import spec client queries (client-side only).
@@ -204,8 +204,8 @@ All tables are additive floor DDL (`CREATE TABLE IF NOT EXISTS` in `state-db.ts`
 | `spec_questions` | `id` PK, `spec_id`, `number`, `element_id?`, `text`, `provenance_json`, `status` (open, answered), `answer`, `answered_at` | Handle `Q<n>` (12.1) |
 | `spec_assumptions` | `id` PK, `spec_id`, `number`, `element_id?`, `text`, `proposed_by_json`, `disposition` (proposed, confirmed, rejected, deferred), `disposed_at` | Handle `A<n>` (12.2) |
 | `spec_comments` | `id` PK, `spec_id`, `thread_id`, `parent_comment_id?`, `element_id`, `anchor_json`, `revision_id`, `body`, `author_json`, `blocking`, `resolution` (open, resolved, dismissed) | Anchor = sectionId/line/charStart/charEnd/quote/prefix/suffix; original revision preserved (8.6) |
-| `spec_evidence` | `id` PK, `spec_id`, `criterion_element_id`, `revision_id`, `kind` (diff, commit, test_run, validator_verdict, screenshot, human_signoff), `ref_json`, `evaluated_state_json`, `producer_json`, `execution_id?`, `source_event_id?` | Append-only (13.1); `evaluated_state = {commitSha?, relevantPaths[], relevantTreeHash?, surfaceId?}` (13.3); `source_event_id` = ingest idempotency key |
-| `spec_proof_verdicts` | `id` PK, `spec_id`, `criterion_element_id`, `revision_id`, `execution_id?`, `verdict_kind` (deterministic_validator, agent_validator, human), `evidence_ids_json`, `verdict_at`, `stale_at?`, `stale_reason?` | Distinct from evidence (13.4) |
+| `spec_evidence` | `id` PK, `spec_id`, `criterion_element_id`, `revision_id`, `kind` (commit, test_run, validator_verdict — narrowed by migration 0009; fresh-DB CHECK matches), `ref_json`, `evaluated_state_json`, `producer_json`, `execution_id?`, `source_event_id?` | Append-only (13.1); `evaluated_state = {commitSha?, relevantPaths[], relevantTreeHash?, surfaceId?}` (13.3; `surfaceId` is retained-historical — no surviving kind reads it); `source_event_id` = ingest idempotency key |
+| `spec_proof_verdicts` | `id` PK, `spec_id`, `criterion_element_id`, `revision_id`, `execution_id?`, `verdict_kind` (deterministic_validator, agent_validator, human), `evidence_ids_json`, `verdict_at`, `stale_at?`, `stale_reason?` | Distinct from evidence (13.4); `human` is retained historical value space — no surface records one (13.4) |
 | `spec_waivers` | `id` PK, `spec_id`, `criterion_element_id`, `revision_id`, `reason`, `waived_at`, `stale` | Human-only, reason required, per (criterion, revision) (14.2) |
 | `spec_criterion_dispositions` | PK(`execution_id`, `criterion_element_id`), `disposition` (in_scope, deferred, waived, delivered_elsewhere), `waiver_id?`, `delivered_by_execution_id?` | Per-scope (14.1); delivered_elsewhere requires a merged execution (14.6) |
 | `spec_task_claims` | `id` PK, `spec_id`, `task_element_id`, `execution_id?`, `actor_json`, `evidence_ids_json`, `claimed_at`, `status` (accepted, reopened) | Rejected claims are refused, never stored; reopen feeds rework measure (2.12, 20.1) |
@@ -217,7 +217,7 @@ All tables are additive floor DDL (`CREATE TABLE IF NOT EXISTS` in `state-db.ts`
 
 - `section`: `{role: intent_problem | intent_outcomes | intent_non_goals | intent_success_measures | intent_constraints | design_narrative | context, title, body}` (markdown body) — 2.3.
 - `requirement`: `{statement, priority: must | should | could, risk: high | medium | low}` — criteria are child elements — 2.7.
-- `criterion`: `{text, validationStrategy: {kinds: EvidenceKind[], note?}}` — strategy approved with the requirement — 2.9.
+- `criterion`: `{text, validationStrategy: {kinds: EvidenceKind[], note?}}` — strategy approved with the requirement; `kinds` must include at least one machine-validation kind (`test_run` | `validator_verdict`), refused at write time otherwise — 2.9.
 - `decision`: `{title, chosenApproach, rejectedAlternatives: {label, reason}[], reason}` — 2.10.
 - `task`: `{title, instructions, tracedRequirementElementIds[], coveredCriterionElementIds[], dependsOnTaskElementIds[], laneGroup?, touchedPaths?[]}` — 2.11, 23.1. `touchedPaths` are normalized repo-relative POSIX prefixes (absolute, `..`, and trailing separators rejected at write; overlap compares whole path segments); `laneGroup` keys are opaque, compared exactly.
 
@@ -350,11 +350,11 @@ Gate semantics: the evaluator reads pinned (revision, scope) dispositions/verdic
 | RevisionDiff | pure | element classification + change list | 8.4, 10.5–10.7 | — | Service |
 | PhaseProjection | pure | phase/status projections | 2.12, 2.13, 3 | — | Service |
 | ScopeValidation | pure | execution scope predicate | 16.4–16.7 | — | Service |
-| FreshnessRules | pure | per-kind proof validity | 13.8–13.13 | git plumbing (P1) | Service |
+| FreshnessRules | pure | per-kind proof validity | 13.8–13.11, 13.13 | git plumbing (P1) | Service |
 | TransitionPredicates | logic | all gated transitions, one refusal shape | 6.5, 9, 10, 11, 16, 18 | PolicyEngine, LintEngine, RevisionDiff, ScopeValidation (P0) | Service |
 | AuthoringService | service | create, draft CAS writes, propose | 4, 7 | SpecsRepo, TransitionPredicates, events (P0) | Service/API |
 | ReviewService | service | review actions, sign-off, questions/assumptions, policy confirm | 8.5, 10, 11.10, 12 | SpecReviewRepo, TransitionPredicates (P0) | Service/API |
-| EvidenceService + EvidenceIngest | service | evidence records, resolvability, verdicts, claims, waivers, ingestion | 6.6, 13, 14 | SpecDeliveryRepo, workflow events repo, git, content-store (P0) | Service/API |
+| EvidenceService + EvidenceIngest | service | evidence records, resolvability, verdicts, claims, waivers, ingestion | 6.6, 13, 14 | SpecDeliveryRepo, workflow events repo, git (P0) | Service/API |
 | ExecutionService + Compiler | service | start/pin/compile, abandon, delivered callback | 16, 17.1–17.3 | workflow services, SpecDeliveryRepo (P0) | Service/API |
 | DeliveryGateAdapter | service | merge-port implementation | 18 | TransitionPredicates, FreshnessRules (P0) | Service |
 | LinksService | service | promote, graduate, materialize, read-through queries | 4.3–4.5, 15 | tickets service, SpecLinksRepo (P0) | Service/API |
@@ -487,21 +487,23 @@ interface TransitionPredicates {
 | Field | Detail |
 |-------|--------|
 | Intent | Criterion-keyed evidence, proof verdicts, claims, waivers, dispositions; automatic execution flow-back |
-| Requirements | 6.6, 13.1–13.13, 14.1–14.6 |
+| Requirements | 6.6, 13.1–13.11, 13.13, 14.1–14.6 (13.12 is owned by the state-store migration — see the F14–F26 amendment) |
 
 **Responsibilities & Constraints**
 
-- Resolvability at record time (13.2): `commit`/`diff` → git object exists in the session worktree/repo; `validator_verdict`/`test_run` → a `graph_workflow_events` row with matching contextId **or a merge job's persisted candidate-validation fact** (gate-side issuance); `screenshot` → content-store object exists; `human_signoff` → human-actor record. Unresolvable ⇒ refusal, same shape as gate violations.
+- Resolvability at record time (13.2): `commit` → git object exists in the session worktree/repo; `validator_verdict`/`test_run` → a `graph_workflow_events` row with matching contextId **or a merge job's persisted candidate-validation fact** (gate-side issuance). Unresolvable ⇒ refusal, same shape as gate violations.
 - Claims (6.6): refuse when no evidence cited, a cited record doesn't resolve, or it targets a criterion the task doesn't cover at the pinned revision; also refuse under the exploratory preset (11.4) and the 9.7 lint rule.
-- Ingestion (13.7): idempotent fold over `graph_workflow_events` for the linked workflow execution (validation results and lane commit snapshots carry contextId; test results arrive inside validator verdicts) routed to criteria via the compiled origin map; keyed by `source_event_id`. Invoked on evidence reads (**best-effort** — a GET never blocks on the write queue; the read serves current state when ingestion is contended), and authoritatively on claims, execution completion, and the delivery gate. No workflow-domain callbacks.
-- Proof verdicts (13.4, 13.5) — the strategy-satisfaction contract: a verdict must cite at least one resolvable, **fresh** evidence record per evidence kind the criterion's approved validation strategy requires — predicate-checked at verdict time, freshness-rechecked at the delivery gate. Verdict origins are fixed: `deterministic_validator`/`agent_validator` verdicts originate only from execution ingestion, `human` verdicts only from UI routes (the CLI has no verdict verb). The strategy's `note` is the approved prose description of the checks — compiled into validator briefs and bounding validator judgment: a validator never demands beyond the strategy; strategy-inadequacy becomes a finding/open question routed to the human, and changing a strategy is an amendment (13.6).
-- Freshness (13.8–13.13): fixed per-kind rules — commit/diff evidence counts toward delivery only as ancestors of the merge candidate (13.11); pure-rebase identical relevant tree keeps proof valid (13.9); deterministic validators rerun against the pre-merge candidate via the existing validation phase, credited to criteria through the merge job's persisted candidate-validation fact (gate-side verdict issuance idempotent by `validationRef` — see DeliveryGateAdapter) (13.10); non-deterministic evidence records its captured surface and stales on surface change → revalidate, recapture, or waive (13.12); abandoned-run evidence stays immutable and only counts when a later verdict establishes applicability to the new candidate (13.13).
+- Ingestion (13.7): idempotent fold over `graph_workflow_events` for the linked workflow execution (validation results and lane commit snapshots carry contextId; test results arrive inside validator verdicts) routed to criteria via the compiled origin map; keyed by `source_event_id`. Each validation result is stamped with the validated SHA by **forward correlation** over the ordered event stream: the next same-context event decides — a lane commit seals this validation's tree and stamps its sha (adopted self-committed HEADs included); a later validation supersedes it (materialized unstamped, honestly stale); no subsequent event yet defers the candidate to a later ingest run, materializing unstamped only once the spec execution is terminal (the append-once ingest key means a row frozen early could never gain its stamp). Invoked on evidence reads (**best-effort** — a GET never blocks on the write queue; the read serves current state when ingestion is contended), and authoritatively on claims, execution completion, and the delivery gate. No workflow-domain callbacks.
+- Proof verdicts (13.4, 13.5) — the strategy-satisfaction contract: a verdict must cite at least one resolvable, **fresh** evidence record per evidence kind the criterion's approved validation strategy requires — predicate-checked at verdict time, freshness-rechecked at the delivery gate. Verdict origins are fixed: verdicts originate only from execution ingestion and gate-side issuance — no surface (UI or CLI) records a human verdict; the human remedy for an unprovable criterion is a Controls-view waiver (13.4, 14.2). The strategy's `note` is the approved prose description of the checks — compiled into validator briefs and bounding validator judgment: a validator never demands beyond the strategy; strategy-inadequacy becomes a finding/open question routed to the human, and changing a strategy is an amendment (13.6).
+- Freshness (13.8–13.13): fixed per-kind rules — commit evidence, and ingested machine evidence stamped with a lane commit but no validated tree, counts toward delivery only as an ancestor of the merge candidate (13.11); evidence carrying a validated tree keeps the strong tree-identity check; pure-rebase identical relevant tree keeps proof valid (13.9); deterministic validators rerun against the pre-merge candidate via the existing validation phase, credited to criteria through the merge job's persisted candidate-validation fact (gate-side verdict issuance idempotent by `validationRef` — see DeliveryGateAdapter) (13.10); retired-kind evidence is migrated out, never silently kept — strategies normalize with a traced note, citing verdicts stale, citing accepted claims reopen (13.12); abandoned-run evidence stays immutable and only counts when a later verdict establishes applicability to the new candidate (13.13).
 - Waivers/dispositions (14.1–14.6): human-only grant with reason on (criterion, revision), terminal per revision; agents/policy may request/route only (14.3); "not in this delivery" = deferred (14.4); later change stales the waiver (14.5); delivered_elsewhere only via a merged execution (14.6).
 
 ##### Service Interface
 
 ```typescript
 interface EvidenceService {
+  // attachEvidence and recordProofVerdict are internal seams — called by ingest
+  // and gate-side issuance only; no route action or CLI verb exposes either.
   attachEvidence(input: AttachEvidenceInput): Result<EvidenceRecord, Refusal>;
   recordProofVerdict(input: ProofVerdictInput): Result<ProofVerdict, Refusal>;
   claimTaskComplete(input: TaskClaimInput): Result<TaskClaim, Refusal>;
@@ -529,7 +531,7 @@ interface EvidenceService {
 | Field | Detail |
 |-------|--------|
 | Intent | Enforce scoped delivery at merge, from spec state only |
-| Requirements | 18.1–18.6, 13.9–13.11 |
+| Requirements | 18.1–18.7, 13.9–13.11 |
 
 **Responsibilities & Constraints**
 
@@ -598,7 +600,7 @@ Verb map (all follow the established contract: progressive-disclosure help regis
 | `start <slug> --file <scope.json>` | write | pins (revision, scope) from a schema-backed scope document — task/criterion selection plus the 16.6 exclusion dispositions — with deterministic local validation before network (6.1, 16.1) |
 | `abandon <slug or execution> --reason` | write | abandons the active execution, or the spec, with a required reason (3.10, 16.9) |
 
-- Gate refusals: exit 1 + `code` + `issues` (unmet conditions) + `instruction` (6.5); local validation failures exit 2. Actor provenance from the established env injection: agent + originating conversation on cctl mutations; human acts arrive via UI routes and record a human actor without fabricated agent/conversation (6.7). One handle vocabulary shared with UI/chips/briefs/evidence via `handles.ts` (1.4). No policy-changing verbs (D5), and no proof-verdict verb — `deterministic_validator`/`agent_validator` verdicts originate only from execution ingestion, `human` verdicts only from UI routes (13.4, 13.5).
+- Gate refusals: exit 1 + `code` + `issues` (unmet conditions) + `instruction` (6.5); local validation failures exit 2. Actor provenance from the established env injection: agent + originating conversation on cctl mutations; human acts arrive via UI routes and record a human actor without fabricated agent/conversation (6.7). One handle vocabulary shared with UI/chips/briefs/evidence via `handles.ts` (1.4). No policy-changing verbs (D5), no evidence-attach verb, and no proof-verdict verb — verdicts originate only from execution ingestion and gate-side issuance; no surface records a human verdict (13.4, 13.5).
 
 #### ReferenceRegistry + UnifiedPicker
 
@@ -616,7 +618,7 @@ Verb map (all follow the established contract: progressive-disclosure help regis
 | Field | Detail |
 |-------|--------|
 | Intent | Review, approval, and browsing surface |
-| Requirements | 1.5, 8.1–8.9, 3.6, 3.8, 3.11, 9.10 |
+| Requirements | 1.5, 8.1–8.10, 3.6, 3.8, 3.11, 9.10 |
 
 - Routes: `/specs` (list: phase chips via StatusChip, pending-approval badges, linked-work roll-ups, project filter — navigation peer of `/tickets` and `/conversations`) and `/specs/[projectName]/[slug]` (detail) with `?el=R3.2` deep-link + scroll and alias-aware slug resolution (1.5, 8.1).
 - Detail: prose sections rendered per-element with the existing annotation stack (AnnotatedMarkdown + gutter/cards); structured rail (requirements/decisions/tasks with status + approval state); live updates via the sse-reducer + pending-overlay pattern (8.2). V1 annotate/approve only — no content editing (8.3).
@@ -781,6 +783,7 @@ src/app/api/specs/**/route.ts                   # thin re-exports of route-handl
 | 8.7 | Bulk approval = per-element records | ReviewService bulk path |
 | 8.8 | Per-criterion evidence view | EvidencePanel + criterion-keyed queries |
 | 8.9 | Traceability graph with lint in place | TraceabilityGraph (xyflow) + LintPanel |
+| 8.10 | Merge-gate reachability + server-computed delivery state | SpecStudio Controls primary view; required `deliveryProjection` per execution on the detail view; `?el=delivery` → merge-gate focus (F14–F26 amendment) |
 | 9.1 | Deterministic lint only | LintEngine pure catalog |
 | 9.2, 9.3, 9.4, 9.5, 9.6 | Propose blockers | LintEngine rules + propose predicate |
 | 9.7 | Claim blocker | LintEngine + claim predicate |
@@ -802,7 +805,8 @@ src/app/api/specs/**/route.ts                   # thin re-exports of route-handl
 | 13.1, 13.2, 13.3 | Append-only typed criterion evidence; resolvability; record fields | `spec_evidence` + EvidenceService resolution |
 | 13.4, 13.5, 13.6 | Proof distinct; strategy-bounded validators; inadequacy routes to human | `spec_proof_verdicts` + EvidenceService rules |
 | 13.7 | Automatic flow-back | EvidenceIngest |
-| 13.8, 13.9, 13.10, 13.11, 13.12, 13.13 | Fixed freshness rules | FreshnessRules + DeliveryGateAdapter application |
+| 13.8, 13.9, 13.10, 13.11, 13.13 | Fixed freshness rules | FreshnessRules + DeliveryGateAdapter application |
+| 13.12 | Traced vocabulary-narrowing migration | Migration `0009-narrow-evidence-kinds` (strategy normalization + hash recompute + verdict staling + claim reopening + trace event) + narrowed `spec_evidence` CHECK + strategy machine-kind refine |
 | 14.1, 14.2, 14.3, 14.4, 14.5, 14.6 | Dispositions; human-only waivers; request-not-grant; deferred; staleness; delivered-elsewhere | `spec_criterion_dispositions`, `spec_waivers`, EvidenceService + predicates |
 | 15.1, 15.2, 15.3 | Link; graduate; materialize | LinksService + ticket service composition |
 | 15.4, 15.5, 15.6 | Source-task-removed display; read-through; ticket-owned lifecycle | TicketReadThrough (computed display only) |
@@ -812,6 +816,7 @@ src/app/api/specs/**/route.ts                   # thin re-exports of route-handl
 | 17.1, 17.2 | Compile to standard definitions; existing surface | Compiler + workflow services |
 | 17.3, 17.4, 17.5 | Definition approval + origin; locked vs editable; general capabilities | WorkflowCapabilities |
 | 18.1, 18.2, 18.3, 18.4, 18.5, 18.6 | Spec-read gate; scope-only; acceptable states; refusal; deferred visible; Delivered after merge | DeliveryGateAdapter + MergeGatePort + ExecutionService callback |
+| 18.7 | Auto-filed delivery approval request; approval-wait halt distinct from criteria failure | Delivery gate `requestDeliveryApproval` dep → ReviewService.requestApproval (idempotent per run, pinned-revision identity); halt `refusalCode`/`spec` presentation + `?el=delivery` deep link (F14–F26 amendment) |
 | 19.1, 19.2, 19.3 | Typed events day one; live surfaces; attention | SpecEventsPublisher + sse-reactions + adapters |
 | 20.1, 20.2, 20.3, 20.4 | Measure capture; reviewer navigation; computable; frozen definitions | `spec_events` + MeasuresEngine + `cctl spec measures` |
 | 21.1, 21.2, 21.3, 21.4 | Release acceptance + refusal demos | Testing Strategy (release-acceptance procedure); enforcement points 16.3, 6.6, 18.4 |
@@ -825,6 +830,22 @@ src/app/api/specs/**/route.ts                   # thin re-exports of route-handl
 | 23.6 | Execution-graph planning guidance | `/spec` skill plan-stage section + `spec.help.ts` |
 | 23.9, 23.11, 23.12 | Dependency embedding; mid-run placement freeze; predecessor-ordered completion | Compiler validation at approval/start + runtime guards via registered composition seams |
 | 23.10 | Graph facts in plan review surfaces | SpecStudio review mode + CctlSpecFamily reads |
+| 24.1 | Four-field self-description on every mutating response | Result envelopes + view schemas + CLI renderers (SD1) |
+| 24.2 | Handles in mutation responses and read projections; explicit no-handle case | `review-state.ts` derived-handle model reused in result envelopes and a snapshot view wrapper (SD1, SD2) |
+| 24.3 | Invalid-handle refusal states the grammar and detects element ids | `handles.ts` explanation shared by both CLI sites and the element read route (SD3) |
+| 24.4 | Input schemas printable from the CLI | `cctl spec schema [kind]` generated from the Zod sources (SD4) |
+| 24.5, 24.6 | Truthful execution handoff; phase qualified with execution state | CctlSpecFamily `start`/`status` output; definition-review park reported, never crossed (SD5) |
+| 24.7, 24.8, 24.9 | Draft-opening refusal instruction; first-class amendment command; capture-vs-amend help | `stale_stage` branch keyed on `currentRevision === null`; `cctl spec amend` over the open-amendment action; help entries naming each other (SD6, SD7) |
+| 24.10 | Policy authority stated in help | `spec` family help note — policy is human-only Studio data, no CLI verb (SD8, D5) |
+| 24.11 | Search-scope truth with guidance parity | `/spec` expansion + repository guidance from one structured source, parity-checked (SD9) |
+| 24.12 | Documented `position` ordering contract | One global order per revision with element-id tiebreak + deterministic append; nesting from `parentElementId` (SD10) |
+| 24.13 | Gate history as provenance, never asserted satisfaction | `gateStatuses` keeps current-revision `state`; separate spec-wide admission history field (SD-note, PC-lineage) |
+| 25.1, 25.2 | Draft stage pinned; new dials prospective | ReviewService `changePolicy` + stage-scoped dial resolution at transition time (PC1, PC2) |
+| 25.3, 25.4 | No retroactive synthesis; no restaging of proposed/approved/withdrawn | PolicyEngine prospective-only rule; revision-state guard (PC3) |
+| 25.5, 25.10 | Remaining stage sequence reported; enriched policy record | `change-policy` response + status projection + policy event payload (PC4) |
+| 25.6 | Decision-incomplete shapes refuse while a wider draft is open | `changePolicy` predicate fallback (PC4) |
+| 25.7, 25.8 | Human-only whole-spec abandon; agent-reachable execution abandon | `HUMAN_ONLY_ACTIONS` route gate + Studio control; `abandon-execution` unchanged (PC5) |
+| 25.9 | Confirmation shown by the server's own rule | Studio policy control: backend-equivalent predicate gates the modal; `hardConfirmed` only from its accept action (PC6) |
 
 ## Error Handling
 
@@ -864,7 +885,7 @@ Red-green TDD per repo contract; Storybook-free unit tests; no `vi.mock` of inte
 - PolicyEngine + TransitionPredicates: full preset×dial matrix (11.2–11.5), floor unreachability (11.6–11.9), exploratory claim/merge refusal (11.4), fast-path atomic marker.
 - RevisionDiff: unchanged/modified/removed classification, nested-criterion → requirement-modified (10.6), plan staleness (10.7).
 - PhaseProjection: precedence cases (3.1–3.11) incl. Executing-with-review facet and all-waived display.
-- ScopeValidation (16.4–16.7), FreshnessRules per evidence kind (13.8–13.13), HandleGrammar round-trips (1.2, 1.3), Compiler output shape + locked regions (17.1, 17.4), MeasuresEngine over seeded event logs (20.3).
+- ScopeValidation (16.4–16.7), FreshnessRules per evidence kind (13.8–13.11, 13.13), HandleGrammar round-trips (1.2, 1.3), Compiler output shape + locked regions (17.1, 17.4), MeasuresEngine over seeded event logs (20.3).
 - Chip staleness basis: new revision with the element untouched ⇒ fresh; element content changed since the observed revision ⇒ stale; a draft edit restoring the observed hash ⇒ fresh again (5.9).
 
 ### Contract Tests (persistence)
@@ -903,6 +924,77 @@ Red-green TDD per repo contract; Storybook-free unit tests; no `vi.mock` of inte
 
 ## Migration Strategy
 
-- **Schema**: 19 new tables + indexes via floor DDL only; no additive columns on existing tables; no `KNOWN_SCHEMA_VERSION` bump (older branch builds ignore unknown tables). Workflow capability fields live inside definition JSON blobs (schema-optional — old records parse). `bun run build` smoke for multi-worker open races.
+- **Schema**: 19 new tables + indexes via floor DDL only; no additive columns on existing tables; no `KNOWN_SCHEMA_VERSION` bump for this initial landing (older branch builds ignore unknown tables) — the F14–F26 amendment later bumped 1 → 2 for the evidence-kind narrowing (see the amendment section). Workflow capability fields live inside definition JSON blobs (schema-optional — old records parse). `bun run build` smoke for multi-worker open races.
 - **Rollout sequencing constraints** (for the tasks phase): (1) reference-registry migration and the three workflow capabilities are independently shippable and de-risk integrations; (2) spec core (repos + transitions + CLI reads/writes) precedes Studio review surfaces; (3) evidence/execution/delivery-gate land before instrumentation-dependent release acceptance; (4) the merge-machine change ships dark (no executionId callers) before the execution path activates it.
 - **Rollback**: new tables are inert if the feature is disabled; the merge gate no-ops without executionId; registry migration is the one non-additive change — guarded by parity tests before spec types are added.
+
+## Amendment — agent-surface self-description and policy-change authority (R24, R25)
+
+Approved 2026-07-25 (ticket command-center#24). Decision records: `design-agent-surface-self-description.md` (SD1–SD10) and `design-policy-change-staging-and-authority.md` (PC1–PC6). This section is **additive**: every decision, row, and rule above stands except where a delta below names it. No new table, column, migration, refusal code, or dependency; the seam ratchet is unaffected (no raw `404` literal is added or removed in `route-handlers.ts`).
+
+### Self-description contract (R24)
+
+The four contract fields — resulting state, assigned addressing tokens, blocked-by (agent or human), exact next command — live in **result envelopes and view schemas**, never in durable row shapes. `specElementSchema` and `specRevisionSnapshotSchema` are DB row shapes pinned by round-trip contracts and do not gain `handle` (SD1).
+
+| Surface | Delta |
+|---|---|
+| `AuthoringService` create/draft results | The assigned handle rides the result envelope, computed inside the writing transaction through the single `review-state.ts` derivation; `null` for sections and number-less elements, whose element id is labelled as an id (SD1, SD2) |
+| Spec detail read projection | A view-only snapshot wrapper carries a nullable `handle` per element, built from the existing `handlesByElementId` reuse; the private duplicate derivation in the route module collapses onto it. Both strict copies of the detail view schema (CLI and Spec Studio) change in one step (SD1, SD2) |
+| Handle grammar | One domain-owned explanation of the handle format with per-kind examples, reused by both CLI refusal sites and by the element read route, naming the real handle when the supplied value is a known element id (SD3) |
+| `CctlSpecFamily` verb map | `schema [kind]` (read) — input schemas, enums, constraints, worked examples generated from the Zod sources (SD4). `amend <slug>` (write) — opens or returns the open draft of an approved spec over the existing open-amendment action; strict empty body, idempotent, bare revision response (SD6) |
+| `spec start` output | Execution id, definition id, `workflow launched: no`, the launching command, and the acting party per the execution-start dial. The `definition_review` park is **reported, never crossed**: no auto-launch, no agent definition-approval route (SD5) |
+| `spec status` output | Phase qualified with execution state and the definition-review wait; gate lines keep their current-revision `state` and gain a **separate** history line carrying prior admissions (revision number, basis, actor) with no satisfaction claim (SD5, R24.13) |
+| Help + guidance | Policy-authority note (per-spec, mutable, human-only, Spec Studio, no CLI verb); `capture` and `amend` naming each other; search described as spec-scoped in both the runtime `/spec` expansion and the repository guidance, pinned by a parity check (SD7–SD9) |
+| Element ordering | `position` is one global order per revision with an element-id tiebreak; nesting derives from `parentElementId`. Writes omitting `position` receive a deterministic append (SD10) |
+
+Gate history is sourced from a new spec-wide admission read on the review repository; the existing `(spec_id, gate, created_at DESC)` index covers it, so no migration is required.
+
+### Transition Ownership deltas (R25)
+
+These rows **amend** the Transition Ownership table above; where they conflict with an earlier row, these govern.
+
+| Transition | Initiator (surface) | Authorization | Predicate | Transaction / records | Idempotency |
+|---|---|---|---|---|---|
+| Abandon spec (whole spec) — amends the spec half of "Abandon (execution or spec)" | human — Spec Studio | **human-only** (route gate, same set and mechanism as `rename`); agents raise an open question instead | spec non-terminal; reason required (3.10) | terminal state + reason + events | already-terminal refused |
+| Abandon execution — unchanged | agent — `cctl spec abandon <slug> --execution <id> --reason` — or human | either (actor recorded) | execution active | terminal state + reason + events | already-terminal refused |
+| Policy change — amends the "Policy change" row | human — Studio hard-confirm, shown by the server's own rule (PC6) | **human-only, always** (11.10); the confirmation is obtained, never asserted | `changePolicy`, plus the PC4 fallback refusal when a wider-stage draft is open and the shape is not decision-complete | policy update + event carrying actor, previous policy, resulting policy, and the open draft's pinned stage; prospective-only | — |
+
+Policy-change semantics on an open draft (PC1–PC3): the draft's `authoring_stage` is **pinned** — never moved backward (stage-only write admissibility would strand its later-stage elements) and never advanced (an advance is a recorded transition with a gate admission, which a policy edit must not manufacture). The new dials govern the draft's remaining transitions at resolution time under the existing stage-scoped rule (10.11). `openDraftAuthoringStage` keeps its single job — stage assignment at draft open — so a widened policy is expressed by the *next* draft, not by rewriting this one. Proposed, approved, and withdrawn revisions are never restaged.
+
+### Deferred design targets recorded with evidence
+
+Designed later, not improvised inside these fixes; each names its evidence in the decision records.
+
+| Target | Why it is not done here |
+|---|---|
+| Gate satisfaction/supersession lineage | Admission rows record `(gate, basis, approval_id, revision_id, execution_id, actor)` and nothing about admitted content, so no data proves an earlier admission still holds. Designed together with restaging — both answer "did the admitted content change?". Until then, history is provenance only (R24.13) |
+| Approval-request validation | `requestApproval` validates only spec+revision existence and mints a fresh attention id per call, so stale and duplicate Needs You entries are reachable; the target is applicability + pending-state validation with a logical idempotency key returning the existing active request |
+| Edit-context read | Every single-element write first reads the full spec detail, making an authoring session quadratic in transferred content; the target is a lightweight current-revision/stage/element-version read, independent of and earlier than batching |
+| Atomic batch element write | Constrained by contract: per-element `baseElementVersion` CAS in one all-or-nothing transaction with **indexed per-element refusals**; a revision-level CAS would replace element-granular optimistic concurrency (7.1–7.4) with document locking. Atomic create-with-first-element (4.1) must survive |
+| Read-projection DTO normalization | Raw persistence rows for executions and gate admissions are today the only way to diagnose a parked execution; normalization must retain execution state and workflow linkage, and therefore sequences after the handoff output above |
+| Project-wide spec search | Search is spec-scoped today; guidance tells that truth now (R24.11) and is restored to describing cross-spec discovery when the read exists |
+
+### Testing additions
+
+- CLI-over-real-route contract coverage that handles appear in create/draft results and in detail/element projections, including the explicit no-handle case for sections.
+- Handle-grammar unit coverage for the refusal explanation, including the element-id detection path.
+- Read-route coverage that gate history renders on its own line with basis and actor and that gate `state` stays current-revision-scoped.
+- Write-route coverage for `abandon-spec` (agent transport refused `human_act_required` with the service uncalled; human transport succeeds) with `abandon-execution` still agent-reachable — the existing human-only action pattern.
+- Studio coverage of the confirmation matrix: every preset direction pair and both override directions show the modal when the server requires confirmation, and `hardConfirmed` is emitted only from its accept action.
+- Guidance parity check between the runtime `/spec` expansion and the repository guidance document.
+
+## Amendment — evidence-kind narrowing and delivery-approval reachability (ticket command-center#24, F14–F26)
+
+Amended 2026-07-26 under the ticket's authoritative scope decisions (F25 — engine plans `final_publish` while a ready lane never started — is excluded and tracked as ticket command-center#28). Unlike the R24/R25 amendment, this change **narrows** normative content, so the affected statements above were corrected in place (13.2 resolvability, the `spec_evidence`/`spec_proof_verdicts` rows, the criterion payload invariant, ingestion stamping, freshness rules, the verb-map verdict note, allowed dependencies, and Requirements 2.9/8.10/13/18.7); this section records the change set and its rationale.
+
+| Surface | Delta |
+|---|---|
+| Evidence vocabulary | Narrowed to `commit \| test_run \| validator_verdict` — the kinds the system can actually produce. `diff`, `screenshot`, and `human_signoff` had no producer, no ingestion path, and no UI; keeping them made unprovable obligations authorable. `validationStrategySchema` gains the ≥1-machine-kind refine (typed issue naming the rule), enforced at `spec propose`/`spec amend`/draft-upsert route writes. No mechanism is added for attaching the removed kinds (waiver-request CLI verb explicitly deferred) |
+| Removed route actions | `attach-evidence` and `record-verdict` deleted outright (zero production callers); a POST to either falls to the documented bare 404 `Spec action not found`, pinned by test. `EvidenceService.attachEvidence`/`recordProofVerdict` survive as internal seams for ingestion and gate-side issuance. `verdict_kind = 'human'` stays in the row schema and DDL CHECK as historical value space |
+| Copy | Every refusal/help/guidance string that promised a nonexistent attach-evidence or human-verdict surface now points at remedies that exist: ingested evidence citation for claims, and Spec Studio → Controls → Merge gate → Waive… as the human remedy for an unprovable criterion; the agent guidance and generated command doc state the gate-records/waiver-remedy model |
+| Migration | `0009-narrow-evidence-kinds` (one immediate transaction): strips retired kinds from persisted strategies; where no machine kind remains, appends `validator_verdict` with a trace note in the strategy itself; recomputes payload/content hashes; deletes retired-kind evidence; stales citing verdicts (reason names migration 0009) and reopens citing accepted claims; writes one frozen raw-SQL `spec_events` trace row per touched spec. 0008 is frozen against its historical six-kind vocabulary. **`KNOWN_SCHEMA_VERSION` 1 → 2** with the 0005 barrier pattern — this amends the Migration Strategy section's original "no bump" rule: an older build's wide enum + permissive CHECK would re-insert retired kinds after the one-shot repair. The `spec_evidence` CHECK is narrowed in the floor DDL for fresh databases |
+| Exported bundles | Pre-narrowing bundles fail `spec verify --against` with the existing mismatch message for affected specs (content genuinely changed under an approved migration; remedy is re-export); plain integrity `verify` passes post-migration; no `formatVersion` bump (the manifest format is unchanged) |
+| Ingest stamping (13.7, 13.11 — F24) | Validation-result evidence is stamped at ingest with the lane-commit sha that sealed its tree, by forward correlation over the execution's ordered event stream (see the amended Ingestion bullet). Freshness dispatch: machine evidence with a validated tree keeps tree-identity; with only a commit stamp it evaluates through candidate ancestry (the same standard commit evidence meets); with neither it is stale `missing_commit_state`. The gate's auto-verdict path still demands candidate-citing `merge_validation` evidence — ancestry freshness removes the structural "permanently stale" property, it does not loosen the gate |
+| Delivery approval server path (18.7 — F17/F19) | The delivery gate's approval-missing refusal carries a typed `reason: "approval_required"` discriminator set only by that branch; on it the gate auto-files the durable approval request through ReviewService (best-effort, never blocks the refusal), idempotently per run — execution-scoped request identity canonicalizes to the run's pinned revision — with a retry-safe Needs You notification (rebuilt from the existing attention id on every repeat; the notifier dedupes on it). Delivery-gate semantics and preset dials are unchanged: every preset keeps `delivery: "gate"`; this is reachability, not loosening |
+| Halt presentation | Halt reason `delivery_gate_failed` is retained and extended with optional `refusalCode?: "approval_required"` and `spec?: {specSlug, specName, projectName}` across the merge types, the jobs Zod schema, and the halt-equality projection; the halt card and details dialog render the approval wait as attention (amber) with an `Open the merge gate →` link to `/specs/<project>/<slug>?el=delivery`; status bar and event log stay headline-only |
+| Studio reachability (8.10 — F14/F15/F16/F18/F26) | Controls joins the primary tabbed views; the pending-approvals banner and the executing-phase CTA link to the approving control; `?el=delivery` resolves to the focused merge-gate panel (retrying deep-link contract, cold-load safe); each execution view carries a **required** server-computed `deliveryProjection` (per-criterion `proven_merged \| waived \| delivered_elsewhere \| proof_recorded \| awaiting_proof`, precedence and validity mirroring the gate, waivers loaded for every execution-pinned revision) that the client renders verbatim with the split proof counter |

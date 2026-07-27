@@ -745,12 +745,12 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
   });
 });
 
-describe("state-db ref-shape cutover (schema version 1)", () => {
-  it("this build understands schema version 1 (the AgentSessionRef canonical cutover)", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(1);
+describe("state-db breaking-cutover versions", () => {
+  it("this build understands schema version 2 (the evidence-kind narrowing, after the AgentSessionRef cutover at 1)", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(2);
   });
 
-  it("opens a DB stamped at version 1 (this build) but refuses one stamped above it (an older build's DB advanced past this)", () => {
+  it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
     const dbPath = path.join(dir, "command-center.db");
 
@@ -759,20 +759,20 @@ describe("state-db ref-shape cutover (schema version 1)", () => {
       .prepare(
         "INSERT OR IGNORE INTO schema_migrations (version, description) VALUES (?, ?)",
       )
-      .run(1, "AgentSessionRef canonical cutover");
+      .run(KNOWN_SCHEMA_VERSION, "this build's newest breaking cutover");
     stamped.close();
 
-    // A build that knows version 1 reopens cleanly.
+    // A build that knows this version reopens cleanly.
     const reopened = _createTestDbAtPath(dbPath);
     expect(reopened.open).toBe(true);
     reopened
       .prepare(
         "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
       )
-      .run(2, "a future breaking migration");
+      .run(KNOWN_SCHEMA_VERSION + 1, "a future breaking migration");
     reopened.close();
 
-    // Now the recorded MAX(version) exceeds what this build knows (1), so the
+    // Now the recorded MAX(version) exceeds what this build knows, so the
     // forward-only gate refuses to open — the cutover's whole point.
     expect(() => _createTestDbAtPath(dbPath)).toThrow(/schema version|refus/i);
   });

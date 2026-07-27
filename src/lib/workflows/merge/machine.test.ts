@@ -357,6 +357,55 @@ describe("mergeMachine", () => {
       expect(output.error).toContain("R1.1");
     });
 
+    it("carries the approval-required presentation into the halt reason instead of the unmet-criteria template", async () => {
+      const unmet = [
+        {
+          criterionId: "spec-execution-1:gate:1",
+          criterionHandle: "audit-log",
+          outcome: "gate_blocked",
+          reason: "The delivery gate requires human approval.",
+        },
+      ];
+      const spec = {
+        specSlug: "audit-log",
+        specName: "Audit Log",
+        projectName: "command-center",
+      };
+      const machine = createTestMachine({
+        deliveryGateEvaluator: {
+          async evaluate() {
+            return {
+              status: "refused",
+              unmet,
+              instruction: "Approve delivery in Spec Studio, then resume.",
+              refusalCode: "approval_required",
+              spec,
+            };
+          },
+        },
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, executionId: "workflow-execution-1" },
+      });
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.haltReason).toEqual({
+        type: "delivery_gate_failed",
+        unmet,
+        instruction: "Approve delivery in Spec Studio, then resume.",
+        refusalCode: "approval_required",
+        spec,
+      });
+      // A sign-off wait is not an unmet-criteria failure: the error line says
+      // what the run is waiting on rather than listing pseudo-criteria.
+      expect(output.error).toBe(
+        "Delivery gate is waiting on human delivery approval. Approve delivery in Spec Studio, then resume.",
+      );
+    });
+
     it("publishes unchanged without invoking the evaluator when executionId is absent", async () => {
       let evaluateCall = 0;
       let publishCall = 0;

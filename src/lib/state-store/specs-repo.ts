@@ -143,7 +143,13 @@ const createDraftElementInputSchema = z
     revisionId: z.string().min(1),
     kind: specElementKindSchema,
     parentElementId: z.string().min(1).nullable(),
-    position: z.number().int().nonnegative(),
+    /**
+     * Omitted means append (R24.12): the server assigns the next position in
+     * the revision's one global order inside the insert transaction, so no
+     * caller has to read the revision to place an element and two concurrent
+     * appends cannot collide on a position.
+     */
+    position: z.number().int().nonnegative().optional(),
     payload: specElementPayloadSchema,
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
@@ -668,6 +674,11 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
      WHERE revision_id = ? AND element_id = ?
      LIMIT 1`,
   );
+  const nextElementPositionStmt = db.prepare(
+    `SELECT COALESCE(MAX(position), -1) + 1 AS next_position
+     FROM spec_element_versions
+     WHERE revision_id = ?`,
+  );
   const updateDraftElementCasStmt = db.prepare(
     `UPDATE spec_element_versions
      SET payload_json = @payload_json,
@@ -966,6 +977,19 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
   ): SpecElementVersion | null {
     const raw: unknown = findElementVersionStmt.get(revisionId, elementId);
     return raw === undefined ? null : rowToElementVersion(raw);
+  }
+
+  /**
+   * The append slot in the revision's one global order. Read inside the
+   * creating transaction so the value cannot be stale by the time it is used.
+   */
+  function nextElementPosition(revisionId: string): number {
+    return parseRow(
+      z.object({ next_position: z.number().int().nonnegative() }),
+      nextElementPositionStmt.get(revisionId),
+      "spec_element_version",
+      revisionId,
+    ).next_position;
   }
 
   function readSnapshot(revisionId: string): SpecRevisionSnapshot | null {
@@ -1382,7 +1406,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
       insertElementVersionStmt.run({
         revision_id: input.revisionId,
         element_id: input.id,
-        position: input.position,
+        position: input.position ?? nextElementPosition(input.revisionId),
         payload_json: stableStringify(input.payload),
         payload_hash: hash,
         created_at: input.createdAt,

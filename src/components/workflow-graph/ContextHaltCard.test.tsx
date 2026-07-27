@@ -42,3 +42,91 @@ describe("ContextHaltCard detail bounding", () => {
     expect(screen.getByTestId("halt-detail")).not.toContainElement(action);
   });
 });
+
+const approvalHalt: GraphWorkflowHaltReason = {
+  type: "delivery_gate_failed",
+  unmet: [
+    {
+      criterionId: "spec-execution-1:gate:1",
+      criterionHandle: "audit-log",
+      outcome: "gate_blocked",
+      reason: "The delivery gate requires human approval.",
+    },
+  ],
+  instruction:
+    "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+  refusalCode: "approval_required",
+  spec: {
+    specSlug: "audit-log",
+    specName: "Audit Log",
+    projectName: "command-center",
+  },
+};
+
+const criteriaHalt: GraphWorkflowHaltReason = {
+  type: "delivery_gate_failed",
+  unmet: [
+    {
+      criterionId: "criterion-1",
+      criterionHandle: "R1.1",
+      outcome: "proof_required",
+      reason: "No current proof",
+    },
+  ],
+  instruction: "Record fresh proof and re-dispatch the merge.",
+  spec: {
+    specSlug: "audit-log",
+    specName: "Audit Log",
+    projectName: "command-center",
+  },
+};
+
+describe("ContextHaltCard delivery-gate presentation", () => {
+  it("renders the approval refusal as an attention state with its own headline, not the unmet-criteria failure template", () => {
+    render(<ContextHaltCard primary={approvalHalt} />);
+
+    expect(
+      screen.getByText("Delivery gate — waiting on your approval"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Audit Log requires a human delivery approval before this run can publish.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Approve delivery in Spec Studio, then resume this workflow.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/refused publish/)).not.toBeInTheDocument();
+    // A sign-off wait must not read as a failure.
+    expect(screen.getByRole("alert")).toHaveAttribute("data-tone", "attention");
+    expect(
+      screen.getByRole("link", { name: /Open the merge gate/ }),
+    ).toHaveAttribute("href", "/specs/command-center/audit-log?el=delivery");
+  });
+
+  it("keeps the failure template for unmet-criteria refusals and links to the same merge gate", () => {
+    render(<ContextHaltCard primary={criteriaHalt} />);
+
+    expect(
+      screen.getByText(/Delivery gate refused publish — 1 unmet/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveAttribute("data-tone", "blocked");
+    expect(
+      screen.getByRole("link", { name: /Open the merge gate/ }),
+    ).toHaveAttribute("href", "/specs/command-center/audit-log?el=delivery");
+  });
+
+  it("falls back to a generic approval line without a link when the halt predates the spec block", () => {
+    const { spec: _spec, ...withoutSpec } = approvalHalt;
+    render(<ContextHaltCard primary={withoutSpec} />);
+
+    expect(
+      screen.getByText(
+        "This run requires a human delivery approval before it can publish.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+});

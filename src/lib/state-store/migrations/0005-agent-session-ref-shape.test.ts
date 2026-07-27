@@ -18,7 +18,11 @@ import {
   agentSessionRefShape,
   _setMigration0005AfterScanHookForTesting,
 } from "./0005-agent-session-ref-shape";
-import { _createTestDb, _createTestDbAtPath } from "../state-db";
+import {
+  KNOWN_SCHEMA_VERSION,
+  _createTestDb,
+  _createTestDbAtPath,
+} from "../state-db";
 import { createConversationsRepo } from "../conversations-repo";
 import { schemaCompatibilityBarrierPath } from "../schema-compatibility";
 
@@ -378,9 +382,15 @@ describe("0005-agent-session-ref-shape (production registry)", () => {
       threadId: "thr-future-race",
     });
     seedConversation(db, "c-future-race", { backendRef: legacyBytes });
+    // A version above what THIS build understands models a newer build's
+    // cutover landing after this connection opened; versions this build
+    // itself stamps (later migrations in its own chain) must not refuse.
     db.prepare(
       "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
-    ).run(2, "newer build committed after this connection opened");
+    ).run(
+      KNOWN_SCHEMA_VERSION + 1,
+      "newer build committed after this connection opened",
+    );
 
     await expect(
       agentSessionRefShape.up({
@@ -392,7 +402,7 @@ describe("0005-agent-session-ref-shape (production registry)", () => {
     expect(
       readRefColumns(db, "conversations", "c-future-race").backend_ref,
     ).toBe(legacyBytes);
-    expect(readSchemaMigrationVersions(db)).toEqual([2]);
+    expect(readSchemaMigrationVersions(db)).toEqual([KNOWN_SCHEMA_VERSION + 1]);
   });
 
   it("is idempotent: a second run leaves byte-identical rows", async () => {

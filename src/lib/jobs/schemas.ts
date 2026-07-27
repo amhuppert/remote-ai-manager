@@ -46,6 +46,22 @@ export const deliveryGateHaltReasonSchema = z.object({
   type: z.literal("delivery_gate_failed"),
   unmet: z.array(deliveryGateCriterionOutcomeSchema),
   instruction: z.string().min(1),
+  /**
+   * Present only when the refusal is the gate waiting on a human delivery
+   * approval; halt surfaces render it as an attention (amber) state with an
+   * approval deep link instead of the unmet-criteria failure template.
+   * Optional so halt reasons persisted before this field parse unchanged.
+   */
+  refusalCode: z.literal("approval_required").optional(),
+  /** Owning-spec presentation for the halt surface's Controls deep link. */
+  spec: z
+    .object({
+      specSlug: z.string().min(1),
+      specName: z.string().min(1),
+      projectName: z.string().min(1),
+    })
+    .strict()
+    .optional(),
 });
 export type DeliveryGateHaltReason = z.infer<
   typeof deliveryGateHaltReasonSchema

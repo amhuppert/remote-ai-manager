@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { SpecDetailView } from "@/lib/specs/queries";
 
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import { buildRailGroups, detailStatePresentation } from "./SpecDetailPage";
+import {
+  buildRailGroups,
+  detailStatePresentation,
+  resolveDeepLinkId,
+} from "./SpecDetailPage";
 
 describe("buildRailGroups", () => {
   it("keeps the prototype's four structured rail groups even when one is empty", () => {
@@ -60,25 +64,55 @@ describe("buildRailGroups", () => {
 
 describe("detailStatePresentation", () => {
   it("derives the phase-specific primary action without inventing a new mutation", () => {
-    expect(detailStatePresentation("approved")).toMatchObject({
+    expect(detailStatePresentation("approved", [])).toMatchObject({
       tone: "green",
       banner: "Revision approved",
       action: "Start execution",
       view: "controls",
     });
-    expect(detailStatePresentation("executing")).toMatchObject({
+    expect(detailStatePresentation("executing", [])).toMatchObject({
       tone: "cyan",
       banner: "Execution active",
       action: "Open evidence",
       view: "evidence",
     });
-    expect(detailStatePresentation("in_review")).toMatchObject({
+    expect(detailStatePresentation("in_review", [])).toMatchObject({
       tone: "amber",
       banner: "Revision awaits sign-off",
       action: "Review revision",
       view: "review",
     });
-    expect(detailStatePresentation("delivered").action).toBeNull();
-    expect(detailStatePresentation("abandoned").action).toBeNull();
+    expect(detailStatePresentation("delivered", []).action).toBeNull();
+    expect(detailStatePresentation("abandoned", []).action).toBeNull();
+  });
+
+  it("points the executing CTA at the pending delivery approval when one exists", () => {
+    const deliveryPending = [
+      { gate: "delivery" as const, subject: "delivery", elementId: null },
+    ];
+
+    expect(detailStatePresentation("executing", deliveryPending)).toEqual({
+      tone: "amber",
+      banner: "Execution active — approval needed",
+      description:
+        "The delivery gate is waiting on a human approval; proof continues against the pinned revision.",
+      action: "Approve delivery",
+      view: "controls",
+      el: "delivery",
+    });
+    // Authoring-gate approvals do not hijack the evidence CTA.
+    expect(
+      detailStatePresentation("executing", [
+        { gate: "design" as const, subject: "D1", elementId: "decision-1" },
+      ]),
+    ).toMatchObject({ action: "Open evidence", view: "evidence" });
+  });
+});
+
+describe("resolveDeepLinkId", () => {
+  it("maps the delivery deep link onto the merge-gate panel target", () => {
+    expect(resolveDeepLinkId("delivery", "native-sdd")).toBe("merge-gate");
+    expect(resolveDeepLinkId("R1", "native-sdd")).toBe("R1");
+    expect(resolveDeepLinkId(null, "native-sdd")).toBeNull();
   });
 });

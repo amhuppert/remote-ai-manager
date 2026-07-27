@@ -53,8 +53,6 @@ export const SPEC_ACTIONS = [
   "propose-assumption",
   "dispose-assumption",
   "change-policy",
-  "attach-evidence",
-  "record-verdict",
   "claim-task-complete",
   "reopen-claim",
   "request-waiver",

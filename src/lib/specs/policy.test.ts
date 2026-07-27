@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import type { SpecGate, SpecGatePolicy, SpecGatePreset } from "./schemas";
 import {
   COMBINED_APPROVAL_DIAL,
+  dialRequiresHumanApproval,
   isExploratoryShippingRefused,
   policyChangeRequiresHardConfirmation,
   resolveDial,
   type ResolvedGateDial,
 } from "./policy";
+import { resolvedGateDialSchema } from "./schemas";
 
 const gates: SpecGate[] = [
   "requirements",
@@ -158,4 +160,38 @@ describe("spec gate policy", () => {
       expect(isExploratoryShippingRefused({ preset })).toBe(expected);
     },
   );
+});
+
+describe("the canonical human-approval predicate", () => {
+  it.each<[ResolvedGateDial, boolean]>([
+    ["gate", true],
+    [COMBINED_APPROVAL_DIAL, true],
+    ["notify", false],
+    ["off", false],
+  ])("reports %s as requiring a human approval: %s", (dial, expected) => {
+    expect(dialRequiresHumanApproval(dial)).toBe(expected);
+  });
+
+  it("answers for every dial the schema admits, so a new dial cannot be silently unhandled", () => {
+    const dials: ResolvedGateDial[] = [
+      "gate",
+      "notify",
+      "off",
+      COMBINED_APPROVAL_DIAL,
+    ];
+    for (const dial of dials) {
+      expect(resolvedGateDialSchema.safeParse(dial).success).toBe(true);
+      expect(typeof dialRequiresHumanApproval(dial)).toBe("boolean");
+    }
+  });
+
+  it("agrees with the preset matrix that every contract-bearing gate is a human act", () => {
+    for (const gate of gates) {
+      expect(
+        dialRequiresHumanApproval(
+          resolveDial({ preset: "contract-bearing" }, gate),
+        ),
+      ).toBe(true);
+    }
+  });
 });

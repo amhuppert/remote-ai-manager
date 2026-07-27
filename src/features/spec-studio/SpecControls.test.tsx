@@ -7,12 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { SpecDetailView } from "@/lib/specs/queries";
+import { specGatePresetSchema } from "@/lib/specs/schemas";
 import type {
+  SpecGatePreset,
   SpecRevisionSnapshot,
   SpecRevisionState,
 } from "@/lib/specs/schemas";
 
-import {
+import SpecControlsPanel, {
+  AbandonSpecPanel,
   ExecutionPanel,
   IntegrityBanner,
   PolicyAdmissionNotices,
@@ -22,21 +25,62 @@ import {
 } from "./SpecControls";
 import {
   denseSpecControlsDetailFixture as denseExecutionFixture,
-  policyAdmissionRowFixture,
+  draftingSpecControlsDetailFixture as draftingDetailFixture,
+  policyAdmissionViewFixture,
+  policyImpactDraftFixture,
   SPEC_CONTROLS_FIXTURE_NOW as NOW,
   specControlsDetailFixture as detailFixture,
 } from "./SpecControls.fixtures";
 
+const POLICY_CONFIRMATION_NAME = "Gate policy change — human confirmation";
+const POLICY_CONFIRM_BUTTON = "Confirm policy change";
+const LOOSENING_WARNING = /at least one gate becomes weaker/i;
+const POLICY_IMPACT_NAME = "Impact of this change";
+const CONSULTED_LIST = "Gates the next transition consults";
+const ADDED_LIST = "Approvals added";
+const REMOVED_LIST = "Approvals removed";
+const UNAFFECTED_LIST = "Approvals unaffected";
+const LIFECYCLE_LIST = "Remaining lifecycle";
+
+function listLabels(list: HTMLElement): string[] {
+  return within(list)
+    .getAllByRole("listitem")
+    .map((item) => item.textContent ?? "");
+}
+
+const presetOptionLabels: Record<SpecGatePreset, string> = {
+  "contract-bearing": "Contract-bearing",
+  exploratory: "Exploratory",
+  "fast-path": "Fast path",
+};
+
+// Preset dial vectors (requirements, design, plan, execution_start, delivery):
+// contract-bearing (2,2,2,2,2) · exploratory (1,1,1,1,2) · fast-path (2,2,2,1,2).
+// Only these three ordered pairs reduce a dial; the other three tighten.
+const loosenedPresetPairs = new Set([
+  "contract-bearing>exploratory",
+  "contract-bearing>fast-path",
+  "fast-path>exploratory",
+]);
+
+const presetDirectionMatrix = specGatePresetSchema.options.flatMap((from) =>
+  specGatePresetSchema.options
+    .filter((to) => to !== from)
+    .map((to) => ({
+      from,
+      to,
+      loosens: loosenedPresetPairs.has(`${from}>${to}`),
+    })),
+);
+
 describe("PolicyDialog", () => {
-  it("shows policy controls directly and confirms a loosened preset", async () => {
-    const onChangePolicy = vi.fn();
-    const user = userEvent.setup();
+  it("shows policy controls directly without an opening button", () => {
     render(
       <PolicyDialog
         currentPolicy={{ preset: "contract-bearing" }}
         pending={false}
         error={null}
-        onChangePolicy={onChangePolicy}
+        onChangePolicy={vi.fn()}
       />,
     );
 
@@ -46,31 +90,95 @@ describe("PolicyDialog", () => {
     expect(
       screen.queryByRole("button", { name: "Change policy" }),
     ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
-
-    const confirmation = screen.getByRole("alertdialog", {
-      name: "Loosening a gate — human confirmation",
-    });
-    expect(
-      within(confirmation).getByText(/prospectively only/i),
-    ).toBeInTheDocument();
-    expect(
-      within(confirmation).queryByRole("textbox", {
-        name: "Hard confirmation",
-      }),
-    ).not.toBeInTheDocument();
-    await user.click(
-      within(confirmation).getByRole("button", { name: "Confirm loosening" }),
-    );
-
-    expect(onChangePolicy).toHaveBeenCalledWith({
-      proposedPolicy: { preset: "exploratory" },
-      hardConfirmed: true,
-    });
   });
 
-  it("opens the human confirmation only after an individual gate is loosened", async () => {
+  it.each(presetDirectionMatrix)(
+    "requires human confirmation for the $from → $to preset switch (loosens: $loosens)",
+    async ({ from, to, loosens }) => {
+      const onChangePolicy = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <PolicyDialog
+          currentPolicy={{ preset: from }}
+          pending={false}
+          error={null}
+          onChangePolicy={onChangePolicy}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("radio", {
+          name: new RegExp(presetOptionLabels[to]),
+        }),
+      );
+
+      expect(onChangePolicy).not.toHaveBeenCalled();
+      const confirmation = screen.getByRole("alertdialog", {
+        name: POLICY_CONFIRMATION_NAME,
+      });
+      expect(
+        within(confirmation).getByText(/prospectively only/i),
+      ).toBeInTheDocument();
+      expect(
+        within(confirmation).queryByRole("textbox", {
+          name: "Hard confirmation",
+        }),
+      ).not.toBeInTheDocument();
+      if (loosens) {
+        expect(
+          within(confirmation).getByText(LOOSENING_WARNING),
+        ).toBeInTheDocument();
+      } else {
+        expect(
+          within(confirmation).queryByText(LOOSENING_WARNING),
+        ).not.toBeInTheDocument();
+      }
+
+      await user.click(
+        within(confirmation).getByRole("button", {
+          name: POLICY_CONFIRM_BUTTON,
+        }),
+      );
+
+      expect(onChangePolicy).toHaveBeenCalledTimes(1);
+      expect(onChangePolicy).toHaveBeenCalledWith({
+        proposedPolicy: { preset: to },
+        hardConfirmed: true,
+      });
+    },
+  );
+
+  it("cancelling a preset switch submits nothing and restores the current policy", async () => {
+    const onChangePolicy = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{ preset: "exploratory" }}
+        pending={false}
+        error={null}
+        onChangePolicy={onChangePolicy}
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: /Contract-bearing/ }));
+    await user.click(
+      within(
+        screen.getByRole("alertdialog", { name: POLICY_CONFIRMATION_NAME }),
+      ).getByRole("button", { name: "Cancel" }),
+    );
+
+    expect(onChangePolicy).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    expect(
+      within(
+        screen.getByRole("radiogroup", { name: "Gate policy preset" }),
+      ).getByRole("radio", { name: /Exploratory/ }),
+    ).toBeChecked();
+  });
+
+  it("opens the human confirmation when an individual gate is loosened", async () => {
     const onChangePolicy = vi.fn();
     const user = userEvent.setup();
     render(
@@ -90,15 +198,18 @@ describe("PolicyDialog", () => {
     );
 
     const confirmation = screen.getByRole("alertdialog", {
-      name: "Loosening a gate — human confirmation",
+      name: POLICY_CONFIRMATION_NAME,
     });
     expect(
       within(confirmation).getByText(/prospectively only/i),
     ).toBeInTheDocument();
+    expect(within(confirmation).getByText(LOOSENING_WARNING)).toBeVisible();
     expect(onChangePolicy).not.toHaveBeenCalled();
 
     await user.click(
-      within(confirmation).getByRole("button", { name: "Confirm loosening" }),
+      within(confirmation).getByRole("button", {
+        name: POLICY_CONFIRM_BUTTON,
+      }),
     );
     expect(onChangePolicy).toHaveBeenCalledWith({
       proposedPolicy: {
@@ -107,6 +218,243 @@ describe("PolicyDialog", () => {
       },
       hardConfirmed: true,
     });
+  });
+
+  it("submits a same-preset tightening override without any confirmation", async () => {
+    const onChangePolicy = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{ preset: "exploratory" }}
+        pending={false}
+        error={null}
+        onChangePolicy={onChangePolicy}
+      />,
+    );
+
+    const requirementsGate = screen.getByRole("radiogroup", {
+      name: "Requirements gate mode",
+    });
+    await user.click(
+      within(requirementsGate).getByRole("radio", { name: "Gate" }),
+    );
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onChangePolicy).toHaveBeenCalledTimes(1);
+    expect(onChangePolicy).toHaveBeenCalledWith({
+      proposedPolicy: {
+        preset: "exploratory",
+        overrides: { requirements: "gate" },
+      },
+      hardConfirmed: false,
+    });
+  });
+
+  it("confirms a reset that loosens an override back to the preset default", async () => {
+    const onChangePolicy = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{
+          preset: "exploratory",
+          overrides: { requirements: "gate" },
+        }}
+        pending={false}
+        error={null}
+        onChangePolicy={onChangePolicy}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "↺ preset" }));
+
+    const confirmation = screen.getByRole("alertdialog", {
+      name: POLICY_CONFIRMATION_NAME,
+    });
+    expect(within(confirmation).getByText(LOOSENING_WARNING)).toBeVisible();
+    expect(onChangePolicy).not.toHaveBeenCalled();
+
+    await user.click(
+      within(confirmation).getByRole("button", {
+        name: POLICY_CONFIRM_BUTTON,
+      }),
+    );
+    expect(onChangePolicy).toHaveBeenCalledWith({
+      proposedPolicy: { preset: "exploratory" },
+      hardConfirmed: true,
+    });
+  });
+
+  it("submits a reset that tightens an override back to the preset default without confirmation", async () => {
+    const onChangePolicy = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{
+          preset: "contract-bearing",
+          overrides: { requirements: "notify" },
+        }}
+        pending={false}
+        error={null}
+        onChangePolicy={onChangePolicy}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "↺ preset" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onChangePolicy).toHaveBeenCalledTimes(1);
+    expect(onChangePolicy).toHaveBeenCalledWith({
+      proposedPolicy: { preset: "contract-bearing" },
+      hardConfirmed: false,
+    });
+  });
+
+  it("previews the pinned stage, the gates a tightened propose consults, added approvals, draft validity, and remaining lifecycle", async () => {
+    const onChangePolicy = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{ preset: "exploratory" }}
+        pending={false}
+        error={null}
+        onChangePolicy={onChangePolicy}
+        openDraft={policyImpactDraftFixture("design")}
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: /Contract-bearing/ }));
+
+    const confirmation = screen.getByRole("alertdialog", {
+      name: POLICY_CONFIRMATION_NAME,
+    });
+    const impact = within(confirmation).getByRole("region", {
+      name: POLICY_IMPACT_NAME,
+    });
+
+    expect(within(impact).getByText("Design → Design")).toBeVisible();
+    expect(within(impact).getByText("Pinned")).toBeVisible();
+    expect(
+      within(impact).getByText(/never restages an open draft/i),
+    ).toBeVisible();
+    expect(
+      within(impact).getByText(/Propose the Design stage/i),
+    ).toHaveTextContent("human sign-off required");
+
+    expect(
+      listLabels(within(impact).getByRole("list", { name: CONSULTED_LIST })),
+    ).toEqual(["Requirements · Gate", "Design · Gate"]);
+    expect(
+      listLabels(within(impact).getByRole("list", { name: ADDED_LIST })),
+    ).toEqual([
+      "Requirements · Notify → Gate",
+      "Design · Notify → Gate",
+      "Plan · Notify → Gate",
+      "Execution start · Notify → Gate",
+    ]);
+    expect(
+      listLabels(within(impact).getByRole("list", { name: UNAFFECTED_LIST })),
+    ).toEqual(["Delivery · Gate → Gate"]);
+    expect(
+      within(impact).queryByRole("list", { name: REMOVED_LIST }),
+    ).not.toBeInTheDocument();
+
+    expect(within(impact).getByText(/Draft rev 4 stays valid/i)).toBeVisible();
+    expect(
+      listLabels(within(impact).getByRole("list", { name: LIFECYCLE_LIST })),
+    ).toEqual([
+      "Design · Gate",
+      "Plan · Gate",
+      "Execution start · Gate",
+      "Delivery · Gate",
+    ]);
+
+    expect(onChangePolicy).not.toHaveBeenCalled();
+    await user.click(
+      within(confirmation).getByRole("button", {
+        name: POLICY_CONFIRM_BUTTON,
+      }),
+    );
+    expect(onChangePolicy).toHaveBeenCalledWith({
+      proposedPolicy: { preset: "contract-bearing" },
+      hardConfirmed: true,
+    });
+  });
+
+  it("previews a loosening as an agent advance that consults only the pinned stage", async () => {
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{ preset: "contract-bearing" }}
+        pending={false}
+        error={null}
+        onChangePolicy={vi.fn()}
+        openDraft={policyImpactDraftFixture("design")}
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
+
+    const impact = within(
+      screen.getByRole("alertdialog", { name: POLICY_CONFIRMATION_NAME }),
+    ).getByRole("region", { name: POLICY_IMPACT_NAME });
+
+    expect(within(impact).getByText("Design → Design")).toBeVisible();
+    expect(
+      within(impact).getByText(/Advance the Design stage/i),
+    ).toHaveTextContent("the agent may proceed");
+    expect(
+      listLabels(within(impact).getByRole("list", { name: CONSULTED_LIST })),
+    ).toEqual(["Design · Notify"]);
+    expect(
+      listLabels(within(impact).getByRole("list", { name: REMOVED_LIST })),
+    ).toEqual([
+      "Requirements · Gate → Notify",
+      "Design · Gate → Notify",
+      "Plan · Gate → Notify",
+      "Execution start · Gate → Notify",
+    ]);
+    expect(
+      within(impact).queryByRole("list", { name: ADDED_LIST }),
+    ).not.toBeInTheDocument();
+    expect(
+      listLabels(within(impact).getByRole("list", { name: LIFECYCLE_LIST })),
+    ).toEqual([
+      "Design · Notify",
+      "Plan · Notify",
+      "Execution start · Notify",
+      "Delivery · Gate",
+    ]);
+  });
+
+  it("previews a change with no open draft without claiming a stage or a lifecycle", async () => {
+    const user = userEvent.setup();
+    render(
+      <PolicyDialog
+        currentPolicy={{ preset: "contract-bearing" }}
+        pending={false}
+        error={null}
+        onChangePolicy={vi.fn()}
+        openDraft={null}
+      />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: /Fast path/ }));
+
+    const impact = within(
+      screen.getByRole("alertdialog", { name: POLICY_CONFIRMATION_NAME }),
+    ).getByRole("region", { name: POLICY_IMPACT_NAME });
+
+    expect(within(impact).getByText(/No open draft revision/i)).toBeVisible();
+    expect(within(impact).queryByText("Pinned")).not.toBeInTheDocument();
+    expect(
+      within(impact).queryByRole("list", { name: CONSULTED_LIST }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(impact).queryByRole("list", { name: LIFECYCLE_LIST }),
+    ).not.toBeInTheDocument();
+    expect(
+      listLabels(within(impact).getByRole("list", { name: REMOVED_LIST })),
+    ).toEqual(["Execution start · Gate → Notify"]);
   });
 });
 
@@ -357,14 +705,13 @@ describe("ExecutionPanel", () => {
     });
     expect(within(mergeGate).getByText("R1.1")).toBeInTheDocument();
     expect(within(mergeGate).getByText("R1.2")).toBeInTheDocument();
-    expect(within(mergeGate).getByText("Waived")).toBeInTheDocument();
+    expect(within(mergeGate).getAllByText("Waived").length).toBeGreaterThan(0);
     expect(within(mergeGate).getByText("R1.4")).toBeInTheDocument();
     expect(
-      within(mergeGate).getByText("Delivered elsewhere"),
-    ).toBeInTheDocument();
+      within(mergeGate).getAllByText("Delivered elsewhere").length,
+    ).toBeGreaterThan(0);
     expect(within(mergeGate).getByText(/1 deferred criterion/i)).toBeVisible();
     expect(within(mergeGate).getByText(/1 delivered elsewhere/i)).toBeVisible();
-    expect(within(mergeGate).getByText(/1\/3 proven/i)).toBeVisible();
     expect(
       within(mergeGate).queryByRole("button", { name: /Merge execution-1/ }),
     ).not.toBeInTheDocument();
@@ -378,6 +725,78 @@ describe("ExecutionPanel", () => {
       executionId: "execution-1",
       revisionId: "revision-1",
     });
+  });
+
+  it("renders the server-computed proof projection: row chips, kind chips, and the split counter", () => {
+    render(
+      <ExecutionPanel
+        detail={denseExecutionFixture("running")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    const mergeGate = screen.getByRole("region", {
+      name: "Merge gate for execution-1",
+    });
+    // The ?el=delivery deep link scrolls to and focuses this panel.
+    expect(mergeGate).toHaveAttribute("id", "merge-gate");
+    expect(mergeGate).toHaveAttribute("tabindex", "-1");
+    // Per-criterion rows mirror deliveryProjection verbatim.
+    expect(within(mergeGate).getByText("Proof recorded")).toBeVisible();
+    expect(within(mergeGate).getAllByText("Waived").length).toBeGreaterThan(0);
+    expect(
+      within(mergeGate).getAllByText("Delivered elsewhere").length,
+    ).toBeGreaterThan(0);
+    expect(within(mergeGate).getAllByText("Test run")).toHaveLength(3);
+    // Pre-merge proof standing is separated from the delivered-state counter.
+    expect(
+      within(mergeGate).getByText(
+        "1/3 proof recorded · 1 waived · 1 external delivery",
+      ),
+    ).toBeVisible();
+    expect(
+      within(mergeGate).getByText(
+        "Criteria count as proven once a gate-passed merge publishes — merged proof 1/3.",
+      ),
+    ).toBeVisible();
+    expect(within(mergeGate).queryByText(/1\/3 proven ·/)).toBeNull();
+  });
+
+  it("shows Awaiting proof for a scoped criterion with no recorded proof", () => {
+    render(
+      <ExecutionPanel
+        detail={detailFixture("running")}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    const mergeGate = screen.getByRole("region", {
+      name: "Merge gate for execution-1",
+    });
+    expect(within(mergeGate).getByText("Awaiting proof")).toBeVisible();
+    expect(
+      within(mergeGate).getByText(
+        "0/1 proof recorded · 0 waived · 0 external delivery",
+      ),
+    ).toBeVisible();
   });
 
   it("reveals the waiver reason flow only when a scoped criterion is waived", async () => {
@@ -642,13 +1061,13 @@ describe("ExecutionPanel", () => {
         payloadHash: "criterion-2-hash",
       },
     });
-    execution.scope_json = JSON.stringify({
+    execution.scope = {
       selectedTaskIds: ["task-1"],
       selectedCriterionIds: ["criterion-1"],
       exclusionDispositions: [
         { criterionId: "criterion-2", disposition: "deferred" },
       ],
-    });
+    };
     detail.criterionDispositions.push({
       execution_id: execution.id,
       criterion_element_id: "criterion-2",
@@ -716,17 +1135,15 @@ describe("ExecutionPanel", () => {
   it("renders the recorded execution-start approval without claiming the run started", () => {
     const detail = detailFixture("definition_review");
     detail.gateAdmissions = [
-      {
+      policyAdmissionViewFixture({
         id: "admission-start-1",
-        spec_id: "spec-1",
         gate: "execution_start",
         basis: "human_approval",
-        approval_id: "approval-start-1",
-        revision_id: "revision-1",
-        execution_id: "execution-1",
-        actor_json: '{"kind":"human"}',
-        created_at: NOW,
-      },
+        approvalId: "approval-start-1",
+        executionId: "execution-1",
+        actor: { kind: "human" },
+        createdAt: NOW,
+      }),
     ];
     render(
       <ExecutionPanel
@@ -756,7 +1173,7 @@ describe("ExecutionPanel", () => {
     const execution = detail.executions[0];
     if (execution === undefined) throw new Error("Execution fixture missing");
     execution.state = "running";
-    execution.workflow_execution_id = "workflow-execution-9";
+    execution.workflowExecutionId = "workflow-execution-9";
     render(
       <ExecutionPanel
         detail={detail}
@@ -813,17 +1230,15 @@ describe("ExecutionPanel", () => {
   it("renders the admitted state instead of the blocking prompt once delivery approval is granted", () => {
     const detail = detailFixture("definition_review");
     detail.gateAdmissions = [
-      {
+      policyAdmissionViewFixture({
         id: "admission-1",
-        spec_id: "spec-1",
         gate: "delivery",
         basis: "human_approval",
-        approval_id: "approval-1",
-        revision_id: "revision-1",
-        execution_id: "execution-1",
-        actor_json: '{"kind":"human"}',
-        created_at: NOW,
-      },
+        approvalId: "approval-1",
+        executionId: "execution-1",
+        actor: { kind: "human" },
+        createdAt: NOW,
+      }),
     ];
     render(
       <ExecutionPanel
@@ -1150,25 +1565,26 @@ describe("PolicyAdmissionNotices", () => {
     render(
       <PolicyAdmissionNotices
         admissions={[
-          policyAdmissionRowFixture({
+          policyAdmissionViewFixture({
             id: "admission-1",
             gate: "requirements",
           }),
-          policyAdmissionRowFixture({
+          policyAdmissionViewFixture({
             id: "admission-2",
             gate: "plan",
-            revision_id: null,
+            revisionId: null,
+            revisionNumber: null,
           }),
-          policyAdmissionRowFixture({
+          policyAdmissionViewFixture({
             id: "admission-3",
             gate: "design",
             basis: "off_policy",
           }),
-          policyAdmissionRowFixture({
+          policyAdmissionViewFixture({
             id: "admission-4",
             gate: "delivery",
             basis: "human_approval",
-            approval_id: "approval-1",
+            approvalId: "approval-1",
           }),
         ]}
       />,
@@ -1190,9 +1606,9 @@ describe("PolicyAdmissionNotices", () => {
     const { container } = render(
       <PolicyAdmissionNotices
         admissions={[
-          policyAdmissionRowFixture({
+          policyAdmissionViewFixture({
             basis: "human_approval",
-            approval_id: "approval-1",
+            approvalId: "approval-1",
           }),
         ]}
       />,
@@ -1305,5 +1721,360 @@ describe("SpecIntegrityPanel", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Integrity intact",
     );
+  });
+});
+
+describe("AbandonSpecPanel", () => {
+  const SPEC_ABANDON_TRIGGER = "Abandon whole spec";
+  const SPEC_ABANDON_CONFIRM = "Abandon spec permanently";
+  const SPEC_ABANDON_REASON = "Spec abandonment reason";
+
+  it("offers the whole-spec action under its own name, distinct from execution abandonment", () => {
+    render(
+      <AbandonSpecPanel
+        slug="native-sdd"
+        abandonedAt={null}
+        abandonedReason={null}
+        pending={false}
+        error={null}
+        onAbandonSpec={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: SPEC_ABANDON_TRIGGER }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Abandon execution" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a confirmation naming the spec instead of submitting on the first click", async () => {
+    const onAbandonSpec = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AbandonSpecPanel
+        slug="native-sdd"
+        abandonedAt={null}
+        abandonedReason={null}
+        pending={false}
+        error={null}
+        onAbandonSpec={onAbandonSpec}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: SPEC_ABANDON_TRIGGER }),
+    );
+
+    expect(onAbandonSpec).not.toHaveBeenCalled();
+    const confirmation = screen.getByRole("alertdialog", {
+      name: /native-sdd/,
+    });
+    expect(
+      within(confirmation).getByRole("button", { name: SPEC_ABANDON_CONFIRM }),
+    ).toBeDisabled();
+  });
+
+  it("dispatches the abandonment with its reason only from the confirm action", async () => {
+    const onAbandonSpec = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AbandonSpecPanel
+        slug="native-sdd"
+        abandonedAt={null}
+        abandonedReason={null}
+        pending={false}
+        error={null}
+        onAbandonSpec={onAbandonSpec}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: SPEC_ABANDON_TRIGGER }),
+    );
+    const confirmation = screen.getByRole("alertdialog", {
+      name: /native-sdd/,
+    });
+    await user.type(
+      within(confirmation).getByRole("textbox", { name: SPEC_ABANDON_REASON }),
+      "  Superseded by the ticket-native rewrite.  ",
+    );
+    expect(onAbandonSpec).not.toHaveBeenCalled();
+
+    await user.click(
+      within(confirmation).getByRole("button", { name: SPEC_ABANDON_CONFIRM }),
+    );
+
+    expect(onAbandonSpec).toHaveBeenCalledTimes(1);
+    expect(onAbandonSpec).toHaveBeenCalledWith({
+      reason: "Superseded by the ticket-native rewrite.",
+    });
+  });
+
+  it("dispatches nothing when the confirmation is cancelled", async () => {
+    const onAbandonSpec = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <AbandonSpecPanel
+        slug="native-sdd"
+        abandonedAt={null}
+        abandonedReason={null}
+        pending={false}
+        error={null}
+        onAbandonSpec={onAbandonSpec}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: SPEC_ABANDON_TRIGGER }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: SPEC_ABANDON_REASON }),
+      "Superseded by the ticket-native rewrite.",
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(onAbandonSpec).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+
+    // A reopened confirmation must not carry the abandoned reason forward.
+    await user.click(
+      screen.getByRole("button", { name: SPEC_ABANDON_TRIGGER }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: SPEC_ABANDON_REASON }),
+    ).toHaveValue("");
+  });
+
+  it("replaces the control with the recorded outcome once the spec is abandoned", () => {
+    render(
+      <AbandonSpecPanel
+        slug="native-sdd"
+        abandonedAt={NOW}
+        abandonedReason="Superseded by the ticket-native rewrite."
+        pending={false}
+        error={null}
+        onAbandonSpec={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: SPEC_ABANDON_TRIGGER }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Superseded by the ticket-native rewrite."),
+    ).toBeVisible();
+  });
+});
+
+describe("SpecControlsPanel policy impact", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  // The panel is where the open draft is read from, and the preview must
+  // resolve the *proposed* dials: the stored sequence for this contract-bearing
+  // spec says the design stage is concluded by a human propose, while the
+  // exploratory posture being confirmed turns it into an agent advance.
+  it("previews the confirmed policy against the spec's open draft, not the stored sequence", async () => {
+    const detail = draftingDetailFixture("design");
+    api.pending(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+    );
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel detail={detail} projectName="command-center" />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
+
+    const impact = within(
+      screen.getByRole("alertdialog", { name: POLICY_CONFIRMATION_NAME }),
+    ).getByRole("region", { name: POLICY_IMPACT_NAME });
+
+    expect(within(impact).getByText("Design → Design")).toBeVisible();
+    expect(
+      within(impact).getByText(/rev 2 keeps its Design stage/i),
+    ).toBeVisible();
+    expect(
+      within(impact).getByText(/Advance the Design stage/i),
+    ).toHaveTextContent("the agent may proceed");
+    expect(
+      listLabels(within(impact).getByRole("list", { name: LIFECYCLE_LIST })),
+    ).toEqual([
+      "Design · Notify",
+      "Plan · Notify",
+      "Execution start · Notify",
+      "Delivery · Gate",
+    ]);
+  });
+});
+
+describe("SpecControlsPanel gate policy change", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  // change-policy resolves to the spec *and* what the open draft still owes
+  // under the confirmed dials. A response schema narrower than the action's
+  // real return turns every accepted change into a visible failure, because
+  // the parse — not the server — is what rejects it.
+  it("reports an accepted policy change as success rather than an error", async () => {
+    const detail = draftingDetailFixture("design");
+    const changePolicyPath = `/api/specs/command-center/${detail.spec.slug}/actions/change-policy`;
+    api.pending(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+    );
+    let releaseResponse = (): void => {};
+    const responseReleased = new Promise<void>((resolve) => {
+      releaseResponse = () => resolve();
+    });
+    api.reply("POST", changePolicyPath, async () => {
+      await responseReleased;
+      return {
+        json: {
+          spec: { ...detail.spec, gatePolicy: { preset: "exploratory" } },
+          authoringSequence: detail.status.authoringSequence,
+        },
+      };
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel detail={detail} projectName="command-center" />,
+    );
+
+    await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
+    await user.click(
+      within(
+        screen.getByRole("alertdialog", { name: POLICY_CONFIRMATION_NAME }),
+      ).getByRole("button", { name: POLICY_CONFIRM_BUTTON }),
+    );
+
+    const policyRegion = await screen.findByRole("region", {
+      name: "Gate policy",
+    });
+    await waitFor(() => {
+      expect(policyRegion).toHaveAttribute("aria-busy", "true");
+    });
+    expect(api.requestsTo("POST", changePolicyPath)[0]?.jsonBody).toEqual({
+      proposedPolicy: { preset: "exploratory" },
+      hardConfirmed: true,
+    });
+
+    releaseResponse();
+
+    await waitFor(() => {
+      expect(policyRegion).toHaveAttribute("aria-busy", "false");
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("SpecControlsPanel whole-spec abandonment", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  // The CLI path is refused as human-only, so this surface is the only place
+  // the whole-spec action can be reached: the control must be wired into the
+  // composed panel, not merely exported.
+  it("posts the confirmed abandonment through the spec action path", async () => {
+    const detail = detailFixture();
+    const abandonPath = `/api/specs/command-center/${detail.spec.slug}/actions/abandon-spec`;
+    api.pending(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+    );
+    api.json("POST", abandonPath, {
+      ...detail.spec,
+      abandonedAt: NOW,
+      abandonedReason: "Superseded by the ticket-native rewrite.",
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel detail={detail} projectName="command-center" />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Abandon whole spec" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Spec abandonment reason" }),
+      "Superseded by the ticket-native rewrite.",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Abandon spec permanently" }),
+    );
+
+    await waitFor(() => {
+      expect(api.requestsTo("POST", abandonPath)).toHaveLength(1);
+    });
+    expect(api.requestsTo("POST", abandonPath)[0]?.jsonBody).toEqual({
+      reason: "Superseded by the ticket-native rewrite.",
+    });
+  });
+
+  // Rename is human-only for the same reason abandon is, so the refusal sends
+  // agents here; the dialog existed but no surface rendered it, leaving the
+  // capability unreachable from the session the refusal names.
+  it("posts the confirmed rename through the spec action path", async () => {
+    const detail = detailFixture();
+    const renamePath = `/api/specs/command-center/${detail.spec.slug}/actions/rename`;
+    api.pending(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+    );
+    api.json("POST", renamePath, {
+      spec: { ...detail.spec, slug: "renamed-spec" },
+      alias: {
+        specId: detail.spec.id,
+        slug: detail.spec.slug,
+        createdAt: NOW,
+      },
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel detail={detail} projectName="command-center" />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const slugField = screen.getByRole("textbox", { name: "New slug" });
+    await user.clear(slugField);
+    await user.type(slugField, "renamed-spec");
+    await user.click(screen.getByRole("button", { name: "Rename spec" }));
+
+    await waitFor(() => {
+      expect(api.requestsTo("POST", renamePath)).toHaveLength(1);
+    });
+    expect(api.requestsTo("POST", renamePath)[0]?.jsonBody).toEqual({
+      slug: "renamed-spec",
+    });
   });
 });

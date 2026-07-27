@@ -306,7 +306,30 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
       type: "recovery_error",
       message: "could not recover lane state",
     },
-    secondaryHaltReasons: [{ type: "aborted" }],
+    secondaryHaltReasons: [
+      { type: "aborted" },
+      // Maximal delivery-gate halt: carries the approval presentation fields
+      // (refusalCode + spec deep-link block) so the optional extension is
+      // proven durable through the repository round trip.
+      {
+        type: "delivery_gate_failed",
+        unmet: [
+          {
+            criterionId: "spec-execution-1:gate:1",
+            criterionHandle: "audit-log",
+            outcome: "gate_blocked",
+            reason: "The delivery gate requires human approval.",
+          },
+        ],
+        instruction: "Approve delivery in Spec Studio, then resume the merge.",
+        refusalCode: "approval_required",
+        spec: {
+          specSlug: "audit-log",
+          specName: "Audit Log",
+          projectName: "command-center",
+        },
+      },
+    ],
     pendingCollaborations: {
       "collab-1": {
         workflowId: "wf-maximal",

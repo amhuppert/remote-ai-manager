@@ -340,6 +340,7 @@ export function createSpecSpineWorld(): SpecSpineWorld {
     delivery,
     links,
     events,
+    attention: eventsRepo,
     notifier: {
       approvalRequested(notice) {
         reviewNotifications.requested.push(notice);
@@ -404,6 +405,14 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       const record = definitions.findById(workflowDefinitionId);
       return record === null ? [] : readCompiledOriginMap(record.definition);
     },
+    // Late-bound like the execution service's probe below: the fixture's live
+    // workflow status decides deferred-stamp terminality exactly as the
+    // production repos do.
+    getWorkflowExecutionStatus: async (workflowExecutionId) =>
+      activeWorkflowExecution !== null &&
+      activeWorkflowExecution.id === workflowExecutionId
+        ? activeWorkflowExecution.status
+        : null,
   });
   const ingestExecutionEvidence = (executionId: string) =>
     ingest.ingestAuthoritatively(executionId);
@@ -454,8 +463,7 @@ export function createSpecSpineWorld(): SpecSpineWorld {
         job.candidateValidation?.validationRef === ref.validationRef
       );
     },
-    contentObjectExists: async () => false,
-    humanActorExists: async (ref) => ref.actorId === "operator",
+
     isEvidenceFresh: async () => true,
     routeStrategyInadequacy: async () => undefined,
     routeWaiverRequestToHuman: async () => ({
@@ -537,6 +545,8 @@ export function createSpecSpineWorld(): SpecSpineWorld {
     nextId: newId,
     now,
     ingestExecutionEvidence,
+    // The fixture has no sessions store; every named session resolves.
+    sessionExists: async () => true,
     // Late-bound like the definition gate below: reports the fixture's live
     // workflow status so read-path reconciliation sees the run instead of
     // treating the linked workflow as deleted (null now means "abandon").
@@ -622,8 +632,8 @@ export function createSpecSpineWorld(): SpecSpineWorld {
     findApprovalsBySpecId: (specId) => review.findApprovalsBySpecId(specId),
     findCommentsByRevision: (revisionId) =>
       review.findCommentsByRevision(revisionId),
-    findGateAdmissionsByRevision: (revisionId) =>
-      review.findGateAdmissionsByRevision(revisionId),
+    findGateAdmissionsBySpecId: (specId) =>
+      review.findGateAdmissionsBySpecId(specId),
     findLinksBySpecId: (specId) => links.findBySpecId(specId),
     getLinkedTickets: async () => [],
     findQuestionsBySpecId: (specId) => review.findQuestionsBySpecId(specId),
@@ -634,7 +644,9 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       workflowEvents.findByExecution(executionId),
     async reconcileExecution(_projectPath, executionRow) {
       const result = await execution.getStatus(executionRow.id);
-      return result.ok ? result.value : executionRow;
+      return result.ok
+        ? result.value
+        : { execution: executionRow, workflowStatus: null };
     },
     async ingestExecutionEvidenceBestEffort(_projectPath, executionId) {
       await ingest.ingestBestEffort(executionId);
@@ -650,6 +662,9 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       ),
     findWaiverForCriterionRevision: (criterionElementId, revisionId) =>
       delivery.findWaiverForCriterionRevision(criterionElementId, revisionId),
+    findWaiverById: (waiverId) => delivery.findWaiverById(waiverId),
+    findWaiversByRevision: (revisionId) =>
+      delivery.findWaiversByRevision(revisionId),
     async exportSpec(specId) {
       return renderCanonicalBundle(
         await loadSpecExportState({ specs, review }, specId),
@@ -694,6 +709,25 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       evidenceService: evidence,
       ingestExecutionEvidence,
       recordIntervention: recordMutation,
+      getProjectDisplayName: () => SPINE_PROJECT_NAME,
+      // Mirrors production composition: the gate's missing-approval refusal
+      // opens the same durable Needs You request Spec Studio and the CLI use.
+      async requestDeliveryApproval({
+        specId,
+        revisionId,
+        workflowExecutionId,
+      }) {
+        await reviewService.requestApproval({
+          specId,
+          revisionId,
+          gate: "delivery",
+          subject: "delivery",
+          actor: {
+            kind: "agent",
+            conversationId: `workflow:${workflowExecutionId}`,
+          },
+        });
+      },
       now,
       newAdmissionId: () => newId("admission"),
       events,
@@ -1564,20 +1598,10 @@ export async function runSpineWorkflowToEvidence(
     // that build on the last lane commit contain every earlier one.
     world.linkCommit(sha, index === 0 ? [] : [`commit-${index}`]);
     commitShas.push(sha);
+    // Production ordering: the context's passing validation precedes the
+    // lane commit that seals its tree, so ingest stamps the validation
+    // evidence with this lane commit's sha (forward correlation, F24).
     return [
-      graphWorkflowExecutionEventSchema.parse({
-        occurredAt: world.now(),
-        event: {
-          type: "graph-workflow-lane-commit",
-          projectName: SPINE_PROJECT_NAME,
-          sessionName: SPINE_SESSION_NAME,
-          executionId: SPINE_WORKFLOW_EXECUTION_ID,
-          contextId,
-          laneId: `lane-${index + 1}`,
-          sha,
-          committedAt: world.now(),
-        },
-      }),
       graphWorkflowExecutionEventSchema.parse({
         occurredAt: world.now(),
         event: {
@@ -1595,6 +1619,19 @@ export async function runSpineWorkflowToEvidence(
             lane: "context_validator",
             refKind: "backend",
           },
+        },
+      }),
+      graphWorkflowExecutionEventSchema.parse({
+        occurredAt: world.now(),
+        event: {
+          type: "graph-workflow-lane-commit",
+          projectName: SPINE_PROJECT_NAME,
+          sessionName: SPINE_SESSION_NAME,
+          executionId: SPINE_WORKFLOW_EXECUTION_ID,
+          contextId,
+          laneId: `lane-${index + 1}`,
+          sha,
+          committedAt: world.now(),
         },
       }),
     ];

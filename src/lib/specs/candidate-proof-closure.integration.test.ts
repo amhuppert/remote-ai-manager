@@ -450,8 +450,7 @@ describe("candidate-proof closure over the wired merge bridge", () => {
         );
         return source?.mergeJobId === ref.mergeJobId;
       },
-      contentObjectExists: async () => false,
-      humanActorExists: async () => false,
+
       isEvidenceFresh: async () => true,
       routeStrategyInadequacy: async () => undefined,
       routeWaiverRequestToHuman: async () => ({ attentionId: "attention-1" }),
@@ -467,6 +466,8 @@ describe("candidate-proof closure over the wired merge bridge", () => {
       specsRepo,
       evidenceService,
       ingestExecutionEvidence: async () => undefined,
+      getProjectDisplayName: () => "closure-project",
+      requestDeliveryApproval: async () => undefined,
       recordIntervention: createEvidenceMutationRecorder({
         eventsRepo,
         events: specEventsPublisher,

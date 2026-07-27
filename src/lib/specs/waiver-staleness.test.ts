@@ -92,6 +92,7 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
       review: reviewRepo,
       links: createSpecLinksRepo(db),
       events,
+      attention: specEvents,
       newId(prefix: string) {
         idSequence += 1;
         return `${prefix}-${idSequence}`;

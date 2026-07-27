@@ -32,6 +32,9 @@ const SPEC_ID = "spec-review-maximal";
 const ELEMENT_ID = "requirement-review-maximal";
 const REVISION_ID = "revision-review-maximal";
 const EXECUTION_ID = "execution-review-maximal";
+const SECOND_REVISION_ID = "revision-review-maximal-2";
+const FOREIGN_SPEC_ID = "spec-review-foreign";
+const FOREIGN_REVISION_ID = "revision-review-foreign";
 
 let db: Db;
 let repo: SpecReviewRepo;
@@ -103,6 +106,49 @@ function seedReviewParents(): void {
     null,
     "2026-07-18T08:05:00.000Z",
     "2026-07-18T08:06:00.000Z",
+  );
+}
+
+function insertRevision(
+  id: string,
+  specId: string,
+  number: number,
+  createdAt: string,
+): void {
+  db.prepare(
+    `INSERT INTO spec_revisions (
+       id, spec_id, number, state, based_on_revision_id, content_hash,
+       proposed_at, approved_at, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, specId, number, "draft", null, null, null, null, createdAt);
+}
+
+function seedSecondRevision(): void {
+  insertRevision(SECOND_REVISION_ID, SPEC_ID, 5, "2026-07-18T09:30:00.000Z");
+}
+
+function seedForeignSpec(): void {
+  db.prepare(
+    `INSERT INTO specs (
+       id, project_path, slug, name, gate_policy_json,
+       abandoned_at, abandoned_reason, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    FOREIGN_SPEC_ID,
+    "/repos/review-contract",
+    "review-contract-foreign",
+    "Review contract foreign",
+    '{"preset":"contract-bearing"}',
+    null,
+    null,
+    "2026-07-18T08:00:00.000Z",
+    "2026-07-18T08:01:00.000Z",
+  );
+  insertRevision(
+    FOREIGN_REVISION_ID,
+    FOREIGN_SPEC_ID,
+    1,
+    "2026-07-18T08:02:30.000Z",
   );
 }
 
@@ -329,4 +375,40 @@ describe("spec-review-repo durability contract", () => {
       );
     },
   );
+
+  it("reads every admission a spec ever recorded, across its revisions, in one query", () => {
+    seedSecondRevision();
+    seedForeignSpec();
+    const onSecondRevision = specGateAdmissionRowSchema.parse({
+      ...maximalGateAdmission(),
+      id: "admission-review-second-revision",
+      gate: "requirements",
+      approval_id: null,
+      revision_id: SECOND_REVISION_ID,
+      execution_id: null,
+      created_at: "2026-07-18T10:00:00.000Z",
+    });
+    const foreign = specGateAdmissionRowSchema.parse({
+      ...maximalGateAdmission(),
+      id: "admission-review-foreign",
+      spec_id: FOREIGN_SPEC_ID,
+      gate: "design",
+      approval_id: null,
+      revision_id: FOREIGN_REVISION_ID,
+      execution_id: null,
+      created_at: "2026-07-18T08:59:00.000Z",
+    });
+    repo.insertGateAdmission(maximalGateAdmission());
+    repo.insertGateAdmission(onSecondRevision);
+    repo.insertGateAdmission(foreign);
+
+    const reloaded = repo.findGateAdmissionsBySpecId(SPEC_ID);
+
+    expect(reloaded.map((admission) => admission.id)).toEqual([
+      "admission-review-maximal",
+      "admission-review-second-revision",
+    ]);
+    expect(reloaded[0]).toEqual(maximalGateAdmission());
+    expect(repo.findGateAdmissionsBySpecId(FOREIGN_SPEC_ID)).toEqual([foreign]);
+  });
 });

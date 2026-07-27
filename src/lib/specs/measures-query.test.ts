@@ -201,6 +201,59 @@ describe("MeasuresQuery", () => {
 
   afterEach(() => db.close());
 
+  it("skips a historical measure payload carrying a dropped evidence kind instead of failing", async () => {
+    // Rows written before the vocabulary narrowed could name screenshot-style
+    // kinds; the narrowed payload schema must safeParse-skip them so the
+    // report still computes from the surviving events.
+    createSpecEventsRepo(db).append({
+      spec_id: SPEC_ID,
+      occurred_at: "2026-07-18T12:00:08.000Z",
+      event_type: "spec-evidence-changed",
+      actor_json: '{"kind":"system"}',
+      payload_json: JSON.stringify({
+        kind: "lifecycle-measure",
+        measureEvents: [
+          {
+            kind: "evidence-attached",
+            evidenceId: "evidence-legacy",
+            criterionId: "criterion-1",
+            revisionId: REVISION_ID,
+            evidenceKind: "screenshot",
+            source: "manual",
+          },
+        ],
+      }),
+    });
+    const query = createMeasuresQuery({
+      specs: createSpecsRepo(db, createWriteQueue()),
+      events: createSpecEventsRepo(db),
+      delivery: createSpecDeliveryRepo(db),
+      workflowEvents: createGraphWorkflowEventsRepo(db),
+      async loadOriginMap() {
+        return [
+          {
+            contextId: "context-regrouped",
+            taskElementId: "task-1",
+            taskHandle: "T1",
+            criterionElementIds: ["criterion-1"],
+            criterionHandles: ["R1.1"],
+            validationStrategies: {
+              "criterion-1": { kinds: ["validator_verdict"] as const },
+            },
+            criterionBriefs: { "criterion-1": "Run the committed proof." },
+          },
+        ];
+      },
+      now: () => "2026-07-18T12:01:00.000Z",
+    });
+
+    const report = await query.forProject(PROJECT_PATH);
+
+    // The manual screenshot row would drag the share to 0.5 if it parsed;
+    // the skip keeps only the surviving execution-ingested commit event.
+    expect(report.automaticEvidenceCapture).toMatchObject({ share: 1 });
+  });
+
   it("computes all measures and attributes a regrouped context commit to every compiled task", async () => {
     const query = createMeasuresQuery({
       specs: createSpecsRepo(db, createWriteQueue()),

@@ -1,6 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
-import type { SpecCriterionDispositionRow } from "@/lib/specs/schemas";
+import {
+  evidenceEvaluatedStateSchema,
+  type SpecCriterionDispositionRow,
+} from "@/lib/specs/schemas";
+
+import { executionViewFixture } from "./SpecControls.fixtures";
 
 import {
   SpecEvidencePanel,
@@ -33,12 +38,13 @@ const provenCriterion: CriterionProofView = {
         eventId: 42,
         contextId: "validation",
       }),
-      evaluated_state_json: JSON.stringify({
-        commitHash: "af31c2d",
-        relevantTreeHash: "tree-af31c2d",
-        surfaceHash: null,
-        mergeCandidateRef: null,
-      }),
+      evaluated_state_json: JSON.stringify(
+        evidenceEvaluatedStateSchema.parse({
+          commitSha: "af31c2d",
+          relevantPaths: ["src/lib/alias.ts"],
+          relevantTreeHash: "tree-af31c2d",
+        }),
+      ),
       producer_json: JSON.stringify({ kind: "agent" }),
       execution_id: "execution-12",
       source_event_id: 42,
@@ -68,7 +74,7 @@ const unprovenCriterion: CriterionProofView = {
   elementId: "criterion-2",
   handle: "R1.2",
   text: "The changed indicator is visible in the transcript.",
-  validationStrategy: { kinds: ["screenshot"] },
+  validationStrategy: { kinds: ["validator_verdict"] },
   evidence: [],
   verdicts: [],
   waiver: null,
@@ -111,7 +117,7 @@ const waivedCriterion: CriterionProofView = {
   elementId: "criterion-5",
   handle: "R2.3",
   text: "The unavailable hardware capture has an explicit waiver.",
-  validationStrategy: { kinds: ["human_signoff"] },
+  validationStrategy: { kinds: ["validator_verdict"] },
   waiver: {
     id: "waiver-hardware",
     spec_id: "spec-native-sdd",
@@ -270,26 +276,25 @@ const traceability: TraceabilityInput = {
     },
   ],
   executions: [
-    {
+    executionViewFixture({
       id: "execution-12",
-      spec_id: "spec-native-sdd",
-      revision_id: "revision-4",
-      scope_json: JSON.stringify({
+      specId: "spec-native-sdd",
+      revisionId: "revision-4",
+      revisionNumber: 4,
+      scope: {
         selectedTaskIds: ["task-1", "task-2", "task-3", "task-4"],
         selectedCriterionIds: evidenceStates.map(
           (criterion) => criterion.elementId,
         ),
         exclusionDispositions: [],
-      }),
+      },
       state: "running",
-      workflow_definition_id: "workflow-definition-12",
-      workflow_execution_id: "workflow-12",
-      session_name: "native-sdd-run",
-      delivered_at: null,
-      abandoned_reason: null,
-      created_at: NOW,
-      updated_at: NOW,
-    },
+      workflowDefinitionId: "workflow-definition-12",
+      workflowExecutionId: "workflow-12",
+      sessionName: "native-sdd-run",
+      createdAt: NOW,
+      updatedAt: NOW,
+    }),
   ],
   criteria: evidenceStates,
   findings,

@@ -1,7 +1,7 @@
 import { useState, type ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
-import type { SpecDetailView } from "@/lib/specs/queries";
+import { specDetailViewSchema, type SpecDetailView } from "@/lib/specs/queries";
 
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
@@ -98,6 +98,15 @@ function withProse(detail: SpecDetailView): SpecDetailView {
   };
 }
 
+/**
+ * Every story detail — including the phase mutations below — re-parses
+ * through the full response schema, so a story-only variant cannot drift into
+ * a shape the live detail route would never emit.
+ */
+function parsedDetail(detail: SpecDetailView): SpecDetailView {
+  return specDetailViewSchema.parse(detail);
+}
+
 function detailFor(
   phase: SpecDetailView["status"]["phase"]["primary"],
 ): SpecDetailView {
@@ -107,7 +116,7 @@ function detailFor(
     ),
   );
   const snapshot = base.currentRevision;
-  if (snapshot === null) return base;
+  if (snapshot === null) return parsedDetail(base);
   const revisionState =
     phase === "in_review"
       ? "proposed"
@@ -119,7 +128,7 @@ function detailFor(
     state: revisionState as "approved" | "proposed" | "draft",
     approvedAt: revisionState === "approved" ? SPEC_CONTROLS_FIXTURE_NOW : null,
   };
-  return {
+  return parsedDetail({
     ...base,
     spec: {
       ...base.spec,
@@ -147,10 +156,10 @@ function detailFor(
         ? base.executions.map((execution) => ({
             ...execution,
             state: "delivered" as const,
-            delivered_at: SPEC_CONTROLS_FIXTURE_NOW,
+            deliveredAt: SPEC_CONTROLS_FIXTURE_NOW,
           }))
         : base.executions,
-  };
+  });
 }
 
 const meta = {
@@ -197,13 +206,13 @@ export const Delivered: Story = {
 
 export const Exploratory: Story = {
   args: {
-    detail: {
+    detail: parsedDetail({
       ...detailFor("draft"),
       spec: {
         ...detailFor("draft").spec,
         gatePolicy: { preset: "exploratory" },
       },
-    },
+    }),
   },
 };
 
@@ -213,7 +222,7 @@ export const JustCreated: Story = {
       const detail = detailFor("draft");
       const snapshot = detail.currentRevision;
       if (snapshot === null) return detail;
-      return {
+      return parsedDetail({
         ...detail,
         currentRevision: {
           ...snapshot,
@@ -222,7 +231,7 @@ export const JustCreated: Story = {
           ),
         },
         elementStatuses: { requirements: [], tasks: [] },
-      };
+      });
     })(),
   },
 };
@@ -233,4 +242,29 @@ export const Abandoned: Story = {
 
 export const History: Story = {
   args: { view: "history" },
+};
+
+/** The Controls surface reached through the primary view strip (F14). */
+export const Controls: Story = {
+  args: { view: "controls", detail: detailFor("executing") },
+};
+
+/** A run parked on the delivery gate: the banner names the pending delivery
+ *  approval and links it, and the phase CTA targets the approval control
+ *  with the ?el=delivery deep link (F15/F16). */
+export const ExecutingApprovalNeeded: Story = {
+  args: {
+    detail: (() => {
+      const detail = detailFor("executing");
+      return parsedDetail({
+        ...detail,
+        status: {
+          ...detail.status,
+          pendingApprovals: [
+            { gate: "delivery" as const, subject: "delivery", elementId: null },
+          ],
+        },
+      });
+    })(),
+  },
 };

@@ -180,6 +180,103 @@ describe("spec-events-repo durability contract", () => {
     expect(second.id).toBeLessThan(third.id);
   });
 
+  it("finds the active approval request under its logical key, ignoring every other event", () => {
+    const request = (
+      revisionId: string,
+      gate: string,
+      subject: string,
+      attentionId: string,
+    ) =>
+      repo.appendInTransaction({
+        spec_id: SPEC_ID,
+        occurred_at: "2026-07-18T13:05:00.000Z",
+        event_type: "spec-attention-changed",
+        actor_json: stableStringify({ kind: "agent", conversationId: "c-1" }),
+        payload_json: stableStringify({
+          kind: "approval-requested",
+          attentionId,
+          revisionId,
+          gate,
+          subject,
+          active: true,
+        }),
+      });
+
+    request("revision-1", "requirements", "R1", "attention-1");
+    request("revision-1", "requirements", "R2", "attention-2");
+    request("revision-2", "requirements", "R1", "attention-3");
+    request("revision-1", "design", "R1", "attention-4");
+    repo.appendInTransaction(
+      eventInput("spec-attention-changed", "2026-07-18T13:06:00.000Z", 9),
+    );
+
+    expect(
+      repo.findApprovalRequest({
+        specId: SPEC_ID,
+        revisionId: "revision-1",
+        gate: "requirements",
+        subject: "R1",
+        executionId: null,
+      }),
+    ).toEqual({ attentionId: "attention-1" });
+    expect(
+      repo.findApprovalRequest({
+        specId: SPEC_ID,
+        revisionId: "revision-1",
+        gate: "plan",
+        subject: "plan",
+        executionId: null,
+      }),
+    ).toBeNull();
+    expect(
+      repo.findApprovalRequest({
+        specId: "spec-other",
+        revisionId: "revision-1",
+        gate: "requirements",
+        subject: "R1",
+        executionId: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("keys a per-run request by its execution, so the next run's ask is a request of its own", () => {
+    const request = (executionId: string, attentionId: string) =>
+      repo.appendInTransaction({
+        spec_id: SPEC_ID,
+        occurred_at: "2026-07-18T13:05:00.000Z",
+        event_type: "spec-attention-changed",
+        actor_json: stableStringify({ kind: "agent", conversationId: "c-1" }),
+        payload_json: stableStringify({
+          kind: "approval-requested",
+          attentionId,
+          revisionId: "revision-1",
+          gate: "delivery",
+          subject: "delivery",
+          executionId,
+          active: true,
+        }),
+      });
+
+    request("execution-1", "attention-run-1");
+    request("execution-2", "attention-run-2");
+
+    const key = (executionId: string | null) => ({
+      specId: SPEC_ID,
+      revisionId: "revision-1",
+      gate: "delivery",
+      subject: "delivery",
+      executionId,
+    });
+    expect(repo.findApprovalRequest(key("execution-1"))).toEqual({
+      attentionId: "attention-run-1",
+    });
+    expect(repo.findApprovalRequest(key("execution-2"))).toEqual({
+      attentionId: "attention-run-2",
+    });
+    expect(repo.findApprovalRequest(key("execution-3"))).toBeNull();
+    expect(repo.findApprovalRequest(key(null))).toBeNull();
+  });
+
   it("composes appendInTransaction atomically with a service mutation", () => {
     const transaction = db.transaction((shouldFail: boolean) => {
       db.prepare("UPDATE specs SET name = ? WHERE id = ?").run(

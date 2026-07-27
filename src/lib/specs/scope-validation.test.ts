@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  executionScopeSchema,
   validateExecutionScope,
   type ExecutionScope,
   type ScopePlan,
@@ -256,5 +257,41 @@ describe("validateExecutionScope", () => {
         },
       ],
     });
+  });
+});
+
+describe("executionScopeSchema", () => {
+  it("canonicalizes duplicate ids to their first occurrence on parse", () => {
+    // Persisted scopes written before canonicalization may carry duplicates;
+    // parsing is the single choke point every read and write path shares, so
+    // deduping here keeps counters like "n/m proof recorded" coherent.
+    const parsed = executionScopeSchema.parse({
+      selectedTaskIds: ["task-1", "task-2", "task-1"],
+      selectedCriterionIds: ["criterion-1", "criterion-1", "criterion-2"],
+      exclusionDispositions: [
+        { criterionId: "criterion-3", disposition: "deferred" },
+        { criterionId: "criterion-3", disposition: "waived" },
+      ],
+    });
+
+    expect(parsed).toEqual({
+      selectedTaskIds: ["task-1", "task-2"],
+      selectedCriterionIds: ["criterion-1", "criterion-2"],
+      exclusionDispositions: [
+        { criterionId: "criterion-3", disposition: "deferred" },
+      ],
+    });
+  });
+
+  it("leaves an already-canonical scope untouched", () => {
+    const canonical = {
+      selectedTaskIds: ["task-1"],
+      selectedCriterionIds: ["criterion-1"],
+      exclusionDispositions: [
+        { criterionId: "criterion-2", disposition: "deferred" },
+      ],
+    };
+
+    expect(executionScopeSchema.parse(canonical)).toEqual(canonical);
   });
 });

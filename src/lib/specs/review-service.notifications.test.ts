@@ -24,7 +24,11 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 
 import { createSpecEventsPublisher } from "./events";
-import { createReviewService, type ReviewService } from "./review-service";
+import {
+  createReviewService,
+  type ReviewService,
+  type ReviewServiceDeps,
+} from "./review-service";
 
 type Db = InstanceType<typeof Database>;
 
@@ -35,11 +39,13 @@ const APPROVED_REVISION_ID = "revision-approved";
 const EXECUTION_ID = "spec-execution-1";
 const PROPOSED_REVISION_ID = "revision-proposed";
 const REQUIREMENT_ELEMENT_ID = "element-requirement-1";
+const TASK_ELEMENT_ID = "element-task-1";
 const NOW = "2026-07-19T09:00:00.000Z";
 
 describe("ReviewService spec approval notifications (runtime wiring)", () => {
   let db: Db;
   let service: ReviewService;
+  let serviceDeps: ReviewServiceDeps;
   let notifier: ReturnType<typeof createSpecApprovalNotifier>;
   let notificationsRepo: ReturnType<typeof createNotificationsRepo>;
   let reviewRepo: ReturnType<typeof createSpecReviewRepo>;
@@ -71,7 +77,7 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
       getProjectDisplayName: () => PROJECT_NAME,
     });
     reviewRepo = createSpecReviewRepo(db);
-    service = createReviewService({
+    serviceDeps = {
       specs: createSpecsRepo(db, writeQueue),
       review: reviewRepo,
       delivery: createSpecDeliveryRepo(db),
@@ -80,11 +86,13 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
         appendInTransaction: eventsRepo.appendInTransaction,
         publish: () => ({ delivered: true }),
       }),
+      attention: eventsRepo,
       notifier,
       policyNotifier: notifier,
       newId: (prefix) => `${prefix}-${++idSequence}`,
       now: () => NOW,
-    });
+    };
+    service = createReviewService(serviceDeps);
   });
 
   function specRows() {
@@ -124,6 +132,104 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
     });
   });
 
+  it("a delivery-gate request lands a Needs You row deep-linked to the delivery approval surface", async () => {
+    // The gate auto-fire and `cctl spec request-approval --gate delivery`
+    // both default the subject to the gate name; the persisted deepLinkId is
+    // what Active Work turns into the Studio `?el=delivery` link.
+    const result = await service.requestApproval({
+      specId: SPEC_ID,
+      revisionId: APPROVED_REVISION_ID,
+      gate: "delivery",
+      subject: "delivery",
+      actor: { kind: "agent", conversationId: "workflow:workflow-exec-1" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("request was refused");
+    const rows = specRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: "spec-approval-requested",
+      gate: "delivery",
+      gateRequestId: result.value.attentionId,
+      deepLinkId: "delivery",
+    });
+  });
+
+  it("a second refusal-driven request keeps one durable requested row and one push", async () => {
+    // Every delivery-gate refusal re-requests approval; the retry path
+    // re-invokes the notifier ON PURPOSE (crash recovery below), so duplicate
+    // suppression must live in the durable notification layer. This proves it
+    // end-to-end through the real notifications service: two successful
+    // requests, one spec-approval-requested row, one push.
+    const request = () =>
+      service.requestApproval({
+        specId: SPEC_ID,
+        revisionId: APPROVED_REVISION_ID,
+        gate: "delivery",
+        subject: "delivery",
+        actor: { kind: "agent", conversationId: "workflow:workflow-exec-1" },
+      });
+
+    const first = await request();
+    const second = await request();
+
+    expect(first).toMatchObject({ ok: true });
+    expect(second).toMatchObject({
+      ok: true,
+      value: { alreadyRequested: true },
+    });
+    const rows = specRows();
+    expect(
+      rows.filter((row) => row.type === "spec-approval-requested"),
+    ).toHaveLength(1);
+    expect(pushed).toHaveLength(1);
+    expect(deriveNotificationOutcomes(rows, []).needsAction).toHaveLength(1);
+  });
+
+  it("recovers the Needs You row on retry when the notifier crashed after the request committed", async () => {
+    let remainingFailures = 1;
+    const failOnce: typeof notifier = {
+      ...notifier,
+      approvalRequested(notice) {
+        if (remainingFailures > 0) {
+          remainingFailures -= 1;
+          throw new Error("notification pipeline down");
+        }
+        notifier.approvalRequested(notice);
+      },
+    };
+    const flaky = createReviewService({ ...serviceDeps, notifier: failOnce });
+    const request = () =>
+      flaky.requestApproval({
+        specId: SPEC_ID,
+        revisionId: APPROVED_REVISION_ID,
+        gate: "delivery",
+        subject: "delivery",
+        actor: { kind: "agent", conversationId: "workflow:workflow-exec-1" },
+      });
+
+    // The durable request commits before the notifier runs, so the first
+    // attempt fails after the fact and leaves no Needs You row behind.
+    await expect(request()).rejects.toThrow("notification pipeline down");
+    expect(specRows()).toHaveLength(0);
+
+    // The retry short-circuits on the existing durable request but still
+    // re-invokes the notifier, which lands the missing row exactly once.
+    const retried = await request();
+    expect(retried).toMatchObject({
+      ok: true,
+      value: { alreadyRequested: true },
+    });
+    const rows = specRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: "spec-approval-requested",
+      gate: "delivery",
+      deepLinkId: "delivery",
+    });
+  });
+
   it("grantGateApproval creates the matching spec-approval-granted row so the Needs You item clears", async () => {
     const requested = await service.requestApproval({
       specId: SPEC_ID,
@@ -156,6 +262,12 @@ describe("ReviewService spec approval notifications (runtime wiring)", () => {
   });
 
   it("the execution-start gate cycle surfaces in Needs You and clears on the human grant", async () => {
+    // The request fires when the compiled definition parks for a human, so
+    // the run sits at definition review with its lane linked — a running run
+    // has nothing left for execution_start and would be refused.
+    db.prepare(
+      "UPDATE spec_executions SET state = 'definition_review', workflow_execution_id = 'workflow-execution-1' WHERE id = ?",
+    ).run(EXECUTION_ID);
     const requested = await service.requestApproval({
       specId: SPEC_ID,
       revisionId: APPROVED_REVISION_ID,
@@ -409,6 +521,32 @@ function seed(db: Db): void {
        proposed_at, approved_at, created_at
      ) VALUES (?, ?, 1, 'approved', NULL, 'hash-1', ?, ?, ?)`,
   ).run(APPROVED_REVISION_ID, SPEC_ID, NOW, NOW, NOW);
+  // The delivery requests below name T1, so the approved revision the run pins
+  // has to actually contain it.
+  db.prepare(
+    `INSERT INTO spec_elements (id, spec_id, kind, number, parent_element_id, created_at)
+     VALUES (?, ?, 'task', 1, NULL, ?)`,
+  ).run(TASK_ELEMENT_ID, SPEC_ID, NOW);
+  db.prepare(
+    `INSERT INTO spec_element_versions (
+       revision_id, element_id, position, payload_json, payload_hash,
+       element_version, created_at, updated_at
+     ) VALUES (?, ?, 0, ?, 'payload-hash-task-1', 1, ?, ?)`,
+  ).run(
+    APPROVED_REVISION_ID,
+    TASK_ELEMENT_ID,
+    JSON.stringify({
+      kind: "task",
+      title: "Deliver the approval cycle",
+      instructions: "Close the request when the human grants the gate.",
+      tracedRequirementElementIds: [],
+      tracedDecisionElementIds: [],
+      coveredCriterionElementIds: [],
+      dependsOnTaskElementIds: [],
+    }),
+    NOW,
+    NOW,
+  );
   db.prepare(
     `INSERT INTO spec_executions (
        id, spec_id, revision_id, scope_json, state, workflow_definition_id,

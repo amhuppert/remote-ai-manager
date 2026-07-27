@@ -5,7 +5,11 @@ import type {
 } from "@/lib/state-store/graph-workflow-events-repo";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
-import type { EvidenceKind } from "./schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import {
+  MACHINE_VALIDATION_EVIDENCE_KINDS,
+  type EvidenceKind,
+} from "./schemas";
 import type { SpecExecutionRow } from "./schemas";
 import type { CompiledOriginMapEntry } from "./compiler";
 import type { EvidenceService } from "./evidence-service";
@@ -24,6 +28,18 @@ export interface EvidenceIngestDeps {
     workflowDefinitionId: string,
     execution: SpecExecutionRow,
   ): Promise<CompiledOriginMapEntry[]>;
+  /**
+   * The linked graph workflow's live status (`null` when the run was deleted
+   * from both the active slot and the archive). Terminality for the deferred
+   * stamp MUST come from here rather than from the spec execution's own state:
+   * the real terminal ingest paths (workflow-completed reconciliation,
+   * markDelivered) run while the spec execution is still `running`, so a
+   * spec-state-only predicate would defer a followerless final validation
+   * forever.
+   */
+  getWorkflowExecutionStatus(
+    workflowExecutionId: string,
+  ): Promise<GraphWorkflowStatus | null>;
 }
 
 export interface IngestSummary {
@@ -71,8 +87,25 @@ export function createEvidenceIngestService(
     const records = deps.workflowEvents.findRecordsByExecution(
       execution.workflow_execution_id,
     );
-    const candidates = records.flatMap((record) =>
-      evidenceCandidates(record, originsByContext),
+    const workflowStatus = await deps.getWorkflowExecutionStatus(
+      execution.workflow_execution_id,
+    );
+    const candidates = collectEvidenceCandidates(
+      records,
+      originsByContext,
+      // Terminality witnesses that no further same-context lane-commit can
+      // decide a deferred validation, so undecided candidates materialize
+      // unstamped instead of leaking forever. A completed/aborted/deleted
+      // graph workflow is terminal even while the spec execution still runs
+      // (reconciliation and markDelivered both ingest before the state flip);
+      // a halted or paused run can resume, so it stays decidable-later. The
+      // spec execution's own terminal states cover a run abandoned while its
+      // workflow record lingers.
+      workflowStatus === "completed" ||
+        workflowStatus === "aborted" ||
+        workflowStatus === null ||
+        execution.state === "delivered" ||
+        execution.state === "abandoned",
     );
     let materializedEvidenceCount = 0;
     let existingEvidenceCount = 0;
@@ -167,42 +200,94 @@ export function createEvidenceIngestService(
   };
 }
 
-function evidenceCandidates(
-  record: GraphWorkflowEventRecord,
+function collectEvidenceCandidates(
+  records: readonly GraphWorkflowEventRecord[],
   originsByContext: ReadonlyMap<string, readonly CompiledOriginMapEntry[]>,
+  executionIsTerminal: boolean,
 ): EvidenceCandidate[] {
-  const event = record.event;
-  if (
-    event.type !== "graph-workflow-validation-result" &&
-    event.type !== "graph-workflow-lane-commit"
-  ) {
-    return [];
-  }
-  const origins = originsByContext.get(event.contextId);
-  if (origins === undefined) return [];
-  const criteria = contextCriteria(origins);
+  const candidates: EvidenceCandidate[] = [];
+  for (const [index, record] of records.entries()) {
+    const event = record.event;
+    if (
+      event.type !== "graph-workflow-validation-result" &&
+      event.type !== "graph-workflow-lane-commit"
+    ) {
+      continue;
+    }
+    const origins = originsByContext.get(event.contextId);
+    if (origins === undefined) continue;
+    const criteria = contextCriteria(origins);
 
-  if (event.type === "graph-workflow-lane-commit") {
-    return criteria.map(({ criterionElementId }) => ({
-      kind: "commit",
-      criterionElementId,
-      contextId: event.contextId,
-      eventRecord: record,
-      commitSha: event.sha,
-    }));
-  }
+    if (event.type === "graph-workflow-lane-commit") {
+      for (const { criterionElementId } of criteria) {
+        candidates.push({
+          kind: "commit",
+          criterionElementId,
+          contextId: event.contextId,
+          eventRecord: record,
+          commitSha: event.sha,
+        });
+      }
+      continue;
+    }
 
-  return criteria.flatMap(({ criterionElementId, strategy }) => {
-    const kinds: EvidenceKind[] = strategy?.kinds.includes("test_run")
-      ? ["test_run", "validator_verdict"]
-      : ["validator_verdict"];
-    return kinds.map((kind) => ({
-      kind,
-      criterionElementId,
-      contextId: event.contextId,
-      eventRecord: record,
-    }));
-  });
+    // Forward correlation (production ordering is the source of truth): a
+    // context completes on its last passing validation and the commit phase
+    // then seals exactly the lane tree that validation saw. The commit event
+    // that FOLLOWS a validation therefore names the sha it validated; a
+    // validation followed by another validation was remediated away and its
+    // sha claim would be false.
+    const sealing = nextSameContextOutcome(records, index, event.contextId);
+    if (sealing.outcome === "undecided" && !executionIsTerminal) {
+      // Not yet decidable: skip without writing — the ingest key is
+      // append-once, so a row frozen now could never gain its stamp. Ingest
+      // re-runs at every claim/gate/status touchpoint.
+      continue;
+    }
+    for (const { criterionElementId, strategy } of criteria) {
+      const kinds: EvidenceKind[] = strategy?.kinds.includes("test_run")
+        ? [...MACHINE_VALIDATION_EVIDENCE_KINDS]
+        : ["validator_verdict"];
+      for (const kind of kinds) {
+        candidates.push({
+          kind,
+          criterionElementId,
+          contextId: event.contextId,
+          eventRecord: record,
+          ...(sealing.outcome === "sealed" ? { commitSha: sealing.sha } : {}),
+        });
+      }
+    }
+  }
+  return candidates;
+}
+
+type ValidationSealingOutcome =
+  | { outcome: "sealed"; sha: string }
+  | { outcome: "superseded" }
+  | { outcome: "undecided" };
+
+function nextSameContextOutcome(
+  records: readonly GraphWorkflowEventRecord[],
+  fromIndex: number,
+  contextId: string,
+): ValidationSealingOutcome {
+  for (const record of records.slice(fromIndex + 1)) {
+    const event = record.event;
+    if (
+      event.type === "graph-workflow-lane-commit" &&
+      event.contextId === contextId
+    ) {
+      return { outcome: "sealed", sha: event.sha };
+    }
+    if (
+      event.type === "graph-workflow-validation-result" &&
+      event.contextId === contextId
+    ) {
+      return { outcome: "superseded" };
+    }
+  }
+  return { outcome: "undecided" };
 }
 
 function groupOriginsByContext(

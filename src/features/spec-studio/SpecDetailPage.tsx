@@ -39,14 +39,14 @@ import { formatTicketIdentifier } from "@/lib/tickets/references";
 import type {
   SpecApprovalRow,
   SpecAssumptionDisposition,
-  SpecAssumptionRow,
   SpecCommentRow,
   SpecRevisionElement,
 } from "@/lib/specs/schemas";
+import { specCommentRowSchema } from "@/lib/specs/schemas";
 import {
-  specAssumptionRowSchema,
-  specCommentRowSchema,
-} from "@/lib/specs/schemas";
+  specAssumptionViewSchema,
+  type SpecAssumptionView,
+} from "@/lib/specs/queries";
 import type { RequirementStatus, TaskWorkStatus } from "@/lib/specs/phase";
 import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import { cn } from "@/lib/ui/cn";
@@ -267,6 +267,7 @@ export function SpecDetailContent({
   const railGroups = snapshot === null ? [] : buildRailGroups(detail);
   const statePresentation = detailStatePresentation(
     detail.status.phase.primary,
+    detail.status.pendingApprovals,
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const controlsHref = `${detailHref}?view=controls`;
@@ -274,9 +275,11 @@ export function SpecDetailContent({
   const primaryActionHref =
     statePresentation.view === null
       ? null
-      : statePresentation.view === "review"
-        ? reviewHref
-        : `${detailHref}?view=${statePresentation.view}`;
+      : statePresentation.el !== undefined
+        ? `${detailHref}?el=${statePresentation.el}`
+        : statePresentation.view === "review"
+          ? reviewHref
+          : `${detailHref}?view=${statePresentation.view}`;
   // An execution running over a proposed revision projects as `executing` with
   // an `in_review` authoring facet, so the state-driven primary action points at
   // evidence and would otherwise leave review mode with no entry point at all.
@@ -386,6 +389,7 @@ export function SpecDetailContent({
           <SpecRevisionBanner
             detail={detail}
             presentation={statePresentation}
+            detailHref={detailHref}
           />
         }
       >
@@ -454,6 +458,12 @@ export interface DetailStatePresentation {
   description: string;
   action: string | null;
   view: "review" | "evidence" | "controls" | null;
+  /**
+   * Focused deep-link target. When present the CTA navigates with `?el=` —
+   * the retrying contract that lands on the focused control after the page
+   * loads — instead of the bare `?view=` top of the surface.
+   */
+  el?: "delivery";
 }
 
 const bannerLineClass = {
@@ -477,12 +487,55 @@ const bannerTextClass = {
   red: "text-red",
 } as const;
 
-function SpecRevisionBanner({
+const bannerApprovalsLinkClass =
+  "text-[0.68rem] text-text-secondary no-underline underline-offset-2 hover:text-text-primary hover:underline focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+
+/**
+ * The pending-approvals summary is a control, not a statistic: a pending
+ * delivery approval names itself and links straight to the approval control
+ * (`?el=delivery`, the retrying deep-link contract); other pending gates link
+ * to the surface that hosts their decision (F15).
+ */
+function BannerApprovalsSummary({
+  pendingApprovals,
+  detailHref,
+}: {
+  pendingApprovals: SpecDetailView["status"]["pendingApprovals"];
+  detailHref: string;
+}): React.JSX.Element {
+  if (pendingApprovals.some((pending) => pending.gate === "delivery")) {
+    return (
+      <Link
+        href={`${detailHref}?el=delivery`}
+        className={bannerApprovalsLinkClass}
+      >
+        Delivery approval pending — approve in Controls
+      </Link>
+    );
+  }
+  if (pendingApprovals.length > 0) {
+    const target =
+      pendingApprovals[0]?.gate === "execution_start"
+        ? `${detailHref}?view=controls`
+        : `${detailHref}?view=review`;
+    return (
+      <Link href={target} className={bannerApprovalsLinkClass}>
+        {pendingApprovals.length} pending approval
+        {pendingApprovals.length === 1 ? "" : "s"} — review
+      </Link>
+    );
+  }
+  return <>0 pending approvals</>;
+}
+
+export function SpecRevisionBanner({
   detail,
   presentation,
+  detailHref,
 }: {
   detail: SpecDetailView;
   presentation: DetailStatePresentation;
+  detailHref: string;
 }): React.JSX.Element {
   const description =
     detail.status.phase.primary === "abandoned"
@@ -520,8 +573,11 @@ function SpecRevisionBanner({
         {description}
       </span>
       <span className="shrink-0 text-[0.68rem] text-text-tertiary">
-        {detail.status.pendingApprovals.length} pending approvals ·{" "}
-        {detail.status.openQuestions.length} open questions
+        <BannerApprovalsSummary
+          pendingApprovals={detail.status.pendingApprovals}
+          detailHref={detailHref}
+        />{" "}
+        · {detail.status.openQuestions.length} open questions
       </span>
     </section>
   );
@@ -862,6 +918,7 @@ function formatDate(timestamp: string): string {
 
 export function detailStatePresentation(
   phase: SpecPhasePrimary,
+  pendingApprovals: SpecDetailView["status"]["pendingApprovals"],
 ): DetailStatePresentation {
   switch (phase) {
     case "draft":
@@ -890,6 +947,19 @@ export function detailStatePresentation(
         view: "controls",
       };
     case "executing":
+      // A run parked on the delivery gate needs its human, not its evidence:
+      // the CTA targets the pending approval control when one exists (F16).
+      if (pendingApprovals.some((pending) => pending.gate === "delivery")) {
+        return {
+          tone: "amber",
+          banner: "Execution active — approval needed",
+          description:
+            "The delivery gate is waiting on a human approval; proof continues against the pinned revision.",
+          action: "Approve delivery",
+          view: "controls",
+          el: "delivery",
+        };
+      }
       return {
         tone: "cyan",
         banner: "Execution active",
@@ -1105,8 +1175,8 @@ function SpecStructureRail({
       assumptionId: string;
       disposition: Exclude<SpecAssumptionDisposition, "proposed">;
     },
-    SpecAssumptionRow
-  >(projectName, slug, "dispose-assumption", specAssumptionRowSchema, {
+    SpecAssumptionView
+  >(projectName, slug, "dispose-assumption", specAssumptionViewSchema, {
     specId,
     eventTypes: ["spec-attention-changed"],
   });
@@ -1723,10 +1793,13 @@ function resolveComment(
   };
 }
 
-function resolveDeepLinkId(
+export function resolveDeepLinkId(
   rawHandle: string | null,
   slug: string | undefined,
 ): string | null {
+  // Gate-name literals are persisted in notification rows forever, so this
+  // mapping is permanent: ?el=delivery focuses the merge-gate panel.
+  if (rawHandle === "delivery") return "merge-gate";
   if (rawHandle === null || slug === undefined) return null;
   try {
     return toDeepLinkElementId(parseElementHandle(rawHandle, slug));

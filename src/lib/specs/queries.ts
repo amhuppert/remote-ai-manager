@@ -5,30 +5,28 @@ import { apiFetch } from "@/lib/api/fetcher";
 
 import {
   deliveryDisplaySchema,
-  requirementStatusSchema,
   specPhaseProjectionSchema,
   taskWorkStatusSchema,
 } from "./phase";
 import { specKeys } from "./query-keys";
 import {
   actorProvenanceSchema,
-  specAliasSchema,
   specApprovalRowSchema,
   specAssumptionDispositionSchema,
-  specCommentRowSchema,
-  specCriterionDispositionRowSchema,
   specEvidenceRowSchema,
-  specExecutionRowSchema,
-  specGateAdmissionRowSchema,
   specProofVerdictRowSchema,
   specQuestionStatusSchema,
   specRevisionElementSchema,
   specRevisionSchema,
-  specRevisionSnapshotSchema,
   specSchema,
   specWaiverRowSchema,
 } from "./schemas";
-import { integrityReportSchema, specStatusViewSchema } from "./view-schemas";
+import {
+  integrityReportSchema,
+  specDetailViewSchema,
+  specStatusViewSchema,
+  type SpecDetailView,
+} from "./view-schemas";
 
 export { specStatusViewSchema };
 
@@ -84,14 +82,6 @@ const linkedWorkRollupSchema = z
   })
   .strict();
 
-const linkedTicketReadThroughSchema = z
-  .object({
-    projectName: z.string().min(1),
-    number: z.number().int().positive(),
-    title: z.string().min(1),
-  })
-  .strict();
-
 export const specSummaryViewSchema = z
   .object({
     spec: specSchema,
@@ -106,50 +96,8 @@ export const specSummaryViewSchema = z
   .strict();
 export type SpecSummaryView = z.infer<typeof specSummaryViewSchema>;
 
-export const specDetailViewSchema = z
-  .object({
-    spec: specSchema,
-    aliases: z.array(specAliasSchema),
-    revisions: z.array(specRevisionSchema),
-    baseRevision: specRevisionSnapshotSchema.nullable(),
-    currentRevision: specRevisionSnapshotSchema.nullable(),
-    currentApprovedRevision: specRevisionSnapshotSchema.nullable(),
-    executionRevisionSnapshots: z.array(specRevisionSnapshotSchema),
-    approvals: z.array(specApprovalRowSchema),
-    comments: z.array(specCommentRowSchema),
-    executions: z.array(specExecutionRowSchema),
-    criterionDispositions: z.array(specCriterionDispositionRowSchema),
-    waivers: z.array(specWaiverRowSchema),
-    // Admissions recorded against the executions' revisions, so the UI can
-    // present gated actions honestly (granted vs still blocking).
-    gateAdmissions: z.array(specGateAdmissionRowSchema).default([]),
-    elementStatuses: z
-      .object({
-        requirements: z.array(
-          z
-            .object({
-              elementId: z.string().min(1),
-              status: requirementStatusSchema,
-            })
-            .strict(),
-        ),
-        tasks: z.array(
-          z
-            .object({
-              elementId: z.string().min(1),
-              status: taskWorkStatusSchema,
-            })
-            .strict(),
-        ),
-      })
-      .strict(),
-    status: specStatusViewSchema,
-    linkedTickets: z.array(linkedTicketReadThroughSchema),
-    questions: z.array(specQuestionViewSchema).default([]),
-    assumptions: z.array(specAssumptionViewSchema).default([]),
-  })
-  .strict();
-export type SpecDetailView = z.infer<typeof specDetailViewSchema>;
+export { specDetailViewSchema };
+export type { SpecDetailView };
 
 const evidenceStateSchema = z
   .object({

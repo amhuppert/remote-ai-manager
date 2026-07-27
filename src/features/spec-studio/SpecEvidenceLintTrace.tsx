@@ -16,11 +16,11 @@ import type { LintFinding } from "@/lib/specs/lint";
 import type {
   SpecCriterionDispositionRow,
   SpecEvidenceRow,
-  SpecExecutionRow,
   SpecProofVerdictRow,
   SpecWaiverRow,
   ValidationStrategy,
 } from "@/lib/specs/schemas";
+import type { SpecExecutionView } from "@/lib/specs/view-schemas";
 
 const logger = createClientLogger("spec-studio-proof");
 
@@ -68,7 +68,7 @@ export interface TraceabilityInput {
   requirements: TraceabilityRequirement[];
   decisions: TraceabilityDecision[];
   tasks: TraceabilityTask[];
-  executions: SpecExecutionRow[];
+  executions: SpecExecutionView[];
   criteria: CriterionProofView[];
   findings: LintFinding[];
 }
@@ -994,7 +994,7 @@ function focusTraceabilityInput(
     decisions,
     tasks,
     executions: input.executions.filter((execution) =>
-      selectedTaskIds(execution.scope_json).some((id) => taskIds.has(id)),
+      (execution.scope?.selectedTaskIds ?? []).some((id) => taskIds.has(id)),
     ),
     criteria,
     findings: input.findings.filter((finding) =>
@@ -1677,19 +1677,6 @@ function taskNodeId(elementId: string): string {
   return `task:${elementId}`;
 }
 
-function selectedTaskIds(scopeJson: string): string[] {
-  try {
-    const scope = JSON.parse(scopeJson) as Record<string, unknown>;
-    return Array.isArray(scope.selectedTaskIds)
-      ? scope.selectedTaskIds.filter(
-          (taskId): taskId is string => typeof taskId === "string",
-        )
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function elementHref(
   projectName: string,
   slug: string,
@@ -1698,14 +1685,11 @@ function elementHref(
   return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?el=${encodeURIComponent(handle)}`;
 }
 
-function formatEvidenceKind(kind: SpecEvidenceRow["kind"]): string {
+export function formatEvidenceKind(kind: SpecEvidenceRow["kind"]): string {
   const labels: Record<SpecEvidenceRow["kind"], string> = {
     commit: "Commit",
-    diff: "Diff",
     test_run: "Test run",
     validator_verdict: "Validator verdict",
-    screenshot: "Screenshot",
-    human_signoff: "Human sign-off",
   };
   return labels[kind];
 }
@@ -1730,12 +1714,6 @@ function evidenceReferenceLabel(value: string): string {
     }
     if (reference.type === "merge_validation") {
       return `Merge validation ${String(reference.validationRef)}`;
-    }
-    if (reference.type === "content_store") {
-      return `Capture ${String(reference.objectKey)}`;
-    }
-    if (reference.type === "human_actor") {
-      return `Human sign-off ${String(reference.actorId)}`;
     }
   } catch {
     return "Unparseable evidence reference";

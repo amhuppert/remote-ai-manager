@@ -405,6 +405,57 @@ describe("maximal persistence contracts", () => {
       fieldPolicies: { payloadHash: "derived-on-write" },
     });
   });
+
+  it("round-trips every persisted criterion validation-strategy field", async () => {
+    // The task round trip above never exercises `validationStrategy`; this
+    // block keeps every strategy field (full surviving kind list plus note)
+    // contract-backed, since migration 0009 rewrites exactly these bytes.
+    const created = await createSpec({ id: "spec-criterion-maximal" });
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+
+    await assertRoundTripDurability({
+      label: "spec-element-versions (criterion strategy)",
+      schema: specElementVersionSchema,
+      buildMaximalFixture: () =>
+        specElementVersionSchema.parse({
+          revisionId: created.revision.id,
+          elementId: "criterion-version-maximal",
+          position: 3,
+          payload: {
+            kind: "criterion",
+            text: "Every persisted strategy field survives a reload.",
+            validationStrategy: {
+              kinds: ["commit", "test_run", "validator_verdict"],
+              note: "Run the full contract suite before granting proof.",
+            },
+          } satisfies CriterionElementPayload,
+          payloadHash: "derived-from-payload",
+          elementVersion: 1,
+          createdAt: PROPOSED_AT,
+          updatedAt: UPDATED_AT,
+        }),
+      persist: async (maximal) => {
+        const persisted = await repo.createDraftElement({
+          id: maximal.elementId,
+          specId: created.spec.id,
+          revisionId: maximal.revisionId,
+          kind: "criterion",
+          parentElementId: requirement.element.id,
+          position: maximal.position,
+          payload: maximal.payload,
+          createdAt: maximal.createdAt,
+          updatedAt: maximal.updatedAt,
+        });
+        return persisted.version;
+      },
+      reload: (expected) =>
+        repo.findElementVersion(expected.revisionId, expected.elementId),
+      fieldPolicies: { payloadHash: "derived-on-write" },
+    });
+  });
 });
 
 describe("revision snapshots and aliases", () => {
@@ -804,6 +855,152 @@ describe("draft compare-and-swap", () => {
         payload: criterionPayload("Approved content cannot change."),
       }),
     ).rejects.toBeInstanceOf(SpecRevisionImmutableError);
+  });
+
+  it("appends deterministically when a draft write omits position", async () => {
+    const created = await createSpec();
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+    await addCriterion(
+      created.spec.id,
+      created.revision.id,
+      requirement.element.id,
+      "The first criterion.",
+      4,
+    );
+
+    const appended = await repo.createDraftElement({
+      id: nextId("decision"),
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "decision",
+      parentElementId: null,
+      payload: {
+        kind: "decision",
+        title: "Ordering is one global order",
+        chosenApproach: "Append after the highest position in the revision.",
+        rejectedAlternatives: [],
+        reason: "Opaque element-id tiebreaks are not an author-visible order.",
+        tracedRequirementElementIds: [],
+      },
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+
+    expect(appended.version.position).toBe(5);
+    const snapshot = await repo.getRevisionSnapshot(created.revision.id);
+    expect(snapshot?.elements.map(({ version }) => version.position)).toEqual([
+      0, 4, 5,
+    ]);
+  });
+
+  it("orders duplicate positions by element id, the documented tiebreak", async () => {
+    const created = await createSpec();
+    // Written out of element-id order so a repository that fell back to
+    // insertion order would produce a different sequence than the tiebreak.
+    for (const id of ["requirement-z", "requirement-a", "requirement-m"]) {
+      await repo.createDraftElement({
+        id,
+        specId: created.spec.id,
+        revisionId: created.revision.id,
+        kind: "requirement",
+        parentElementId: null,
+        position: 0,
+        payload: requirementPayload(`Statement for ${id}.`),
+        createdAt: CREATED_AT,
+        updatedAt: UPDATED_AT,
+      });
+    }
+
+    const snapshot = await repo.getRevisionSnapshot(created.revision.id);
+    expect(snapshot?.elements.map(({ element }) => element.id)).toEqual([
+      "requirement-a",
+      "requirement-m",
+      "requirement-z",
+    ]);
+    expect(snapshot?.elements.map(({ version }) => version.position)).toEqual([
+      0, 0, 0,
+    ]);
+  });
+
+  it("keeps one global order across parents and children, with nesting carried by the parent alone", async () => {
+    const created = await createSpec();
+    const requirement = await repo.createDraftElement({
+      id: "requirement-parent",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 1,
+      payload: requirementPayload("The parent requirement."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    // The child sits at the parent's position and a second requirement sits
+    // between them numerically: order is one global sequence, so the child
+    // does not travel with its parent.
+    await repo.createDraftElement({
+      id: "criterion-child",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "criterion",
+      parentElementId: requirement.element.id,
+      position: 1,
+      payload: criterionPayload("The nested criterion."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    await repo.createDraftElement({
+      id: "requirement-sibling",
+      specId: created.spec.id,
+      revisionId: created.revision.id,
+      kind: "requirement",
+      parentElementId: null,
+      position: 0,
+      payload: requirementPayload("The sibling requirement."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+
+    const snapshot = await repo.getRevisionSnapshot(created.revision.id);
+    expect(
+      snapshot?.elements.map(({ element, version }) => [
+        element.id,
+        version.position,
+        element.parentElementId,
+      ]),
+    ).toEqual([
+      ["requirement-sibling", 0, null],
+      ["criterion-child", 1, "requirement-parent"],
+      ["requirement-parent", 1, null],
+    ]);
+  });
+
+  it("keeps the element's position when an update omits position", async () => {
+    const created = await createSpec();
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+    const criterion = await addCriterion(
+      created.spec.id,
+      created.revision.id,
+      requirement.element.id,
+      "The only criterion.",
+      3,
+    );
+
+    const updated = await repo.updateDraftElement({
+      revisionId: created.revision.id,
+      elementId: criterion.element.id,
+      expectedElementVersion: criterion.version.elementVersion,
+      payload: criterionPayload("The only criterion, restated."),
+      updatedAt: UPDATED_AT,
+    });
+
+    expect(updated.position).toBe(3);
   });
 
   it("rejects a criterion whose parent is not a requirement", async () => {

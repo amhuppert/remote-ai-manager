@@ -54,6 +54,38 @@ export const parsedElementHandleSchema = z.union([
 ]);
 export type ParsedElementHandle = z.infer<typeof parsedElementHandleSchema>;
 
+/**
+ * A handle without the spec it belongs to. Questions and assumptions are
+ * spec-scoped records read from rows that carry a spec id rather than a slug,
+ * so requiring a slug to render `Q<n>` would push those callers into building
+ * the grammar themselves.
+ */
+export const bareElementHandleSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("requirement"),
+    requirementNumber: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal("criterion"),
+    requirementNumber: z.number().int().positive(),
+    criterionNumber: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal("decision"),
+    number: z.number().int().positive(),
+  }),
+  z.object({ kind: z.literal("task"), number: z.number().int().positive() }),
+  z.object({
+    kind: z.literal("question"),
+    number: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal("assumption"),
+    number: z.number().int().positive(),
+  }),
+]);
+export type BareElementHandle = z.infer<typeof bareElementHandleSchema>;
+
 export type HandleQualification = "qualified" | "bare";
 
 export function parseSpecSlug(input: string): SpecSlug {
@@ -142,12 +174,61 @@ export function parseElementHandle(
   }
 }
 
+/**
+ * The one authored description of the handle grammar. Every invalid-handle
+ * refusal (CLI and route) quotes it so an agent that mis-addressed an element
+ * learns the vocabulary from the refusal itself.
+ */
+export const ELEMENT_HANDLE_FORMAT =
+  "Element handles are R<n> for a requirement, R<n>.<m> for a criterion, D<n> for a decision, T<n> for a task, Q<n> for a question, and A<n> for an assumption — for example R1, R1.2, D3, T4, Q1, A2. Optionally qualify a handle with its spec slug, for example native-sdd/R1.";
+
+/** Kebab/snake-cased values are the shape caller-chosen element ids take. */
+const ELEMENT_ID_SHAPE = /^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)+$/;
+
+/**
+ * Whether a value is grammatically a handle, regardless of whether it resolves.
+ * Separates "you addressed this wrong" from "nothing is at that address".
+ */
+export function isWellFormedElementHandle(
+  input: string,
+  contextSlug?: string,
+): boolean {
+  try {
+    parseElementHandle(input, contextSlug);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Explain why a value is not an element handle. Element ids are caller-chosen
+ * strings, so the grammar alone cannot prove one was supplied: a caller-owned
+ * handle map (when the reader has a snapshot in hand) names the real handle,
+ * and otherwise the shape of the value is reported as a likeness, not a fact.
+ */
+export function explainInvalidElementHandle(
+  input: string,
+  handleByElementId?: ReadonlyMap<string, string>,
+): string {
+  const separatorIndex = input.lastIndexOf("/");
+  const bare = separatorIndex === -1 ? input : input.slice(separatorIndex + 1);
+  const knownHandle = handleByElementId?.get(bare);
+  if (knownHandle !== undefined && knownHandle !== bare) {
+    return `${JSON.stringify(bare)} is an element id, not an element handle; its handle is ${knownHandle}. ${ELEMENT_HANDLE_FORMAT}`;
+  }
+  if (ELEMENT_ID_SHAPE.test(bare)) {
+    return `${JSON.stringify(input)} looks like an element id, not an element handle. ${ELEMENT_HANDLE_FORMAT}`;
+  }
+  return `${JSON.stringify(input)} is not a valid element handle. ${ELEMENT_HANDLE_FORMAT}`;
+}
+
 export function formatElementHandle(
   handle: ParsedElementHandle,
   qualification: HandleQualification = "qualified",
 ): string {
   const parsed = parsedElementHandleSchema.parse(handle);
-  const bare = formatBareHandle(parsed);
+  const bare = formatBareElementHandle(parsed);
   return qualification === "bare" ? bare : `${parsed.slug}/${bare}`;
 }
 
@@ -155,20 +236,26 @@ export function toDeepLinkElementId(handle: ParsedElementHandle): string {
   return formatElementHandle(handle, "bare");
 }
 
-function formatBareHandle(handle: ParsedElementHandle): string {
-  switch (handle.kind) {
+/**
+ * The one site in `src/lib/specs` that renders the handle grammar. Client and
+ * CLI surfaces still build these strings from element numbers themselves, so a
+ * grammar change has to reach them too.
+ */
+export function formatBareElementHandle(handle: BareElementHandle): string {
+  const parsed = bareElementHandleSchema.parse(handle);
+  switch (parsed.kind) {
     case "requirement":
-      return `R${handle.requirementNumber}`;
+      return `R${parsed.requirementNumber}`;
     case "criterion":
-      return `R${handle.requirementNumber}.${handle.criterionNumber}`;
+      return `R${parsed.requirementNumber}.${parsed.criterionNumber}`;
     case "decision":
-      return `D${handle.number}`;
+      return `D${parsed.number}`;
     case "task":
-      return `T${handle.number}`;
+      return `T${parsed.number}`;
     case "question":
-      return `Q${handle.number}`;
+      return `Q${parsed.number}`;
     case "assumption":
-      return `A${handle.number}`;
+      return `A${parsed.number}`;
   }
 }
 

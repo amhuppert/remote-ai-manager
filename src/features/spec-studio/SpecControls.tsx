@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
-import { StatusChip } from "@/components/ui/StatusChip";
+import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { specSlugSchema } from "@/lib/specs/handles";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
@@ -48,8 +48,14 @@ import {
   useSpecIntegrityQuery,
   type SpecDetailView,
 } from "@/lib/specs/queries";
-import type { IntegrityReport } from "@/lib/specs/view-schemas";
-import { executionScopeSchema } from "@/lib/specs/scope-validation";
+import {
+  specPolicyChangeResultSchema,
+  specStartedExecutionViewSchema,
+  type CriterionDeliveryProjection,
+  type IntegrityReport,
+  type SpecExecutionView,
+  type SpecGateAdmissionView,
+} from "@/lib/specs/view-schemas";
 import {
   specAliasSchema,
   specApprovalRowSchema,
@@ -63,9 +69,7 @@ import {
   specWaiverRowSchema,
   type SpecCriterionDisposition,
   type SpecCriterionDispositionRow,
-  type SpecExecutionRow,
   type SpecGate,
-  type SpecGateAdmissionRow,
   type SpecGateDial,
   type SpecGatePolicy,
   type SpecGatePreset,
@@ -75,6 +79,14 @@ import {
 } from "@/lib/specs/schemas";
 import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
 
+import { gateLabels } from "./presentation";
+import { formatEvidenceKind } from "./SpecEvidenceLintTrace";
+import {
+  openDraftForPolicyImpact,
+  PolicyImpactPreview,
+  type PolicyImpactDraft,
+} from "./SpecPolicyImpact";
+
 const logger = createClientLogger("spec-studio-controls");
 const GATES: readonly SpecGate[] = [
   "requirements",
@@ -83,14 +95,6 @@ const GATES: readonly SpecGate[] = [
   "execution_start",
   "delivery",
 ];
-
-const gateLabels: Record<SpecGate, string> = {
-  requirements: "Requirements",
-  design: "Design",
-  plan: "Plan",
-  execution_start: "Execution start",
-  delivery: "Delivery",
-};
 
 const presetLabels: Record<SpecGatePreset, string> = {
   "contract-bearing": "Contract-bearing",
@@ -120,6 +124,18 @@ const dispositionLabels: Record<SpecCriterionDisposition, string> = {
   deferred: "Deferred",
   waived: "Waived",
   delivered_elsewhere: "Delivered elsewhere",
+};
+
+/** Rendered verbatim from the server's `deliveryProjection` (F26). */
+const proofStatePresentation: Record<
+  CriterionDeliveryProjection["proofState"],
+  { label: string; tone: StatusChipTone }
+> = {
+  proven_merged: { label: "Proven & merged", tone: "green" },
+  proof_recorded: { label: "Proof recorded", tone: "cyan" },
+  waived: { label: "Waived", tone: "amber" },
+  delivered_elsewhere: { label: "Delivered elsewhere", tone: "neutral" },
+  awaiting_proof: { label: "Awaiting proof", tone: "neutral" },
 };
 
 export const renameSpecResultSchema = z
@@ -229,6 +245,12 @@ interface PolicyDialogProps {
   }): void;
   specSlug?: string;
   backHref?: string;
+  /**
+   * The spec's open draft, for the confirmation's impact preview. Omitted by
+   * callers that have no spec detail to read one from, which the preview
+   * reports as no open draft rather than inventing a stage.
+   */
+  openDraft?: PolicyImpactDraft | null;
 }
 
 export function PolicyDialog(props: PolicyDialogProps): React.JSX.Element {
@@ -243,6 +265,7 @@ function PolicyEditor({
   onChangePolicy,
   specSlug,
   backHref,
+  openDraft = null,
 }: PolicyDialogProps): React.JSX.Element {
   const [preset, setPreset] = useState<SpecGatePreset>(currentPolicy.preset);
   const [overrides, setOverrides] = useState<Record<SpecGate, GateSelection>>(
@@ -252,16 +275,22 @@ function PolicyEditor({
     useState<SpecGatePolicy | null>(null);
   const confirmationAccepted = useRef(false);
   const proposedPolicy = proposedGatePolicy(preset, overrides);
+  const confirmationLoosens =
+    confirmationPolicy !== null &&
+    policyChoiceLoosens(currentPolicy, confirmationPolicy);
 
   function showPolicy(policy: SpecGatePolicy): void {
     setPreset(policy.preset);
     setOverrides(policyOverrides(policy));
   }
 
+  // `policyChangeRequiresHardConfirmation` is the same predicate the transition
+  // enforces, so it — and only it — decides whether the modal opens. Loosening
+  // is a copy signal: it escalates the warning, never the requirement.
   function proposePolicy(policy: SpecGatePolicy): void {
     showPolicy(policy);
     const loosensPolicy = policyChoiceLoosens(currentPolicy, policy);
-    const requiresBackendConfirmation = policyChangeRequiresHardConfirmation(
+    const requiresHardConfirmation = policyChangeRequiresHardConfirmation(
       currentPolicy,
       policy,
     );
@@ -269,19 +298,22 @@ function PolicyEditor({
       currentPreset: currentPolicy.preset,
       proposedPreset: policy.preset,
       loosensPolicy,
+      requiresHardConfirmation,
     });
-    if (loosensPolicy) {
+    if (requiresHardConfirmation) {
       setConfirmationPolicy(policy);
       logger.info("spec_studio.policy_change.confirmation_required", {
         currentPreset: currentPolicy.preset,
         proposedPreset: policy.preset,
+        loosensPolicy,
+        requiresHardConfirmation,
       });
       return;
     }
 
     onChangePolicy({
       proposedPolicy: policy,
-      hardConfirmed: requiresBackendConfirmation,
+      hardConfirmed: false,
     });
   }
 
@@ -293,7 +325,8 @@ function PolicyEditor({
     });
   }
 
-  function confirmLoosening(): void {
+  // The only site allowed to assert `hardConfirmed: true` — a human clicked it.
+  function confirmPolicyChange(): void {
     if (confirmationPolicy === null) return;
     confirmationAccepted.current = true;
     const policy = confirmationPolicy;
@@ -301,6 +334,8 @@ function PolicyEditor({
     logger.info("spec_studio.policy_change.confirmed", {
       currentPreset: currentPolicy.preset,
       proposedPreset: policy.preset,
+      loosensPolicy: policyChoiceLoosens(currentPolicy, policy),
+      requiresHardConfirmation: true,
     });
     onChangePolicy({
       proposedPolicy: policy,
@@ -513,14 +548,27 @@ function PolicyEditor({
           discardConfirmation();
         }}
       >
-        <AlertDialogContent size="default">
+        <AlertDialogContent size="wide">
           <AlertDialogTitle>
-            Loosening a gate — human confirmation
+            Gate policy change — human confirmation
           </AlertDialogTitle>
           <AlertDialogDescription>
-            This policy change reduces at least one gate. Confirm that the agent
-            may use the looser posture for future work.
+            {confirmationLoosens
+              ? "This policy change reduces at least one gate. Confirm that the agent may use the looser posture for future work."
+              : "This policy change switches the preset without reducing any gate. Confirm the new posture for future work."}
           </AlertDialogDescription>
+          {confirmationLoosens && (
+            <p className="mt-md mb-0 rounded-md border border-solid border-amber-dim bg-amber-glow px-md py-sm font-mono text-[0.7rem] text-amber">
+              Loosening — at least one gate becomes weaker than it is today.
+            </p>
+          )}
+          {confirmationPolicy !== null && (
+            <PolicyImpactPreview
+              currentPolicy={currentPolicy}
+              proposedPolicy={confirmationPolicy}
+              draft={openDraft}
+            />
+          )}
           <div className="my-md grid gap-xs rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.7rem] text-text-secondary">
             <span>
               · applies prospectively only — nothing already admitted is
@@ -533,8 +581,8 @@ function PolicyEditor({
           </div>
           <AlertDialogActions>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmLoosening} loading={pending}>
-              Confirm loosening
+            <AlertDialogAction onClick={confirmPolicyChange} loading={pending}>
+              Confirm policy change
             </AlertDialogAction>
           </AlertDialogActions>
         </AlertDialogContent>
@@ -628,7 +676,7 @@ export function ExecutionPanel({
     (gate: "delivery" | "execution_start") => (execution: { id: string }) =>
       detail.gateAdmissions.some(
         (admission) =>
-          admission.gate === gate && admission.execution_id === execution.id,
+          admission.gate === gate && admission.executionId === execution.id,
       );
   const deliveryAdmitted = gateAdmitted("delivery");
   const executionStartAdmitted = gateAdmitted("execution_start");
@@ -739,7 +787,7 @@ function ExecutionWorkflowHeader({
   execution,
 }: {
   specSlug: string;
-  execution: SpecExecutionRow | undefined;
+  execution: SpecExecutionView | undefined;
 }): React.JSX.Element {
   return (
     <header className="mb-md border-x-0 border-t-0 border-b border-solid border-border-dim pt-[10px] pb-[12px]">
@@ -774,20 +822,20 @@ function ExecutionLinks({
   execution,
 }: {
   projectName: string;
-  execution: SpecExecutionRow;
+  execution: SpecExecutionView;
 }): React.JSX.Element {
   return (
     <div className="flex flex-wrap gap-md">
       <Link
-        href={`/projects/${encodeURIComponent(projectName)}/workflows?definition=${encodeURIComponent(execution.workflow_definition_id)}`}
+        href={`/projects/${encodeURIComponent(projectName)}/workflows?definition=${encodeURIComponent(execution.workflowDefinitionId)}`}
         className="font-mono text-[0.68rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
       >
         Open workflow definition
       </Link>
-      {execution.workflow_execution_id !== null &&
-        execution.session_name !== null && (
+      {execution.workflowExecutionId !== null &&
+        execution.sessionName !== null && (
           <Link
-            href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(execution.session_name)}/workflow`}
+            href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(execution.sessionName)}/workflow`}
             className="font-mono text-[0.68rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
           >
             Open workflow run
@@ -809,7 +857,7 @@ function DefinitionReviewPanel({
 }: {
   detail: SpecDetailView;
   projectName: string;
-  execution: SpecExecutionRow;
+  execution: SpecExecutionView;
   snapshot: SpecRevisionSnapshot | null;
   requiresApproval: boolean;
   admitted: boolean;
@@ -1282,7 +1330,7 @@ function MergeGatePanel({
   onGrantGateApproval,
 }: {
   detail: SpecDetailView;
-  execution: SpecExecutionRow;
+  execution: SpecExecutionView;
   snapshot: SpecRevisionSnapshot | null;
   deliveryRequiresGateApproval: boolean;
   deliveryAdmitted: boolean;
@@ -1292,7 +1340,7 @@ function MergeGatePanel({
   onSetDisposition(input: SetDispositionInput): void;
   onGrantGateApproval(input: GrantGateApprovalPanelInput): void;
 }): React.JSX.Element {
-  const selectedCriteria = selectedCriterionIds(execution.scope_json);
+  const selectedCriteria = selectedCriterionIds(execution.scope);
   const criteria = (snapshot?.elements ?? []).filter(
     (entry) => entry.version.payload.kind === "criterion",
   );
@@ -1305,21 +1353,34 @@ function MergeGatePanel({
   const dispositions = detail.criterionDispositions.filter(
     (row) => row.execution_id === execution.id,
   );
-  const waivedCount = dispositions.filter(
-    (row) =>
-      selectedCriteria.has(row.criterion_element_id) &&
-      row.disposition === "waived",
-  ).length;
   const deliveredElsewhereCount = dispositions.filter(
     (row) =>
       selectedCriteria.has(row.criterion_element_id) &&
       row.disposition === "delivered_elsewhere",
   ).length;
+  const projectionByCriterion = new Map(
+    execution.deliveryProjection.map((row) => [row.criterionElementId, row]),
+  );
+  const proofRecordedOrBetter = execution.deliveryProjection.filter(
+    (row) =>
+      row.proofState === "proof_recorded" || row.proofState === "proven_merged",
+  ).length;
+  const projectionWaivedCount = execution.deliveryProjection.filter(
+    (row) => row.proofState === "waived",
+  ).length;
+  const projectionDeliveredElsewhereCount = execution.deliveryProjection.filter(
+    (row) => row.proofState === "delivered_elsewhere",
+  ).length;
 
   return (
+    // The ?el=delivery deep link resolves here: focusable so the retrying
+    // scroll/focus effect actually lands (focus() is a no-op on a
+    // non-focusable section).
     <section
+      id="merge-gate"
+      tabIndex={-1}
       aria-label={`Merge gate for ${execution.id}`}
-      className="overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
+      className="scroll-mt-lg overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
     >
       <header className="flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim bg-bg-raised px-md py-sm">
         <div>
@@ -1347,7 +1408,7 @@ function MergeGatePanel({
           const waiver = detail.waivers.find(
             (row) =>
               row.criterion_element_id === entry.element.id &&
-              row.revision_id === execution.revision_id &&
+              row.revision_id === execution.revisionId &&
               row.stale === 0,
           );
           const deliveredExecution =
@@ -1367,6 +1428,7 @@ function MergeGatePanel({
               text={entry.version.payload.text}
               execution={execution}
               disposition={disposition}
+              projection={projectionByCriterion.get(entry.element.id)}
               waiver={waiver}
               deliveredExecution={deliveredExecution}
               pendingAction={pendingAction}
@@ -1413,12 +1475,14 @@ function MergeGatePanel({
       <div className="m-md flex flex-wrap items-center justify-between gap-md border-x-0 border-t border-b-0 border-solid border-border-dim pt-md">
         <div>
           <p className="m-0 font-mono text-[0.7rem] font-bold text-text-primary">
-            {detail.status.delivery.provenCount}/
-            {detail.status.delivery.totalInScope} proven · {waivedCount} waived
-            · {deliveredElsewhereCount} external delivery
+            {proofRecordedOrBetter}/{scopedCriteria.length} proof recorded ·{" "}
+            {projectionWaivedCount} waived · {projectionDeliveredElsewhereCount}{" "}
+            external delivery
           </p>
           <p className="mt-[3px] mb-0 font-mono text-[0.64rem] text-text-tertiary">
-            Evidence is evaluated by the workflow against this pinned scope.
+            Criteria count as proven once a gate-passed merge publishes — merged
+            proof {detail.status.delivery.provenCount}/
+            {detail.status.delivery.totalInScope}.
           </p>
         </div>
 
@@ -1444,7 +1508,7 @@ function MergeGatePanel({
                 onClick={() =>
                   onGrantGateApproval({
                     executionId: execution.id,
-                    revisionId: execution.revision_id,
+                    revisionId: execution.revisionId,
                   })
                 }
               >
@@ -1617,12 +1681,147 @@ function AbandonExecutionForm({
   );
 }
 
+export interface AbandonSpecPanelInput {
+  reason: string;
+}
+
+/**
+ * Whole-spec abandonment. The transport gate refuses this action for agents,
+ * so this control is the only surface that can reach it — and it is
+ * deliberately kept apart from `AbandonExecutionForm`: that one stops a single
+ * run, this one retires the durable spec every run belongs to.
+ */
+export function AbandonSpecPanel({
+  slug,
+  abandonedAt,
+  abandonedReason,
+  pending,
+  error,
+  onAbandonSpec,
+}: {
+  slug: string;
+  abandonedAt: string | null;
+  abandonedReason: string | null;
+  pending: boolean;
+  error: string | null;
+  onAbandonSpec(input: AbandonSpecPanelInput): void;
+}): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+  const trimmedReason = reason.trim();
+
+  function handleOpenChange(open: boolean): void {
+    setConfirming(open);
+    setReason("");
+  }
+
+  // The only site allowed to abandon the spec: a human confirmed it here. No
+  // predicate and no fall-through path may reach `onAbandonSpec`.
+  function confirmAbandonSpec(): void {
+    if (trimmedReason.length === 0) return;
+    logger.info("spec_studio.abandon_spec.confirmed", { slug });
+    onAbandonSpec({ reason: trimmedReason });
+  }
+
+  if (abandonedAt !== null) {
+    return (
+      <section
+        aria-label="Spec lifecycle"
+        className="mt-xl rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg"
+      >
+        <div className="flex flex-wrap items-center gap-sm">
+          <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
+            Spec abandoned
+          </h2>
+          <StatusChip tone="red">Retired</StatusChip>
+          <span className="font-mono text-[0.7rem] text-text-tertiary">
+            {abandonedAt}
+          </span>
+        </div>
+        <p className="mt-sm mb-0 max-w-[680px] text-[0.76rem] leading-relaxed text-text-secondary">
+          {abandonedReason ?? "No reason was recorded."}
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      aria-label="Spec lifecycle"
+      className="mt-xl rounded-lg border border-solid border-red-dim bg-red-glow p-lg"
+    >
+      <div className="flex flex-wrap items-center gap-sm">
+        <h2 className="m-0 font-display text-[0.92rem] font-bold text-red">
+          Abandon this spec
+        </h2>
+        <StatusChip tone="red">Terminal</StatusChip>
+      </div>
+      <p className="mt-sm mb-0 max-w-[680px] text-[0.76rem] leading-relaxed text-text-secondary">
+        This retires the whole spec, not a run: it leaves the active inventory,
+        no further execution can start from it, and its revisions stay readable
+        as history. To stop one run and start another, use Abandon execution on
+        the execution surface above.
+      </p>
+      {error !== null && (
+        <FormError role="alert" layoutClassName="mt-md">
+          {error}
+        </FormError>
+      )}
+      <AlertDialog open={confirming} onOpenChange={handleOpenChange}>
+        <AlertDialogTrigger asChild>
+          <Button
+            size="sm"
+            variant="danger"
+            layoutClassName="mt-md"
+            loading={pending}
+          >
+            Abandon whole spec
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent size="default">
+          <AlertDialogTitle>Abandon spec {slug}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            {slug} stops being an active spec. Its approved revisions, evidence,
+            and executions remain readable, but nothing new can be proposed,
+            started, or delivered from it. Studio cannot undo this.
+          </AlertDialogDescription>
+          <FormGroup layoutClassName="mt-lg mb-sm">
+            <FormLabel htmlFor="spec-abandon-spec-reason">
+              Spec abandonment reason
+            </FormLabel>
+            <FormInput
+              id="spec-abandon-spec-reason"
+              aria-label="Spec abandonment reason"
+              value={reason}
+              onChange={(event) => setReason(event.currentTarget.value)}
+              placeholder="Required durable reason, kept with the spec"
+              autoComplete="off"
+            />
+          </FormGroup>
+          <AlertDialogActions>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              danger
+              onClick={confirmAbandonSpec}
+              loading={pending}
+              disabled={trimmedReason.length === 0}
+            >
+              Abandon spec permanently
+            </AlertDialogAction>
+          </AlertDialogActions>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
+
 function CriterionExecutionControls({
   criterionElementId,
   handle,
   text,
   execution,
   disposition,
+  projection,
   waiver,
   deliveredExecution,
   pendingAction,
@@ -1632,10 +1831,11 @@ function CriterionExecutionControls({
   criterionElementId: string;
   handle: string;
   text: string;
-  execution: SpecExecutionRow;
+  execution: SpecExecutionView;
   disposition: SpecCriterionDispositionRow | undefined;
+  projection: CriterionDeliveryProjection | undefined;
   waiver: SpecWaiverRow | undefined;
-  deliveredExecution: SpecExecutionRow | undefined;
+  deliveredExecution: SpecExecutionView | undefined;
   pendingAction: string | null;
   onGrantWaiver(input: GrantWaiverInput): void;
   onSetDisposition(input: SetDispositionInput): void;
@@ -1683,11 +1883,28 @@ function CriterionExecutionControls({
         >
           {text}
         </p>
-        <StatusChip
-          tone={disposition?.disposition === "waived" ? "amber" : "neutral"}
-        >
-          {dispositionLabels[disposition?.disposition ?? "in_scope"]}
-        </StatusChip>
+        <span className="inline-flex flex-wrap items-center justify-end gap-[6px]">
+          {projection?.strategyKinds.map((kind) => (
+            <span
+              key={kind}
+              className="inline-flex items-center rounded-full border border-solid border-border-subtle px-[7px] py-[1px] font-mono text-[0.6rem] tracking-[0.04em] text-text-tertiary uppercase"
+            >
+              {formatEvidenceKind(kind)}
+            </span>
+          ))}
+          {projection !== undefined && (
+            <StatusChip
+              tone={proofStatePresentation[projection.proofState].tone}
+            >
+              {proofStatePresentation[projection.proofState].label}
+            </StatusChip>
+          )}
+          <StatusChip
+            tone={disposition?.disposition === "waived" ? "amber" : "neutral"}
+          >
+            {dispositionLabels[disposition?.disposition ?? "in_scope"]}
+          </StatusChip>
+        </span>
       </div>
       <div className="mt-[6px] flex flex-wrap items-center justify-end gap-[6px]">
         <Select
@@ -1758,7 +1975,7 @@ function CriterionExecutionControls({
             onClick={() =>
               onGrantWaiver({
                 criterionElementId,
-                revisionId: execution.revision_id,
+                revisionId: execution.revisionId,
                 reason: reason.trim(),
               })
             }
@@ -1795,7 +2012,7 @@ function CriterionExecutionControls({
 export function PolicyAdmissionNotices({
   admissions,
 }: {
-  admissions: SpecGateAdmissionRow[];
+  admissions: SpecGateAdmissionView[];
 }): React.JSX.Element | null {
   const policyAdmissions = admissions.filter(
     (admission) =>
@@ -1830,9 +2047,9 @@ export function PolicyAdmissionNotices({
                 : "Proceeded with gate off"}
             </StatusChip>
             <span className="font-mono text-[0.7rem] text-text-tertiary">
-              {gateLabels[admission.gate]} gate · {admission.created_at}
-              {admission.revision_id !== null &&
-                ` · revision ${admission.revision_id}`}
+              {gateLabels[admission.gate]} gate · {admission.createdAt}
+              {admission.revisionId !== null &&
+                ` · revision ${admission.revisionId}`}
             </span>
           </li>
         ))}
@@ -1946,7 +2163,7 @@ export function SpecIntegrityPanel({
 
 const startExecutionResponseSchema = z
   .object({
-    execution: specExecutionRowSchema,
+    execution: specStartedExecutionViewSchema,
     definition: workflowDefinitionRecordSchema,
   })
   .strict();
@@ -1972,10 +2189,18 @@ export default function SpecControlsPanel({
     action: string;
     message: string;
   } | null>(null);
+  // change-policy answers with the spec *and* what the open draft still owes
+  // under the confirmed dials, so a spec-only schema would reject every
+  // accepted change as a parse failure.
   const changePolicy = useSpecActionMutation<
     { proposedPolicy: SpecGatePolicy; hardConfirmed: boolean },
-    z.infer<typeof specSchema>
-  >(projectName, detail.spec.slug, "change-policy", specSchema);
+    z.infer<typeof specPolicyChangeResultSchema>
+  >(
+    projectName,
+    detail.spec.slug,
+    "change-policy",
+    specPolicyChangeResultSchema,
+  );
   const startExecution = useSpecActionMutation<
     StartExecutionInput,
     z.infer<typeof startExecutionResponseSchema>
@@ -2029,6 +2254,14 @@ export default function SpecControlsPanel({
     AbandonExecutionPanelInput,
     z.infer<typeof specExecutionRowSchema>
   >(projectName, detail.spec.slug, "abandon-execution", specExecutionRowSchema);
+  const abandonSpec = useSpecActionMutation<
+    AbandonSpecPanelInput,
+    z.infer<typeof specSchema>
+  >(projectName, detail.spec.slug, "abandon-spec", specSchema);
+  const renameSpec = useSpecActionMutation<
+    { slug: string; name?: string },
+    RenameSpecResultView
+  >(projectName, detail.spec.slug, "rename", renameSpecResultSchema);
   function mutationCallbacks(action: string) {
     return {
       onSuccess: () => {
@@ -2071,6 +2304,33 @@ export default function SpecControlsPanel({
     <div>
       <SpecIntegrityPanel detail={detail} projectName={projectName} />
       <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
+      <section
+        aria-labelledby="spec-identity-heading"
+        className="mb-xl flex items-baseline justify-between gap-md"
+      >
+        <div>
+          <h2
+            id="spec-identity-heading"
+            className="m-0 font-display text-[0.95rem] font-extrabold text-text-primary"
+          >
+            Identity
+          </h2>
+          <p className="mt-[2px] mb-0 font-mono text-[0.72rem] text-text-tertiary">
+            {detail.spec.slug}
+          </p>
+        </div>
+        <RenameSpecDialog
+          currentSlug={detail.spec.slug}
+          currentName={detail.spec.name}
+          pending={renameSpec.isPending}
+          error={
+            actionFailure?.action === "rename" ? actionFailure.message : null
+          }
+          onRename={(input) =>
+            renameSpec.mutate(input, mutationCallbacks("rename"))
+          }
+        />
+      </section>
       <div id="gate-policy" className="mb-xl scroll-mt-lg">
         <PolicyDialog
           currentPolicy={detail.spec.gatePolicy}
@@ -2085,6 +2345,7 @@ export default function SpecControlsPanel({
           }
           specSlug={detail.spec.slug}
           backHref={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`}
+          openDraft={openDraftForPolicyImpact(detail)}
         />
       </div>
       <ExecutionPanel
@@ -2092,7 +2353,10 @@ export default function SpecControlsPanel({
         projectName={projectName}
         pendingAction={pendingAction}
         error={
-          actionFailure !== null && actionFailure.action !== "change-policy"
+          actionFailure !== null &&
+          actionFailure.action !== "change-policy" &&
+          actionFailure.action !== "abandon-spec" &&
+          actionFailure.action !== "rename"
             ? actionFailure.message
             : null
         }
@@ -2125,6 +2389,20 @@ export default function SpecControlsPanel({
         }
         onAbandonExecution={(input) =>
           abandonExecution.mutate(input, mutationCallbacks("abandon-execution"))
+        }
+      />
+      <AbandonSpecPanel
+        slug={detail.spec.slug}
+        abandonedAt={detail.spec.abandonedAt}
+        abandonedReason={detail.spec.abandonedReason}
+        pending={abandonSpec.isPending}
+        error={
+          actionFailure?.action === "abandon-spec"
+            ? actionFailure.message
+            : null
+        }
+        onAbandonSpec={(input) =>
+          abandonSpec.mutate(input, mutationCallbacks("abandon-spec"))
         }
       />
     </div>
@@ -2188,7 +2466,7 @@ function approvedRevisionSnapshot(
 
 function snapshotForExecution(
   detail: SpecDetailView,
-  execution: SpecExecutionRow,
+  execution: SpecExecutionView,
 ): SpecRevisionSnapshot | null {
   return (
     [
@@ -2196,18 +2474,19 @@ function snapshotForExecution(
       detail.baseRevision,
       detail.currentApprovedRevision,
       ...detail.executionRevisionSnapshots,
-    ].find((snapshot) => snapshot?.revision.id === execution.revision_id) ??
-    null
+    ].find((snapshot) => snapshot?.revision.id === execution.revisionId) ?? null
   );
 }
 
-function selectedCriterionIds(scopeJson: string): ReadonlySet<string> {
-  try {
-    const parsed = executionScopeSchema.safeParse(JSON.parse(scopeJson));
-    return new Set(parsed.success ? parsed.data.selectedCriterionIds : []);
-  } catch {
-    return new Set();
-  }
+/**
+ * An unreadable stored scope arrives as a null `scope`, which is a different
+ * claim than an empty scope: nothing is treated as promised, so no criterion
+ * is shown in scope.
+ */
+function selectedCriterionIds(
+  scope: SpecExecutionView["scope"],
+): ReadonlySet<string> {
+  return new Set(scope === null ? [] : scope.selectedCriterionIds);
 }
 
 function criterionHandle(
@@ -2239,7 +2518,7 @@ function criterionHandle(
   return `R${requirement.element.number}.${criterion.element.number}`;
 }
 
-function executionStateLabel(state: SpecExecutionRow["state"]): string {
+function executionStateLabel(state: SpecExecutionView["state"]): string {
   switch (state) {
     case "definition_review":
       return "Definition review";

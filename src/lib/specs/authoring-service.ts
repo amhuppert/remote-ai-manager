@@ -18,6 +18,9 @@ import {
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
 import {
+  computeSpecRevisionContentHash,
+  SpecElementIdTakenError,
+  SpecRevisionImmutableError,
   StaleElementConflictError,
   StaleStageConflictError,
   type CreateDraftElementResult,
@@ -45,7 +48,11 @@ import { lint, type LintFinding } from "./lint";
 import type { SpecMeasureEventPayload } from "./measures";
 import { resolveDial } from "./policy";
 import { diffRevisions, type RevisionDiffResult } from "./revision-diff";
-import { loadProposalState, toDiffRows } from "./review-state";
+import {
+  elementHandleInSnapshot,
+  loadProposalState,
+  toDiffRows,
+} from "./review-state";
 import {
   admitDraftWrite,
   advanceAuthoringStage as evaluateAdvanceAuthoringStage,
@@ -66,7 +73,12 @@ export const draftElementWriteInputSchema = z
     elementId: z.string().min(1),
     kind: specElementKindSchema,
     parentElementId: z.string().min(1).nullable(),
-    position: z.number().int().nonnegative(),
+    /**
+     * One global order per revision, tiebroken by element id. Omit it to
+     * append: a create takes the next slot, an update keeps the slot it has.
+     * Nesting comes from `parentElementId` alone, never from position.
+     */
+    position: z.number().int().nonnegative().optional(),
     payload: specElementPayloadSchema,
     baseElementVersion: z.number().int().positive().nullable(),
     actor: actorProvenanceSchema,
@@ -75,6 +87,68 @@ export const draftElementWriteInputSchema = z
 export type DraftElementWriteInput = z.infer<
   typeof draftElementWriteInputSchema
 >;
+
+/**
+ * One element of a batch write. Identical to a single write minus the spec and
+ * revision the batch as a whole names: per-element `baseElementVersion` is the
+ * concurrency boundary in a batch exactly as it is alone, so two writers
+ * touching disjoint elements never conflict (R7.3).
+ */
+export const draftElementBatchItemSchema = draftElementWriteInputSchema.omit({
+  specId: true,
+  revisionId: true,
+  actor: true,
+});
+export type DraftElementBatchItem = z.infer<typeof draftElementBatchItemSchema>;
+
+export const draftElementBatchInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    revisionId: z.string().min(1),
+    elements: z.array(draftElementBatchItemSchema).min(1),
+    /**
+     * Optional stricter mode (R7.4). Supplying it additionally requires the
+     * revision to be untouched since the token was read — useful for a writer
+     * that reasoned about the whole document. It is never the default: a
+     * revision-level compare-and-swap would make disjoint writers conflict.
+     */
+    expectedRevisionToken: z.string().min(1).optional(),
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type DraftElementBatchInput = z.infer<
+  typeof draftElementBatchInputSchema
+>;
+
+/** One element that landed, addressed by its index in the submitted array. */
+export interface DraftElementBatchEntry extends DraftElementWriteResult {
+  readonly index: number;
+  readonly elementId: string;
+}
+
+/**
+ * One element that refused, addressed by its index in the submitted array so a
+ * caller can see which element refused and why without diffing arrays. The
+ * revision-level token, when supplied and stale, refuses at index -1 with a
+ * null element: no single element is at fault.
+ */
+export interface DraftElementBatchRefusal {
+  readonly index: number;
+  readonly elementId: string | null;
+  readonly code: TransitionRefusal["code"];
+  readonly unmetConditions: string[];
+  readonly instruction: string;
+  /** The version the element is actually at, for a stale-element refusal. */
+  readonly currentElementVersion: number | null;
+}
+
+export type DraftElementBatchResult =
+  | {
+      readonly ok: true;
+      readonly revisionId: string;
+      readonly written: DraftElementBatchEntry[];
+    }
+  | { readonly ok: false; readonly refusals: DraftElementBatchRefusal[] };
 
 /**
  * The first saved element, carried inside the create call: the durable spec
@@ -159,12 +233,23 @@ export interface AuthoringSpecResult {
   readonly reused: boolean;
 }
 
+/**
+ * A draft write plus the handle the written element is now addressed by.
+ * Handles are the authoring vocabulary, so the writer learns the address it
+ * just created instead of having to re-read the spec to discover it. Sections
+ * and unnumbered rows have no handle and report null.
+ */
+export interface DraftElementWriteResult extends CreateDraftElementResult {
+  readonly handle: string | null;
+}
+
 /** Result of the atomic first draft save that creates the spec. */
 export interface AuthoringSpecCreateResult {
   readonly spec: Spec;
   readonly draft: SpecRevision;
   readonly element: CreateDraftElementResult["element"];
   readonly version: SpecElementVersion;
+  readonly handle: string | null;
 }
 
 export interface AuthoringService {
@@ -175,7 +260,12 @@ export interface AuthoringService {
   getRevisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
   upsertDraftElement(
     input: DraftElementWriteInput,
-  ): Promise<CreateDraftElementResult>;
+  ): Promise<DraftElementWriteResult>;
+  upsertDraftElements(
+    input: DraftElementBatchInput,
+  ): Promise<DraftElementBatchResult>;
+  /** The optional revision-level token a stricter batch may pin. */
+  readRevisionToken(revisionId: string): Promise<string | null>;
   reorderDraftElement(
     input: ReorderDraftElementInput,
   ): Promise<SpecElementVersion>;
@@ -297,6 +387,140 @@ function requireOwnedRevision(
   return revision;
 }
 
+/**
+ * Rolls the batch transaction back while carrying the indexed refusals out:
+ * SQLite unwinds on a throw, and the refusals are the answer the caller needs,
+ * so they travel on the error rather than in a return value that would commit.
+ */
+class BatchRefusedError extends Error {
+  constructor(readonly refusals: DraftElementBatchRefusal[]) {
+    super(`spec batch write refused ${refusals.length} element(s)`);
+    this.name = "BatchRefusedError";
+  }
+}
+
+function batchRefusalFor(
+  index: number,
+  elementId: string,
+  error: unknown,
+): DraftElementBatchRefusal {
+  if (error instanceof StaleElementConflictError) {
+    return {
+      index,
+      elementId,
+      code: "stale_element",
+      unmetConditions: [error.message],
+      instruction: `Re-read ${elementId} and resubmit the batch with its current element version.`,
+      currentElementVersion: error.current.elementVersion,
+    };
+  }
+  if (error instanceof SpecElementIdTakenError) {
+    return {
+      index,
+      elementId,
+      code: "element_id_taken",
+      unmetConditions: [error.message],
+      instruction:
+        "Choose a globally unique element ID, preferably prefixed with the spec slug, then resubmit the batch.",
+      currentElementVersion: null,
+    };
+  }
+  if (error instanceof SpecRevisionImmutableError) {
+    return {
+      index,
+      elementId,
+      code: "amendment_required",
+      unmetConditions: [error.message],
+      instruction: "Open an amendment draft before changing approved content.",
+      currentElementVersion: null,
+    };
+  }
+  return {
+    index,
+    elementId,
+    code: "validation",
+    unmetConditions: [
+      error instanceof Error ? error.message : `Batch element ${index} failed.`,
+    ],
+    instruction: `Correct element ${index} (${elementId}) and resubmit the batch.`,
+    currentElementVersion: null,
+  };
+}
+
+/**
+ * The revision-level token the optional stricter batch mode pins: the
+ * revision's canonical content hash, so any committed element change moves it.
+ */
+function revisionToken(snapshot: SpecRevisionSnapshot): string {
+  return computeSpecRevisionContentHash(
+    snapshot.revision.authoringStage,
+    snapshot.elements,
+  );
+}
+
+/**
+ * Writes one element and returns only its version: handles depend on numbers
+ * assigned across the whole batch, and resolving them here would reload and
+ * re-parse the entire revision snapshot per element, making an N-element batch
+ * quadratic inside the write transaction. The caller resolves them once.
+ */
+function writeOneElement(
+  repo: SpecsRepoTransaction,
+  batch: DraftElementBatchInput,
+  item: DraftElementBatchItem,
+  occurredAt: string,
+): SpecElementVersion {
+  let version: SpecElementVersion;
+  if (item.baseElementVersion === null) {
+    const current = repo.findElementVersion(batch.revisionId, item.elementId);
+    if (current !== null) {
+      throw new StaleElementConflictError(
+        batch.revisionId,
+        item.elementId,
+        0,
+        current,
+      );
+    }
+    version = repo.createDraftElement({
+      id: item.elementId,
+      specId: batch.specId,
+      revisionId: batch.revisionId,
+      kind: item.kind,
+      parentElementId: item.parentElementId,
+      position: item.position,
+      payload: item.payload,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    }).version;
+  } else {
+    version = repo.updateDraftElement({
+      revisionId: batch.revisionId,
+      elementId: item.elementId,
+      expectedElementVersion: item.baseElementVersion,
+      payload: item.payload,
+      position: item.position,
+      updatedAt: occurredAt,
+    });
+  }
+  return version;
+}
+
+/**
+ * Handle of an element that was just written, read back from the same
+ * in-transaction snapshot so a criterion resolves its parent requirement's
+ * number without a second derivation of the grammar.
+ */
+function writtenElementHandle(
+  repo: SpecsRepoTransaction,
+  revisionId: string,
+  elementId: string,
+): string | null {
+  const snapshot = repo.getRevisionSnapshot(revisionId);
+  return snapshot === null
+    ? null
+    : elementHandleInSnapshot(snapshot, elementId);
+}
+
 export function createAuthoringService(
   deps: AuthoringServiceDeps,
 ): AuthoringService {
@@ -379,7 +603,7 @@ export function createAuthoringService(
   }
 
   function appendWriteIntervention(
-    spec: Spec,
+    specId: string,
     revisionId: string,
     elementId: string,
     actor: ActorProvenance,
@@ -387,7 +611,7 @@ export function createAuthoringService(
     refusal: TransitionRefusal,
   ): void {
     deps.events.appendDurableInTransaction({
-      specId: spec.id,
+      specId,
       occurredAt,
       actor,
       durableEventType: "spec-intervention-recorded",
@@ -426,7 +650,7 @@ export function createAuthoringService(
         repo: SpecsRepoTransaction,
         specId: string,
         revisionId: string,
-      ): CreateDraftElementResult {
+      ): DraftElementWriteResult {
         const current = repo.findElementVersion(
           revisionId,
           parsed.initialElement.elementId,
@@ -439,7 +663,7 @@ export function createAuthoringService(
             current,
           );
         }
-        return repo.createDraftElement({
+        const written = repo.createDraftElement({
           id: parsed.initialElement.elementId,
           specId,
           revisionId,
@@ -450,6 +674,10 @@ export function createAuthoringService(
           createdAt: occurredAt,
           updatedAt: occurredAt,
         });
+        return {
+          ...written,
+          handle: writtenElementHandle(repo, revisionId, written.element.id),
+        };
       }
 
       const result = await deps.specs.transaction(
@@ -488,7 +716,7 @@ export function createAuthoringService(
             );
             if (!amendmentDecision.ok) {
               appendWriteIntervention(
-                existing,
+                existing.id,
                 approved.id,
                 parsed.initialElement.elementId,
                 parsed.actor,
@@ -519,6 +747,7 @@ export function createAuthoringService(
                 draft: amendment,
                 element: written.element,
                 version: written.version,
+                handle: written.handle,
               },
               prepared: appendDraftEvent(
                 existing,
@@ -565,6 +794,7 @@ export function createAuthoringService(
               draft: created.revision,
               element: written.element,
               version: written.version,
+              handle: written.handle,
             },
             prepared: appendDraftEvent(
               created.spec,
@@ -915,7 +1145,7 @@ export function createAuthoringService(
           );
           if (!decision.ok) {
             appendWriteIntervention(
-              spec,
+              spec.id,
               revision.id,
               parsed.elementId,
               parsed.actor,
@@ -929,7 +1159,7 @@ export function createAuthoringService(
             parsed.elementId,
           );
 
-          let written: CreateDraftElementResult;
+          let version: SpecElementVersion;
           if (parsed.baseElementVersion === null) {
             if (current !== null) {
               throw new StaleElementConflictError(
@@ -939,7 +1169,7 @@ export function createAuthoringService(
                 current,
               );
             }
-            written = repo.createDraftElement({
+            version = repo.createDraftElement({
               id: parsed.elementId,
               specId: parsed.specId,
               revisionId: parsed.revisionId,
@@ -949,9 +1179,9 @@ export function createAuthoringService(
               payload: parsed.payload,
               createdAt: occurredAt,
               updatedAt: occurredAt,
-            });
+            }).version;
           } else {
-            const version = repo.updateDraftElement({
+            version = repo.updateDraftElement({
               revisionId: parsed.revisionId,
               elementId: parsed.elementId,
               expectedElementVersion: parsed.baseElementVersion,
@@ -959,16 +1189,22 @@ export function createAuthoringService(
               position: parsed.position,
               updatedAt: occurredAt,
             });
-            const element = repo
-              .getRevisionSnapshot(parsed.revisionId)
-              ?.elements.find(
-                ({ element: candidate }) => candidate.id === parsed.elementId,
-              )?.element;
-            if (element === undefined) {
-              throw new SpecDraftUnavailableError(parsed.specId);
-            }
-            written = { element, version };
           }
+          // One post-write snapshot serves both the written row and its
+          // handle, so a criterion resolves its parent requirement's number
+          // from the same committed state the write produced.
+          const snapshot = repo.getRevisionSnapshot(parsed.revisionId);
+          const element = snapshot?.elements.find(
+            ({ element: candidate }) => candidate.id === parsed.elementId,
+          )?.element;
+          if (snapshot === null || element === undefined) {
+            throw new SpecDraftUnavailableError(parsed.specId);
+          }
+          const written: DraftElementWriteResult = {
+            element,
+            version,
+            handle: elementHandleInSnapshot(snapshot, parsed.elementId),
+          };
 
           return {
             ok: true as const,
@@ -1003,6 +1239,177 @@ export function createAuthoringService(
         elementVersion: result.value.version.elementVersion,
       });
       return result.value;
+    },
+
+    async readRevisionToken(revisionId) {
+      const snapshot = await deps.specs.getRevisionSnapshot(revisionId);
+      return snapshot === null ? null : revisionToken(snapshot);
+    },
+
+    async upsertDraftElements(input) {
+      const parsed = draftElementBatchInputSchema.parse(input);
+      const occurredAt = now();
+      let transaction: {
+        result: DraftElementBatchResult;
+        prepared: PreparedSpecEventPublication;
+      };
+      const blockedWrites: Array<{
+        elementId: string;
+        refusal: TransitionRefusal;
+      }> = [];
+      try {
+        transaction = await deps.specs.transaction(
+          "specs.authoring.upsert-elements",
+          (repo) => {
+            const spec = requireSpec(repo, parsed.specId);
+            const revision = requireOwnedRevision(
+              repo,
+              parsed.specId,
+              parsed.revisionId,
+            );
+            if (parsed.expectedRevisionToken !== undefined) {
+              const snapshot = repo.getRevisionSnapshot(revision.id);
+              const actual = snapshot === null ? null : revisionToken(snapshot);
+              if (actual !== parsed.expectedRevisionToken) {
+                throw new BatchRefusedError([
+                  {
+                    index: -1,
+                    elementId: null,
+                    code: "stale_revision",
+                    unmetConditions: [
+                      `Revision ${revision.id} changed since the supplied token was read.`,
+                    ],
+                    instruction:
+                      "Re-read the revision token and resubmit the batch.",
+                    currentElementVersion: null,
+                  },
+                ]);
+              }
+            }
+
+            const landed: {
+              index: number;
+              elementId: string;
+              version: SpecElementVersion;
+            }[] = [];
+            const refusals: DraftElementBatchRefusal[] = [];
+            parsed.elements.forEach((item, index) => {
+              const decision = writeDecision(
+                spec,
+                revision,
+                item.kind,
+                item.payload,
+              );
+              if (!decision.ok) {
+                // Recorded after this transaction unwinds, not here: the
+                // intervention is the durable trace of the refusal, and a row
+                // written inside the batch dies with the rollback that keeps
+                // the element writes atomic.
+                blockedWrites.push({
+                  elementId: item.elementId,
+                  refusal: decision.refusal,
+                });
+                refusals.push({
+                  index,
+                  elementId: item.elementId,
+                  code: decision.refusal.code,
+                  unmetConditions: decision.refusal.unmetConditions,
+                  instruction: decision.refusal.instruction,
+                  currentElementVersion: null,
+                });
+                return;
+              }
+              try {
+                landed.push({
+                  index,
+                  elementId: item.elementId,
+                  version: writeOneElement(repo, parsed, item, occurredAt),
+                });
+              } catch (error) {
+                // Every element is attempted so one bad version does not hide
+                // the next; the whole batch is rolled back below regardless.
+                refusals.push(batchRefusalFor(index, item.elementId, error));
+              }
+            });
+
+            if (refusals.length > 0) throw new BatchRefusedError(refusals);
+
+            // One snapshot for the whole batch, read after every write so the
+            // numbers each handle derives from are final.
+            const snapshot = repo.getRevisionSnapshot(revision.id);
+            if (snapshot === null) {
+              throw new SpecDraftUnavailableError(parsed.specId);
+            }
+            const elementsById = new Map(
+              snapshot.elements.map(({ element }) => [element.id, element]),
+            );
+            const written: DraftElementBatchEntry[] = landed.map((entry) => {
+              const element = elementsById.get(entry.elementId);
+              if (element === undefined) {
+                throw new SpecDraftUnavailableError(parsed.specId);
+              }
+              return {
+                index: entry.index,
+                elementId: entry.elementId,
+                element,
+                version: entry.version,
+                handle: elementHandleInSnapshot(snapshot, entry.elementId),
+              };
+            });
+            return {
+              result: {
+                ok: true as const,
+                revisionId: revision.id,
+                written,
+              },
+              prepared: appendDraftEvent(
+                spec,
+                revision.id,
+                parsed.elements.map((item) => item.elementId),
+                parsed.actor,
+                occurredAt,
+                "draft-elements-written",
+              ),
+            };
+          },
+        );
+      } catch (error) {
+        if (!(error instanceof BatchRefusedError)) throw error;
+        // Same ordering the single-element path uses: the intervention is
+        // committed before the refusal reaches the caller. It takes a second
+        // transaction here only because the first one had to unwind.
+        if (blockedWrites.length > 0) {
+          await deps.specs.transaction(
+            "specs.authoring.upsert-elements.interventions",
+            () => {
+              for (const blocked of blockedWrites) {
+                appendWriteIntervention(
+                  parsed.specId,
+                  parsed.revisionId,
+                  blocked.elementId,
+                  parsed.actor,
+                  occurredAt,
+                  blocked.refusal,
+                );
+              }
+            },
+          );
+        }
+        logger.warn("specs.authoring.upsert_elements.refused", {
+          specId: parsed.specId,
+          revisionId: parsed.revisionId,
+          elementCount: parsed.elements.length,
+          refusalCodes: error.refusals.map((refusal) => refusal.code),
+        });
+        return { ok: false, refusals: error.refusals };
+      }
+      publish(transaction.prepared);
+      logger.info("specs.authoring.upsert_elements.complete", {
+        specId: parsed.specId,
+        revisionId: parsed.revisionId,
+        elementCount: parsed.elements.length,
+      });
+      return transaction.result;
     },
 
     async advanceAuthoringStage(input) {
@@ -1193,7 +1600,7 @@ export function createAuthoringService(
             );
             if (!decision.ok) {
               appendWriteIntervention(
-                spec,
+                spec.id,
                 revision.id,
                 parsed.elementId,
                 parsed.actor,
@@ -1260,7 +1667,7 @@ export function createAuthoringService(
             );
             if (!decision.ok) {
               appendWriteIntervention(
-                spec,
+                spec.id,
                 revision.id,
                 parsed.elementId,
                 parsed.actor,

@@ -6,7 +6,11 @@
  */
 
 import type { BaseWorkflowContext } from "../types";
-import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
+import type {
+  ConflictEntry,
+  ConflictDecisionInput,
+  DeliveryGateHaltReason as PersistedDeliveryGateHaltReason,
+} from "@/lib/jobs/schemas";
 
 export interface CriterionOutcome {
   criterionId: string;
@@ -31,6 +35,17 @@ export interface DeliveryGateEvaluateInput {
   candidateValidation?: CandidateValidationFact;
 }
 
+/**
+ * Where the halted run's human remedy lives: the owning spec's Studio page.
+ * Set on every spec-linked delivery-gate refusal so halt surfaces can deep
+ * link to the spec's Controls view (`?el=delivery`).
+ */
+export interface DeliveryGateSpecPresentation {
+  specSlug: string;
+  specName: string;
+  projectName: string;
+}
+
 export type DeliveryGateEvaluation =
   | {
       status: "pass";
@@ -41,6 +56,12 @@ export type DeliveryGateEvaluation =
       status: "refused";
       unmet: CriterionOutcome[];
       instruction: string;
+      /**
+       * Present only when the refusal is the delivery gate waiting on a human
+       * delivery approval — the one refusal a Studio approval clears.
+       */
+      refusalCode?: "approval_required";
+      spec?: DeliveryGateSpecPresentation;
     };
 
 export interface DeliveryGateEvaluator {
@@ -51,7 +72,26 @@ export interface DeliveryGateHaltReason {
   type: "delivery_gate_failed";
   unmet: CriterionOutcome[];
   instruction: string;
+  /** See {@link DeliveryGateEvaluation}'s refused branch. */
+  refusalCode?: "approval_required";
+  spec?: DeliveryGateSpecPresentation;
 }
+
+/**
+ * Compile-level drift guard (do not export): the merge-domain interface above
+ * and the persisted Zod shape in `@/lib/jobs/schemas` carry the same halt
+ * payload across three contracts (evaluation, machine context/output, SSE +
+ * runtime_json rows). The constraint chain compiles only while the two types
+ * stay mutually assignable, so extending one without the other is a type
+ * error here rather than a silently dropped field at the boundary.
+ */
+type MutuallyAssignable<A extends B, B extends C, C = A> = [A, B, C];
+type _DeliveryGateHaltReasonSchemaParity = MutuallyAssignable<
+  DeliveryGateHaltReason,
+  PersistedDeliveryGateHaltReason
+>;
+// Reference the guard so it is not an unused type alias.
+export type { _DeliveryGateHaltReasonSchemaParity as DeliveryGateHaltReasonSchemaParity };
 
 /** Phase tracking for SSE broadcast. */
 export type MergePhase =

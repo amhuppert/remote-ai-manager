@@ -396,9 +396,12 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec status <slug>`
   - `cctl spec get <slug>/<handle>`
   - `cctl spec search <slug> <query>`
+  - `cctl spec search --all <query>`
+  - `cctl spec schema [<document>]`
   - `cctl spec export <slug> [--out <bundle.json>]`
   - `cctl spec verify <slug> [--against <bundle.json>]`
   - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>`
+  - `cctl spec amend <slug>`
   - `cctl spec draft <slug> --file <element.json> --base-version <number|new>`
   - `cctl spec propose <slug>`
   - `cctl spec advance <slug> --from <requirements|design>`
@@ -419,16 +422,23 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec get` — read one spec element with approval and evidence state
   - `cctl spec get <slug>/<handle>`
   - `cctl spec get <slug> <handle>`
-- `cctl spec search` — search requirement and decision text
+- `cctl spec search` — search requirement and decision text in one spec or across all
   - `cctl spec search <slug> <query>`
+  - `cctl spec search --all <query>`
+- `cctl spec schema` — print the schema of every input document this family accepts
+  - `cctl spec schema`
+  - `cctl spec schema <document>`
 - `cctl spec export` — produce a canonical portable spec bundle
   - `cctl spec export <slug> [--out <bundle.json>]`
 - `cctl spec verify` — recompute spec integrity
   - `cctl spec verify <slug> [--against <bundle.json>]`
 - `cctl spec create` — create a durable spec from its first draft save
   - `cctl spec create --slug <slug> --name <name> --preset <contract-bearing|exploratory|fast-path> --file <element.json>`
+- `cctl spec amend` — reopen authoring on an approved spec as an amendment draft
+  - `cctl spec amend <slug>`
 - `cctl spec draft` — save a base-versioned draft element
   - `cctl spec draft <slug> --file <element.json> --base-version <number|new>`
+  - `cctl spec draft <slug> --file <elements.json>`
 - `cctl spec propose` — propose the current authoring stage for review
   - `cctl spec propose <slug>`
 - `cctl spec advance` — conclude a Notify/Off authoring stage explicitly
@@ -443,13 +453,13 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec task complete <slug>/T7 --execution <id> --evidence <id>`
 - `cctl spec request-approval` — route a spec gate to the user
   - `cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]`
-- `cctl spec start` — start execution from an approved revision and scope
+- `cctl spec start` — compile an approved revision and scope into an execution workflow
   - `cctl spec start <slug> --file <scope.json>`
-- `cctl spec capture` — capture discovered work as a proposed scope amendment
+- `cctl spec capture` — record work discovered during a running execution as a scope amendment
   - `cctl spec capture <slug> --execution <id> --file <task.json> [--blocking-reason <reason>]`
 - `cctl spec rename` — rename a spec's slug, keeping the old slug as an alias
   - `cctl spec rename <slug> --to <new-slug> [--name <name>]`
-- `cctl spec abandon` — abandon a spec or one of its executions
+- `cctl spec abandon` — abandon one execution, or retire the whole spec as a human
   - `cctl spec abandon <slug> --reason <reason>`
   - `cctl spec abandon <slug> --execution <id> --reason <reason>`
 - `cctl spec task complete` — claim task completion with evidence

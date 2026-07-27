@@ -24,22 +24,56 @@ export type RequirementPriority = z.infer<typeof requirementPrioritySchema>;
 export const requirementRiskSchema = z.enum(["high", "medium", "low"]);
 export type RequirementRisk = z.infer<typeof requirementRiskSchema>;
 
+/**
+ * Only machine-producible evidence survives in the vocabulary: the server
+ * ingests commits and validation results from workflow events, and nothing
+ * can produce diff/screenshot/human_signoff evidence (ticket #24). The human
+ * lever for an unprovable criterion is a Spec Studio Controls-view waiver.
+ */
 export const evidenceKindSchema = z.enum([
-  "diff",
   "commit",
   "test_run",
   "validator_verdict",
-  "screenshot",
-  "human_signoff",
 ]);
 export type EvidenceKind = z.infer<typeof evidenceKindSchema>;
 
+/**
+ * The kinds the delivery gate can prove with a machine verdict. `commit` is
+ * deliberately excluded: commit evidence can never cite a merge_validation
+ * ref, so a strategy of only commits is an obligation nothing can prove.
+ */
+export const MACHINE_VALIDATION_EVIDENCE_KINDS = [
+  "test_run",
+  "validator_verdict",
+] as const satisfies readonly EvidenceKind[];
+export type MachineValidationEvidenceKind =
+  (typeof MACHINE_VALIDATION_EVIDENCE_KINDS)[number];
+export function isMachineValidationEvidenceKind(
+  kind: EvidenceKind,
+): kind is MachineValidationEvidenceKind {
+  return MACHINE_VALIDATION_EVIDENCE_KINDS.includes(
+    kind as MachineValidationEvidenceKind,
+  );
+}
+
+/**
+ * Exported as its own schema instance so the CLI's published JSON Schema can
+ * recognize this exact node and attach the machine-kind `contains` constraint
+ * that the `.refine()` below enforces but `z.toJSONSchema` cannot express.
+ */
+export const validationStrategyKindsSchema = z.array(evidenceKindSchema);
+
 export const validationStrategySchema = z
   .object({
-    kinds: z.array(evidenceKindSchema),
+    kinds: validationStrategyKindsSchema,
     note: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .refine((strategy) => strategy.kinds.some(isMachineValidationEvidenceKind), {
+    message:
+      "A validation strategy must include at least one machine-provable evidence kind (test_run or validator_verdict); the delivery gate cannot prove a criterion from commits alone.",
+    path: ["kinds"],
+  });
 export type ValidationStrategy = z.infer<typeof validationStrategySchema>;
 
 export const sectionElementPayloadSchema = z
@@ -172,6 +206,18 @@ export type SpecGate = z.infer<typeof specGateSchema>;
 export const specGateDialSchema = z.enum(["gate", "notify", "off"]);
 export type SpecGateDial = z.infer<typeof specGateDialSchema>;
 
+/**
+ * The fast-path dial: authorable only as a preset, never as an override, so it
+ * is a resolution result rather than a storable dial value.
+ */
+export const COMBINED_APPROVAL_DIAL = "combined-approval";
+
+export const resolvedGateDialSchema = z.union([
+  specGateDialSchema,
+  z.literal(COMBINED_APPROVAL_DIAL),
+]);
+export type ResolvedGateDial = z.infer<typeof resolvedGateDialSchema>;
+
 export const specGatePolicySchema = z
   .object({
     preset: specGatePresetSchema,
@@ -231,6 +277,15 @@ export const refusalCodeSchema = z.enum([
   "delivery_gate_failed",
   "slug_taken",
   "element_id_taken",
+  // Approval-request refusals (R10.9, R24.1). A request that names a revision
+  // the gate is no longer evaluated against, a gate the policy does not gate
+  // on or the draft has not reached, a subject with nothing outstanding, or an
+  // approval already granted would each open a Needs You entry no human act
+  // can clear, so each is refused with its own diagnosis.
+  "stale_revision",
+  "gate_not_applicable",
+  "invalid_subject",
+  "already_satisfied",
   "not_found",
   "validation",
 ]);
@@ -372,6 +427,25 @@ export const specExecutionStateSchema = z.enum([
   "abandoned",
 ]);
 export type SpecExecutionState = z.infer<typeof specExecutionStateSchema>;
+
+/**
+ * The linked graph-workflow execution's live status, as the reconcile read
+ * reports it. A spec execution stays `running` between workflow completion
+ * and the session's delivering merge, so this is the only field that lets a
+ * reader tell "lanes are working" from "everything finished; merge pending"
+ * and from "halted awaiting attention".
+ */
+export const specWorkflowLaneStatusSchema = z.enum([
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "halted",
+  "aborted",
+]);
+export type SpecWorkflowLaneStatus = z.infer<
+  typeof specWorkflowLaneStatusSchema
+>;
 
 export const specLinkObjectKindSchema = z.enum([
   "ticket",

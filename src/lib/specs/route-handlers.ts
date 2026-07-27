@@ -12,7 +12,10 @@ import {
 } from "@/lib/shared/route-resolution";
 import { PersistenceError } from "@/lib/shared/errors";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
-import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import {
+  createSpecDeliveryRepo,
+  type SpecDeliveryRepo,
+} from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -29,13 +32,16 @@ import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-sch
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
 
+import { draftAuthoringSequence } from "./authoring-sequence";
 import {
   SpecDraftUnavailableError,
   SpecSlugTakenError,
   StageBlockedWriteError,
   createAuthoringService,
   createAuthoringSpecInputSchema,
+  draftElementBatchInputSchema,
   draftElementWriteInputSchema,
+  type DraftElementBatchRefusal,
   openAmendmentInputSchema,
   proposeAuthoringRevisionInputSchema,
   removeDraftElementInputSchema,
@@ -43,6 +49,7 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { compiledWorkflowTaskId, readCompiledOriginMap } from "./compiler";
+import { isEarlierMergedDelivery } from "./delivery-gate";
 import type { EvidenceService } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
 import {
@@ -53,8 +60,24 @@ import {
   type CanonicalSpecBundle,
   type IntegrityReport,
 } from "./export";
-import type { ExecutionService } from "./execution-service";
+import type {
+  ExecutionService,
+  ReconciledSpecExecution,
+} from "./execution-service";
 import {
+  currentExecution,
+  elementHandle,
+  gateStatuses,
+  latestRevision,
+  parseProvenance,
+  pendingApprovals,
+  type PendingApproval,
+  type SpecGateStatus,
+} from "./gate-projection";
+import {
+  explainInvalidElementHandle,
+  formatBareElementHandle,
+  isWellFormedElementHandle,
   parseElementHandle,
   specSlugSchema,
   type ParsedElementHandle,
@@ -79,8 +102,7 @@ import {
   type DeliveryCriterion,
   type SpecPhaseProjection,
 } from "./phase";
-import { resolveDial, type ResolvedGateDial } from "./policy";
-import { toDiffRows, toLintSnapshot } from "./review-state";
+import { elementHandleInSnapshot, toLintSnapshot } from "./review-state";
 import {
   answerQuestionInputSchema,
   approveItemInputSchema,
@@ -98,18 +120,25 @@ import {
   signOffRevisionInputSchema,
   type ReviewService,
 } from "./review-service";
-import { executionScopeSchema } from "./scope-validation";
-import { consultedAuthoringGates } from "./transitions";
-import type { SpecAssumptionView, SpecQuestionView } from "./view-schemas";
+import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
+import type {
+  CriterionDeliveryProjection,
+  RemainingAuthoringSequence,
+  SpecAssumptionView,
+  SpecQuestionView,
+  SpecRevisionSnapshotView,
+  SpecEditContextView,
+  SpecExecutionView,
+  SpecGateAdmissionView,
+  SpecSearchHit,
+  SpecStartedExecutionView,
+  SpecStatusExecution,
+} from "./view-schemas";
 import {
   actorProvenanceSchema,
-  evidenceEvaluatedStateSchema,
-  evidenceKindSchema,
   specCriterionDispositionSchema,
   specAuthoringStageSchema,
-  specGateSchema,
   taskElementPayloadSchema,
-  validationStrategySchema,
   type ActorProvenance,
   type Refusal,
   type Spec,
@@ -120,7 +149,6 @@ import {
   type SpecCriterionDispositionRow,
   type SpecEvidenceRow,
   type SpecExecutionRow,
-  type SpecGate,
   type SpecGateAdmissionRow,
   type SpecLinkRow,
   type SpecProofVerdictRow,
@@ -130,6 +158,7 @@ import {
   type SpecRevisionSnapshot,
   type SpecTaskClaimRow,
   type SpecWaiverRow,
+  type SpecWorkflowLaneStatus,
 } from "./schemas";
 
 const logger = createLogger("specs.routes");
@@ -148,7 +177,7 @@ export interface SpecRouteDeps {
   lintDraft(specId: string, revisionId: string): Promise<LintFinding[]>;
   findApprovalsBySpecId(specId: string): SpecApprovalRow[];
   findCommentsByRevision(revisionId: string): SpecCommentRow[];
-  findGateAdmissionsByRevision(revisionId: string): SpecGateAdmissionRow[];
+  findGateAdmissionsBySpecId(specId: string): SpecGateAdmissionRow[];
   findLinksBySpecId(specId: string): SpecLinkRow[];
   getLinkedTickets(
     projectPath: string,
@@ -164,7 +193,7 @@ export interface SpecRouteDeps {
   reconcileExecution(
     projectPath: string,
     execution: SpecExecutionRow,
-  ): Promise<SpecExecutionRow>;
+  ): Promise<ReconciledSpecExecution>;
   ingestExecutionEvidenceBestEffort(
     projectPath: string,
     executionId: string,
@@ -184,6 +213,14 @@ export interface SpecRouteDeps {
     criterionElementId: string,
     revisionId: string,
   ): SpecWaiverRow | null;
+  /**
+   * By-id waiver resolution for the delivery projection: the gate honors a
+   * waiver only through the execution disposition's `waiver_id` link, so the
+   * projection must resolve exactly that row rather than "any current waiver
+   * for the criterion/revision".
+   */
+  findWaiverById(waiverId: string): SpecWaiverRow | null;
+  findWaiversByRevision(revisionId: string): SpecWaiverRow[];
   exportSpec(specId: string): Promise<CanonicalSpecBundle>;
   verifySpec(specId: string): Promise<IntegrityReport>;
   measureProject(projectPath: string): Promise<SpecMeasuresReport>;
@@ -213,23 +250,13 @@ interface SpecCoverage {
   percentage: number;
 }
 
-interface SpecGateStatus {
-  gate: SpecGate;
-  dial: ResolvedGateDial;
-  state: "pending" | "admitted" | "not_required";
-}
-
-interface PendingApproval {
-  gate: SpecGate;
-  subject: string;
-  elementId: string | null;
-}
-
 interface SpecStatusView {
   specId: string;
   slug: string;
   phase: SpecPhaseProjection;
+  executions: SpecStatusExecution[];
   gates: SpecGateStatus[];
+  authoringSequence: RemainingAuthoringSequence | null;
   pendingApprovals: PendingApproval[];
   openQuestions: Array<{
     id: string;
@@ -325,8 +352,8 @@ function createDefaultDeps(): SpecRouteDeps {
     findApprovalsBySpecId: (specId) => review.findApprovalsBySpecId(specId),
     findCommentsByRevision: (revisionId) =>
       review.findCommentsByRevision(revisionId),
-    findGateAdmissionsByRevision: (revisionId) =>
-      review.findGateAdmissionsByRevision(revisionId),
+    findGateAdmissionsBySpecId: (specId) =>
+      review.findGateAdmissionsBySpecId(specId),
     findLinksBySpecId: (specId) => links.findBySpecId(specId),
     async getLinkedTickets(projectPath, specId) {
       const services = await loadProductionSpecRouteServices(projectPath);
@@ -341,7 +368,7 @@ function createDefaultDeps(): SpecRouteDeps {
     async reconcileExecution(projectPath, execution) {
       const services = await loadProductionSpecRouteServices(projectPath);
       const result = await services.execution.getStatus(execution.id);
-      return result.ok ? result.value : execution;
+      return result.ok ? result.value : { execution, workflowStatus: null };
     },
     async ingestExecutionEvidenceBestEffort(projectPath, executionId) {
       const services = await loadProductionSpecRouteServices(projectPath);
@@ -358,6 +385,9 @@ function createDefaultDeps(): SpecRouteDeps {
       ),
     findWaiverForCriterionRevision: (criterionElementId, revisionId) =>
       delivery.findWaiverForCriterionRevision(criterionElementId, revisionId),
+    findWaiverById: (waiverId) => delivery.findWaiverById(waiverId),
+    findWaiversByRevision: (revisionId) =>
+      delivery.findWaiversByRevision(revisionId),
     async exportSpec(specId) {
       return renderCanonicalBundle(
         await loadSpecExportState({ specs, review }, specId),
@@ -403,14 +433,6 @@ export async function resolveSpecRoute(
     ok: true,
     value: { ...project.value, requestedSlug: slug ?? "", spec },
   };
-}
-
-function latestRevision(
-  revisions: readonly SpecRevision[],
-): SpecRevision | null {
-  return (
-    [...revisions].sort((left, right) => right.number - left.number)[0] ?? null
-  );
 }
 
 async function loadCurrentState(
@@ -742,143 +764,6 @@ function phase(
   });
 }
 
-function validApproval(
-  approvals: readonly SpecApprovalRow[],
-  subjectKind: SpecApprovalRow["subject_kind"],
-  elementId: string | null,
-): boolean {
-  return approvals.some(
-    (approval) =>
-      approval.subject_kind === subjectKind &&
-      approval.element_id === elementId &&
-      approval.validity === "valid",
-  );
-}
-
-/** The gates whose admissions are per-execution rather than per-revision. */
-const EXECUTION_SCOPED_GATES: ReadonlySet<string> = new Set([
-  "execution_start",
-  "delivery",
-]);
-
-function gateStatuses(
-  spec: Spec,
-  revisionId: string | null,
-  admissions: readonly SpecGateAdmissionRow[],
-  currentExecution: SpecExecutionRow | null,
-): SpecGateStatus[] {
-  return specGateSchema.options.map((gate) => {
-    const dial = resolveDial(spec.gatePolicy, gate);
-    // Execution-scoped gates admit one run, read against the run's PINNED
-    // revision: an older run's admission must not make the current run read
-    // as admitted, and a newer draft amendment must not hide the active
-    // run's admission (its rows carry the pinned revision, not the draft).
-    const admitted = admissions.some((admission) =>
-      admission.gate !== gate
-        ? false
-        : EXECUTION_SCOPED_GATES.has(gate)
-          ? currentExecution !== null &&
-            admission.execution_id === currentExecution.id &&
-            admission.revision_id === currentExecution.revision_id
-          : revisionId === null || admission.revision_id === revisionId,
-    );
-    return {
-      gate,
-      dial,
-      state: admitted
-        ? "admitted"
-        : dial === "gate" || dial === "combined-approval"
-          ? "pending"
-          : "not_required",
-    };
-  });
-}
-
-function pendingApprovals(
-  snapshot: SpecRevisionSnapshot | null,
-  baseSnapshot: SpecRevisionSnapshot | null,
-  approvals: readonly SpecApprovalRow[],
-  gates: readonly SpecGateStatus[],
-): PendingApproval[] {
-  if (snapshot === null) return [];
-
-  const pending: PendingApproval[] = [];
-  const consulted = new Set(
-    consultedAuthoringGates(
-      snapshot.revision.authoringStage,
-      baseSnapshot === null ? [] : toDiffRows(baseSnapshot),
-      toDiffRows(snapshot),
-    ),
-  );
-  const gatePending = (gate: SpecGate) =>
-    gates.some((status) => status.gate === gate && status.state === "pending");
-  const handles = new Map(
-    snapshot.elements.map((row) => [
-      row.element.id,
-      elementHandle(snapshot, row),
-    ]),
-  );
-  for (const row of snapshot.elements) {
-    if (
-      row.element.kind === "requirement" &&
-      consulted.has("requirements") &&
-      gatePending("requirements") &&
-      !validApproval(approvals, "requirement", row.element.id)
-    ) {
-      pending.push({
-        gate: "requirements",
-        subject: handles.get(row.element.id) ?? row.element.id,
-        elementId: row.element.id,
-      });
-    }
-    if (
-      row.element.kind === "decision" &&
-      consulted.has("design") &&
-      gatePending("design") &&
-      !validApproval(approvals, "decision", row.element.id)
-    ) {
-      pending.push({
-        gate: "design",
-        subject: handles.get(row.element.id) ?? row.element.id,
-        elementId: row.element.id,
-      });
-    }
-  }
-  if (
-    consulted.has("plan") &&
-    snapshot.revision.authoringStage === "plan" &&
-    gatePending("plan") &&
-    !validApproval(approvals, "plan", null)
-  ) {
-    pending.push({ gate: "plan", subject: "plan", elementId: null });
-  }
-  for (const gate of ["execution_start", "delivery"] as const) {
-    if (gatePending(gate)) {
-      pending.push({ gate, subject: gate, elementId: null });
-    }
-  }
-  return pending;
-}
-
-function elementHandle(
-  snapshot: SpecRevisionSnapshot,
-  row: SpecRevisionElement,
-): string {
-  const { element } = row;
-  if (element.kind === "section" || element.number === null) return element.id;
-  if (element.kind === "criterion") {
-    const parent = snapshot.elements.find(
-      ({ element: candidate }) => candidate.id === element.parentElementId,
-    )?.element;
-    return parent?.number === null || parent?.number === undefined
-      ? element.id
-      : `R${parent.number}.${element.number}`;
-  }
-  if (element.kind === "requirement") return `R${element.number}`;
-  if (element.kind === "decision") return `D${element.number}`;
-  return `T${element.number}`;
-}
-
 function handlesByElementId(
   spec: Spec,
   snapshot: SpecRevisionSnapshot,
@@ -889,6 +774,23 @@ function handlesByElementId(
       element.handle,
     ]),
   );
+}
+
+/**
+ * Attach each element's handle to a snapshot for the read projections, so an
+ * agent reading the spec learns the vocabulary it must quote back. Elements
+ * with no handle report null rather than echoing their element id as one.
+ */
+function toSnapshotView(
+  snapshot: SpecRevisionSnapshot,
+): SpecRevisionSnapshotView {
+  return {
+    revision: snapshot.revision,
+    elements: snapshot.elements.map((row) => ({
+      ...row,
+      handle: elementHandleInSnapshot(snapshot, row.element.id),
+    })),
+  };
 }
 
 function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
@@ -922,24 +824,228 @@ function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
 }
 
 /**
- * Provenance columns hold agent/human actor JSON; a row written by a newer
- * build (or hand-edited) may not parse, and the read surface must not 500 on
- * one bad record — it degrades to null.
+ * Project a stored run into the domain shape (R24.1). The JSON columns become
+ * the objects they hold, so a reader never parses a payload a second time, and
+ * the revision's number rides alongside its id.
  */
-function parseProvenance(raw: string): ActorProvenance | null {
+function toExecutionView(
+  execution: SpecExecutionRow,
+  revisionNumberById: ReadonlyMap<string, number>,
+  deliveryProjection: CriterionDeliveryProjection[],
+): SpecExecutionView {
+  const scope = parseExecutionScope(execution.scope_json);
+  return {
+    id: execution.id,
+    specId: execution.spec_id,
+    revisionId: execution.revision_id,
+    revisionNumber: revisionNumberById.get(execution.revision_id) ?? null,
+    state: execution.state,
+    workflowDefinitionId: execution.workflow_definition_id,
+    workflowExecutionId: execution.workflow_execution_id,
+    scope,
+    sessionName: execution.session_name,
+    deliveredAt: execution.delivered_at,
+    abandonedReason: execution.abandoned_reason,
+    createdAt: execution.created_at,
+    updatedAt: execution.updated_at,
+    deliveryProjection,
+  };
+}
+
+/**
+ * The start receipt's run: the same domain shape as `toExecutionView` minus
+ * the delivery projection, with the pinned revision's number supplied by the
+ * start result itself so the mutation needs no second read.
+ */
+function toStartedExecutionView(
+  execution: SpecExecutionRow,
+  revisionNumber: number,
+): SpecStartedExecutionView {
+  return {
+    id: execution.id,
+    specId: execution.spec_id,
+    revisionId: execution.revision_id,
+    revisionNumber,
+    state: execution.state,
+    workflowDefinitionId: execution.workflow_definition_id,
+    workflowExecutionId: execution.workflow_execution_id,
+    scope: parseExecutionScope(execution.scope_json),
+    sessionName: execution.session_name,
+    deliveredAt: execution.delivered_at,
+    abandonedReason: execution.abandoned_reason,
+    createdAt: execution.created_at,
+    updatedAt: execution.updated_at,
+  };
+}
+
+/**
+ * The prior-run rule needs by-id lookups; the detail route already holds every
+ * execution and its dispositions in memory, so the adapter closes over those
+ * instead of issuing new repo reads.
+ */
+type PriorRunLookup = Pick<
+  SpecDeliveryRepo,
+  "findExecutionById" | "findCriterionDisposition"
+>;
+
+/**
+ * The per-criterion proof standing the merge-gate panel renders (F26),
+ * computed over the run's pinned revision with the gate's own precedence and
+ * validity rules: a valid pinned-revision waiver wins even on a delivered run;
+ * external delivery must satisfy the gate's prior-run rule
+ * (`isEarlierMergedDelivery`); and a verdict counts only while it is non-stale
+ * AND its cited evidence still resolves — `stale_at` alone is not proof,
+ * because only the gate re-resolves evidence and Studio must not claim more
+ * than the gate would honor.
+ */
+function buildDeliveryProjection(
+  deps: SpecRouteDeps,
+  execution: SpecExecutionRow,
+  pinnedSnapshot: SpecRevisionSnapshot | undefined,
+  dispositions: readonly SpecCriterionDispositionRow[],
+  priorRuns: PriorRunLookup,
+): CriterionDeliveryProjection[] {
+  if (pinnedSnapshot === undefined) return [];
+  const scope = parseExecutionScope(execution.scope_json);
+  if (scope === null) return [];
+  const criteriaById = new Map(
+    pinnedSnapshot.elements.flatMap((entry) =>
+      entry.version.payload.kind === "criterion"
+        ? [[entry.element.id, entry.version.payload] as const]
+        : [],
+    ),
+  );
+  return scope.selectedCriterionIds.flatMap((criterionElementId) => {
+    const payload = criteriaById.get(criterionElementId);
+    if (payload === undefined) return [];
+    return [
+      {
+        criterionElementId,
+        handle:
+          elementHandleInSnapshot(pinnedSnapshot, criterionElementId) ??
+          criterionElementId,
+        strategyKinds: payload.validationStrategy.kinds,
+        proofState: criterionDeliveryProofState(
+          deps,
+          execution,
+          criterionElementId,
+          dispositions,
+          priorRuns,
+        ),
+      },
+    ];
+  });
+}
+
+function criterionDeliveryProofState(
+  deps: SpecRouteDeps,
+  execution: SpecExecutionRow,
+  criterionElementId: string,
+  dispositions: readonly SpecCriterionDispositionRow[],
+  priorRuns: PriorRunLookup,
+): CriterionDeliveryProjection["proofState"] {
+  const disposition = dispositions.find(
+    (row) => row.criterion_element_id === criterionElementId,
+  );
+  // The gate's disposition-owned waiver rule (`evaluateCriterion`): a waiver
+  // counts only when this run's disposition is `waived` AND its linked waiver
+  // resolves to a non-stale row for the pinned spec/revision/criterion. A
+  // merely-granted waiver that no disposition links is one the gate refuses,
+  // so Studio must not count it either; an invalid link falls through to the
+  // verdict evaluation and honestly reads awaiting_proof.
+  if (disposition?.disposition === "waived") {
+    const waiver =
+      disposition.waiver_id === null
+        ? null
+        : deps.findWaiverById(disposition.waiver_id);
+    if (
+      waiver !== null &&
+      waiver.stale === 0 &&
+      waiver.spec_id === execution.spec_id &&
+      waiver.revision_id === execution.revision_id &&
+      waiver.criterion_element_id === criterionElementId
+    ) {
+      return "waived";
+    }
+  }
+  if (
+    disposition?.disposition === "delivered_elsewhere" &&
+    isEarlierMergedDelivery(priorRuns, execution, disposition)
+  ) {
+    return "delivered_elsewhere";
+  }
+  if (execution.state === "delivered") return "proven_merged";
+  const evidenceIds = new Set(
+    deps
+      .findEvidenceByCriterionRevision(
+        criterionElementId,
+        execution.revision_id,
+      )
+      .map((row) => row.id),
+  );
+  const hasResolvableVerdict = deps
+    .findProofVerdictsByCriterionRevision(
+      criterionElementId,
+      execution.revision_id,
+    )
+    .some(
+      (verdict) =>
+        verdict.stale_at === null &&
+        verdictEvidenceResolves(verdict, evidenceIds),
+    );
+  return hasResolvableVerdict ? "proof_recorded" : "awaiting_proof";
+}
+
+function verdictEvidenceResolves(
+  verdict: SpecProofVerdictRow,
+  resolvableEvidenceIds: ReadonlySet<string>,
+): boolean {
+  let raw: unknown;
   try {
-    const parsed = actorProvenanceSchema.safeParse(JSON.parse(raw));
+    raw = JSON.parse(verdict.evidence_ids_json);
+  } catch {
+    return false;
+  }
+  const ids = z.array(z.string().min(1)).safeParse(raw);
+  if (!ids.success) return false;
+  return ids.data.every((id) => resolvableEvidenceIds.has(id));
+}
+
+function parseExecutionScope(raw: string): ExecutionScope | null {
+  try {
+    const parsed = executionScopeSchema.safeParse(JSON.parse(raw));
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
 }
 
+function toGateAdmissionView(
+  admission: SpecGateAdmissionRow,
+  revisionNumberById: ReadonlyMap<string, number>,
+): SpecGateAdmissionView {
+  return {
+    id: admission.id,
+    specId: admission.spec_id,
+    gate: admission.gate,
+    basis: admission.basis,
+    approvalId: admission.approval_id,
+    revisionId: admission.revision_id,
+    revisionNumber:
+      admission.revision_id === null
+        ? null
+        : (revisionNumberById.get(admission.revision_id) ?? null),
+    executionId: admission.execution_id,
+    actor: parseProvenance(admission.actor_json),
+    createdAt: admission.created_at,
+  };
+}
+
 function toQuestionView(row: SpecQuestionRow): SpecQuestionView {
   return {
     id: row.id,
     number: row.number,
-    handle: `Q${row.number}`,
+    handle: formatBareElementHandle({ kind: "question", number: row.number }),
     elementId: row.element_id,
     text: row.text,
     status: row.status,
@@ -955,7 +1061,7 @@ function toAssumptionView(row: SpecAssumptionRow): SpecAssumptionView {
   return {
     id: row.id,
     number: row.number,
-    handle: `A${row.number}`,
+    handle: formatBareElementHandle({ kind: "assumption", number: row.number }),
     elementId: row.element_id,
     text: row.text,
     disposition: row.disposition,
@@ -970,25 +1076,31 @@ async function buildStatus(
   deps: SpecRouteDeps,
   spec: Spec,
   state: CurrentSpecState,
-  loadedExecutions?: readonly SpecExecutionRow[],
+  loadedExecutions?: ReconciledExecutions,
+  loadedAdmissions?: readonly SpecGateAdmissionRow[],
 ): Promise<SpecStatusView> {
   const revisionId = state.currentRevision?.id ?? null;
   const approvals = deps.findApprovalsBySpecId(spec.id);
-  const executions =
+  const reconciled =
     loadedExecutions ?? (await loadReconciledExecutions(deps, spec));
+  const executions = reconciled.rows;
   const selectedExecution = currentExecution(executions);
-  // Authoring-gate admissions live on the current document revision;
-  // execution-scoped admissions live on the selected run's pinned revision,
-  // which trails the document when a draft or proposed amendment exists.
-  const admissionRevisionIds = new Set(
-    [revisionId, selectedExecution?.revision_id ?? null].filter(
-      (id): id is string => id !== null,
-    ),
+  // Authoring-gate admissions live on the current document revision and
+  // execution-scoped ones on the selected run's pinned revision, but the
+  // whole spec's admissions are read so a gate that an amendment reset can
+  // still report where its earlier admission happened.
+  const revisionNumberById = new Map(
+    state.revisions.map((candidate) => [candidate.id, candidate.number]),
   );
-  const admissions = [...admissionRevisionIds].flatMap((admissionRevisionId) =>
-    deps.findGateAdmissionsByRevision(admissionRevisionId),
+  const admissions =
+    loadedAdmissions ?? deps.findGateAdmissionsBySpecId(spec.id);
+  const gates = gateStatuses(
+    spec,
+    revisionId,
+    admissions,
+    selectedExecution,
+    revisionNumberById,
   );
-  const gates = gateStatuses(spec, revisionId, admissions, selectedExecution);
   const criteria = deliveryCriteria(
     deps,
     state.currentApprovedSnapshot,
@@ -1008,25 +1120,47 @@ async function buildStatus(
     specId: spec.id,
     slug: spec.slug,
     phase: phase(spec, state.revisions, executions, criteria),
+    executions: executions.map((run) => ({
+      id: run.id,
+      state: run.state,
+      workflowDefinitionId: run.workflow_definition_id,
+      workflowExecutionId: run.workflow_execution_id,
+      workflowStatus: reconciled.laneStatusById.get(run.id) ?? null,
+    })),
     gates,
+    authoringSequence:
+      state.currentSnapshot === null
+        ? null
+        : draftAuthoringSequence({
+            policy: spec.gatePolicy,
+            snapshot: state.currentSnapshot,
+            baseSnapshot: state.baseSnapshot,
+          }),
     pendingApprovals: pendingApprovals(
       state.currentSnapshot,
       state.baseSnapshot,
       approvals,
       gates,
+      selectedExecution,
     ),
     openQuestions: deps
       .findQuestionsBySpecId(spec.id)
       .filter((question) => question.status === "open")
       .map((question) => ({
         id: question.id,
-        handle: `Q${question.number}`,
+        handle: formatBareElementHandle({
+          kind: "question",
+          number: question.number,
+        }),
         text: question.text,
         elementId: question.element_id,
       })),
     assumptions: deps.findAssumptionsBySpecId(spec.id).map((assumption) => ({
       id: assumption.id,
-      handle: `A${assumption.number}`,
+      handle: formatBareElementHandle({
+        kind: "assumption",
+        number: assumption.number,
+      }),
       text: assumption.text,
       disposition: assumption.disposition,
       elementId: assumption.element_id,
@@ -1038,51 +1172,40 @@ async function buildStatus(
 }
 
 /**
- * The execution whose admissions the execution-scoped gates project: the
- * active run when one exists, otherwise the most recently created run (so a
- * delivered spec keeps reading its delivered run's admissions). Returned as
- * the full row because gate projection reads its pinned revision.
+ * The reconciled rows plus each active run's live lane status keyed by
+ * execution id — kept side by side so the row-consuming projections stay
+ * untouched while the status facet can report the lane's real position.
  */
-function currentExecution(
-  executions: readonly SpecExecutionRow[],
-): SpecExecutionRow | null {
-  const active = executions.find(
-    (execution) =>
-      execution.state === "definition_review" || execution.state === "running",
-  );
-  if (active !== undefined) return active;
-  let latest: SpecExecutionRow | null = null;
-  for (const execution of executions) {
-    if (
-      latest === null ||
-      execution.created_at > latest.created_at ||
-      (execution.created_at === latest.created_at && execution.id > latest.id)
-    ) {
-      latest = execution;
-    }
-  }
-  return latest;
+interface ReconciledExecutions {
+  rows: SpecExecutionRow[];
+  laneStatusById: ReadonlyMap<string, SpecWorkflowLaneStatus | null>;
 }
 
-function loadReconciledExecutions(
+async function loadReconciledExecutions(
   deps: SpecRouteDeps,
   spec: Spec,
-): Promise<SpecExecutionRow[]> {
-  return Promise.all(
+): Promise<ReconciledExecutions> {
+  const reconciled = await Promise.all(
     deps
       .findExecutionsBySpecId(spec.id)
       .map((execution) =>
         execution.state === "definition_review" || execution.state === "running"
           ? deps.reconcileExecution(spec.projectPath, execution)
-          : Promise.resolve(execution),
+          : Promise.resolve({ execution, workflowStatus: null }),
       ),
   );
+  return {
+    rows: reconciled.map((entry) => entry.execution),
+    laneStatusById: new Map(
+      reconciled.map((entry) => [entry.execution.id, entry.workflowStatus]),
+    ),
+  };
 }
 
 async function buildSummary(deps: SpecRouteDeps, spec: Spec) {
   const state = await loadCurrentState(deps, spec.id);
-  const executions = await loadReconciledExecutions(deps, spec);
-  const status = await buildStatus(deps, spec, state, executions);
+  const reconciled = await loadReconciledExecutions(deps, spec);
+  const status = await buildStatus(deps, spec, state, reconciled);
   return {
     spec,
     phase: status.phase,
@@ -1279,17 +1402,20 @@ export function createSpecRouteHandlers(
     const resolved = await resolveSpecRoute(deps, context);
     if (!resolved.ok) return resolved.response;
     const state = await loadCurrentState(deps, resolved.value.spec.id);
-    const [aliases, executions, linkedTickets] = await Promise.all([
+    const [aliases, reconciled, linkedTickets] = await Promise.all([
       deps.listAliases(resolved.value.spec.id),
       loadReconciledExecutions(deps, resolved.value.spec),
       deps.getLinkedTickets(resolved.value.projectPath, resolved.value.spec.id),
     ]);
+    const executions = reconciled.rows;
     const approvals = deps.findApprovalsBySpecId(resolved.value.spec.id);
+    const admissions = deps.findGateAdmissionsBySpecId(resolved.value.spec.id);
     const status = await buildStatus(
       deps,
       resolved.value.spec,
       state,
-      executions,
+      reconciled,
+      admissions,
     );
     const baseRevision = state.baseSnapshot;
     const proofSnapshot =
@@ -1309,13 +1435,28 @@ export function createSpecRouteHandlers(
         ),
       )
     ).filter((snapshot): snapshot is SpecRevisionSnapshot => snapshot !== null);
-    const criterionDispositions = executions.flatMap((execution) =>
-      deps.findCriterionDispositionsByExecution(execution.id),
+    const dispositionsByExecution = new Map(
+      executions.map((execution) => [
+        execution.id,
+        deps.findCriterionDispositionsByExecution(execution.id),
+      ]),
     );
-    const gateAdmissions = [
-      ...new Set(executions.map((execution) => execution.revision_id)),
-    ].flatMap((revisionId) => deps.findGateAdmissionsByRevision(revisionId));
-    const waivers =
+    const criterionDispositions = [...dispositionsByExecution.values()].flat();
+    const pinnedRevisionIds = new Set(
+      executions.map((execution) => execution.revision_id),
+    );
+    const revisionNumberById = new Map(
+      state.revisions.map((candidate) => [candidate.id, candidate.number]),
+    );
+    const gateAdmissions = admissions.filter(
+      (admission) =>
+        admission.revision_id !== null &&
+        pinnedRevisionIds.has(admission.revision_id),
+    );
+    // The merge gate honors waivers for each run's pinned revision, so the
+    // detail view must carry those too — loading only the proof snapshot's
+    // waivers made a valid older-pin waiver invisible in Studio (F26).
+    const proofSnapshotWaivers =
       proofSnapshot?.elements
         .filter(({ element }) => element.kind === "criterion")
         .flatMap(({ element }) => {
@@ -1325,6 +1466,44 @@ export function createSpecRouteHandlers(
           );
           return waiver === null ? [] : [waiver];
         }) ?? [];
+    const waivers = [
+      ...new Map(
+        [
+          ...proofSnapshotWaivers,
+          ...[...pinnedRevisionIds].flatMap((revisionId) =>
+            deps.findWaiversByRevision(revisionId),
+          ),
+        ].map((waiver) => [waiver.id, waiver]),
+      ).values(),
+    ];
+    const snapshotsByRevisionId = new Map(
+      [
+        state.currentSnapshot,
+        baseRevision,
+        state.currentApprovedSnapshot,
+        ...executionRevisionSnapshots,
+      ]
+        .filter(
+          (candidate): candidate is SpecRevisionSnapshot => candidate !== null,
+        )
+        .map((candidate) => [candidate.revision.id, candidate]),
+    );
+    const executionById = new Map(
+      executions.map((execution) => [execution.id, execution]),
+    );
+    const priorRunLookup: PriorRunLookup = {
+      findExecutionById(id) {
+        return executionById.get(id) ?? null;
+      },
+      findCriterionDisposition(executionId, criterionElementId) {
+        return (
+          dispositionsByExecution
+            .get(executionId)
+            ?.find((row) => row.criterion_element_id === criterionElementId) ??
+          null
+        );
+      },
+    };
     const comments = state.revisions.flatMap((revision) =>
       deps.findCommentsByRevision(revision.id),
     );
@@ -1347,15 +1526,36 @@ export function createSpecRouteHandlers(
       spec: resolved.value.spec,
       aliases,
       revisions: state.revisions,
-      baseRevision,
-      currentRevision: state.currentSnapshot,
-      currentApprovedRevision: state.currentApprovedSnapshot,
-      executionRevisionSnapshots,
+      baseRevision: baseRevision === null ? null : toSnapshotView(baseRevision),
+      currentRevision:
+        state.currentSnapshot === null
+          ? null
+          : toSnapshotView(state.currentSnapshot),
+      currentApprovedRevision:
+        state.currentApprovedSnapshot === null
+          ? null
+          : toSnapshotView(state.currentApprovedSnapshot),
+      executionRevisionSnapshots:
+        executionRevisionSnapshots.map(toSnapshotView),
       approvals,
       comments,
-      executions,
+      executions: executions.map((run) =>
+        toExecutionView(
+          run,
+          revisionNumberById,
+          buildDeliveryProjection(
+            deps,
+            run,
+            snapshotsByRevisionId.get(run.revision_id),
+            dispositionsByExecution.get(run.id) ?? [],
+            priorRunLookup,
+          ),
+        ),
+      ),
       criterionDispositions,
-      gateAdmissions,
+      gateAdmissions: gateAdmissions.map((admission) =>
+        toGateAdmissionView(admission, revisionNumberById),
+      ),
       waivers,
       elementStatuses,
       status,
@@ -1379,6 +1579,67 @@ export function createSpecRouteHandlers(
     return NextResponse.json(
       await buildStatus(deps, resolved.value.spec, state),
     );
+  }
+
+  /**
+   * The write path's read (R7.1). It resolves only what a write must name, so
+   * an authoring session that saves N elements no longer transfers the whole
+   * spec N times.
+   */
+  async function getSpecEditContextGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const spec = resolved.value.spec;
+    const revisions = await deps.listRevisions(spec.id);
+    const current = latestRevision(revisions);
+    const approved = latestRevision(
+      revisions.filter((revision) => revision.state === "approved"),
+    );
+    const requested = new URL(request.url).searchParams.get("element");
+    const snapshot =
+      current === null || requested === null
+        ? null
+        : await deps.getRevisionSnapshot(current.id);
+    const row =
+      snapshot === null || requested === null
+        ? undefined
+        : snapshot.elements.find(
+            (candidate) =>
+              candidate.element.id === requested ||
+              elementHandleInSnapshot(snapshot, candidate.element.id) ===
+                requested,
+          );
+    const view: SpecEditContextView = {
+      specId: spec.id,
+      slug: spec.slug,
+      name: spec.name,
+      gatePolicy: spec.gatePolicy,
+      currentRevision:
+        current === null
+          ? null
+          : {
+              id: current.id,
+              number: current.number,
+              state: current.state,
+              authoringStage: current.authoringStage,
+            },
+      latestApprovedRevision:
+        approved === null ? null : { id: approved.id, number: approved.number },
+      element:
+        row === undefined || snapshot === null
+          ? null
+          : {
+              elementId: row.element.id,
+              handle: elementHandleInSnapshot(snapshot, row.element.id),
+              kind: row.element.kind,
+              elementVersion: row.version.elementVersion,
+              position: row.version.position,
+            },
+    };
+    return NextResponse.json(view);
   }
 
   async function getSpecLintGET(
@@ -1427,7 +1688,10 @@ export function createSpecRouteHandlers(
         specId: spec.id,
         slug: spec.slug,
         kind: "question",
-        handle: `Q${parsed.number}`,
+        handle: formatBareElementHandle({
+          kind: "question",
+          number: parsed.number,
+        }),
         question: toQuestionView(row),
       });
     }
@@ -1440,7 +1704,10 @@ export function createSpecRouteHandlers(
         specId: spec.id,
         slug: spec.slug,
         kind: "assumption",
-        handle: `A${parsed.number}`,
+        handle: formatBareElementHandle({
+          kind: "assumption",
+          number: parsed.number,
+        }),
         assumption: toAssumptionView(row),
       });
     }
@@ -1508,7 +1775,24 @@ export function createSpecRouteHandlers(
         break;
       }
     }
-    if (row === undefined) return notFound("Spec element not found");
+    if (row === undefined) {
+      const address = requestedHandle ?? "";
+      // A well-formed handle that resolves to nothing is a genuine miss; an
+      // ill-formed one is a mis-addressed element, so its refusal teaches the
+      // grammar and names the real handle when the value is an element id.
+      if (isWellFormedElementHandle(address, resolved.value.spec.slug)) {
+        return notFound("Spec element not found");
+      }
+      const knownHandle = handles.get(address) ?? null;
+      return notFound(
+        explainInvalidElementHandle(address, handles),
+        "invalid_handle",
+        {
+          handle: address,
+          elementHandle: knownHandle === address ? null : knownHandle,
+        },
+      );
+    }
 
     const revisionId = snapshot.revision.id;
     const executions = deps
@@ -1608,6 +1892,78 @@ export function createSpecRouteHandlers(
     return NextResponse.json({ query, results });
   }
 
+  /**
+   * Project-wide search (R24.11). Element text lives only in the current
+   * revision, so matching loads that one snapshot per candidate and nothing
+   * else; the full summary — which reloads revisions, executions, and gate
+   * status — is built only for the specs that matched.
+   */
+  async function searchProjectSpecsGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const project = await resolveSpecProjectRoute(deps, context);
+    if (!project.ok) return project.response;
+    const query = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+    const normalized = query.toLocaleLowerCase();
+    if (normalized.length === 0) {
+      return NextResponse.json({ query, results: [] });
+    }
+    const specs = await deps.listSpecs(project.value.projectPath);
+    const results: SpecSearchHit[] = [];
+    for (const candidate of [...specs].sort((left, right) =>
+      left.slug.localeCompare(right.slug),
+    )) {
+      const current = latestRevision(await deps.listRevisions(candidate.id));
+      const snapshot =
+        current === null ? null : await deps.getRevisionSnapshot(current.id);
+      const handles =
+        snapshot === null
+          ? new Map<string, string>()
+          : handlesByElementId(candidate, snapshot);
+      const matches = (snapshot?.elements ?? []).flatMap((row) => {
+        const searchable = searchableText(row);
+        if (
+          searchable === null ||
+          !searchable.toLocaleLowerCase().includes(normalized)
+        ) {
+          return [];
+        }
+        return [
+          {
+            handle: handles.get(row.element.id) ?? row.element.id,
+            kind: row.element.kind,
+            elementId: row.element.id,
+            text: searchable,
+          },
+        ];
+      });
+      const matchedName = `${candidate.slug}\n${candidate.name}`
+        .toLocaleLowerCase()
+        .includes(normalized);
+      if (!matchedName && matches.length === 0) continue;
+      const summary = await buildSummary(deps, candidate);
+      results.push({
+        specId: candidate.id,
+        slug: candidate.slug,
+        name: candidate.name,
+        phase: summary.phase,
+        preset: candidate.gatePolicy.preset,
+        gatePolicy: candidate.gatePolicy,
+        matchedName,
+        matchCount: matches.length,
+        matches,
+      });
+    }
+    logger.debug("specs.routes.project_search.complete", {
+      projectName: project.value.projectName,
+      queryLength: query.length,
+      specCount: specs.length,
+      hitCount: results.length,
+    });
+    return NextResponse.json({ query, results });
+  }
+
   async function getSpecExportGET(
     _request: Request,
     context: SpecRouteContext,
@@ -1644,9 +2000,11 @@ export function createSpecRouteHandlers(
     getSpecSummaryGET,
     getSpecGET,
     getSpecStatusGET,
+    getSpecEditContextGET,
     getSpecLintGET,
     getSpecElementGET,
     searchSpecGET,
+    searchProjectSpecsGET,
     getSpecExportGET,
     getSpecVerifyGET,
   };
@@ -1658,9 +2016,11 @@ export const specMeasuresGET = withTracing(handlers.getSpecMeasuresGET);
 export const specSummaryGET = withTracing(handlers.getSpecSummaryGET);
 export const specDetailGET = withTracing(handlers.getSpecGET);
 export const specStatusGET = withTracing(handlers.getSpecStatusGET);
+export const specEditContextGET = withTracing(handlers.getSpecEditContextGET);
 export const specLintGET = withTracing(handlers.getSpecLintGET);
 export const specElementGET = withTracing(handlers.getSpecElementGET);
 export const specSearchGET = withTracing(handlers.searchSpecGET);
+export const specProjectSearchGET = withTracing(handlers.searchProjectSpecsGET);
 export const specExportGET = withTracing(handlers.getSpecExportGET);
 export const specVerifyGET = withTracing(handlers.getSpecVerifyGET);
 
@@ -1672,6 +2032,7 @@ export interface SpecMutationServices {
     AuthoringService,
     | "createSpec"
     | "upsertDraftElement"
+    | "upsertDraftElements"
     | "reorderDraftElement"
     | "removeDraftElement"
     | "openAmendment"
@@ -1725,6 +2086,10 @@ const graduateTicketBodySchema = graduateTicketInputSchema.omit({
   actor: true,
 });
 const draftElementBodySchema = draftElementWriteInputSchema.omit({
+  specId: true,
+  actor: true,
+});
+const draftElementBatchBodySchema = draftElementBatchInputSchema.omit({
   specId: true,
   actor: true,
 });
@@ -1827,60 +2192,6 @@ const linkTicketBodySchema = linkTicketInputSchema.omit({
   actor: true,
 });
 
-const evidenceReferenceSchema = z.discriminatedUnion("type", [
-  z
-    .object({ type: z.literal("git_object"), objectId: z.string().min(1) })
-    .strict(),
-  z
-    .object({
-      type: z.literal("workflow_event"),
-      workflowExecutionId: z.string().min(1),
-      eventId: z.number().int().positive(),
-      contextId: z.string().min(1),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("merge_validation"),
-      mergeJobId: z.string().min(1),
-      validationRef: z.string().min(1),
-    })
-    .strict(),
-  z
-    .object({ type: z.literal("content_store"), objectKey: z.string().min(1) })
-    .strict(),
-  z
-    .object({ type: z.literal("human_actor"), actorId: z.string().min(1) })
-    .strict(),
-]);
-const attachEvidenceBodySchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    revisionId: z.string().min(1),
-    kind: evidenceKindSchema,
-    ref: evidenceReferenceSchema,
-    evaluatedState: evidenceEvaluatedStateSchema,
-    executionId: z.string().min(1),
-    sourceEventId: z.number().int().positive().optional(),
-  })
-  .strict();
-const proofVerdictBodySchema = z
-  .object({
-    criterionElementId: z.string().min(1),
-    revisionId: z.string().min(1),
-    executionId: z.string().min(1).optional(),
-    evidenceIds: z.array(z.string().min(1)),
-    validationStrategy: validationStrategySchema.optional(),
-    strategyAssessment: z
-      .union([
-        z.object({ adequate: z.literal(true) }).strict(),
-        z
-          .object({ adequate: z.literal(false), reason: z.string().min(1) })
-          .strict(),
-      ])
-      .optional(),
-  })
-  .strict();
 const taskClaimBodySchema = z
   .object({
     taskElementId: z.string().min(1),
@@ -2067,14 +2378,21 @@ const HUMAN_ONLY_ACTIONS = new Set([
   "approve-execution-start",
   "grant-waiver",
   "change-policy",
-  "record-verdict",
   // Assumption disposition is the human half of the propose/dispose split
   // (mirrors waiver origin rules); the service also refuses agents, but the
   // route gate returns the typed refusal before any service work.
   "dispose-assumption",
+  // Questions have the same split: an agent opens one FOR a human, so an
+  // agent answering would clear its own blocking signal with no record that
+  // no human ever decided. Studio's answer control is the human half.
+  "answer-question",
   // Renames change the identity every copied reference resolves through, so
   // only the operator performs them; agents receive human_act_required.
   "rename",
+  // Retiring the whole durable spec is the least reversible act on this
+  // surface. Abandoning a single run ("abandon-execution") stays agent
+  // reachable because stopping one run is ordinary agent work.
+  "abandon-spec",
 ]);
 
 function humanActRequiredResponse(action: string): Response {
@@ -2085,7 +2403,20 @@ function humanActRequiredResponse(action: string): Response {
   });
 }
 
-function routeFailure(error: unknown, action: string): Response {
+/**
+ * Slug of the spec a failing action addressed. Refusal instructions name the
+ * exact recovery command, which is only actionable with the caller's slug;
+ * project-scoped actions have none, so the copy degrades to a placeholder.
+ */
+interface SpecActionFailureContext {
+  readonly specSlug: string;
+}
+
+function routeFailure(
+  error: unknown,
+  action: string,
+  context?: SpecActionFailureContext,
+): Response {
   if (error instanceof PersistenceError) {
     const { failure } = error;
     if (failure.kind === "not_found") {
@@ -2142,8 +2473,12 @@ function routeFailure(error: unknown, action: string): Response {
     return specRefusalResponse({
       code: "stale_stage",
       unmetConditions: [error.message],
+      // With no draft open there is nothing to re-read: approved revisions are
+      // immutable, so the only way forward is opening an amendment draft.
       instruction:
-        "Read the current draft and authoring stage, then advance that exact revision if it still applies.",
+        error.currentRevision === null
+          ? `This spec has no open draft, and its approved revisions are immutable. Run \`cctl spec amend ${context?.specSlug ?? "<slug>"}\` to open an amendment draft, then advance that draft.`
+          : "Read the current draft and authoring stage, then advance that exact revision if it still applies.",
       details: {
         expectedRevisionId: error.expectedRevisionId,
         expectedStage: error.expectedStage,
@@ -2206,17 +2541,37 @@ function routeFailure(error: unknown, action: string): Response {
   return jsonError("Spec mutation failed", 500);
 }
 
+/**
+ * A batch is all-or-nothing, so its refusal is one refusal about many
+ * elements. The per-element results ride in `details.refusals`, indexed by the
+ * caller's own array, so the writer can see exactly which element refused and
+ * why without diffing what it sent against what landed (R24.1).
+ */
+function batchRefusal(refusals: readonly DraftElementBatchRefusal[]): Refusal {
+  return {
+    code: refusals[0]?.code ?? "validation",
+    unmetConditions: refusals.map(
+      (refusal) =>
+        `[${refusal.index}]${refusal.elementId === null ? "" : ` ${refusal.elementId}`}: ${refusal.unmetConditions.join(" ")}`,
+    ),
+    instruction:
+      "The batch was refused as a whole and nothing was written. Correct the elements named in details.refusals, then resubmit the batch.",
+    details: { refusals },
+  };
+}
+
 async function invokeAction<T>(
   request: Request,
   schema: z.ZodType<T>,
   operation: (input: T) => Promise<unknown>,
+  context?: SpecActionFailureContext,
 ): Promise<Response> {
   try {
     const parsed = await parseActionBody(request, schema);
     if (!parsed.ok) return parsed.response;
     return serviceResultResponse(await operation(parsed.value));
   } catch (error) {
-    return routeFailure(error, "spec-action");
+    return routeFailure(error, "spec-action", context);
   }
 }
 
@@ -2307,6 +2662,22 @@ export function createSpecWriteRouteHandlers(
           return invokeAction(request, draftElementBodySchema, (input) =>
             services.authoring.upsertDraftElement(withReviewIdentity(input)),
           );
+        case "draft-batch":
+          return invokeAction(
+            request,
+            draftElementBatchBodySchema,
+            async (input) => {
+              const result = await services.authoring.upsertDraftElements(
+                withReviewIdentity(input),
+              );
+              return result.ok
+                ? result
+                : {
+                    ok: false as const,
+                    refusal: batchRefusal(result.refusals),
+                  };
+            },
+          );
         case "draft-reorder":
           return invokeAction(request, reorderDraftElementBodySchema, (input) =>
             services.authoring.reorderDraftElement(withReviewIdentity(input)),
@@ -2342,6 +2713,9 @@ export function createSpecWriteRouteHandlers(
               services.authoring.advanceAuthoringStage(
                 withReviewIdentity(input),
               ),
+            // Advance is the one action whose stale-stage refusal names a
+            // recovery command that has to carry the caller's own slug.
+            { specSlug: resolved.value.spec.slug },
           );
         case "comment":
           return invokeAction(request, reviewCommentBodySchema, (input) =>
@@ -2404,48 +2778,73 @@ export function createSpecWriteRouteHandlers(
               approver: "operator",
             }),
           );
+        // Question and assumption mutations answer with the same domain
+        // shape the read path projects (camelCase, parsed provenance, the
+        // handle every later call must quote) — never the persistence row.
         case "open-question":
-          return invokeAction(request, openQuestionBodySchema, (input) =>
-            services.review.openQuestion(withReviewIdentity(input)),
+          return invokeAction(
+            request,
+            openQuestionBodySchema,
+            async (input) => {
+              const result = await services.review.openQuestion(
+                withReviewIdentity(input),
+              );
+              return result.ok
+                ? { ...result, value: toQuestionView(result.value) }
+                : result;
+            },
           );
         case "answer-question":
-          return invokeAction(request, answerQuestionBodySchema, (input) =>
-            services.review.answerQuestion(withReviewIdentity(input)),
+          return invokeAction(
+            request,
+            answerQuestionBodySchema,
+            async (input) => {
+              const result = await services.review.answerQuestion(
+                withReviewIdentity(input),
+              );
+              return result.ok
+                ? { ...result, value: toQuestionView(result.value) }
+                : result;
+            },
           );
         case "propose-assumption":
-          return invokeAction(request, proposeAssumptionBodySchema, (input) =>
-            services.review.proposeAssumption(withReviewIdentity(input)),
+          return invokeAction(
+            request,
+            proposeAssumptionBodySchema,
+            async (input) => {
+              const result = await services.review.proposeAssumption(
+                withReviewIdentity(input),
+              );
+              return result.ok
+                ? { ...result, value: toAssumptionView(result.value) }
+                : result;
+            },
           );
         case "request-approval":
           return invokeAction(request, requestApprovalBodySchema, (input) =>
             services.review.requestApproval(withReviewIdentity(input)),
           );
         case "dispose-assumption":
-          return invokeAction(request, disposeAssumptionBodySchema, (input) =>
-            services.review.disposeAssumption(withReviewIdentity(input)),
+          return invokeAction(
+            request,
+            disposeAssumptionBodySchema,
+            async (input) => {
+              const result = await services.review.disposeAssumption(
+                withReviewIdentity(input),
+              );
+              return result.ok
+                ? { ...result, value: toAssumptionView(result.value) }
+                : result;
+            },
           );
         case "change-policy":
           return invokeAction(request, changePolicyBodySchema, (input) =>
             services.review.changePolicy(withReviewIdentity(input)),
           );
-        case "attach-evidence":
-          return invokeAction(request, attachEvidenceBodySchema, (input) =>
-            services.evidence.attachEvidence({
-              ...input,
-              specId,
-              producer: actor.value,
-            }),
-          );
-        case "record-verdict":
-          return invokeAction(request, proofVerdictBodySchema, (input) =>
-            services.evidence.recordProofVerdict({
-              ...input,
-              specId,
-              actor: actor.value,
-              verdictKind: "human",
-              origin: "ui_route",
-            }),
-          );
+        // "attach-evidence" and "record-verdict" were removed with the
+        // evidence-kind narrowing (ticket #24): evidence is only ever
+        // ingested from workflow events and proof verdicts are recorded only
+        // by the delivery gate, so both fall through to the 404 default.
         case "claim-task-complete":
           return invokeAction(request, taskClaimBodySchema, (input) =>
             services.evidence.claimTaskComplete({
@@ -2505,12 +2904,26 @@ export function createSpecWriteRouteHandlers(
             services.evidence.setDisposition({ ...input, actor: actor.value }),
           );
         case "start-execution":
-          return invokeAction(request, startExecutionBodySchema, (input) =>
-            services.execution.start({
-              ...input,
-              specId,
-              actor: actor.value,
-            }),
+          return invokeAction(
+            request,
+            startExecutionBodySchema,
+            async (input) => {
+              const result = await services.execution.start({
+                ...input,
+                specId,
+                actor: actor.value,
+              });
+              return result.ok
+                ? {
+                    ok: true as const,
+                    execution: toStartedExecutionView(
+                      result.execution,
+                      result.revisionNumber,
+                    ),
+                    definition: result.definition,
+                  }
+                : result;
+            },
           );
         case "abandon-execution":
           return invokeAction(request, abandonExecutionBodySchema, (input) =>

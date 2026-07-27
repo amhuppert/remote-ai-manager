@@ -54,22 +54,10 @@ export interface MergeValidationEvidenceRef {
   validationRef: string;
 }
 
-export interface ContentStoreEvidenceRef {
-  type: "content_store";
-  objectKey: string;
-}
-
-export interface HumanActorEvidenceRef {
-  type: "human_actor";
-  actorId: string;
-}
-
 export type EvidenceReference =
   | GitObjectEvidenceRef
   | WorkflowEventEvidenceRef
-  | MergeValidationEvidenceRef
-  | ContentStoreEvidenceRef
-  | HumanActorEvidenceRef;
+  | MergeValidationEvidenceRef;
 
 export interface ApprovedCriterion {
   specId: string;
@@ -217,8 +205,6 @@ export interface EvidenceServiceDeps {
     ref: MergeValidationEvidenceRef,
     expectedExecution: EvidenceExecutionContext,
   ): Promise<boolean>;
-  contentObjectExists(ref: ContentStoreEvidenceRef): Promise<boolean>;
-  humanActorExists(ref: HumanActorEvidenceRef): Promise<boolean>;
   isEvidenceFresh(evidence: SpecEvidenceRow): Promise<boolean>;
   routeStrategyInadequacy(input: StrategyInadequacy): Promise<void>;
   routeWaiverRequestToHuman(
@@ -476,7 +462,6 @@ async function referenceResolves(
 
   switch (kind) {
     case "commit":
-    case "diff":
       return (
         ref.type === "git_object" &&
         deps.gitObjectExists(ref, expectedExecution)
@@ -495,10 +480,6 @@ async function referenceResolves(
         expectedExecution.workflowExecutionId !== null &&
         deps.mergeValidationFactExists(ref, expectedExecution)
       );
-    case "screenshot":
-      return ref.type === "content_store" && deps.contentObjectExists(ref);
-    case "human_signoff":
-      return ref.type === "human_actor" && deps.humanActorExists(ref);
   }
 }
 
@@ -692,11 +673,11 @@ export function createEvidenceService(
           "human_act_required",
           [
             input.verdictKind === "human"
-              ? "Human proof verdicts originate only from Spec Studio UI routes."
+              ? "Human proof verdicts have no recording surface."
               : "Validator proof verdicts originate only from execution ingestion.",
           ],
           input.verdictKind === "human"
-            ? "Record the human judgment in Spec Studio."
+            ? "Waive the criterion instead: Spec Studio → Controls → Merge gate → Waive…, which records a human decision with a reason."
             : "Ingest the validator result from the linked execution.",
         );
       }
@@ -927,7 +908,7 @@ export function createEvidenceService(
         return refuseClaim(
           "lint_blocked",
           ["A task completion claim must cite evidence."],
-          "Attach resolvable evidence for the task's covered criteria and claim again.",
+          "Cite ingested evidence ids for the task's covered criteria — the server ingests commit and validation evidence from workflow events — and claim again.",
           taskClaimLintFindings(context, input.taskElementId, []),
         );
       }
@@ -950,7 +931,7 @@ export function createEvidenceService(
           return refuseClaim(
             "unresolvable_evidence",
             [`Evidence ${evidenceId} could not be resolved by the server.`],
-            "Attach a reference to an object Command Center can resolve and claim again.",
+            "Cite an evidence id the server has already ingested for this execution and claim again.",
           );
         }
         if (
@@ -987,7 +968,7 @@ export function createEvidenceService(
             (criterionId) =>
               `Covered criterion ${criterionId} has no cited evidence.`,
           ),
-          "Attach resolvable evidence for every covered criterion and claim again.",
+          "Cite ingested evidence for every covered criterion and claim again — a criterion with no evidence usually means its covering work has not been committed or validated yet.",
           taskClaimLintFindings(context, input.taskElementId, citedCriteria),
         );
       }

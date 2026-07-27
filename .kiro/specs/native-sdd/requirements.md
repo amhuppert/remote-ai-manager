@@ -42,7 +42,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 6. The spec system shall keep requirement, criterion, decision, and task identities stable across revisions: editing an element's text shall never change its identity.
 7. The spec system shall require every requirement to carry a statement, one or more addressable acceptance criteria, and a priority/risk indication.
 8. The spec system shall nest acceptance criteria under their requirement — approved and revised with it — while each criterion carries stable identity so coverage and evidence key on the criterion.
-9. The spec system shall require every acceptance criterion to carry a declared validation strategy — the evidence kinds and checks that satisfy it — approved and revised as part of its requirement's content.
+9. The spec system shall require every acceptance criterion to carry a declared validation strategy — the evidence kinds and checks that satisfy it — approved and revised as part of its requirement's content; a strategy shall name at least one machine-validation kind (test run or validator verdict), so no criterion carries an obligation nothing can machine-prove, and a strategy violating this shall be refused at write time.
 10. The spec system shall record for every decision its chosen approach, rejected alternatives, and reason.
 11. The spec system shall record for each task the requirements it traces to and the set of acceptance criteria it covers, supporting many-to-many task-to-criterion coverage, and optionally its declared lane group and touched file surfaces (Requirement 23).
 12. The spec system shall derive a task's work status from that task's own execution events and completion claim with its evidence, never from the dispositions of the criteria it covers.
@@ -107,6 +107,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 6. If a task completion claim carries no evidence, or cites an evidence record that does not resolve or does not target a criterion the task covers at the pinned revision, the spec system shall reject the claim.
 7. The spec system shall record the actual actor on every mutation as provenance: agent-authored mutations shall record the agent and originating conversation, and human acts shall record the human actor without a fabricated agent or conversation.
 8. The `cctl spec` family shall produce a portable, reviewable export of a spec on demand and shall verify a spec's integrity against that representation, so the recoverable-representation invariant is demonstrable user-visible behavior in V1.
+9. Every mutating `cctl spec` response shall report the resulting state, the addressing tokens the server assigned, what is blocked and which party must act, and the exact next command; and every schema-backed input the family accepts shall be printable from the CLI (Requirement 24).
 
 ### Requirement 7: Concurrent draft authoring
 **Objective:** As the operator running parallel conversations, I want element-granular optimistic authoring, so that two agents drafting the same spec never silently lose each other's work.
@@ -130,6 +131,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 7. Where bulk approval is used ("approve all requirements", "approve all remaining" at section or revision level), the spec system shall record the same per-element approval state as individual approval.
 8. The evidence view shall answer "what proves this?" per acceptance criterion — listing the attached evidence and its verdicts against the criterion's approved validation strategy, or showing that nothing proves it yet — never rolling proof up per task.
 9. The traceability view shall present requirement → decision → task → execution → evidence as a navigable graph with lint findings surfaced in place.
+10. Spec Studio shall keep the merge-gate and approval controls reachable: the controls surface shall be a primary view of the spec detail, delivery deep links shall resolve to the approving control, and per-criterion delivery state (proven and merged, proof recorded, waived, delivered elsewhere, awaiting proof) shall be computed by the server and rendered without client re-derivation.
 
 ### Requirement 9: Deterministic spec lint
 **Objective:** As the operator, I want deterministic lint over the typed relationship graph, enforced server-side at transitions, so that structurally broken specs cannot advance. This requirement is the authoritative catalog of V1 lint findings and severities.
@@ -180,6 +182,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 10. When a preset switch or any gate loosening is requested — including on an in-flight spec — the system shall require a hard, non-bypassable human confirmation, applied prospectively only and never retroactively creating approvals.
 11. The elicitation layer shall keep question batches and checklists skippable, visible, and prunable.
 12. The three authoring gates (requirements, design, plan) shall additionally govern the staged-authoring advance of Requirement 22, under the same dials and overrides, with no separate policy surface.
+13. A confirmed policy change shall pin the authoring stage of any open draft revision and shall govern that draft's remaining transitions prospectively, never restaging a proposed or approved revision and never synthesizing approvals or admissions retroactively (Requirement 25); and any surface requesting a policy change shall obtain the required hard confirmation before asserting it.
 
 ### Requirement 12: Open questions and assumptions
 **Objective:** As the operator, I want open questions and agent assumptions to be first-class records with human disposition, so that unresolved intent is visible and never silently baked into approved content.
@@ -193,18 +196,18 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 **Objective:** As the operator, I want typed, resolvable, criterion-level evidence with distinct proof verdicts and fixed freshness rules, so that "what proves this criterion?" always has a verifiable answer.
 
 #### Acceptance Criteria
-1. The spec system shall record evidence as append-only, typed records attached at the acceptance-criterion level — diffs, commits, test runs, validator verdicts, screenshots, human sign-offs.
-2. The spec system shall accept machine evidence kinds only as server-resolvable references to objects CC already knows; if a cited reference cannot be resolved, the spec system shall reject the record the same way it rejects a gate violation.
+1. The spec system shall record evidence as append-only, typed records attached at the acceptance-criterion level — commits, test runs, validator verdicts; every evidence kind is machine-produced.
+2. The spec system shall accept evidence only as server-resolvable references to objects CC already knows; if a cited reference cannot be resolved, the spec system shall reject the record the same way it rejects a gate violation.
 3. The spec system shall record on every evidence record its producer, producing execution, target criterion and revision, and the code/content state it evaluated.
-4. The spec system shall treat evidence and proof as distinct: an attached evidence record shall not by itself mark a criterion proven — a proof verdict (deterministic validator, agent validator, or human judgment) under the criterion's approved validation strategy is required.
+4. The spec system shall treat evidence and proof as distinct: an attached evidence record shall not by itself mark a criterion proven — a proof verdict (deterministic validator or agent validator) under the criterion's approved validation strategy is required; no surface records a human proof verdict, and the human remedy for a criterion that cannot be machine-proven is a waiver (Requirement 14).
 5. When cited evidence satisfies the criterion's approved validation strategy, the proof verdict shall be proven; a validator shall never require evidence beyond the approved strategy.
 6. If a validator judges the approved validation strategy itself inadequate, it shall raise a finding or open question routed to the human — never unilaterally raise the required standard; changing a validation strategy shall be a spec amendment (a new revision).
-7. While an execution runs, the system shall attach lane commits, validator verdicts, test results, and screenshots automatically to the criteria they prove.
+7. While an execution runs, the system shall attach lane commits, validator verdicts, and test results automatically to the criteria they prove, stamping each validation result with the lane commit that sealed the tree it validated; a validation superseded by a later iteration before any commit shall be recorded honestly stale.
 8. The spec system shall apply fixed, evidence-kind applicability rules to proof freshness — validity rules independent of the autonomy dials.
 9. When a merge candidate results from a pure rebase with an identical relevant tree, the spec system shall keep existing proof valid.
 10. When a delivery candidate is evaluated, deterministic validators shall rerun against the pre-merge candidate.
-11. The spec system shall count commit and diff evidence toward delivery only when it resolves into the merge candidate's history.
-12. Non-deterministic evidence (screenshots, human sign-offs) shall record its captured surface; when that surface changes, the spec system shall mark dependent proof stale, requiring revalidation, recapture, or an explicit waiver.
+11. The spec system shall count commit evidence — and machine validation evidence that records a lane commit but no validated tree — toward delivery only when it resolves into the merge candidate's history.
+12. When the evidence-kind vocabulary narrows, the spec system shall migrate persisted state deterministically and traceably: retired kinds are removed from validation strategies (appending the weakest machine-provable kind, with a note recorded in the strategy itself, when none remains), evidence of a retired kind is deleted, proof verdicts citing it are marked stale with the migration named as the reason, and accepted claims citing it are reopened — a criterion's proof obligation is never silently weakened and its proof never silently preserved.
 13. The spec system shall retain evidence from an abandoned run as immutable fact that never automatically satisfies a later delivery; a later proof verdict may cite it only when its applicability to that delivery candidate is established.
 
 ### Requirement 14: Waivers and criterion dispositions
@@ -263,6 +266,7 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 4. If any selected criterion is in none of the acceptable states of criterion 3, the spec system shall refuse the merge.
 5. When the merge gate evaluates an execution, criteria excluded from the pinned scope as deferred shall be listed visibly as out-of-scope without blocking the merge.
 6. The spec system shall mark an execution Delivered only after its merge succeeds — not when delivery is requested or approved.
+7. When the delivery gate refuses solely because the required human delivery approval is missing, the spec system shall file the durable approval request itself — idempotently for the execution, keyed to the run's pinned revision — so the wait reaches Needs You without an agent action, and the resulting halt shall present as waiting on approval with a deep link to the approving control, distinct from an unmet-criteria failure.
 
 ### Requirement 19: Liveness and attention
 **Objective:** As the operator, I want spec state changes to behave like every other CC domain — live, typed, and attention-routed — so that no spec surface polls or goes stale.
@@ -322,3 +326,40 @@ Naming ("spec", "Spec Studio", `cctl spec`) is working vocabulary; final naming 
 10. Plan review surfaces — Spec Studio and the CLI reads — shall present each task's dependencies, lane group, touched surfaces, and criterion coverage.
 11. Once a spec-origin execution is running, task-to-context placement shall be immutable: a live edit moving a task shall be refused.
 12. A task completion claim shall be refused while any of the task's declared intra-context predecessors is incomplete.
+
+### Requirement 24: Agent-surface self-description
+
+**Objective:** As an agent operating native SDD from any repository, I want every mutating `cctl spec` response and every schema-backed input to describe itself — resulting state, assigned addressing tokens, what is blocked and by whom, and the exact next command — so that the surface is usable without reading Command Center's source.
+
+#### Acceptance Criteria
+
+1. Every mutating `cctl spec` response shall report the resulting state of the objects it changed, the addressing tokens the server assigned (element handles, revision, execution, and workflow-definition identifiers), what is blocked together with the party that must act — agent or human — and the exact next command to run.
+2. When an element is created or updated through the agent surface, the response shall carry the handle that element now answers to; single-element and full-spec read projections shall carry the handle of every element they return; and an element that has no handle (a section or a number-less element) shall be reported explicitly as having none, with its element identifier labelled as an identifier rather than presented as an address.
+3. When the spec system cannot resolve a supplied element address, the refusal shall state the handle format with an example per element kind, and where the supplied value matches a known element identifier the refusal shall name that element's actual handle.
+4. The `cctl spec` family shall print, from the CLI itself, the schema of every schema-backed input document it accepts — element write documents by element kind and the execution scope document — with enumerated enum values, field constraints, and a worked example per kind.
+5. When an execution is started, the response shall report the execution identifier, the compiled workflow-definition identifier, that no workflow has been launched, the exact command that launches the definition, and which party acts next under the governing execution-start dial.
+6. The `cctl spec` status read shall qualify the reported phase with the current execution's state, and while an execution waits in definition review the status shall name that wait, the definition identifier, and the next action rather than reporting an unqualified running phase.
+7. When a stage advance is refused because the spec has no open draft revision, the refusal shall name the command that opens a draft and shall state that the approved revision it identifies is immutable.
+8. The `cctl spec` family shall provide a first-class command that opens — or returns the already-open — draft revision of an approved spec; the authoring-amendment path shall not be discoverable only as a side effect of another command's description.
+9. Help for the authoring-amendment command and for the execution-time scope-capture command shall each state which amendment it performs and shall name the other, so the two are not confusable.
+10. The `cctl spec` help shall state that gate policy is per-spec data, mutable, a human-only act performed in Spec Studio, and changed by no CLI verb.
+11. Guidance surfaces shall describe the actual scope of spec search: while search is spec-scoped, both the runtime `/spec` expansion and the repository guidance document shall describe it as spec-scoped, and an automated check shall fail when the two surfaces disagree.
+12. The spec system shall define and document the ordering contract of element position — one global order per revision with a declared tiebreak, with parent nesting derived from the parent element and never from position — and the authoring surfaces shall state the same contract the repository enforces.
+13. Where a gate's state is computed against the current revision only, the status read and Spec Studio shall additionally present each prior admission's provenance — the revision it was admitted on, its basis, and its actor — as history, without asserting that the admission still satisfies the gate for the current revision.
+
+### Requirement 25: Policy-change staging semantics and action authority
+
+**Objective:** As the operator, I want a confirmed policy change to have stated, prospective consequences for an open draft — and irreversible spec-level acts to be mine alone — so that autonomy changes never strand authored content, never manufacture approvals, and never happen without a confirmation I actually saw.
+
+#### Acceptance Criteria
+
+1. When a policy change is confirmed while a draft revision is open, the spec system shall pin that draft's authoring stage: the stage shall never move backward, and the policy change shall never advance it.
+2. Following a confirmed policy change, the newly confirmed dials shall govern the open draft's remaining transitions, with propose and sign-off consulting the new policy under the stage-scoped rule of Requirement 10.11.
+3. A policy change shall never create an approval or a gate admission for a transition that already occurred.
+4. A policy change shall never restage a proposed, approved, or withdrawn revision.
+5. The change-policy response and the `cctl spec` status read shall present the authoring stage sequence remaining for the current draft together with the gate that concludes each remaining stage under the new policy.
+6. If the staged consequences of a requested policy change cannot be specified decision-completely for that policy shape, the spec system shall refuse the change while a draft revision at a wider authoring stage is open, naming the open draft and instructing the operator to resolve it first.
+7. The spec system shall treat abandoning a whole spec as a human act: a request from agent transport shall be refused as human-act-required with an instruction naming the human surface, and the agent's supported path shall be to raise the proposal as an open question.
+8. The spec system shall keep abandoning the active execution reachable from the agent surface with its required reason.
+9. Any surface requesting a policy change shall present the hard confirmation whenever the server requires one for that change and shall assert a confirmed change only from that confirmation's explicit accept action; whether the change loosens gates shall govern the warning content only, never whether the confirmation appears.
+10. The spec system shall record on every confirmed policy change the acting human, the previous policy, the resulting policy, and the pinned authoring stage of any open draft, so a later reviewer can determine which dials governed which transition.

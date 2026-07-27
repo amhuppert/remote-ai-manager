@@ -159,6 +159,9 @@ function maximalEvidence(): SpecEvidenceRow {
         "src/lib/state-store/spec-delivery-repo.contract.test.ts",
       ],
       relevantTreeHash: "tree-delivery-maximal",
+      // Retained-historical field: no evaluation path reads surfaceId since
+      // the evidence-kind narrowing dropped surface evidence, but persisted
+      // rows carrying it must keep parsing — this fixture is that proof.
       surfaceId: "spec-studio/evidence",
     }),
     producer_json: JSON.stringify({

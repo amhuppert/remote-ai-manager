@@ -244,8 +244,6 @@ describe("EvidenceService evidence records and proof verdicts", () => {
       gitObjectExists: vi.fn(async () => false),
       workflowEventExists: vi.fn(async () => false),
       mergeValidationFactExists: vi.fn(async () => false),
-      contentObjectExists: vi.fn(async () => false),
-      humanActorExists: vi.fn(async () => false),
       isEvidenceFresh: vi.fn(async () => true),
       routeStrategyInadequacy: vi.fn(async () => undefined),
       routeWaiverRequestToHuman: vi.fn(async () => ({
@@ -274,7 +272,6 @@ describe("EvidenceService evidence records and proof verdicts", () => {
 
   it.each([
     ["commit", { type: "git_object", objectId: "missing-commit" }],
-    ["diff", { type: "git_object", objectId: "missing-diff" }],
     [
       "validator_verdict",
       {
@@ -292,8 +289,6 @@ describe("EvidenceService evidence records and proof verdicts", () => {
         validationRef: "validation-evidence",
       },
     ],
-    ["screenshot", { type: "content_store", objectKey: "missing-shot" }],
-    ["human_signoff", { type: "human_actor", actorId: "missing-human" }],
   ] as const)(
     "13.2 refuses an unresolvable %s reference",
     async (kind, ref) => {
@@ -557,6 +552,96 @@ describe("EvidenceService evidence records and proof verdicts", () => {
     );
   });
 
+  it("F24 qualifies stamped in-run machine evidence for a proof verdict where a sha-less row stays disqualified", async () => {
+    deps.getApprovedCriterion = async () => ({
+      specId: SPEC_ID,
+      validationStrategy: { kinds: ["validator_verdict"] },
+    });
+    deps.workflowEventExists = vi.fn(async () => true);
+    // Production-shaped freshness: evaluateEvidenceFreshness routes machine
+    // evidence without a tree hash through ancestry, which requires a
+    // commitSha — a sha-less evaluated state can never probe git.
+    deps.isEvidenceFresh = vi.fn(async (evidence) => {
+      const state: unknown = JSON.parse(evidence.evaluated_state_json);
+      return (
+        typeof state === "object" &&
+        state !== null &&
+        "commitSha" in state &&
+        typeof state.commitSha === "string"
+      );
+    });
+    const service = createEvidenceService(deps);
+    const workflowEventRef = {
+      type: "workflow_event",
+      workflowExecutionId: "workflow-execution-evidence",
+      eventId: 41,
+      contextId: "context-evidence",
+    } as const;
+    const stamped = await service.attachEvidence({
+      specId: SPEC_ID,
+      criterionElementId: CRITERION_ID,
+      revisionId: REVISION_ID,
+      kind: "validator_verdict",
+      ref: workflowEventRef,
+      evaluatedState: { commitSha: "lane-head-sha", relevantPaths: [] },
+      producer: { kind: "agent", conversationId: "conversation-evidence" },
+      executionId: EXECUTION_ID,
+    });
+    const legacy = await service.attachEvidence({
+      specId: SPEC_ID,
+      criterionElementId: CRITERION_ID,
+      revisionId: REVISION_ID,
+      kind: "validator_verdict",
+      ref: workflowEventRef,
+      evaluatedState: { relevantPaths: [] },
+      producer: { kind: "agent", conversationId: "conversation-evidence" },
+      executionId: EXECUTION_ID,
+    });
+    if (!stamped.ok || !legacy.ok)
+      throw new Error("fixture evidence was refused");
+
+    const fromLegacy = await service.recordProofVerdict({
+      specId: SPEC_ID,
+      criterionElementId: CRITERION_ID,
+      revisionId: REVISION_ID,
+      executionId: EXECUTION_ID,
+      verdictKind: "agent_validator",
+      origin: "execution_ingest",
+      actor: { kind: "system" },
+      evidenceIds: [legacy.value.id],
+    });
+    const fromStamped = await service.recordProofVerdict({
+      specId: SPEC_ID,
+      criterionElementId: CRITERION_ID,
+      revisionId: REVISION_ID,
+      executionId: EXECUTION_ID,
+      verdictKind: "agent_validator",
+      origin: "execution_ingest",
+      actor: { kind: "system" },
+      evidenceIds: [stamped.value.id],
+    });
+
+    expect(fromLegacy).toEqual({
+      ok: false,
+      refusal: {
+        code: "validation",
+        unmetConditions: [
+          "The approved validation strategy requires fresh, resolvable validator_verdict evidence.",
+        ],
+        instruction:
+          "Attach fresh, resolvable evidence for every kind in the approved validation strategy.",
+      },
+    });
+    expect(fromStamped).toMatchObject({
+      ok: true,
+      value: {
+        criterion_element_id: CRITERION_ID,
+        revision_id: REVISION_ID,
+        stale_at: null,
+      },
+    });
+  });
+
   it.each([
     ["agent_validator", "ui_route"],
     ["deterministic_validator", "ui_route"],
@@ -583,6 +668,31 @@ describe("EvidenceService evidence records and proof verdicts", () => {
       });
     },
   );
+
+  it("13.4 tells a stranded human verdict caller the waiver is the remedy", async () => {
+    const service = createEvidenceService(deps);
+
+    const result = await service.recordProofVerdict({
+      specId: SPEC_ID,
+      criterionElementId: CRITERION_ID,
+      revisionId: REVISION_ID,
+      executionId: EXECUTION_ID,
+      verdictKind: "human",
+      origin: "execution_ingest",
+      actor: { kind: "system" },
+      evidenceIds: [],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      refusal: {
+        code: "human_act_required",
+        unmetConditions: ["Human proof verdicts have no recording surface."],
+        instruction:
+          "Waive the criterion instead: Spec Studio → Controls → Merge gate → Waive…, which records a human decision with a reason.",
+      },
+    });
+  });
 
   it.each([
     ["missing", undefined],
@@ -660,7 +770,7 @@ describe("EvidenceService evidence records and proof verdicts", () => {
       origin: "execution_ingest",
       actor: { kind: "system" },
       evidenceIds: [],
-      validationStrategy: { kinds: ["screenshot"] },
+      validationStrategy: { kinds: ["validator_verdict"] },
     });
 
     expect(result).toEqual({
@@ -698,8 +808,6 @@ describe("EvidenceService claims, waivers, and dispositions", () => {
       gitObjectExists: vi.fn(async () => true),
       workflowEventExists: vi.fn(async () => true),
       mergeValidationFactExists: vi.fn(async () => true),
-      contentObjectExists: vi.fn(async () => true),
-      humanActorExists: vi.fn(async () => true),
       isEvidenceFresh: vi.fn(async () => true),
       routeStrategyInadequacy: vi.fn(async () => undefined),
       routeWaiverRequestToHuman: vi.fn(async () => ({
@@ -858,6 +966,8 @@ describe("EvidenceService claims, waivers, and dispositions", () => {
       refusal: {
         code: "lint_blocked",
         unmetConditions: ["A task completion claim must cite evidence."],
+        instruction:
+          "Cite ingested evidence ids for the task's covered criteria — the server ingests commit and validation evidence from workflow events — and claim again.",
       },
     });
     expect(deps.ingestExecutionEvidence).toHaveBeenCalledWith(EXECUTION_ID);
@@ -878,7 +988,43 @@ describe("EvidenceService claims, waivers, and dispositions", () => {
 
     expect(result).toMatchObject({
       ok: false,
-      refusal: { code: "unresolvable_evidence" },
+      refusal: {
+        code: "unresolvable_evidence",
+        instruction:
+          "Cite an evidence id the server has already ingested for this execution and claim again.",
+      },
+    });
+  });
+
+  it("6.6 points an uncovered-criterion refusal at ingestion, not attachment", async () => {
+    const evidence = await attachCommit();
+    deps.getTaskClaimContext = vi.fn(async () => ({
+      specId: SPEC_ID,
+      revisionId: REVISION_ID,
+      policy: { preset: "contract-bearing" as const },
+      draft: TASK_CLAIM_DRAFT,
+      coveredCriterionElementIds: [CRITERION_ID, OTHER_CRITERION_ID],
+    }));
+    const service = createEvidenceService(deps);
+
+    const result = await service.claimTaskComplete({
+      specId: SPEC_ID,
+      taskElementId: TASK_ID,
+      executionId: EXECUTION_ID,
+      actor: { kind: "agent", conversationId: "conversation-evidence" },
+      evidenceIds: [evidence.id],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: {
+        code: "lint_blocked",
+        unmetConditions: [
+          `Covered criterion ${OTHER_CRITERION_ID} has no cited evidence.`,
+        ],
+        instruction:
+          "Cite ingested evidence for every covered criterion and claim again — a criterion with no evidence usually means its covering work has not been committed or validated yet.",
+      },
     });
   });
 

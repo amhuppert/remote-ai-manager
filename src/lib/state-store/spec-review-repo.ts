@@ -33,6 +33,7 @@ export interface SpecReviewRepo {
   insertGateAdmission(admission: SpecGateAdmissionRow): void;
   findGateAdmissionById(id: string): SpecGateAdmissionRow | null;
   findGateAdmissionsByRevision(revisionId: string): SpecGateAdmissionRow[];
+  findGateAdmissionsBySpecId(specId: string): SpecGateAdmissionRow[];
   hasValidHumanGateApproval(input: {
     specId: string;
     revisionId: string;
@@ -104,6 +105,14 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
   const findGateAdmissionsByRevisionStmt = db.prepare(
     `SELECT * FROM spec_gate_admissions
      WHERE revision_id = ?
+     ORDER BY created_at ASC, id ASC`,
+  );
+  // Whole-spec gate history in one round trip. `idx_spec_gate_admissions_spec_gate`
+  // serves the spec_id lookup; the chronological order costs a temp sort over
+  // the spec's own admissions, which is bounded by its gate count.
+  const findGateAdmissionsBySpecStmt = db.prepare(
+    `SELECT * FROM spec_gate_admissions
+     WHERE spec_id = ?
      ORDER BY created_at ASC, id ASC`,
   );
   const hasValidHumanGateApprovalStmt = db.prepare(
@@ -282,6 +291,16 @@ export function createSpecReviewRepo(db: Db): SpecReviewRepo {
           "spec_gate_admission",
           `revision:${revisionId}`,
           () => findGateAdmissionsByRevisionStmt.all(revisionId),
+        ),
+      );
+    },
+    findGateAdmissionsBySpecId(specId) {
+      return timed("find_by_spec", "spec_gate_admission", specId, () =>
+        readMany(
+          specGateAdmissionRowSchema,
+          "spec_gate_admission",
+          `spec:${specId}`,
+          () => findGateAdmissionsBySpecStmt.all(specId),
         ),
       );
     },

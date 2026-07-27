@@ -7,7 +7,7 @@ import type { SpecDetailView } from "@/lib/specs/queries";
 
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
-  policyAdmissionRowFixture,
+  policyAdmissionViewFixture,
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
 import SpecHistoryPanel, { buildSpecHistory } from "./SpecHistoryPanel";
@@ -30,8 +30,8 @@ describe("buildSpecHistory", () => {
         },
       ],
       gateAdmissions: [
-        policyAdmissionRowFixture({
-          created_at: "2026-07-18T12:04:00.000Z",
+        policyAdmissionViewFixture({
+          createdAt: "2026-07-18T12:04:00.000Z",
         }),
       ],
       waivers: [
@@ -157,7 +157,7 @@ describe("buildSpecHistory", () => {
       <SpecHistoryPanel
         detail={{
           ...detail,
-          gateAdmissions: [policyAdmissionRowFixture()],
+          gateAdmissions: [policyAdmissionViewFixture()],
         }}
         projectName="command-center"
       />,
@@ -224,7 +224,7 @@ describe("buildSpecHistory", () => {
       <SpecHistoryPanel
         detail={{
           ...detail,
-          gateAdmissions: [policyAdmissionRowFixture()],
+          gateAdmissions: [policyAdmissionViewFixture()],
         }}
         projectName="command-center"
       />,

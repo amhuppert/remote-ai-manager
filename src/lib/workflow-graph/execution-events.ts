@@ -273,10 +273,15 @@ function haltReasonsEqual(
 
   switch (previous.type) {
     case "delivery_gate_failed":
+      // Compare the full presentation projection: halt surfaces render
+      // refusalCode and the spec block (name/project deep link), so equality
+      // must not swallow an observable change in either (mid-run rename).
       return (
         next.type === "delivery_gate_failed" &&
         deepEqualJson(previous.unmet, next.unmet) &&
-        previous.instruction === next.instruction
+        previous.instruction === next.instruction &&
+        previous.refusalCode === next.refusalCode &&
+        deepEqualJson(previous.spec ?? null, next.spec ?? null)
       );
     case "circuit_breaker":
       return (

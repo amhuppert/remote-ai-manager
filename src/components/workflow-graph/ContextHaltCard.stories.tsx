@@ -104,8 +104,63 @@ const longJoinFailure: GraphWorkflowHaltReason = {
   ),
 };
 
+// A sign-off wait, not a failure: amber attention chrome with the
+// ?el=delivery merge-gate link (F18/F19).
+const deliveryApprovalRequired: GraphWorkflowHaltReason = {
+  type: "delivery_gate_failed",
+  unmet: [
+    {
+      criterionId: "execution-12:gate:1",
+      criterionHandle: "native-sdd",
+      outcome: "delivery_gate_failed",
+      reason: "The delivery gate requires a human delivery approval.",
+    },
+  ],
+  instruction:
+    "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+  refusalCode: "approval_required",
+  spec: {
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    projectName: "command-center",
+  },
+};
+
+const deliveryUnmetCriteria: GraphWorkflowHaltReason = {
+  type: "delivery_gate_failed",
+  unmet: [
+    {
+      criterionId: "criterion-1",
+      criterionHandle: "R1.1",
+      outcome: "proof_required",
+      reason: "No valid proof verdict exists for the pinned criterion.",
+    },
+    {
+      criterionId: "criterion-2",
+      criterionHandle: "R1.2",
+      outcome: "missing_disposition",
+      reason: "The pinned criterion has no execution disposition.",
+    },
+  ],
+  instruction:
+    "Re-dispatch validation against the prepared candidate, resolve any remaining proof or waiver requirements, then retry delivery.",
+  spec: {
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    projectName: "command-center",
+  },
+};
+
 export const CircuitBreaker: Story = {
   args: { primary: circuitBreaker },
+};
+
+export const DeliveryApprovalRequired: Story = {
+  args: { primary: deliveryApprovalRequired },
+};
+
+export const DeliveryUnmetCriteria: Story = {
+  args: { primary: deliveryUnmetCriteria },
 };
 
 export const MaxIterations: Story = {

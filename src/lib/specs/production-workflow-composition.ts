@@ -1,11 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
+import { createLogger } from "@/lib/logging";
 import { createJobsRepo } from "@/lib/jobs/repo";
 import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { getNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
+import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
+import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
@@ -37,6 +40,8 @@ import type { SpecWorkflowComposition } from "./workflow-composition";
 import { registerSpecWorkflowComposition } from "./workflow-composition";
 import { createSpecExecutionContract } from "./execution-contract";
 
+const logger = createLogger("specs.production-workflow-composition");
+
 export interface ProductionSpecWorkflowCompositionDeps {
   gitClient: GitClient;
 }
@@ -57,6 +62,9 @@ export function createProductionSpecWorkflowComposition(
   const eventsRepo = createSpecEventsRepo(db);
   const jobsRepo = createJobsRepo(db);
   const workflowEvents = createGraphWorkflowEventsRepo(db);
+  const workflowExecutions = createGraphWorkflowExecutionsRepo(db);
+  const archivedWorkflowExecutions =
+    createGraphWorkflowArchivedExecutionsRepo(db);
   const workflowStorage = createWorkflowStorageService();
   const events = createSpecEventsPublisher({
     appendInTransaction: eventsRepo.appendInTransaction,
@@ -93,6 +101,18 @@ export function createProductionSpecWorkflowComposition(
         workflowDefinitionId,
       );
       return record === null ? [] : readCompiledOriginMap(record.definition);
+    },
+    getWorkflowExecutionStatus(workflowExecutionId) {
+      for (const workflow of workflowExecutions.listActive().values()) {
+        if (workflow.id === workflowExecutionId) {
+          return Promise.resolve(workflow.status);
+        }
+      }
+      // A cleared run leaves the active slot but keeps its terminal status in
+      // the archive; only a truly deleted execution reports null.
+      return Promise.resolve(
+        archivedWorkflowExecutions.findStatusByExecutionId(workflowExecutionId),
+      );
     },
   });
   const ingestExecutionEvidence = (executionId: string) =>
@@ -151,12 +171,6 @@ export function createProductionSpecWorkflowComposition(
         job?.executionId === expectedExecution.workflowExecutionId &&
         job.candidateValidation?.validationRef === ref.validationRef
       );
-    },
-    async contentObjectExists() {
-      return false;
-    },
-    async humanActorExists() {
-      return false;
     },
     async isEvidenceFresh(evidence) {
       let rawState: unknown;
@@ -225,6 +239,20 @@ export function createProductionSpecWorkflowComposition(
     },
     getProjectDisplayName,
   });
+  // The lifecycle gate and the delivery gate both reuse the review service so
+  // parked definitions and missing delivery approvals open the same durable
+  // Needs You request — and workflow-surface approvals record the same
+  // execution-scoped grant — as Spec Studio's actions.
+  const reviewService = createReviewService({
+    specs: specsRepo,
+    review: reviewRepo,
+    delivery: deliveryRepo,
+    links: linksRepo,
+    events,
+    attention: eventsRepo,
+    notifier,
+    policyNotifier: notifier,
+  });
   const deliveryGate = createDeliveryGate({
     deliveryRepo,
     reviewRepo,
@@ -241,6 +269,28 @@ export function createProductionSpecWorkflowComposition(
       return db.transaction(fn).immediate();
     },
     policyNotifier: notifier,
+    getProjectDisplayName,
+    async requestDeliveryApproval({ specId, revisionId, workflowExecutionId }) {
+      const result = await reviewService.requestApproval({
+        specId,
+        revisionId,
+        gate: "delivery",
+        subject: "delivery",
+        actor: {
+          kind: "agent",
+          conversationId: `workflow:${workflowExecutionId}`,
+        },
+      });
+      if (!result.ok) {
+        // A refusal here is informational (e.g. the human approved between
+        // gate attempts → already_satisfied); the gate's own refusal already
+        // carries the remediation.
+        logger.debug("specs.delivery-gate.approval-request-refused", {
+          specId,
+          refusalCode: result.refusal.code,
+        });
+      }
+    },
     async resolveCandidateValidation(input) {
       const source = jobsRepo.findMergeValidationByExecutionIdAndRef(
         input.workflowExecutionId,
@@ -256,18 +306,6 @@ export function createProductionSpecWorkflowComposition(
             },
           };
     },
-  });
-  // The lifecycle gate reuses the review service so parked definitions open
-  // the same durable Needs You request — and workflow-surface approvals
-  // record the same execution-scoped grant — as Spec Studio's actions.
-  const reviewService = createReviewService({
-    specs: specsRepo,
-    review: reviewRepo,
-    delivery: deliveryRepo,
-    links: linksRepo,
-    events,
-    notifier,
-    policyNotifier: notifier,
   });
   const lifecycleCallbacks: ExecutionLifecycleCallbacks =
     createExecutionLifecycleCallbacks({

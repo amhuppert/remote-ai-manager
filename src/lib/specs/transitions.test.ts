@@ -814,6 +814,8 @@ describe("transition predicates", () => {
           findings: [
             { ruleId: "9.7.claim-without-evidence", severity: "blocks_claim" },
           ],
+          instruction:
+            "Cite ingested evidence for every covered criterion and claim again.",
         },
       });
     });
@@ -940,6 +942,66 @@ describe("transition predicates", () => {
             "Re-dispatch validation against the prepared candidate, obtain any required human waiver, or repair the delivery scope before merging.",
         },
       });
+    });
+
+    it("marks the missing-human-approval refusal with the approval_required reason and the Controls-view instruction", () => {
+      expect(
+        evaluateDeliveryGate(
+          deliveryContext(contractPolicy, { deliveryApprovalGranted: false }),
+        ),
+      ).toEqual({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          reason: "approval_required",
+          unmetConditions: ["The delivery gate requires human approval."],
+          instruction:
+            "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+        },
+      });
+    });
+
+    it("sets no approval_required reason on any other refusal branch, even when approval is also missing", () => {
+      const decisions = [
+        evaluateDeliveryGate(
+          deliveryContext(contractPolicy, {
+            executionState: "abandoned",
+            deliveryApprovalGranted: false,
+          }),
+        ),
+        evaluateDeliveryGate(
+          deliveryContext(
+            { preset: "exploratory" },
+            { deliveryApprovalGranted: false },
+          ),
+        ),
+        evaluateDeliveryGate(
+          deliveryContext(contractPolicy, {
+            pinnedRevisionId: undefined,
+            deliveryApprovalGranted: false,
+          }),
+        ),
+        evaluateDeliveryGate(
+          deliveryContext(contractPolicy, {
+            criteria: [
+              {
+                criterionId: "criterion-1",
+                handle: "R1.1",
+                validProof: false,
+                waiver: null,
+                deliveredByMergedExecution: false,
+              },
+            ],
+          }),
+        ),
+      ];
+
+      for (const decision of decisions) {
+        expect(decision.ok).toBe(false);
+        if (!decision.ok) {
+          expect(decision.refusal.reason).toBeUndefined();
+        }
+      }
     });
 
     it("accepts a valid human waiver for the pinned revision", () => {

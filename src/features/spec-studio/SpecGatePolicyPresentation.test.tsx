@@ -52,9 +52,9 @@ describe("PolicyDialog presentation", () => {
     await user.click(
       within(
         screen.getByRole("alertdialog", {
-          name: "Loosening a gate — human confirmation",
+          name: "Gate policy change — human confirmation",
         }),
-      ).getByRole("button", { name: "Confirm loosening" }),
+      ).getByRole("button", { name: "Confirm policy change" }),
     );
     expect(
       within(requirements)

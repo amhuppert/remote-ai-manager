@@ -21,11 +21,19 @@ import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
+import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import type {
   WorkflowDefinitionDraft,
   WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
+import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
+import { readCompiledOriginMap } from "./compiler";
+import { createEvidenceIngestService } from "./evidence-ingest";
+import {
+  createEvidenceService,
+  type EvidenceServiceDeps,
+} from "./evidence-service";
 import type { ExecutionScope } from "./scope-validation";
 import { createSpecEventsPublisher } from "./events";
 import {
@@ -71,6 +79,7 @@ describe("ExecutionService start", () => {
       workflowDefinitions: definitions,
       writeQueue,
       ingestExecutionEvidence: vi.fn(async () => undefined),
+      sessionExists: async (sessionName) => sessionName === "session-execution",
       getWorkflowExecutionStatus: vi.fn(async () => null),
       getPublishedMerge: vi.fn(async () => null),
       nextId: (kind) => `${kind}-${++nextId}`,
@@ -80,6 +89,30 @@ describe("ExecutionService start", () => {
       },
     };
     service = createExecutionService(deps);
+  });
+
+  it("refuses a session name that does not resolve before recording anything", async () => {
+    const result = await service.start({
+      specId,
+      revisionId,
+      scope: fullScope(),
+      actor: { kind: "agent", conversationId: "conversation-start" },
+      sessionName: "no-such-session",
+    });
+
+    // The alternative is a durable execution pinned to a session the server
+    // cannot resolve, which dead-ends one command later as a bare
+    // "Session not found" from `workflow start`.
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: { code: "not_found" },
+    });
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.refusal.instruction).toContain("session");
+    expect(definitions.records).toHaveLength(0);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM spec_executions").get(),
+    ).toEqual({ count: 0 });
   });
 
   it("16.3 refuses a revision that is not Approved before preparing a definition", async () => {
@@ -677,6 +710,131 @@ describe("ExecutionService start", () => {
     expect(deps.ingestExecutionEvidence).toHaveBeenCalledWith(running.id);
   });
 
+  it("F24 pins the delivery ordering: a followerless final validation is materialized unstamped by the time Delivered commits", async () => {
+    const running = await startRunning();
+    const workflowExecutionId = `workflow-${running.id}`;
+    db.prepare(
+      `INSERT INTO sessions (
+         project_path, session_name, worktree_path, branch_name, created_at,
+         last_activity_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(projectPath, "session-execution", "/wt/execution", "exec", now, now);
+    const workflowEvents = createGraphWorkflowEventsRepo(db);
+    const definitionRecord = definitions.records[0];
+    if (definitionRecord === undefined) throw new Error("definition missing");
+    const originMap = readCompiledOriginMap(definitionRecord.definition);
+    const contextId = originMap.find((entry) =>
+      entry.criterionElementIds.includes("criterion-1"),
+    )?.contextId;
+    if (contextId === undefined) throw new Error("origin context missing");
+    // A validator passed the context, but its lane commit never arrived (e.g.
+    // nothing to commit) — the sealing outcome stays undecidable while the
+    // run lives.
+    workflowEvents.appendMany(
+      projectPath,
+      "session-execution",
+      workflowExecutionId,
+      now,
+      [
+        graphWorkflowExecutionEventSchema.parse({
+          occurredAt: now,
+          event: {
+            type: "graph-workflow-validation-result",
+            projectName: "execution-service",
+            sessionName: "session-execution",
+            executionId: workflowExecutionId,
+            contextId,
+            validatorType: "context",
+            pass: true,
+            summary: "The pinned criterion holds.",
+          },
+        }),
+      ],
+    );
+
+    const evidenceService = createEvidenceService({
+      repo: deps.deliveryRepo,
+      ingestExecutionEvidence: async () => undefined,
+      nextId: () => `evidence-${++nextId}`,
+      now: () => now,
+      async getApprovedCriterion(targetRevisionId, criterionElementId) {
+        const snapshot =
+          await deps.specsRepo.getRevisionSnapshot(targetRevisionId);
+        if (snapshot?.revision.state !== "approved") return null;
+        const criterion = snapshot.elements.find(
+          (item) =>
+            item.element.id === criterionElementId &&
+            item.version.payload.kind === "criterion",
+        );
+        return criterion?.version.payload.kind === "criterion"
+          ? {
+              specId: snapshot.revision.specId,
+              validationStrategy: criterion.version.payload.validationStrategy,
+            }
+          : null;
+      },
+      gitObjectExists: async () => false,
+      async workflowEventExists(ref, expectedExecution) {
+        const record = workflowEvents.findRecordById(ref.eventId);
+        return (
+          record !== null &&
+          record.executionId === expectedExecution.workflowExecutionId &&
+          "contextId" in record.event &&
+          record.event.contextId === ref.contextId
+        );
+      },
+      mergeValidationFactExists: async () => false,
+      isEvidenceFresh: async () => true,
+      routeStrategyInadequacy: async () => undefined,
+      routeWaiverRequestToHuman: async () => ({ attentionId: "unused" }),
+      getTaskClaimContext: async () => null,
+      getCriterionVersion: async () => null,
+      wasCriterionDeliveredByMergedExecution: async () => false,
+      recordMutation: () => undefined,
+      runInImmediateTransaction: (operation) => operation(),
+    } satisfies EvidenceServiceDeps);
+    // The publish-time delivery lands while the graph workflow itself is
+    // still running (the final-publish task completes before the run does),
+    // so neither the workflow status nor the pre-flip spec state is terminal.
+    deps.getWorkflowExecutionStatus = vi.fn(async () => "running" as const);
+    const ingest = createEvidenceIngestService({
+      repo: deps.deliveryRepo,
+      workflowEvents,
+      evidenceService,
+      writeQueue: deps.writeQueue,
+      loadOriginMap: async () => originMap,
+      getWorkflowExecutionStatus: deps.getWorkflowExecutionStatus,
+    });
+    deps.ingestExecutionEvidence = (executionId) =>
+      ingest.ingestAuthoritatively(executionId);
+    deps.getPublishedMerge = vi.fn(async () => ({
+      mergeHash: "merge-sha-final",
+      deliveryGatePassed: true,
+    }));
+    service = createExecutionService(deps);
+
+    const result = await service.markDelivered(running.id, "merge-sha-final");
+
+    expect(result).toMatchObject({ ok: true, value: { state: "delivered" } });
+    const rows = db
+      .prepare(
+        `SELECT kind, criterion_element_id, evaluated_state_json
+           FROM spec_evidence ORDER BY kind ASC`,
+      )
+      .all() as Array<{
+      kind: string;
+      criterion_element_id: string;
+      evaluated_state_json: string;
+    }>;
+    expect(rows.map((row) => [row.kind, row.criterion_element_id])).toEqual([
+      ["validator_verdict", "criterion-1"],
+    ]);
+    // Honest-stale: no sealing commit ever named the validated sha.
+    expect(JSON.parse(rows[0]!.evaluated_state_json)).toEqual({
+      relevantPaths: [],
+    });
+  });
+
   it("adapts workflow lifecycle callbacks to the linked immutable spec execution", async () => {
     const running = await startRunning();
     deps.getPublishedMerge = vi.fn(async () => ({
@@ -749,7 +907,12 @@ describe("ExecutionService start", () => {
     service = createExecutionService(deps);
 
     const running = await service.getStatus(started.execution.id);
-    expect(running).toMatchObject({ ok: true, value: { state: "running" } });
+    expect(running).toMatchObject({
+      ok: true,
+      // The lane already completed; the spec execution stays running until
+      // the delivering merge, and the pair reports both positions.
+      value: { execution: { state: "running" }, workflowStatus: "completed" },
+    });
     expect(deps.ingestExecutionEvidence).toHaveBeenCalledTimes(1);
     expect(deps.ingestExecutionEvidence).toHaveBeenCalledWith(
       started.execution.id,
@@ -763,7 +926,7 @@ describe("ExecutionService start", () => {
     const delivered = await service.getStatus(started.execution.id);
     expect(delivered).toMatchObject({
       ok: true,
-      value: { state: "delivered" },
+      value: { execution: { state: "delivered" } },
     });
   });
 
@@ -809,8 +972,10 @@ describe("ExecutionService start", () => {
     expect(result).toMatchObject({
       ok: true,
       value: {
-        state: "abandoned",
-        abandoned_reason: "The linked graph workflow execution was aborted.",
+        execution: {
+          state: "abandoned",
+          abandoned_reason: "The linked graph workflow execution was aborted.",
+        },
       },
     });
     const abandonEvents = deps.eventsRepo
@@ -840,7 +1005,7 @@ describe("ExecutionService start", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      value: { state: "abandoned" },
+      value: { execution: { state: "abandoned" } },
     });
     const runningEvents = deps.eventsRepo
       .findBySpecId(specId)
@@ -860,9 +1025,11 @@ describe("ExecutionService start", () => {
     expect(result).toMatchObject({
       ok: true,
       value: {
-        state: "abandoned",
-        abandoned_reason:
-          "The linked graph workflow execution no longer exists.",
+        execution: {
+          state: "abandoned",
+          abandoned_reason:
+            "The linked graph workflow execution no longer exists.",
+        },
       },
     });
   });
@@ -874,7 +1041,10 @@ describe("ExecutionService start", () => {
 
     const result = await service.getStatus(running.id);
 
-    expect(result).toMatchObject({ ok: true, value: { state: "running" } });
+    expect(result).toMatchObject({
+      ok: true,
+      value: { execution: { state: "running" }, workflowStatus: "halted" },
+    });
   });
 
   it("3.10 requires an abandon reason and keeps execution abandonment terminal", async () => {
@@ -1034,6 +1204,7 @@ describe("ExecutionService execution-start gate", () => {
       workflowDefinitions: new InMemoryWorkflowDefinitions(),
       writeQueue,
       ingestExecutionEvidence: vi.fn(async () => undefined),
+      sessionExists: async (sessionName) => sessionName === "session-execution",
       getWorkflowExecutionStatus: vi.fn(async () => null),
       getPublishedMerge: vi.fn(async () => null),
       nextId: (kind) => `${kind}-${++nextId}`,
@@ -1324,6 +1495,7 @@ describe("ExecutionService abandon clears open spec attention (runtime wiring)",
       workflowDefinitions: new InMemoryWorkflowDefinitions(),
       writeQueue,
       ingestExecutionEvidence: async () => undefined,
+      sessionExists: async (sessionName) => sessionName === "session-execution",
       getWorkflowExecutionStatus: async () => null,
       getPublishedMerge: async () => null,
       nextId: (kind) => `${kind}-${++nextId}`,

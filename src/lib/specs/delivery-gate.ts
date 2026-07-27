@@ -9,6 +9,7 @@ import type {
   DeliveryGateEvaluateInput,
   DeliveryGateEvaluation,
   DeliveryGateEvaluator,
+  DeliveryGateSpecPresentation,
 } from "@/lib/workflows/merge/types";
 import { scopePlanFromRevision } from "./compiler";
 import type { SpecEventsPublisher } from "./events";
@@ -28,6 +29,7 @@ import {
 } from "./freshness";
 import {
   evidenceEvaluatedStateSchema,
+  isMachineValidationEvidenceKind,
   type ActorProvenance,
   type EvidenceKind,
   type Spec,
@@ -93,6 +95,19 @@ export interface DeliveryGateDeps {
   ): Promise<CandidateValidationSource | null>;
   /** Lands refused evaluations in the durable spec event log (21.4). */
   recordIntervention(input: EvidenceMutationRecord): void;
+  /**
+   * Opens the durable Needs You approval request when the gate refuses on the
+   * missing human delivery approval (F17). Best-effort: a failure is logged
+   * and never blocks the refusal itself. Idempotency lives in the review
+   * service (one request per spec/gate/subject/execution).
+   */
+  requestDeliveryApproval(input: {
+    specId: string;
+    revisionId: string;
+    workflowExecutionId: string;
+  }): Promise<void>;
+  /** Display name Studio URLs use — halt surfaces deep-link with it (F18). */
+  getProjectDisplayName(projectPath: string): string;
   now(): string;
 }
 
@@ -206,7 +221,31 @@ async function evaluateLinkedExecution(
       deliveredByMergedExecution: false,
     })),
   });
+  const specPresentation: DeliveryGateSpecPresentation = {
+    specSlug: spec.slug,
+    specName: spec.name,
+    projectName: deps.getProjectDisplayName(spec.projectPath),
+  };
+
   if (!policyDecision.ok) {
+    // Fires only on the refusal branch that self-identifies as waiting on a
+    // human delivery approval; every other refusal (terminal, exploratory,
+    // invalid pin/scope) would open a Needs You entry no approval can clear.
+    if (policyDecision.refusal.reason === "approval_required") {
+      try {
+        await deps.requestDeliveryApproval({
+          specId: execution.spec_id,
+          revisionId: execution.revision_id,
+          workflowExecutionId: input.workflowExecutionId,
+        });
+      } catch (error) {
+        logger.warn("specs.delivery-gate.approval-request-failed", {
+          specExecutionId: execution.id,
+          workflowExecutionId: input.workflowExecutionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     logger.warn("specs.delivery-gate.refused", {
       specExecutionId: execution.id,
       workflowExecutionId: input.workflowExecutionId,
@@ -214,7 +253,11 @@ async function evaluateLinkedExecution(
       refusalCode: policyDecision.refusal.code,
       unmetConditionCount: policyDecision.refusal.unmetConditions.length,
     });
-    return refusedByTransition(execution, spec.slug, policyDecision.refusal);
+    return refusedByTransition(
+      execution,
+      specPresentation,
+      policyDecision.refusal,
+    );
   }
 
   const probes = deps.gitProbesForProject(input.projectPath);
@@ -288,7 +331,7 @@ async function evaluateLinkedExecution(
     });
     return refusedByTransition(
       execution,
-      spec.slug,
+      specPresentation,
       proofDecision.refusal,
       unmet,
     );
@@ -378,16 +421,19 @@ function deliveryCriterionSnapshot(
 
 function refusedByTransition(
   execution: SpecExecutionRow,
-  specSlug: string,
+  spec: DeliveryGateSpecPresentation,
   refusal: TransitionRefusal,
   criterionOutcomes: CriterionOutcome[] = [],
 ): DeliveryGateEvaluation {
+  // The pseudo-criterion entries stay in the durable payload so release
+  // evidence counting and old persisted halts are unchanged; the dedicated
+  // approval presentation rides alongside as refusalCode/spec (F19).
   const unmet =
     refusal.code === "delivery_gate_failed" && criterionOutcomes.length > 0
       ? criterionOutcomes
       : refusal.unmetConditions.map((reason, index) => ({
           criterionId: `${execution.id}:gate:${index + 1}`,
-          criterionHandle: specSlug,
+          criterionHandle: spec.specSlug,
           outcome: refusal.code,
           reason,
         }));
@@ -395,6 +441,10 @@ function refusedByTransition(
     status: "refused",
     unmet,
     instruction: refusal.instruction,
+    ...(refusal.reason === "approval_required"
+      ? { refusalCode: refusal.reason }
+      : {}),
+    spec,
   };
 }
 
@@ -606,8 +656,7 @@ async function issueCandidateProof(
   const candidate = input.candidateValidation;
   if (candidate === undefined) return;
   const machineKinds = [...new Set(contract.strategy.kinds)].filter(
-    (kind): kind is "test_run" | "validator_verdict" =>
-      kind === "test_run" || kind === "validator_verdict",
+    isMachineValidationEvidenceKind,
   );
   if (machineKinds.length === 0) return;
 
@@ -740,8 +789,7 @@ async function freshEvidenceIdsForStrategy(
   );
   const evidenceIds: string[] = [];
   for (const kind of [...new Set(contract.strategy.kinds)]) {
-    const mustCiteCandidate =
-      kind === "test_run" || kind === "validator_verdict";
+    const mustCiteCandidate = isMachineValidationEvidenceKind(kind);
     const candidates = evidence.filter(
       (record) =>
         record.kind === kind &&
@@ -767,8 +815,7 @@ function verdictAlreadyCitesValidation(
   validationRef: string,
 ): boolean {
   const machineKinds = [...new Set(contract.strategy.kinds)].filter(
-    (kind): kind is "test_run" | "validator_verdict" =>
-      kind === "test_run" || kind === "validator_verdict",
+    isMachineValidationEvidenceKind,
   );
   return repo
     .findProofVerdictsByCriterionRevision(contract.id, execution.revision_id)
@@ -784,8 +831,18 @@ function verdictAlreadyCitesValidation(
     });
 }
 
-function isEarlierMergedDelivery(
-  repo: SpecDeliveryRepo,
+/**
+ * The single owner of the prior-run rule for `delivered_elsewhere`
+ * dispositions. Exported so the detail route's per-criterion projection
+ * validates external delivery with exactly the rule the gate enforces —
+ * a client or route re-derivation of "earlier merged delivery" is how the
+ * Studio counter drifted from gate truth in the first place (F26).
+ */
+export function isEarlierMergedDelivery(
+  repo: Pick<
+    SpecDeliveryRepo,
+    "findExecutionById" | "findCriterionDisposition"
+  >,
   execution: SpecExecutionRow,
   disposition: SpecCriterionDispositionRow,
 ): boolean {

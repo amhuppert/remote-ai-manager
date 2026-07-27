@@ -98,6 +98,11 @@ function bridgeHost(
             params: Promise.resolve({ name, slug }),
           });
         }
+        if (segments.length === 5 && segments[4] === "edit-context") {
+          return world.readHandlers.getSpecEditContextGET(request, {
+            params: Promise.resolve({ name, slug }),
+          });
+        }
         if (segments.length === 6 && segments[4] === "elements") {
           return world.readHandlers.getSpecElementGET(request, {
             params: Promise.resolve({ name, slug, element: segments[5] ?? "" }),
@@ -409,7 +414,7 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
         ],
       },
       instruction:
-        "Attach resolvable evidence for the task's covered criteria and claim again.",
+        "Cite ingested evidence ids for the task's covered criteria — the server ingests commit and validation evidence from workflow events — and claim again.",
     });
 
     // Durable event log: all three refused claims are intervention rows with

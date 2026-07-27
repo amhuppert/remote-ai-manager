@@ -59,6 +59,7 @@ beforeEach(() => {
     review: reviewRepo,
     links: createSpecLinksRepo(db),
     events,
+    attention: specEvents,
     newId(prefix: string) {
       idSequence += 1;
       return `${prefix}-${idSequence}`;

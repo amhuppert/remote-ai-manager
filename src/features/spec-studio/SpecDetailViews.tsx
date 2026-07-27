@@ -62,7 +62,7 @@ export interface EvidenceRevisionTarget {
 const detailTabClass =
   "cursor-pointer border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-0 py-xs font-mono text-[0.7rem] font-semibold text-text-tertiary transition-colors duration-150 ease-[ease] outline-none hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:border-cyan data-[state=active]:text-text-primary max-768:min-h-[44px] max-768:px-sm";
 
-type PrimarySubscreen = "evidence" | "traceability" | "history";
+type PrimarySubscreen = "evidence" | "traceability" | "history" | "controls";
 
 const primarySubscreenPresentation: Record<
   PrimarySubscreen,
@@ -84,6 +84,12 @@ const primarySubscreenPresentation: Record<
     description:
       "Human decisions are recorded separately from policy admissions and execution lifecycle events.",
     layoutClassName: "max-w-[1000px]",
+  },
+  controls: {
+    title: "Controls",
+    description:
+      "Executions, approvals, gate policy, and the merge gate for this spec.",
+    layoutClassName: "max-w-[1300px]",
   },
 };
 
@@ -148,14 +154,6 @@ export default function SpecDetailViews({
     proofViews,
     lintFindings,
   );
-
-  if (view === "controls") {
-    return (
-      <div className="mt-lg">
-        <SpecControlsPanel detail={detail} projectName={projectName} />
-      </div>
-    );
-  }
 
   if (isFocusedView(view)) {
     return (
@@ -226,6 +224,11 @@ export default function SpecDetailViews({
         {overviewBanner}
         {children}
       </TabsContent>
+      {view === "controls" && (
+        <div className="mt-lg">
+          <SpecControlsPanel detail={detail} projectName={projectName} />
+        </div>
+      )}
       {view === "evidence" && (
         <div className="mt-lg">
           <SpecEvidencePanel
@@ -320,6 +323,11 @@ function PrimaryViewNavigation(): React.JSX.Element {
             History
           </button>
         </TabsTrigger>
+        <TabsTrigger asChild value="controls">
+          <button type="button" className={detailTabClass}>
+            Controls
+          </button>
+        </TabsTrigger>
       </div>
     </TabsList>
   );
@@ -332,6 +340,9 @@ export function initialDetailViewForDeepLink(
   slug: string | undefined,
 ): DetailView {
   if (rawHandle === "execution_start") return "controls";
+  // The delivery-approval deep link (notification rows, halt cards, banner,
+  // phase CTA) must open Controls or its merge-gate target never mounts.
+  if (rawHandle === "delivery") return "controls";
   if (rawHandle === null || slug === undefined) return "overview";
   try {
     const kind = parseElementHandle(rawHandle, slug).kind;
@@ -372,7 +383,12 @@ function focusedViewDescription(view: FocusedView): string {
 }
 
 function isPrimarySubscreen(view: DetailView): view is PrimarySubscreen {
-  return view === "evidence" || view === "traceability" || view === "history";
+  return (
+    view === "evidence" ||
+    view === "traceability" ||
+    view === "history" ||
+    view === "controls"
+  );
 }
 
 export function selectEvidenceRevision(
@@ -390,7 +406,7 @@ export function selectEvidenceRevision(
   );
   if (activeExecution !== undefined) {
     const pinned = snapshots.find(
-      (snapshot) => snapshot.revision.id === activeExecution.revision_id,
+      (snapshot) => snapshot.revision.id === activeExecution.revisionId,
     );
     if (pinned?.revision.state === "approved") {
       return {

@@ -39,6 +39,7 @@ import {
   type SpecCriterionDisposition,
   type SpecExecutionRow,
   type SpecRevision,
+  type SpecWorkflowLaneStatus,
   type TaskElementPayload,
 } from "./schemas";
 import {
@@ -124,11 +125,16 @@ export interface ExecutionServiceDeps {
   ): string;
   now(): string;
   ingestExecutionEvidence(executionId: string): Promise<unknown>;
+  /**
+   * Whether the named session resolves in this project. `start` records the
+   * session durably on the execution and `workflow start` is session-scoped,
+   * so an unvalidated name would dead-end one command later as a bare
+   * "Session not found" with the unresolvable pin already persisted.
+   */
+  sessionExists(sessionName: string): Promise<boolean>;
   getWorkflowExecutionStatus(
     workflowExecutionId: string,
-  ): Promise<
-    "pending" | "running" | "paused" | "completed" | "halted" | "aborted" | null
-  >;
+  ): Promise<SpecWorkflowLaneStatus | null>;
   getPublishedMerge(workflowExecutionId: string): Promise<{
     mergeHash: string;
     deliveryGatePassed: boolean;
@@ -289,6 +295,8 @@ export type StartSpecExecutionResult =
       ok: true;
       execution: SpecExecutionRow;
       definition: WorkflowDefinitionRecord;
+      /** The pinned revision's number, so the receipt needs no second read. */
+      revisionNumber: number;
     }
   | { ok: false; refusal: TransitionRefusal };
 
@@ -318,7 +326,7 @@ export interface ExecutionService {
   ): Promise<LifecycleResult<SpecExecutionRow>>;
   getStatus(
     specExecutionId: string,
-  ): Promise<LifecycleResult<SpecExecutionRow>>;
+  ): Promise<LifecycleResult<ReconciledSpecExecution>>;
   abandonExecution(
     input: AbandonExecutionInput,
   ): Promise<LifecycleResult<SpecExecutionRow>>;
@@ -331,6 +339,19 @@ export interface ExecutionService {
 export type LifecycleResult<T> =
   | { ok: true; value: T }
   | { ok: false; refusal: TransitionRefusal };
+
+/**
+ * A reconciled run together with its linked lane's live status. The spec
+ * execution stays `running` between workflow completion and the session's
+ * delivering merge, so the row alone cannot tell "lanes are working" from
+ * "everything finished; only the merge remains" — the status read reports
+ * both so no caller has to re-derive the lane's position.
+ */
+export interface ReconciledSpecExecution {
+  execution: SpecExecutionRow;
+  /** Null when no lane is linked or the run is already terminal. */
+  workflowStatus: SpecWorkflowLaneStatus | null;
+}
 
 export interface AbandonExecutionInput {
   executionId: string;
@@ -897,7 +918,7 @@ async function markDelivered(
   }
   await deps.ingestExecutionEvidence(specExecutionId);
 
-  return deps.writeQueue.withWriteQueue(
+  const delivered = await deps.writeQueue.withWriteQueue(
     `spec-execution-delivered[${specExecutionId}]`,
     async () => {
       const prepared: PreparedSpecEventPublication[] = [];
@@ -974,6 +995,24 @@ async function markDelivered(
       return result;
     },
   );
+  if (delivered.ok) {
+    // The pre-flip ingest above ran while both the spec execution and (on the
+    // publish path) the graph workflow were still running, so a followerless
+    // final validation stayed deferred. Now that Delivered is durable the
+    // stamp is decidable — no sealing commit can ever follow a published
+    // merge — so fold once more; the append-once ingest key makes a replay
+    // free. A failure here must not un-deliver: ingest re-runs at every
+    // later claim/gate/status touchpoint.
+    try {
+      await deps.ingestExecutionEvidence(specExecutionId);
+    } catch (error) {
+      logger.warn("specs.execution.delivered-evidence-ingest-failed", {
+        specExecutionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return delivered;
 }
 
 async function buildDeliveryMeasureEvents(
@@ -1030,14 +1069,24 @@ async function buildDeliveryMeasureEvents(
 async function reconcileStatus(
   deps: ExecutionServiceDeps,
   specExecutionId: string,
-): Promise<LifecycleResult<SpecExecutionRow>> {
+): Promise<LifecycleResult<ReconciledSpecExecution>> {
+  const withLane = (
+    result: LifecycleResult<SpecExecutionRow>,
+    workflowStatus: SpecWorkflowLaneStatus | null,
+  ): LifecycleResult<ReconciledSpecExecution> =>
+    result.ok
+      ? { ok: true, value: { execution: result.value, workflowStatus } }
+      : result;
+
   let current = deps.deliveryRepo.findExecutionById(specExecutionId);
   if (current === null) return lifecycleNotFound(specExecutionId);
   if (current.state === "delivered" || current.state === "abandoned") {
-    return { ok: true, value: current };
+    return { ok: true, value: { execution: current, workflowStatus: null } };
   }
   const workflowExecutionId = current.workflow_execution_id;
-  if (workflowExecutionId === null) return { ok: true, value: current };
+  if (workflowExecutionId === null) {
+    return { ok: true, value: { execution: current, workflowStatus: null } };
+  }
 
   const [workflowStatus, publishedMerge] = await Promise.all([
     deps.getWorkflowExecutionStatus(workflowExecutionId),
@@ -1053,7 +1102,10 @@ async function reconcileStatus(
       publishedMerge?.deliveryGatePassed === true &&
       current.state === "running"
     ) {
-      return markDelivered(deps, specExecutionId, publishedMerge.mergeHash);
+      return withLane(
+        await markDelivered(deps, specExecutionId, publishedMerge.mergeHash),
+        workflowStatus,
+      );
     }
     const abandoned = await abandonExecution(deps, {
       executionId: specExecutionId,
@@ -1063,16 +1115,16 @@ async function reconcileStatus(
           : "The linked graph workflow execution no longer exists.",
       actor: { kind: "system" },
     });
-    if (abandoned.ok) return abandoned;
+    if (abandoned.ok) return withLane(abandoned, workflowStatus);
     // A concurrent transition beat the abandon; the fresh row is the truth.
     const fresh = deps.deliveryRepo.findExecutionById(specExecutionId);
     return fresh === null
       ? lifecycleNotFound(specExecutionId)
-      : { ok: true, value: fresh };
+      : { ok: true, value: { execution: fresh, workflowStatus } };
   }
   if (
     current.state === "definition_review" &&
-    ((workflowStatus !== null && workflowStatus !== "pending") ||
+    (workflowStatus !== "pending" ||
       publishedMerge?.deliveryGatePassed === true)
   ) {
     const running = await markRunning(deps, workflowExecutionId);
@@ -1091,9 +1143,12 @@ async function reconcileStatus(
     });
   }
   if (publishedMerge?.deliveryGatePassed === true) {
-    return markDelivered(deps, specExecutionId, publishedMerge.mergeHash);
+    return withLane(
+      await markDelivered(deps, specExecutionId, publishedMerge.mergeHash),
+      workflowStatus,
+    );
   }
-  return { ok: true, value: current };
+  return { ok: true, value: { execution: current, workflowStatus } };
 }
 
 async function abandonExecution(
@@ -1362,6 +1417,22 @@ async function startWithinQueue(
   if (snapshot === null || snapshot.revision.specId !== spec.id) {
     return refusedNotFound("The target revision does not belong to the spec.");
   }
+  if (
+    input.sessionName !== null &&
+    !(await deps.sessionExists(input.sessionName))
+  ) {
+    return {
+      ok: false,
+      refusal: {
+        code: "not_found",
+        unmetConditions: [
+          `Session ${JSON.stringify(input.sessionName)} does not exist in this project.`,
+        ],
+        instruction:
+          "Create or select a session first, then rerun spec start from it — the execution pins the session it will launch and merge through, and cctl binds the one CC_SESSION names.",
+      },
+    };
+  }
 
   const plan = scopePlanFromRevision(spec.slug, snapshot);
   const preflight = decideStartExecution({
@@ -1510,7 +1581,12 @@ async function startWithinQueue(
         selectedTaskCount: input.scope.selectedTaskIds.length,
         selectedCriterionCount: input.scope.selectedCriterionIds.length,
       });
-      return { ok: true, execution, definition };
+      return {
+        ok: true,
+        execution,
+        definition,
+        revisionNumber: snapshot.revision.number,
+      };
     },
   );
   publishPrepared(deps, prepared);

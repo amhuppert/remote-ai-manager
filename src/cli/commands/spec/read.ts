@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import { createLogger } from "@/lib/logging";
 import {
+  explainInvalidElementHandle,
   formatElementHandle,
+  isWellFormedElementHandle,
   parseElementHandle,
   specSlugSchema,
 } from "@/lib/specs/handles";
@@ -14,10 +16,16 @@ import {
   specDetailViewSchema,
   specElementGetResponseSchema,
   specInventoryViewSchema,
+  specProjectSearchViewSchema,
   specSearchViewSchema,
   specStatusViewSchema,
   specSummaryViewSchema,
   type CanonicalSpecBundle,
+  type RemainingAuthoringSequence,
+  type SpecGatePriorAdmission,
+  type SpecProjectSearchView,
+  type SpecSearchHit,
+  type SpecStatusExecution,
   type SpecStatusView,
 } from "@/lib/specs/view-schemas";
 import { flagNamesFor } from "../../help-registry";
@@ -45,6 +53,23 @@ const specShowResponseSchema = z.union([
   specDetailViewSchema,
   specSummaryViewSchema,
 ]);
+
+/**
+ * The execution states `projectSpecPhase` collapses into `phase: executing`.
+ * Reporting them individually is what lets a reader tell a parked definition
+ * review from a running lane.
+ */
+type ActiveExecution = SpecStatusExecution & {
+  state: "definition_review" | "running";
+};
+
+function isActiveExecution(
+  execution: SpecStatusExecution,
+): execution is ActiveExecution {
+  return (
+    execution.state === "definition_review" || execution.state === "running"
+  );
+}
 
 type ReadResult<T> = { ok: true; value: T } | { ok: false; result: CliResult };
 
@@ -123,19 +148,218 @@ async function requestTyped<T>(
   return { ok: true, value: parsed.data };
 }
 
-function statusText(status: SpecStatusView): string {
+/**
+ * `pending` is evaluated against the current revision (or the selected run),
+ * so say which revision it is pending on — otherwise a reader who also sees an
+ * earlier admission cannot tell the two apart.
+ */
+function gateStateText(
+  state: SpecStatusView["gates"][number]["state"],
+): string {
+  return state === "pending" ? "pending on current revision" : state;
+}
+
+/**
+ * An earlier revision's admission, rendered as its own history line. Nothing
+ * here establishes that the governed content is unchanged, so it must never be
+ * folded into the state position or worded as still-satisfied. `basis` stays
+ * visible so a policy admission is not read as a human approval.
+ */
+function priorAdmissionText(admission: SpecGatePriorAdmission): string {
+  const run =
+    admission.executionId === null ? "" : ` for run ${admission.executionId}`;
+  const actor = admission.actor === null ? "" : ` by ${admission.actor.kind}`;
+  return `history: admitted on rev ${admission.revisionNumber}${run}${actor} (basis ${admission.basis})`;
+}
+
+type ExecutionLaneState =
+  | "running"
+  | "merge_pending"
+  | "halted"
+  | "awaiting_definition_approval"
+  | "not_launched";
+
+interface ExecutionProgress {
+  readonly laneState: ExecutionLaneState;
+  readonly actsNext: "human" | "agent" | null;
+  readonly detail: string;
+}
+
+/**
+ * The one owner of what a run's position means, so the text and `--json`
+ * renderings cannot disagree. The spec-execution state decides: a run in
+ * `definition_review` is parked whether or not a workflow execution is linked,
+ * because linking is exactly what happens when the compiled definition parks
+ * awaiting a human under a Gate execution_start dial.
+ */
+function describeExecution(execution: ActiveExecution): ExecutionProgress {
+  const lane = execution.workflowExecutionId;
+  if (execution.state === "running") {
+    // The spec execution stays `running` until the session's delivering
+    // merge, so the lane's own status is what separates "lanes are working"
+    // from "everything finished; only the merge remains" and "halted".
+    if (lane !== null && execution.workflowStatus === "completed") {
+      return {
+        laneState: "merge_pending",
+        actsNext: null,
+        detail: `workflow lane ${lane} completed; delivery lands when the session's delivering merge publishes`,
+      };
+    }
+    if (lane !== null && execution.workflowStatus === "halted") {
+      return {
+        laneState: "halted",
+        actsNext: null,
+        detail: `workflow lane ${lane} halted; resolve the halt from the workflow surface, then resume it`,
+      };
+    }
+    return {
+      laneState: "running",
+      actsNext: null,
+      detail:
+        lane === null ? "no workflow lane recorded" : `workflow lane ${lane}`,
+    };
+  }
+  if (lane === null) {
+    return {
+      laneState: "not_launched",
+      actsNext: "agent",
+      detail: `no workflow lane launched (definition ${execution.workflowDefinitionId}); next: cctl workflow start ${execution.workflowDefinitionId}`,
+    };
+  }
+  return {
+    laneState: "awaiting_definition_approval",
+    actsNext: "human",
+    detail: `parked awaiting human approval of the compiled definition (workflow lane ${lane} is not running); next: a human approves it in Spec Studio`,
+  };
+}
+
+const LANE_STATE_CLAUSES: ReadonlyArray<{
+  laneState: ExecutionLaneState;
+  clause: (count: number) => string;
+}> = [
+  {
+    laneState: "running",
+    clause: (count) =>
+      `${count} workflow lane${count === 1 ? "" : "s"} running`,
+  },
+  {
+    laneState: "merge_pending",
+    clause: (count) =>
+      `${count} workflow lane${count === 1 ? "" : "s"} completed awaiting the delivering merge`,
+  },
+  {
+    laneState: "halted",
+    clause: (count) =>
+      `${count} workflow lane${count === 1 ? "" : "s"} halted awaiting attention`,
+  },
+  {
+    laneState: "awaiting_definition_approval",
+    clause: (count) =>
+      `${count} execution${count === 1 ? "" : "s"} parked awaiting human approval of the compiled definition`,
+  },
+  {
+    laneState: "not_launched",
+    clause: (count) =>
+      `${count} execution${count === 1 ? "" : "s"} parked with no workflow lane launched`,
+  },
+];
+
+/**
+ * `phase: executing` covers both a run parked at definition review and a live
+ * lane. Unqualified it reads as "work is running", which is the wrong
+ * conclusion for every parked execution.
+ */
+function phaseQualifier(executions: readonly ActiveExecution[]): string {
+  const laneStates = executions.map(
+    (execution) => describeExecution(execution).laneState,
+  );
+  const clauses = LANE_STATE_CLAUSES.flatMap(({ laneState, clause }) => {
+    const count = laneStates.filter(
+      (candidate) => candidate === laneState,
+    ).length;
+    return count === 0 ? [] : [clause(count)];
+  });
+  return clauses.length === 0 ? "" : ` (${clauses.join(", ")})`;
+}
+
+function executionLine(execution: ActiveExecution): string {
+  return `  ${execution.id}: ${execution.state} — ${describeExecution(execution).detail}`;
+}
+
+/**
+ * The exact command that concludes a stage. `advance` records the policy
+ * admission and moves this draft on; `propose` ends the draft at that stage,
+ * and the stage after it is authored in the draft an amendment opens.
+ */
+function concludingCommand(
+  slug: string,
+  transition: RemainingAuthoringSequence["nextTransition"],
+): string {
+  return transition.action === "advance"
+    ? `cctl spec advance ${slug} --from ${transition.stage}`
+    : `cctl spec propose ${slug}`;
+}
+
+/**
+ * How many stages the open draft's spec still walks, and what concludes each
+ * (R25.5). Without it a draft pinned by a policy change reads as if the new
+ * preset's shorter sequence applied to it, which is the defect this answers.
+ */
+function authoringSequenceLines(
+  slug: string,
+  sequence: RemainingAuthoringSequence | null,
+): string[] {
+  if (sequence === null) {
+    return [
+      "remaining authoring stages: none — the current revision is not an open draft",
+    ];
+  }
+  const [current, following] = sequence.stages;
+  const transition = sequence.nextTransition;
+  return [
+    `remaining authoring stages (draft revision ${sequence.revisionNumber} pinned at ${sequence.pinnedStage}):`,
+    ...sequence.stages.map(
+      (stage) =>
+        `  ${stage.stage}: dial ${stage.dial} — concluded by ${stage.concludedBy}${
+          stage.requiresHumanSignOff ? ", human sign-off required" : ""
+        }`,
+    ),
+    `  next: ${concludingCommand(slug, transition)}${
+      transition.requiresHumanSignOff ? " — human sign-off required" : ""
+    }; gates consulted: ${transition.consultedGates
+      .map((consulted) => `${consulted.gate} (${consulted.dial})`)
+      .join(", ")}`,
+    ...(current?.concludedBy === "propose" && following !== undefined
+      ? [
+          `  this draft ends at ${current.stage}; once its gate is approved, cctl spec amend ${slug} opens the draft for ${following.stage}`,
+        ]
+      : []),
+  ];
+}
+
+function statusText(
+  status: SpecStatusView,
+  executions: readonly ActiveExecution[],
+): string {
   const lines = [
-    `${status.slug}  phase: ${status.phase.primary}`,
+    `${status.slug}  phase: ${status.phase.primary}${phaseQualifier(executions)}`,
     ...(status.phase.authoringStage === undefined
       ? []
       : [
           `authoring stage: ${status.phase.authoringStage} (concluding gate: ${status.phase.authoringStage})`,
         ]),
+    ...authoringSequenceLines(status.slug, status.authoringSequence),
     `coverage: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} (${status.coverage.percentage}%)`,
+    ...(executions.length === 0
+      ? []
+      : ["executions:", ...executions.map(executionLine)]),
     "gates:",
-    ...status.gates.map(
-      (gate) => `  ${gate.gate}: ${gate.state} (${gate.dial})`,
-    ),
+    ...status.gates.flatMap((gate) => [
+      `  ${gate.gate}: ${gateStateText(gate.state)} (${gate.dial})`,
+      ...gate.priorAdmissions.map(
+        (admission) => `    ${priorAdmissionText(admission)}`,
+      ),
+    ]),
     "pending approvals:",
     ...(status.pendingApprovals.length === 0
       ? ["  none"]
@@ -403,21 +627,41 @@ export async function runSpecStatus(
     json,
   );
   if (!response.ok) return response.result;
+  const executions = response.value.executions.filter(isActiveExecution);
   logger.debug("cli.spec.read_complete", {
     command: "status",
     slug: slug.value,
     pendingApprovalCount: response.value.pendingApprovals.length,
     openQuestionCount: response.value.openQuestions.length,
+    activeExecutionCount: executions.length,
   });
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, statusText(response.value), {
+    stdout: render(json, statusText(response.value, executions), {
       ok: true,
       status: response.value,
+      executions: executions.map((execution) => {
+        const progress = describeExecution(execution);
+        return {
+          id: execution.id,
+          state: execution.state,
+          workflowDefinitionId: execution.workflowDefinitionId,
+          workflowExecutionId: execution.workflowExecutionId,
+          workflowStatus: execution.workflowStatus,
+          laneState: progress.laneState,
+          actsNext: progress.actsNext,
+        };
+      }),
     }),
     stderr: "",
   };
 }
+
+/**
+ * Stand-in slug used only to test handle grammar, never to resolve: it lets an
+ * ungrammatical address be told apart from one that is merely unqualified.
+ */
+const GRAMMAR_PROBE_SLUG = "spec";
 
 function parseGetTarget(
   rest: string[],
@@ -432,24 +676,43 @@ function parseGetTarget(
       ),
     };
   }
-  try {
-    const parsed =
-      rest.length === 1
-        ? parseElementHandle(rest[0] ?? "")
-        : parseElementHandle(rest[1] ?? "", rest[0]);
-    return {
-      ok: true,
-      value: {
-        slug: parsed.slug,
-        handle: formatElementHandle(parsed, "bare"),
-      },
-    };
-  } catch {
+  const raw = (rest.length === 1 ? rest[0] : rest[1]) ?? "";
+  const contextSlug = rest.length === 1 ? undefined : rest[0];
+  // The grammar probe below deliberately ignores this slug, so it would other-
+  // wise reach parseElementHandle unchecked and throw instead of refusing.
+  if (contextSlug !== undefined) {
+    const slug = validateSlug(contextSlug, "get", json);
+    if (!slug.ok) return slug;
+  }
+  // Probe the grammar against a stand-in slug so an ungrammatical address is
+  // refused on its own terms; a bare handle is grammatical and only missing
+  // the slug this command resolves through, which the next branch names.
+  if (!isWellFormedElementHandle(raw, GRAMMAR_PROBE_SLUG)) {
     return {
       ok: false,
-      result: usageFailure("spec get: invalid spec element handle", json),
+      result: usageFailure(
+        `spec get: ${explainInvalidElementHandle(raw)}`,
+        json,
+      ),
     };
   }
+  if (contextSlug === undefined && !raw.includes("/")) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `spec get: ${JSON.stringify(raw)} is missing its spec slug; this command takes <slug>/${raw} or <slug> ${raw}`,
+        json,
+      ),
+    };
+  }
+  const parsed = parseElementHandle(raw, contextSlug);
+  return {
+    ok: true,
+    value: {
+      slug: parsed.slug,
+      handle: formatElementHandle(parsed, "bare"),
+    },
+  };
 }
 
 export async function runSpecGet(
@@ -494,6 +757,79 @@ export async function runSpecGet(
   };
 }
 
+const SEARCH_SHAPES =
+  "cctl spec search <slug> <query> searches one spec; cctl spec search --all <query> searches every spec in the project";
+
+/**
+ * A project-wide hit is worth reporting on its slug or name alone, so the
+ * summary distinguishes "this spec is named like your query" from "this spec
+ * says it" rather than collapsing both into a count.
+ */
+function projectHitSummary(hit: SpecSearchHit): string {
+  const elements = `${hit.matchCount} element match${hit.matchCount === 1 ? "" : "es"}`;
+  return hit.matchedName ? `name or slug match, ${elements}` : elements;
+}
+
+function projectSearchText(view: SpecProjectSearchView): string {
+  if (view.results.length === 0) return "no matches\n";
+  const lines = view.results.flatMap((hit) => [
+    `${hit.slug}\t${hit.phase.primary}\t${hit.preset}\t${projectHitSummary(hit)}\t${hit.name}`,
+    ...hit.matches.map(
+      (match) => `  ${match.handle}\t${match.kind}\t${match.text}`,
+    ),
+  ]);
+  return `${lines.join("\n")}\n`;
+}
+
+async function runSpecProjectSearch(
+  rest: string[],
+  flags: GlobalFlags,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  if (rest.length !== 1) {
+    return usageFailure(
+      `spec search --all takes only <query> — ${SEARCH_SHAPES}`,
+      json,
+    );
+  }
+  const query = rest[0]?.trim() ?? "";
+  if (query.length === 0) {
+    return usageFailure("spec search requires a non-empty <query>", json);
+  }
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const params = new URLSearchParams({ q: query });
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    // Project-scoped reads sit under `-` rather than beside [slug]: a static
+    // sibling wins over the dynamic segment, so a bare /search would make a
+    // spec slugged "search" unreachable. `-` is not a legal slug.
+    `/api/specs/${encodePathSegment(resolved.context.project)}/-/search?${params.toString()}`,
+    specProjectSearchViewSchema,
+    "search",
+    json,
+  );
+  if (!response.ok) return response.result;
+  logger.debug("cli.spec.read_complete", {
+    command: "search",
+    scope: "project",
+    queryLength: query.length,
+    resultCount: response.value.results.length,
+  });
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, projectSearchText(response.value), {
+      ok: true,
+      scope: "project",
+      search: response.value,
+    }),
+    stderr: "",
+  };
+}
+
 export async function runSpecSearch(
   rest: string[],
   flags: GlobalFlags,
@@ -504,8 +840,15 @@ export async function runSpecSearch(
   const json = flags.json;
   const denied = checkFlags(values, flagNamesFor("spec search"), json);
   if (denied) return denied;
-  const extra = noExtraPositionals(rest, 2, "search", json);
-  if (extra) return extra;
+  if (values["all"] === "true") {
+    return runSpecProjectSearch(rest, flags, env, host);
+  }
+  if (rest.length !== 2) {
+    return usageFailure(
+      `spec search takes <slug> <query> — ${SEARCH_SHAPES}`,
+      json,
+    );
+  }
   const slug = validateSlug(rest[0], "search", json);
   if (!slug.ok) return slug.result;
   const query = rest[1]?.trim() ?? "";
@@ -538,7 +881,11 @@ export async function runSpecSearch(
           .join("\n")}\n`;
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, human, { ok: true, search: response.value }),
+    stdout: render(json, human, {
+      ok: true,
+      scope: "spec",
+      search: response.value,
+    }),
     stderr: "",
   };
 }

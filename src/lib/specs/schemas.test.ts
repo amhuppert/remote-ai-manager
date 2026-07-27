@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  MACHINE_VALIDATION_EVIDENCE_KINDS,
   actorProvenanceSchema,
   evidenceEvaluatedStateSchema,
   evidenceKindSchema,
+  isMachineValidationEvidenceKind,
   refusalCodeSchema,
   refusalSchema,
   specElementPayloadSchema,
@@ -11,6 +13,7 @@ import {
   specGatePolicySchema,
   specRevisionRowSchema,
   specRevisionSchema,
+  validationStrategySchema,
 } from "./schemas";
 
 const validPayloads = {
@@ -164,18 +167,49 @@ describe("spec gate policy schema", () => {
 });
 
 describe("shared spec contracts", () => {
-  it.each([
-    "diff",
-    "commit",
-    "test_run",
-    "validator_verdict",
-    "screenshot",
-    "human_signoff",
-  ])("accepts the %s evidence kind", (kind) => {
-    expect(evidenceKindSchema.safeParse(kind).success).toBe(true);
+  it("accepts exactly the machine-producible evidence kinds", () => {
+    expect(evidenceKindSchema.options).toEqual([
+      "commit",
+      "test_run",
+      "validator_verdict",
+    ]);
   });
 
-  it("parses the evaluated code and surface state", () => {
+  it.each(["diff", "screenshot", "human_signoff"])(
+    "rejects the dropped %s evidence kind",
+    (kind) => {
+      expect(evidenceKindSchema.safeParse(kind).success).toBe(false);
+    },
+  );
+
+  it("requires at least one machine-provable kind in a validation strategy", () => {
+    for (const kinds of [[], ["commit"]]) {
+      const parsed = validationStrategySchema.safeParse({ kinds });
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) {
+        expect(parsed.error.issues[0]?.message).toContain(
+          "machine-provable evidence kind",
+        );
+      }
+    }
+    expect(
+      validationStrategySchema.safeParse({
+        kinds: ["commit", "validator_verdict"],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("splits kinds into machine-validation kinds and commit", () => {
+    expect(MACHINE_VALIDATION_EVIDENCE_KINDS).toEqual([
+      "test_run",
+      "validator_verdict",
+    ]);
+    expect(isMachineValidationEvidenceKind("test_run")).toBe(true);
+    expect(isMachineValidationEvidenceKind("validator_verdict")).toBe(true);
+    expect(isMachineValidationEvidenceKind("commit")).toBe(false);
+  });
+
+  it("keeps the retained-historical surfaceId readable in evaluated state", () => {
     const state = {
       commitSha: "abc123",
       relevantPaths: ["src/lib/specs/schemas.ts"],

@@ -320,13 +320,13 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     // the execution panel renders the admitted state instead of a stale
     // "blocked" prompt.
     const detailAfterGrant = await postJson<{
-      gateAdmissions: Array<{ gate: string; execution_id: string | null }>;
+      gateAdmissions: Array<{ gate: string; executionId: string | null }>;
     }>(world.getRoute("getSpecGET", { slug: SLUG }));
     expect(detailAfterGrant.gateAdmissions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           gate: "delivery",
-          execution_id: started.specExecutionId,
+          executionId: started.specExecutionId,
         }),
       ]),
     );
@@ -585,8 +585,9 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
         "agent",
       ),
     );
+    // The start receipt is the domain view, not the persistence row.
     expect(started.execution).toMatchObject({
-      revision_id: created.draft.id,
+      revisionId: created.draft.id,
       state: "definition_review",
     });
     expect(started.definition.definition.approvalRequired).toBe(false);

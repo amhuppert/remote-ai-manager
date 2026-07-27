@@ -321,7 +321,31 @@ function buildMaximalEvent(): GraphWorkflowExecutionEvent {
       activeJoinIds: ["join-1"],
       haltReason: { type: "aborted" },
       pendingHaltReason: { type: "aborted" },
-      secondaryHaltReasons: [{ type: "aborted" }],
+      secondaryHaltReasons: [
+        { type: "aborted" },
+        // Maximal delivery-gate halt: the optional approval presentation
+        // (refusalCode + strict spec deep-link block) is persisted through
+        // this events table too and must survive its serialization boundary.
+        {
+          type: "delivery_gate_failed",
+          unmet: [
+            {
+              criterionId: "spec-execution-1:gate:1",
+              criterionHandle: "audit-log",
+              outcome: "gate_blocked",
+              reason: "The delivery gate requires human approval.",
+            },
+          ],
+          instruction:
+            "Approve delivery in Spec Studio, then resume the merge.",
+          refusalCode: "approval_required",
+          spec: {
+            specSlug: "audit-log",
+            specName: "Audit Log",
+            projectName: "command-center",
+          },
+        },
+      ],
     },
     preReset: true,
   });

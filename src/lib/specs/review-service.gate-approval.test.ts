@@ -60,6 +60,7 @@ describe("ReviewService.grantGateApproval (delivery gate)", () => {
           return { delivered: true };
         },
       }),
+      attention: eventsRepo,
       newId: (prefix) => `${prefix}-${++idSequence}`,
       now: () => NOW,
     });
@@ -142,6 +143,7 @@ describe("ReviewService.grantGateApproval (delivery gate)", () => {
         appendInTransaction: eventsRepo.appendInTransaction,
         publish: () => ({ delivered: true }),
       }),
+      attention: eventsRepo,
       notifier: { approvalRequested: vi.fn(), approvalGranted },
       newId: (prefix) => `${prefix}-idem-${++idemSequence}`,
       now: () => NOW,

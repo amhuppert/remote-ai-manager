@@ -7,86 +7,151 @@ argument-hint: <what-to-specify>
 # Native Spec Authoring
 
 Author a native Command Center spec for `$ARGUMENTS` in this conversation.
-Conversations author; Spec Studio reviews, approves, and browses. Do not write
-or update `.kiro/specs/`, and do not treat a conversation document as the
-authoritative spec object.
 
-## Elicitation
+<!-- BEGIN SHARED SPEC GUIDANCE -->
 
-Use the existing `cctl ask` machinery when missing product intent would
-materially change the spec. Put each related question batch in a JSON payload
-under `.cc/temp/`, then submit it with `cctl ask --file <payload>`. Keep every
-batch small and explicitly skippable, keep questions and answers visible in the
-conversation, and prune resolved or irrelevant questions and checklist items
-from later batches. When `cctl ask` accepts a batch, end the turn as required by
-the ask protocol and continue authoring after the answers arrive.
+## Authoring surface
 
-Elicitation is advisory: the server never blocks on elicitation. If a batch is
-skipped or no answer arrives, proceed with the safest reasonable judgment and
-record any meaningful assumption through `cctl spec assume` so it stays visible
-for human disposition.
+Conversations author; Spec Studio reviews, approves, and browses.
+Do not write or update `.kiro/specs/`, and do not treat a conversation
+document as the authoritative spec object.
+
+Read `cctl spec --help` and the relevant leaf help before composing
+payloads: every verb documents its own flags, refusals, and next step.
+
+## Find an existing spec before creating one
+
+`cctl spec list` returns this project's durable inventory with each
+spec's phase and approval summary. `cctl spec search --all <query>`
+matches requirement and decision text across every spec in the project
+and reports each hit's slug, phase and preset. Use either before creating
+anything so you do not open a competing object for work that already has
+a spec; search answers it directly when you have wording to match on.
+
+`cctl spec search <slug> <query>` is the single-spec form: with a slug
+positional it matches requirement and decision text within that one spec
+only.
 
 ## Durable first save
 
-1. Read `cctl spec --help` and the relevant leaf help before composing payloads.
-2. Use `cctl spec list` and `cctl spec search` to avoid creating a competing
-   object for work that already has a spec.
-3. Choose a stable kebab-case slug, a clear name, and an intentional gate
-   preset. When the user has not selected a preset, prefer `contract-bearing`.
-4. No durable spec exists until the first successful draft save. When the
-   first element is ready, run `cctl spec create --slug <slug> --name <name>
-   --preset <preset> --file <element.json>` — one atomic call that creates the
-   spec, its draft revision, and the first element together. Author payload
-   files under `.cc/temp/`. Partial drafts are valid; do not wait for every
-   section, and do not create the spec before the first element is ready. If
-   the slug is taken, the server refuses with `slug_taken` — follow its
-   instruction to continue the existing draft or choose a different slug.
-5. Confirm the save through `cctl spec list`, `cctl spec show <slug>`, or
-   `cctl spec get <slug>/<handle>`. The spec must be discoverable immediately
-   from the CLI and Spec Studio while it is incomplete.
+Choose a stable kebab-case slug, a clear name, and an intentional gate
+preset; prefer `contract-bearing` when the user has not chosen one.
 
-Continue authoring with element-granular `cctl spec draft` writes, always using
-the last observed `--base-version`. Capture unresolved matters with the
-`question`, `answer`, and `assume` verbs — `cctl spec question` opens a durable
-Q record that stays visible in `spec status` until answered.
+No durable spec exists until the first successful draft save. When the
+first element is ready, run `cctl spec create --slug <slug> --name <name>
+--preset <preset> --file <first-element.json>` — one atomic call that
+creates the spec, its draft revision, and the first element together,
+visible immediately through `cctl spec list` and Spec Studio. Do not
+create the spec before the first element is ready.
+
+Partial drafts are valid. Continue with element-granular `cctl spec draft`
+writes carrying the last observed `--base-version`; a stale write returns
+the winning content and version. If create refuses with `slug_taken`,
+follow the returned instruction: continue the existing draft or choose a
+different slug.
 
 ## Staged authoring
 
-Treat the stage reported by `cctl spec status` as the server-enforced authoring
-boundary. Under gated presets, author and review one foundation at a time:
+`cctl spec status` reports the draft's authoring stage, and that stage is
+the server-enforced write boundary: requirements admits intent and context
+prose, requirements, and acceptance criteria; design adds decisions and
+design narrative; plan adds tasks. A `stage_blocked` refusal means the
+element belongs to a later stage — follow its instruction instead of
+authoring ahead.
 
-1. Requirements stage: write intent/context sections, requirements, and
-   acceptance criteria. Propose the current stage, route the review when
-   needed, and end the turn for human review. Never pre-author decisions or
-   tasks while waiting.
-2. Design stage: after the requirements-stage revision is approved, open the
-   next draft by writing the first design element. Write decisions and
-   `design_narrative` sections, correcting earlier content when discovery
-   requires it. Propose and wait for design review.
-3. Plan stage: after design approval, author the execution plan, then propose
-   it for plan review. Only an approved plan-stage revision can execute.
+Conclude a stage with `cctl spec propose <slug>`, which freezes the
+editable revision for review of that stage. When the stage's concluding
+dial is Notify or Off, cross the boundary explicitly with `cctl spec
+advance <slug> --from <requirements|design>`; the expected stage keeps a
+stale command from advancing a replacement revision. When the dial is
+Gate, only human sign-off advances the draft. A pure combined-approval
+policy opens directly at plan stage and preserves single-pass authoring.
 
-When the concluding dial is Notify or Off, cross the boundary explicitly with
-`cctl spec advance <slug> --from <stage>`; the expected stage prevents a stale
-command from advancing a replacement revision. When the dial is Gate, advance
-only through human sign-off. A pure combined-approval policy opens directly at
-plan stage and preserves single-pass authoring. Follow a `stage_blocked`
-refusal's instruction instead of changing downstream content early.
+Before saving tasks, read `cctl spec draft --help` for the plan-stage
+graph discipline the compiler and reviewers expect.
+
+## Continuing an approved spec
+
+An approved gate ends that revision, not the spec. When the gate is
+approved and no draft is open, continue the spec by opening an amendment:
+`cctl spec amend <slug>` opens the next draft from the approved revision,
+and authoring resumes through `cctl spec draft`.
+
+An amendment opens at the stage after its approved base, so an amendment
+on an approved plan-stage revision opens at plan stage and admits every
+element kind.
+
+## Execution start is a handoff
+
+Only an approved plan-stage revision can execute, and `cctl spec start
+<slug> --file <scope.json>` does not launch a lane. It compiles the
+approved revision and the selected scope into a graph workflow definition
+and parks the spec execution in `definition_review` with no workflow
+execution attached.
+
+The run begins when that definition is started: `cctl workflow start
+<definitionId>`, using the `definition.id` the start response returns. The
+spec execution leaves `definition_review` once the linked workflow reports
+a live status.
+
+When the `execution_start` dial is Gate, the compiled definition carries
+an approval requirement and the run parks at a human approval boundary
+that opens a durable Needs You request. That boundary is intentional:
+report it and hand off. There is no agent route around it.
+
+## Human-only acts
+
+Approvals, sign-off, waivers, assumption disposition, rename, and gate
+policy changes are human-only Spec Studio acts. No `cctl spec` verb
+changes gate policy, and an agent transport that reaches a human-only
+action receives a typed `human_act_required` refusal telling it to
+perform the action from the authenticated browser session.
+
+Never approve, sign off, dispose assumptions, or change gate policy on
+the user's behalf. Ask the operator to act in Spec Studio and continue
+with whatever remains authorable.
+
+Proof verdicts are recorded only by the delivery gate from machine
+evidence (test runs, validator verdicts, commits). No one records them
+by hand. When a criterion cannot be machine-proven, the human remedy is
+a waiver: Spec Studio → Controls → Merge gate → Waive…
+
+## Elicitation
+
+Use `cctl ask` only when missing product intent would materially change
+the spec. Question batches stay small, skippable, visible in the
+conversation, and prunable as they resolve. The server never blocks on
+elicitation: if a batch is skipped or no answer arrives, proceed with the
+safest reasonable judgment.
+
+Open questions that belong to the spec itself are recorded durably with
+`cctl spec question` — they become addressable (Q1, Q2, …) and reviewable
+in Spec Studio, where the human answers them (`cctl spec answer` is the
+human half; agent transports receive a typed refusal). Record meaningful
+assumptions through `cctl spec assume` when proceeding without an answer.
+
+## Ask payloads
+
+Put each related question batch in a JSON payload under `.cc/temp/`, then
+submit it with `cctl ask --file <payload>`. When `cctl ask` accepts a
+batch, end the turn as required by the ask protocol and continue authoring
+after the answers arrive. Author spec element payload files under
+`.cc/temp/` as well.
 
 ## Plan-stage execution graph
 
 Apply the graph-workflow-planning discipline before saving tasks:
 
-- Size each task for one agent lane. Split work that one agent cannot complete
-  coherently; compilation can group tasks but never splits one.
+- Size each task for one agent lane. Split work that one agent cannot
+  complete coherently; compilation can group tasks but never splits one.
 - Record `dependsOnTaskElementIds` as ordering truth. Two tasks without a
   dependency path are an explicit claim that they may execute in parallel.
-- Use `laneGroup` only when several small tasks intentionally share one lane.
-  Intra-group dependencies determine their order.
+- Use `laneGroup` only when several small tasks intentionally share one
+  lane. Intra-group dependencies determine their order.
 - Declare normalized repo-relative POSIX `touchedPaths` so conflicting
   parallel surfaces are reviewable, and cover every applicable criterion.
-- Review `cctl spec status` for the resulting dependencies, grouping, touched
-  surfaces, criterion coverage, and graph-shape findings before proposing.
+- Review `cctl spec status` for the resulting dependencies, grouping,
+  touched surfaces, criterion coverage, and graph-shape findings before
+  proposing.
 
-Never approve, sign off, change gate policy, or record proof verdicts on the
-user's behalf.
+<!-- END SHARED SPEC GUIDANCE -->

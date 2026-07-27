@@ -80,3 +80,51 @@ export const WithSecondaryFailures: Story = {
 export const ResumingInFlight: Story = {
   args: { primary: agentTurnFailed, isMutating: true, isResuming: true },
 };
+
+// A sign-off wait, not a failure: amber accent and the merge-gate link (F19).
+const deliveryApprovalRequired: GraphWorkflowHaltReason = {
+  type: "delivery_gate_failed",
+  unmet: [
+    {
+      criterionId: "execution-12:gate:1",
+      criterionHandle: "native-sdd",
+      outcome: "delivery_gate_failed",
+      reason: "The delivery gate requires a human delivery approval.",
+    },
+  ],
+  instruction:
+    "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+  refusalCode: "approval_required",
+  spec: {
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    projectName: "command-center",
+  },
+};
+
+const deliveryUnmetCriteria: GraphWorkflowHaltReason = {
+  type: "delivery_gate_failed",
+  unmet: [
+    {
+      criterionId: "criterion-1",
+      criterionHandle: "R1.1",
+      outcome: "proof_required",
+      reason: "No valid proof verdict exists for the pinned criterion.",
+    },
+  ],
+  instruction:
+    "Re-dispatch validation against the prepared candidate, resolve any remaining proof or waiver requirements, then retry delivery.",
+  spec: {
+    specSlug: "native-sdd",
+    specName: "Native SDD",
+    projectName: "command-center",
+  },
+};
+
+export const DeliveryApprovalRequired: Story = {
+  args: { primary: deliveryApprovalRequired },
+};
+
+export const DeliveryUnmetCriteria: Story = {
+  args: { primary: deliveryUnmetCriteria },
+};

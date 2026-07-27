@@ -1,13 +1,17 @@
+import { z } from "zod";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
-import type {
-  CriterionElementPayload,
-  DecisionElementPayload,
-  RequirementElementPayload,
-  SectionElementPayload,
-  SpecRevisionElement,
-  SpecRevisionSnapshot,
-  TaskElementPayload,
-  ValidationStrategy,
+import {
+  evidenceKindSchema,
+  isMachineValidationEvidenceKind,
+  type CriterionElementPayload,
+  type DecisionElementPayload,
+  type EvidenceKind,
+  type RequirementElementPayload,
+  type SectionElementPayload,
+  type SpecRevisionElement,
+  type SpecRevisionSnapshot,
+  type TaskElementPayload,
+  type ValidationStrategy,
 } from "./schemas";
 import {
   contractTaskGroups,
@@ -463,6 +467,80 @@ function compileCharter(
   };
 }
 
+/**
+ * Frozen copy of the pre-narrowing six-kind vocabulary. Compiled workflow
+ * definitions are persisted (config-dir definition records and the immutable
+ * `graph_workflow_executions.definition_json` pin), so strategy metadata
+ * written before the vocabulary narrowed can still carry dropped kinds. This
+ * lenient schema accepts those historical bytes so the read boundary can
+ * normalize them — the pinned bytes themselves are never rewritten.
+ */
+const frozenSixKindEvidenceKindSchema = z.enum([
+  "diff",
+  "commit",
+  "test_run",
+  "validator_verdict",
+  "screenshot",
+  "human_signoff",
+]);
+const frozenLenientStrategySchema = z
+  .object({
+    kinds: z.array(frozenSixKindEvidenceKindSchema),
+    note: z.string().optional(),
+  })
+  .strict();
+const compiledStrategyMetadataSchema = z.record(
+  z.string(),
+  frozenLenientStrategySchema,
+);
+
+/**
+ * The same pure rule migration 0009 applies to persisted strategies: strip
+ * dropped kinds, dedupe, and append `validator_verdict` when no machine kind
+ * remains, so every strategy a reader sees is machine-provable.
+ */
+function normalizeCompiledStrategy(
+  strategy: z.infer<typeof frozenLenientStrategySchema>,
+): ValidationStrategy {
+  const surviving = [
+    ...new Set(
+      strategy.kinds.filter(
+        (kind): kind is EvidenceKind =>
+          evidenceKindSchema.safeParse(kind).success,
+      ),
+    ),
+  ];
+  const kinds = surviving.some(isMachineValidationEvidenceKind)
+    ? surviving
+    : [...surviving, "validator_verdict" as const];
+  return {
+    kinds,
+    ...(strategy.note === undefined ? {} : { note: strategy.note }),
+  };
+}
+
+function readCompiledStrategyMetadata(
+  metadata: Record<string, string>,
+  taskId: string,
+): Record<string, ValidationStrategy> {
+  const raw = parseMetadataJson<unknown>(
+    metadata,
+    metadataKeys.validationStrategies,
+  );
+  const parsed = compiledStrategyMetadataSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `Compiled workflow task ${taskId} metadata ${metadataKeys.validationStrategies} does not parse as validation strategies: ${parsed.error.message}`,
+    );
+  }
+  return Object.fromEntries(
+    Object.entries(parsed.data).map(([criterionId, strategy]) => [
+      criterionId,
+      normalizeCompiledStrategy(strategy),
+    ]),
+  );
+}
+
 export function readCompiledOriginMap(
   definition: WorkflowSemanticDefinition,
 ): CompiledOriginMapEntry[] {
@@ -485,9 +563,7 @@ export function readCompiledOriginMap(
         metadata,
         metadataKeys.criterionHandles,
       ),
-      validationStrategies: parseMetadataJson<
-        Record<string, ValidationStrategy>
-      >(metadata, metadataKeys.validationStrategies),
+      validationStrategies: readCompiledStrategyMetadata(metadata, task.id),
       criterionBriefs: parseMetadataJson<Record<string, string>>(
         metadata,
         metadataKeys.criterionBriefs,

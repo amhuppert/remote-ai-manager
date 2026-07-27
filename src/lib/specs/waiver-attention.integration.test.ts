@@ -101,8 +101,7 @@ describe("waiver request/grant attention pipeline (runtime wiring)", () => {
       gitObjectExists: async () => false,
       workflowEventExists: async () => false,
       mergeValidationFactExists: async () => false,
-      contentObjectExists: async () => false,
-      humanActorExists: async () => false,
+
       isEvidenceFresh: async () => false,
       routeStrategyInadequacy: async () => undefined,
       // Mirrors the production route in service-factory: mint the attention

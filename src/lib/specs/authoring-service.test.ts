@@ -157,6 +157,59 @@ describe("AuthoringService create and draft writes", () => {
     ]);
   });
 
+  it("returns the handle assigned to the created and drafted elements", async () => {
+    const created = await createDraft();
+    expect(created.handle).toBe("R1");
+
+    const secondRequirement = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "requirement-2",
+      kind: "requirement",
+      parentElementId: null,
+      position: 1,
+      payload: requirement("Handles address elements."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    expect(secondRequirement.handle).toBe("R2");
+
+    const criterion = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "criterion-1",
+      kind: "criterion",
+      parentElementId: "requirement-2",
+      position: 2,
+      payload: {
+        kind: "criterion",
+        text: "The create response names the handle.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    expect(criterion.handle).toBe("R2.1");
+
+    const section = await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elementId: "section-intent",
+      kind: "section",
+      parentElementId: null,
+      position: 3,
+      payload: {
+        kind: "section",
+        role: "intent_problem",
+        title: "Intent",
+        body: "Why this spec.",
+      },
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    expect(section.handle).toBeNull();
+  });
+
   it("refuses an out-of-stage first element without creating a spec or intervention", async () => {
     await expect(
       service.createSpec({

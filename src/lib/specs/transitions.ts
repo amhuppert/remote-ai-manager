@@ -6,6 +6,7 @@ import {
 } from "./lint";
 import {
   COMBINED_APPROVAL_DIAL,
+  dialRequiresHumanApproval,
   isExploratoryShippingRefused,
   policyChangeRequiresHardConfirmation,
   resolveDial,
@@ -37,6 +38,14 @@ import {
 
 export type TransitionRefusal = Omit<Refusal, "findings"> & {
   findings?: LintFinding[];
+  /**
+   * Self-identifying discriminator for the one delivery-gate refusal a human
+   * approval clears. Set ONLY by the missing-delivery-approval branch of
+   * `evaluateDeliveryGate`; every other refusal (terminal state, exploratory
+   * shipping, invalid pin/scope, unmet criteria) leaves it unset so callers
+   * never auto-request an approval a human act cannot satisfy.
+   */
+  reason?: "approval_required";
 };
 
 export type TransitionDecision =
@@ -113,11 +122,18 @@ export interface WaiverContext {
   existingWaiver: boolean;
 }
 
+export interface OpenDraftSnapshot {
+  revisionNumber: number;
+  authoringStage: SpecAuthoringStage;
+}
+
 export interface PolicyChangeContext {
   actor: ActorProvenance;
   currentPolicy: SpecGatePolicy;
   proposedPolicy: SpecGatePolicy;
   hardConfirmed: boolean;
+  /** Absent when no draft is open; a proposed or approved revision is never one. */
+  openDraft?: OpenDraftSnapshot;
 }
 
 export interface DeliveryWaiverSnapshot {
@@ -171,13 +187,13 @@ export type AuthoringGate = Extract<
 >;
 export type ResolvedAuthoringDials = Record<AuthoringGate, ResolvedGateDial>;
 
-const authoringStages: readonly SpecAuthoringStage[] = [
+export const authoringStages: readonly SpecAuthoringStage[] = [
   "requirements",
   "design",
   "plan",
 ];
 
-function authoringStageIndex(stage: SpecAuthoringStage): number {
+export function authoringStageIndex(stage: SpecAuthoringStage): number {
   return authoringStages.indexOf(stage);
 }
 
@@ -326,10 +342,6 @@ function blockingFindings(
   );
 }
 
-function requiresHumanApproval(dial: ResolvedGateDial): boolean {
-  return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
-}
-
 function approvalFor(
   review: SignOffReviewSnapshot,
   subjectKind: ApprovalSnapshot["subjectKind"],
@@ -391,7 +403,7 @@ function approvalUnmetConditions(
     kind: "requirement" | "decision",
     label: "Requirement" | "Decision",
   ): void => {
-    if (!requiresHumanApproval(dial)) {
+    if (!dialRequiresHumanApproval(dial)) {
       return;
     }
 
@@ -424,7 +436,7 @@ function approvalUnmetConditions(
     requireElementApprovals(designDial, "decision", "Decision");
   }
 
-  if (authoringStage === "plan" && requiresHumanApproval(planDial)) {
+  if (authoringStage === "plan" && dialRequiresHumanApproval(planDial)) {
     const approval = approvalFor(review, "plan");
     const validForRevision =
       approval !== undefined &&
@@ -572,7 +584,7 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
     context.policy,
     context.authoringStage,
     context.review,
-  ).some(requiresHumanApproval);
+  ).some(dialRequiresHumanApproval);
   if (humanRequired && context.actor.kind !== "human") {
     return refused(
       "human_act_required",
@@ -674,7 +686,7 @@ export function claimTaskComplete(
     return refused(
       "lint_blocked",
       findings.map((finding) => finding.message),
-      "Attach resolvable evidence for every covered criterion and claim again.",
+      "Cite ingested evidence for every covered criterion and claim again.",
       findings,
     );
   }
@@ -742,7 +754,59 @@ export function changePolicy(context: PolicyChangeContext): TransitionDecision {
     );
   }
 
+  const draft = context.openDraft;
+  if (draft !== undefined) {
+    const undecided = undecidedAuthoringStages(
+      context.proposedPolicy,
+      draft.authoringStage,
+    );
+    if (
+      undecided.length > 0 &&
+      authoringStageIndex(draft.authoringStage) >
+        authoringStageIndex(
+          openDraftAuthoringStage({ policy: context.proposedPolicy }),
+        )
+    ) {
+      return refused(
+        "gate_blocked",
+        [
+          `Revision ${draft.revisionNumber} is open at the ${draft.authoringStage} stage and the proposed policy does not state what ${undecided.join(", ")} would conclude with.`,
+        ],
+        `Propose or abandon revision ${draft.revisionNumber} before changing the policy.`,
+      );
+    }
+  }
+
   return allowed();
+}
+
+/**
+ * R25.6's backstop: the remaining stages whose concluding transition the
+ * proposed policy does not decide. Every dial the policy schema can express is
+ * decided today, so this is empty for every expressible shape — the exhaustive
+ * switch exists so a new dial value fails to compile until its staging
+ * consequence is stated, rather than silently inheriting one.
+ */
+export function undecidedAuthoringStages(
+  policy: SpecGatePolicy,
+  pinnedStage: SpecAuthoringStage,
+): SpecAuthoringStage[] {
+  return authoringStages
+    .slice(authoringStageIndex(pinnedStage))
+    .filter((stage) => !stagingDecided(resolveDial(policy, stage)));
+}
+
+function stagingDecided(dial: ResolvedGateDial): boolean {
+  // Gate and combined conclude a stage with a human sign-off; Notify and Off
+  // conclude it with a recorded advance. A dial with no case here leaves the
+  // function without a return and fails to compile.
+  switch (dial) {
+    case "gate":
+    case COMBINED_APPROVAL_DIAL:
+    case "notify":
+    case "off":
+      return true;
+  }
 }
 
 function validWaiver(
@@ -806,11 +870,16 @@ export function evaluateDeliveryGate(
     resolveDial(context.policy, "delivery") === "gate" &&
     !context.deliveryApprovalGranted
   ) {
-    return refused(
-      "gate_blocked",
-      ["The delivery gate requires human approval."],
-      "Ask a human to approve delivery in Spec Studio.",
-    );
+    return {
+      ok: false,
+      refusal: {
+        code: "gate_blocked",
+        reason: "approval_required",
+        unmetConditions: ["The delivery gate requires human approval."],
+        instruction:
+          "Approve delivery in Spec Studio: open the spec's Controls view → Merge gate → Approve delivery for merge, then resume the merge.",
+      },
+    };
   }
 
   const criteriaById = new Map(

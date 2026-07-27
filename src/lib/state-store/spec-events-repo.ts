@@ -12,12 +12,33 @@ const { parseRow, readMany, readOne, timed } = createSpecRepoHelpers(
   "state-store.spec-events",
 );
 
+/**
+ * The logical identity of an approval request. Requests are not their own
+ * table: the durable `spec-attention-changed` event IS the record, and this
+ * tuple is what makes a repeat of the same ask the same request rather than a
+ * second Needs You entry.
+ *
+ * `executionId` is what a per-run gate adds to that identity. Successive runs
+ * pin the same approved revision, so without it a second run's ask reads as a
+ * repeat of the first and no human is ever told. Revision-scoped gates pass
+ * null and match the requests that carry none.
+ */
+export interface ApprovalRequestKey {
+  specId: string;
+  revisionId: string;
+  gate: string;
+  subject: string;
+  executionId: string | null;
+}
+
 export interface SpecEventsRepo {
   append(event: SpecEventInput): SpecEventRow;
   /** Leaves transaction ownership with the calling service mutation. */
   appendInTransaction(event: SpecEventInput): SpecEventRow;
   findEventById(id: number): SpecEventRow | null;
   findBySpecId(specId: string): SpecEventRow[];
+  /** The attention id already issued for this ask, or null. */
+  findApprovalRequest(key: ApprovalRequestKey): { attentionId: string } | null;
 }
 
 export function createSpecEventsRepo(db: Db): SpecEventsRepo {
@@ -36,6 +57,29 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
      WHERE spec_id = ?
      ORDER BY id ASC`,
   );
+  // Execution-scoped requests (non-null executionId) are identified by
+  // (spec, gate, subject, execution) alone: rows persisted before revision
+  // canonicalization may carry a non-pinned revisionId, and the run — not
+  // the revision — owns a per-run gate's identity.
+  const findApprovalRequestStmt = db.prepare(
+    `SELECT json_extract(payload_json, '$.attentionId') AS attention_id
+     FROM spec_events
+     WHERE spec_id = @spec_id
+       AND event_type = 'spec-attention-changed'
+       AND json_extract(payload_json, '$.kind') = 'approval-requested'
+       AND (
+         @execution_id IS NOT NULL
+         OR json_extract(payload_json, '$.revisionId') = @revision_id
+       )
+       AND json_extract(payload_json, '$.gate') = @gate
+       AND json_extract(payload_json, '$.subject') = @subject
+       AND json_extract(payload_json, '$.executionId') IS @execution_id
+     ORDER BY id ASC
+     LIMIT 1`,
+  );
+  const attentionIdRowSchema = z.object({
+    attention_id: z.string().min(1),
+  });
 
   function appendInTransaction(event: SpecEventInput): SpecEventRow {
     return timed("append", "spec_event", event.spec_id, () => {
@@ -74,6 +118,18 @@ export function createSpecEventsRepo(db: Db): SpecEventsRepo {
           findBySpecStmt.all(specId),
         ),
       );
+    },
+    findApprovalRequest(key) {
+      const raw: unknown = findApprovalRequestStmt.get({
+        spec_id: key.specId,
+        revision_id: key.revisionId,
+        gate: key.gate,
+        subject: key.subject,
+        execution_id: key.executionId,
+      });
+      if (raw === undefined) return null;
+      const parsed = attentionIdRowSchema.safeParse(raw);
+      return parsed.success ? { attentionId: parsed.data.attention_id } : null;
     },
   };
 }

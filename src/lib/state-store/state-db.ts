@@ -44,8 +44,15 @@ const DB_FILE_NAME = "command-center.db";
  * `0005-agent-session-ref-shape` rewrites every persisted ref to the canonical
  * `{backend, ref}` (dropping the legacy `sessionId`/`threadId` handle key) and
  * stamps `schema_migrations` version 1.
+ *
+ * Version 2 is the evidence-kind narrowing: migration
+ * `0009-narrow-evidence-kinds` rewrites persisted validation strategies to
+ * the machine-provable vocabulary and deletes dropped-kind evidence. The bump
+ * guards against old-build writes — an older build's wide enum and the legacy
+ * permissive `spec_evidence` CHECK would re-insert dropped-kind rows the new
+ * strict read path hard-fails on.
  */
-export const KNOWN_SCHEMA_VERSION = 1;
+export const KNOWN_SCHEMA_VERSION = 2;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -448,8 +455,7 @@ const SPEC_SCHEMA_DDL = `
     criterion_element_id  TEXT NOT NULL,
     revision_id           TEXT NOT NULL,
     kind                  TEXT NOT NULL CHECK (kind IN (
-      'diff', 'commit', 'test_run', 'validator_verdict', 'screenshot',
-      'human_signoff'
+      'commit', 'test_run', 'validator_verdict'
     )),
     ref_json              TEXT NOT NULL,
     evaluated_state_json  TEXT NOT NULL,
@@ -834,8 +840,7 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
     criterion_element_id  TEXT NOT NULL,
     revision_id           TEXT NOT NULL,
     kind                  TEXT NOT NULL CHECK (kind IN (
-      'diff', 'commit', 'test_run', 'validator_verdict', 'screenshot',
-      'human_signoff'
+      'commit', 'test_run', 'validator_verdict'
     )),
     ref_json              TEXT NOT NULL,
     evaluated_state_json  TEXT NOT NULL,

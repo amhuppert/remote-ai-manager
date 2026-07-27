@@ -1,5 +1,16 @@
 import type { StatusChipTone } from "@/components/ui/StatusChip";
 import type { DeliveryDisplay, SpecPhasePrimary } from "@/lib/specs/phase";
+import type { SpecGate } from "@/lib/specs/schemas";
+
+// Authoring stages share the identifiers of the gates that conclude them, so
+// one map labels both.
+export const gateLabels: Record<SpecGate, string> = {
+  requirements: "Requirements",
+  design: "Design",
+  plan: "Plan",
+  execution_start: "Execution start",
+  delivery: "Delivery",
+};
 
 export const phaseLabels: Record<SpecPhasePrimary, string> = {
   abandoned: "Abandoned",
