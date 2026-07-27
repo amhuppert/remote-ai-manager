@@ -48,7 +48,7 @@ domain-action service.
 | Global/project navigation | `G H/P/S/C/T/R/A` |
 | Open-conversation navigation | `G 1` … `G 9`, `G J`, `G K` |
 | Creation | `C S/C/W/T` |
-| Workspace views | `V V/C/D/O/A/S/R/P`; project `V S/C`; tickets `V B/L` |
+| Workspace views | `V V/C/D/O/A/S/R/F/P`; project `V S/C`; tickets `V B/L` |
 | Local focus | `I` focuses the composer; `/` focuses contextual search |
 | Conversation tab close | `X`, with safe neighbor selection and draft handling |
 | Prompt access to app commands | Literal `Ctrl+;` arms one complete shortcut |

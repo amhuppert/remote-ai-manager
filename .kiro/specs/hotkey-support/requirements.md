@@ -159,8 +159,8 @@ workspace-switching actions.
    workflow, or quick ticket in contexts that support the action.
 2. `V V` shall return to the previous view when that view history exists.
 3. Session workspaces shall support `V C`, `V D`, `V O`, `V A`, `V S`, `V R`,
-   and `V P` for conversation, diff, documents, alignment, specs, artifact, and
-   panes views.
+   `V F`, and `V P` for conversation, diff, documents, alignment, specs,
+   artifact, split 50/50, and panes views.
 4. Project workspaces shall use `V S` for sessions and `V C` for conversations.
 5. Ticket workspaces shall use `V B` and `V L` for board and list views.
 6. Commands unavailable in the current context shall neither execute nor

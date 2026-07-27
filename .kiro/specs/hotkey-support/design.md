@@ -148,6 +148,7 @@ runtime authority if the catalog changes.
 | `viewAlignment` | `V A` | Alignment view | Session workspace |
 | `viewSpecs` | `V S` | Specs view | Session workspace |
 | `viewArtifact` | `V R` | Artifact view | Session workspace |
+| `viewSplit` | `V F` | Split 50/50 view | Session workspace |
 | `viewPanes` | `V P` | Panes view | Session with at least two open conversations |
 | `viewSessions` | `V S` | Sessions view | Project workspace |
 | `viewBoard` | `V B` | Board view | Ticket workspace |

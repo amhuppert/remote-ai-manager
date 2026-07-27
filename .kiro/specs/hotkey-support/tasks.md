@@ -82,7 +82,7 @@ dispatcher design and the red-green tests added with each behavior.
 
 - [x] 7. Wire creation and contextual view commands
   - Implement `C S`, `C C`, `C W`, and `C T` in their owning contexts.
-  - Implement session `V V/C/D/O/A/S/R/P` and launcher-only exit panes.
+  - Implement session `V V/C/D/O/A/S/R/F/P` and launcher-only exit panes.
   - Implement project `V S/C` and ticket `V B/L`.
   - Allow contextual reuse of `V S` while preserving duplicate fail-closed
     behavior.

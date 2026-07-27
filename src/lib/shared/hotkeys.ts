@@ -66,6 +66,7 @@ export type HotkeyId =
   | "viewAlignment"
   | "viewSpecs"
   | "viewArtifact"
+  | "viewSplit"
   | "viewPanes"
   | "viewSessions"
   | "viewBoard"
@@ -368,6 +369,13 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     keys: "v>r",
     label: "Artifact view",
     description: "Show the active workflow artifact",
+    category: "views",
+  },
+  viewSplit: {
+    id: "viewSplit",
+    keys: "v>f",
+    label: "Split 50/50 view",
+    description: "Show the conversation and right panel side by side",
     category: "views",
   },
   viewPanes: {

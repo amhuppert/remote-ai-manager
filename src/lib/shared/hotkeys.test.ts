@@ -47,6 +47,7 @@ describe("HOTKEY_REGISTRY", () => {
       "viewAlignment",
       "viewSpecs",
       "viewArtifact",
+      "viewSplit",
       "viewPanes",
       "viewSessions",
       "viewBoard",
@@ -73,6 +74,10 @@ describe("HOTKEY_REGISTRY", () => {
     expect(HOTKEY_REGISTRY.lastMessage.keys).toBe("shift+g");
     expect(HOTKEY_REGISTRY.voiceToggle.keys).toBe("ctrl+shift+.");
     expect(HOTKEY_REGISTRY.stopTurn.keys).toBe("ctrl+.");
+    expect(HOTKEY_REGISTRY.viewAlignment.keys).toBe("v>a");
+    expect(HOTKEY_REGISTRY.viewArtifact.keys).toBe("v>r");
+    expect(HOTKEY_REGISTRY.viewSplit.keys).toBe("v>f");
+    expect(HOTKEY_REGISTRY.viewPanes.keys).toBe("v>p");
   });
 
   it("keeps the exact thinking expansion bindings", async () => {

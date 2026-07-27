@@ -707,6 +707,7 @@ describe("ConversationWorkspace", () => {
         "viewAlignment",
         "viewSpecs",
         "viewArtifact",
+        "viewSplit",
         "viewPrevious",
       ]),
     );
@@ -744,6 +745,49 @@ describe("ConversationWorkspace", () => {
       layout: "conversation",
       mobilePanel: "chat",
     });
+  });
+
+  it.each([
+    ["viewDiff", "diff", "diff"],
+    ["viewDocuments", "docs", "docs"],
+    ["viewAlignment", "diff", "alignment"],
+    ["viewSpecs", "specs", "specs"],
+    ["viewArtifact", "diff", "artifact"],
+  ] as const)(
+    "%s shows its intended right-panel view",
+    (hotkeyId, expectedMobilePanel, expectedRightPaneTab) => {
+      renderPage();
+      const registration = vi
+        .mocked(useAppHotkey)
+        .mock.calls.findLast(([id]) => id === hotkeyId);
+
+      expect(registration).toBeDefined();
+      act(() => {
+        const event = new KeyboardEvent("keydown");
+        registration?.[1](event, keyboardInvocation(hotkeyId, event));
+      });
+
+      expect(useSessionDetailStore.getState()).toMatchObject({
+        layout: "diff",
+        mobilePanel: expectedMobilePanel,
+        rightPaneTab: expectedRightPaneTab,
+      });
+    },
+  );
+
+  it("switches to the 50/50 split layout with the split view command", () => {
+    renderPage();
+    const registration = vi
+      .mocked(useAppHotkey)
+      .mock.calls.findLast(([id]) => id === "viewSplit");
+
+    expect(registration).toBeDefined();
+    act(() => {
+      const event = new KeyboardEvent("keydown");
+      registration?.[1](event, keyboardInvocation("viewSplit", event));
+    });
+
+    expect(useSessionDetailStore.getState().layout).toBe("split");
   });
 
   describe("scroll navigation", () => {

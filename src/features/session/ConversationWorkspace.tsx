@@ -283,10 +283,12 @@ export default function ConversationWorkspace({
     enabled: !isReadOnly,
   });
 
-  type SessionView = "conversation" | "panes" | RightPaneTab;
+  type SessionView = "conversation" | "split" | "panes" | RightPaneTab;
   const [previousView, setPreviousView] = useState<SessionView | null>(null);
   const currentView = (
-    store.layout === "conversation" || store.layout === "panes"
+    store.layout === "conversation" ||
+    store.layout === "split" ||
+    store.layout === "panes"
       ? store.layout
       : store.rightPaneTab
   ) satisfies SessionView;
@@ -297,13 +299,16 @@ export default function ConversationWorkspace({
         handleLayoutChange("conversation");
         return;
       }
+      if (view === "split") {
+        handleLayoutChange("split");
+        return;
+      }
       if (view === "panes") {
         store.switchMobilePanel("chat");
         handleLayoutChange("panes");
         return;
       }
 
-      store.switchRightPaneTab(view);
       if (view === "docs") {
         store.switchMobilePanel("docs");
       } else if (view === "specs") {
@@ -311,6 +316,7 @@ export default function ConversationWorkspace({
       } else {
         store.switchMobilePanel("diff");
       }
+      store.switchRightPaneTab(view);
       handleLayoutChange("diff");
     },
     [handleLayoutChange, store],
@@ -330,6 +336,7 @@ export default function ConversationWorkspace({
   useAppHotkey("viewAlignment", () => selectView("alignment"));
   useAppHotkey("viewSpecs", () => selectView("specs"));
   useAppHotkey("viewArtifact", () => selectView("artifact"));
+  useAppHotkey("viewSplit", () => selectView("split"));
   useAppHotkey(
     "viewPrevious",
     () => {
