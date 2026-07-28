@@ -33,6 +33,7 @@ export interface UseSessionPageHandlersArgs {
   selectedEffort: EffortLevel;
   effortSupported: boolean;
   selectedBackend: SubmissionArgs["selectedBackend"];
+  selectedCodexFastMode: boolean;
   sendPrompt: SubmissionArgs["sendPrompt"];
   queueMessage: SubmissionArgs["queueMessage"];
   collaborationStartMutation: SubmissionArgs["collaborationStartMutation"];
@@ -58,6 +59,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     selectedEffort,
     effortSupported,
     selectedBackend,
+    selectedCodexFastMode,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,
@@ -104,6 +106,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     selectedEffort,
     effortSupported,
     selectedBackend,
+    selectedCodexFastMode,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,

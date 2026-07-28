@@ -19,7 +19,11 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/proje
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    effort: "ultra",
+    codexFastMode: true,
+  },
 };
 
 function makeConversation(
@@ -330,6 +334,68 @@ describe("UnifiedComposer model settings", () => {
     ).toMatchObject({
       kind: "send",
       input: { backend: "codex", modelId: customModel, effort: "ultra" },
+    });
+  });
+});
+
+describe("UnifiedComposer Codex speed", () => {
+  it("initializes a new Codex conversation from the global default", () => {
+    renderComposer({
+      agentBackend: "codex",
+      activeConversationId: null,
+      activeConversation: undefined,
+    });
+
+    expect(screen.getByRole("radio", { name: "Fast" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("restores the active conversation's last sent speed over the global default", () => {
+    renderComposer({
+      agentBackend: "codex",
+      activeConversation: makeConversation({
+        agentBackend: "codex",
+        promptCount: 2,
+      }),
+      lastUsedCodexFastMode: false,
+    });
+
+    expect(screen.getByRole("radio", { name: "Standard" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("includes the selected speed on Codex sends and omits it from Claude sends", () => {
+    const common = {
+      draft: "ship it",
+      pendingImages: [],
+      tokens: [],
+      modelId: "model",
+      effort: "high" as const,
+      effortSupported: true,
+      codexFastMode: true,
+    };
+
+    expect(
+      resolveProjectComposerSubmit({ ...common, backend: "codex" }),
+    ).toMatchObject({
+      kind: "send",
+      input: { backend: "codex", codexFastMode: true },
+    });
+    expect(
+      resolveProjectComposerSubmit({ ...common, backend: "claude" }),
+    ).toEqual({
+      kind: "send",
+      input: {
+        text: "ship it",
+        images: [],
+        backend: "claude",
+        modelId: "model",
+        effort: "high",
+      },
     });
   });
 });

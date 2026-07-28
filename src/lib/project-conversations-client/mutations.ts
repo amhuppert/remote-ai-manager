@@ -38,6 +38,8 @@ import type {
 } from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
+import type { OptimisticAgentSettings } from "@/stores/session-detail/types";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { projectConversationKeys } from "./query-keys";
 
@@ -501,6 +503,21 @@ export interface SendProjectPromptInput {
   backend?: AgentBackendId;
   modelId?: string;
   effort?: string;
+  codexFastMode?: boolean;
+}
+
+function projectPromptAgentSettings(
+  input: SendProjectPromptInput,
+): OptimisticAgentSettings {
+  return {
+    ...(input.modelId !== undefined ? { model: input.modelId } : {}),
+    ...(input.effort !== undefined ? { effort: input.effort } : {}),
+    ...(input.backend !== undefined &&
+    backendSupportsFastMode(input.backend) &&
+    input.codexFastMode !== undefined
+      ? { codexFastMode: input.codexFastMode }
+      : {}),
+  };
 }
 
 export interface ProjectPromptError {
@@ -1000,6 +1017,13 @@ export function useSendProjectPrompt(
       if (input.images !== undefined && input.images.length > 0)
         body.images = input.images;
       if (input.backend !== undefined) body.backend = input.backend;
+      if (
+        input.backend !== undefined &&
+        backendSupportsFastMode(input.backend) &&
+        input.codexFastMode !== undefined
+      ) {
+        body.codexFastMode = input.codexFastMode;
+      }
 
       try {
         const res = await fetch(url, {
@@ -1042,9 +1066,12 @@ export function useSendProjectPrompt(
               // Streamed output belongs to the turn that asked for it, so it is
               // mirrored onto that turn's current key rather than onto whichever
               // tab is active.
-              receiveStreamContent(turnStorageId(currentKey()), userContent, [
-                ...streamBlocks,
-              ]);
+              receiveStreamContent(
+                turnStorageId(currentKey()),
+                userContent,
+                [...streamBlocks],
+                projectPromptAgentSettings(input),
+              );
               break;
             }
             case "error":
@@ -1144,7 +1171,12 @@ export function useSendProjectPrompt(
       // The optimistic prompt is attributed to this turn's key before the
       // request goes out, so no state this turn produces ever exists without a
       // key that owns it.
-      submitPrompt(storageId, userContent, cachedMessageCount(key));
+      submitPrompt(
+        storageId,
+        userContent,
+        cachedMessageCount(key),
+        projectPromptAgentSettings(input),
+      );
 
       if (unnamedTurn !== null) {
         unnamed.current.set(unnamedTurn.key.provisionalId, unnamedTurn);

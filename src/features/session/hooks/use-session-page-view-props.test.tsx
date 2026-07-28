@@ -131,6 +131,8 @@ function makeSlices(
     backendModelEffort: {
       backendLocked: false,
       selectedBackend: "claude",
+      codexFastMode: true,
+      setCodexFastMode: vi.fn(),
       selectedModel: "sonnet",
       selectedEffort: "high",
       availableEffortLevels: ["low", "medium", "high"],
@@ -251,6 +253,7 @@ describe("useSessionPageViewProps", () => {
     expect(slot.agentBackend).toBe("claude");
     // Composer sub-bundle carries backend/model/effort + collab + voice.
     expect(slot.promptComposerProps.selectedBackend).toBe("claude");
+    expect(slot.promptComposerProps.codexFastMode).toBe(true);
     expect(slot.promptComposerProps.selectedModel).toBe("sonnet");
     expect(slot.promptComposerProps.selectedEffort).toBe("high");
     expect(slot.promptComposerProps.availableEffortLevels).toEqual([

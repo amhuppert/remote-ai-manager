@@ -7,6 +7,7 @@ export function buildCollaborationUserTranscriptEntry(input: {
   imageRefs: readonly ConversationImageRef[];
   modelId?: string;
   effort?: string;
+  codexFastMode?: boolean;
   id?: string;
 }): TranscriptEntry {
   return {
@@ -24,5 +25,8 @@ export function buildCollaborationUserTranscriptEntry(input: {
     ],
     ...(input.modelId !== undefined ? { model: input.modelId } : {}),
     ...(input.effort !== undefined ? { effort: input.effort } : {}),
+    ...(input.codexFastMode !== undefined
+      ? { codexFastMode: input.codexFastMode }
+      : {}),
   };
 }

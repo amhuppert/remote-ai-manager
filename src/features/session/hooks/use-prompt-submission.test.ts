@@ -458,6 +458,7 @@ describe("usePromptSubmission", () => {
     function renderQueueHook(args: {
       sending: boolean;
       selectedBackend: AgentBackendId;
+      selectedCodexFastMode?: boolean;
       serialized: { prompt: string; images: ImagePayload[] };
       conversations?: ConversationState[];
       queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
@@ -496,6 +497,7 @@ describe("usePromptSubmission", () => {
           selectedEffort: "medium",
           effortSupported: true,
           selectedBackend: args.selectedBackend,
+          selectedCodexFastMode: args.selectedCodexFastMode ?? false,
           sendPrompt,
           queueMessage,
           ...(args.queueCapabilityForBackend
@@ -607,6 +609,7 @@ describe("usePromptSubmission", () => {
       const h = renderQueueHook({
         sending: false,
         selectedBackend: "codex",
+        selectedCodexFastMode: true,
         serialized: { prompt: "fresh turn", images: [] },
         conversations: [makeConversation({ id: "c", status: "awaiting" })],
       });
@@ -617,6 +620,7 @@ describe("usePromptSubmission", () => {
 
       expect(h.sendPrompt).toHaveBeenCalledTimes(1);
       expect(h.sendPrompt.mock.calls[0]?.[0]).toBe("fresh turn");
+      expect(h.sendPrompt.mock.calls[0]?.[7]).toBe(true);
       expect(h.queueMessage).not.toHaveBeenCalled();
     });
 

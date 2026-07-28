@@ -6,6 +6,8 @@ import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import DebugModeToggle from "@/components/session/DebugModeToggle";
+import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -37,6 +39,8 @@ export interface PromptDesktopToolbarProps {
   onModelChange: (model: string) => void;
   selectedEffort: EffortLevel;
   onEffortChange: (effort: EffortLevel) => void;
+  codexFastMode: boolean;
+  onCodexFastModeChange: (enabled: boolean) => void;
   availableEffortLevels: EffortLevel[];
   effortSupported: boolean;
   isReadOnly: boolean;
@@ -71,6 +75,8 @@ export default function PromptDesktopToolbar({
   onModelChange,
   selectedEffort,
   onEffortChange,
+  codexFastMode,
+  onCodexFastModeChange,
   availableEffortLevels,
   effortSupported,
   isReadOnly,
@@ -147,6 +153,13 @@ export default function PromptDesktopToolbar({
           }
           onOpenChange={onEffortOpenChange}
         />
+        {backendSupportsFastMode(selectedBackend) && (
+          <CodexSpeedToggle
+            fastMode={codexFastMode}
+            onFastModeChange={onCodexFastModeChange}
+            disabled={sending || isReadOnly}
+          />
+        )}
         <DebugModeToggle
           projectName={projectName}
           sessionName={sessionName}

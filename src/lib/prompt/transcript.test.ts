@@ -617,7 +617,7 @@ describe("readConversationMessages", () => {
     });
   });
 
-  it("propagates model and effort from user entries to assistant messages", async () => {
+  it("propagates turn settings from user entries to assistant messages", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "model-effort.jsonl");
     const lines = [
       JSON.stringify({
@@ -627,6 +627,7 @@ describe("readConversationMessages", () => {
         content: [{ type: "text", text: "Hello" }],
         model: "opus",
         effort: "high",
+        codexFastMode: true,
       }),
       JSON.stringify({
         timestamp: "t1",
@@ -641,9 +642,11 @@ describe("readConversationMessages", () => {
     expect(result).toHaveLength(2);
     expect(result[0]!.model).toBe("opus");
     expect(result[0]!.effort).toBe("high");
-    // Assistant inherits model+effort from preceding user entry
+    expect(result[0]!.codexFastMode).toBe(true);
+    // Assistant inherits turn settings from the preceding user entry.
     expect(result[1]!.model).toBe("opus");
     expect(result[1]!.effort).toBe("high");
+    expect(result[1]!.codexFastMode).toBe(true);
   });
 
   it("tracks model/effort changes across turns", async () => {
@@ -1963,7 +1966,7 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(captured).toHaveLength(0);
   });
 
-  it("includes model and effort in the broadcast message when set on the entry", async () => {
+  it("includes agent settings in the broadcast message when set on the entry", async () => {
     await appendTranscriptEntry(
       "conv-model",
       {
@@ -1973,16 +1976,22 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
         content: [{ type: "text", text: "hi" }],
         model: "opus",
         effort: "high",
+        codexFastMode: true,
       },
       TEST_DIR,
       meta,
     );
     expect(captured).toHaveLength(1);
     const event = captured[0] as {
-      message: { model?: string; effort?: string };
+      message: {
+        model?: string;
+        effort?: string;
+        codexFastMode?: boolean;
+      };
     };
     expect(event.message.model).toBe("opus");
     expect(event.message.effort).toBe("high");
+    expect(event.message.codexFastMode).toBe(true);
   });
 
   it("uses the active broadcast dep set via setTranscriptDeps", async () => {

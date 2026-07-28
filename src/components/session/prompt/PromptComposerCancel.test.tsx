@@ -90,6 +90,8 @@ function makeProps(activeConversation: ConversationState) {
     onModelChange: vi.fn(),
     selectedEffort: "medium" as const,
     onEffortChange: vi.fn(),
+    codexFastMode: false,
+    onCodexFastModeChange: vi.fn(),
     availableEffortLevels: ["low", "medium", "high"] satisfies EffortLevel[],
     effortSupported: true,
     hasCollabChip: false,

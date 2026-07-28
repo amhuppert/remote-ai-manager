@@ -429,6 +429,7 @@ export function useCollaborationStartMutation(
       backend?: AgentBackendId;
       modelId?: string;
       effort?: string;
+      codexFastMode?: boolean;
       images?: ImagePayload[];
     }) =>
       mutationFetch(

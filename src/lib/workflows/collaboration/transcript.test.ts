@@ -24,6 +24,7 @@ describe("buildCollaborationUserTranscriptEntry", () => {
         ],
         modelId: "gpt-5.6",
         effort: "xhigh",
+        codexFastMode: true,
       }),
     ).toEqual({
       timestamp: "2026-07-13T12:00:00.000Z",
@@ -44,6 +45,7 @@ describe("buildCollaborationUserTranscriptEntry", () => {
       ],
       model: "gpt-5.6",
       effort: "xhigh",
+      codexFastMode: true,
     });
   });
 });

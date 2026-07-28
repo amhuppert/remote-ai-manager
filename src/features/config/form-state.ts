@@ -130,6 +130,7 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "agentBackends.claude.timeoutMs",
   "agentBackends.codex.model",
   "agentBackends.codex.reasoningEffort",
+  "agentBackends.codex.fastMode",
   "agentBackends.codex.timeoutMs",
   "maxTurns",
   "maxConcurrentQueries",

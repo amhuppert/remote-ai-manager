@@ -48,6 +48,8 @@ describe("usePromptComposerProps", () => {
         backendLocked: false,
         selectedBackend: "claude",
         handleBackendChange: () => {},
+        codexFastMode: true,
+        setCodexFastMode: vi.fn(),
         selectedModel: "sonnet",
         handleModelChange: () => {},
         selectedEffort: "medium",
@@ -70,6 +72,7 @@ describe("usePromptComposerProps", () => {
     expect(result.current.projectName).toBe("p");
     expect(result.current.isWorkflowManagedConversation).toBe(true);
     expect(result.current.selectedBackend).toBe("claude");
+    expect(result.current.codexFastMode).toBe(true);
     expect(result.current.selectedModel).toBe("sonnet");
     expect(result.current.selectedEffort).toBe("medium");
     expect(typeof result.current.onSendPrompt).toBe("function");

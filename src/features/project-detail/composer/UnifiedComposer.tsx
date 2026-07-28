@@ -9,6 +9,7 @@ import { deserializePromptDoc } from "@/lib/prompt-editor";
 import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
 import {
+  backendSupportsFastMode,
   getEffortLevelsForBackend,
   getModelsForBackend,
 } from "@/lib/agent-backends/catalog";
@@ -16,6 +17,7 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversa
 import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { usePendingPromptPersistence } from "@/hooks/use-pending-prompt-persistence";
+import { useCodexFastMode } from "@/hooks/use-codex-fast-mode";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import {
@@ -39,6 +41,7 @@ export interface UnifiedComposerSendInput {
   backend: AgentBackendId;
   modelId: string;
   effort?: string;
+  codexFastMode?: boolean;
 }
 
 /**
@@ -86,6 +89,7 @@ export interface UnifiedComposerProps {
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
   lastUsedModelId?: string;
   lastUsedEffort?: string;
+  lastUsedCodexFastMode?: boolean;
   busy: boolean;
   error?: ProjectPromptError | null;
   onDismissError?: () => void;
@@ -157,6 +161,7 @@ export function resolveProjectComposerSubmit({
   modelId,
   effort,
   effortSupported,
+  codexFastMode,
 }: {
   draft: string;
   pendingImages: ImagePayload[];
@@ -165,6 +170,7 @@ export function resolveProjectComposerSubmit({
   modelId: string;
   effort: EffortLevel;
   effortSupported: boolean;
+  codexFastMode?: boolean;
 }): ProjectComposerSubmitResult {
   const trimmed = draft.trim();
   if (!trimmed && pendingImages.length === 0) return { kind: "noop" };
@@ -190,6 +196,9 @@ export function resolveProjectComposerSubmit({
       backend,
       modelId,
       ...(effortSupported ? { effort } : {}),
+      ...(backendSupportsFastMode(backend)
+        ? { codexFastMode: codexFastMode ?? false }
+        : {}),
     },
   };
 }
@@ -209,6 +218,7 @@ export default function UnifiedComposer({
   onRunCommand,
   lastUsedModelId,
   lastUsedEffort,
+  lastUsedCodexFastMode,
   busy,
   error,
   onDismissError,
@@ -228,6 +238,12 @@ export default function UnifiedComposer({
   const [effortPref, setEffortPref] = useState<EffortLevel>(
     () => parseEffort(lastUsedEffort) ?? backendDefaults[agentBackend].effort,
   );
+  const { codexFastMode, setCodexFastMode } = useCodexFastMode({
+    conversationId: activeConversationId,
+    promptCount: activeConversation?.promptCount ?? 0,
+    defaultValue: backendDefaults.codex.codexFastMode ?? false,
+    lastUsedValue: lastUsedCodexFastMode,
+  });
   const [prevRememberedSettingsKey, setPrevRememberedSettingsKey] = useState(
     rememberedSettingsKey,
   );
@@ -397,6 +413,7 @@ export default function UnifiedComposer({
       modelId: selectedModel,
       effort: selectedEffort,
       effortSupported,
+      codexFastMode,
     });
 
     switch (result.kind) {
@@ -432,6 +449,7 @@ export default function UnifiedComposer({
     selectedModel,
     selectedEffort,
     effortSupported,
+    codexFastMode,
     onRunCommand,
     clearComposer,
     restoreComposer,
@@ -515,6 +533,8 @@ export default function UnifiedComposer({
         onModelChange={setModelPref}
         selectedEffort={selectedEffort}
         onEffortChange={setEffortPref}
+        codexFastMode={codexFastMode}
+        onCodexFastModeChange={setCodexFastMode}
         availableEffortLevels={availableEffortLevels}
         effortSupported={effortSupported}
         hasCollabChip={false}

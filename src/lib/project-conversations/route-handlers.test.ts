@@ -245,6 +245,49 @@ describe("project conversation route handlers", () => {
     expect(forwarded).toEqual(["req-42", undefined]);
   });
 
+  it("forwards Codex speed through both project prompt routes", async () => {
+    const forwarded: Array<boolean | undefined> = [];
+    const h = harness({
+      executeProjectPromptStream: async (input) => {
+        forwarded.push(input.codexFastMode);
+        return {
+          conversationId: input.conversationId ?? "new-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    });
+
+    await readStream(
+      await h.handlers.firstPromptPOST(
+        jsonRequest({
+          prompt: "first",
+          backend: "codex",
+          codexFastMode: true,
+        }),
+        ctx({ name: "demo" }),
+      ),
+    );
+
+    h.store.set(
+      "c1",
+      makeConv({ id: "c1", promptCount: 1, agentBackend: "codex" }),
+    );
+    await readStream(
+      await h.handlers.promptPOST(
+        jsonRequest({
+          prompt: "next",
+          backend: "codex",
+          codexFastMode: false,
+        }),
+        ctx({ name: "demo", conversationId: "c1" }),
+      ),
+    );
+
+    expect(forwarded).toEqual([true, false]);
+  });
+
   it("firstPromptPOST decides every non-OK answer before running the prompt, so a rejection creates no conversation", async () => {
     // A rejected create-and-send must leave no empty project conversation
     // behind: the user sees an error and retries, and a retry that accumulated

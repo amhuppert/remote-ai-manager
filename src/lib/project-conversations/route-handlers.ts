@@ -141,6 +141,7 @@ export function createProjectConversationRouteHandlers(
       prompt: string;
       modelId?: string;
       effort?: string;
+      codexFastMode?: boolean;
       backend?: ConversationState["agentBackend"];
       images?: ExecuteProjectPromptStreamInput["images"];
       /**
@@ -176,6 +177,9 @@ export function createProjectConversationRouteHandlers(
             ...(body.images !== undefined ? { images: body.images } : {}),
             ...(body.backend !== undefined ? { backend: body.backend } : {}),
             ...(body.effort !== undefined ? { effort: body.effort } : {}),
+            ...(body.codexFastMode !== undefined
+              ? { codexFastMode: body.codexFastMode }
+              : {}),
             // Dropped when this turn targets an existing conversation: that
             // conversation was not created for this submission.
             ...(conversationId === undefined &&

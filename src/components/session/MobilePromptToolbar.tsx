@@ -4,8 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
 import { Dialog, DialogContent } from "@/components/ui/Dialog";
+import CodexSpeedToggle from "@/components/session/prompt/CodexSpeedToggle";
 import {
   backendLabel,
+  backendSupportsFastMode,
   backendToneToken,
   skillTriggerPrefixForBackend,
 } from "@/lib/agent-backends/catalog";
@@ -73,6 +75,8 @@ export interface MobilePromptToolbarProps {
   backend: AgentBackendId;
   backendLocked: boolean;
   onSelectBackend(b: AgentBackendId): void;
+  codexFastMode: boolean;
+  onCodexFastModeChange(enabled: boolean): void;
 
   onAttach(): void;
   attachDisabled?: boolean;
@@ -120,6 +124,8 @@ export default function MobilePromptToolbar({
   backend,
   backendLocked,
   onSelectBackend,
+  codexFastMode,
+  onCodexFastModeChange,
   onAttach,
   attachDisabled,
   onSheetOpenChange,
@@ -150,6 +156,17 @@ export default function MobilePromptToolbar({
   const selectedEffortOpt = effortOptions.find((e) => e.id === selectedEffort);
   const chipModelLabel = selectedModelOpt?.label ?? selectedModel;
   const chipEffortLabel = selectedEffortOpt?.label;
+  const chipSettingsLabel = [
+    `Model ${chipModelLabel}`,
+    effortSupported && chipEffortLabel
+      ? `reasoning ${chipEffortLabel}`
+      : undefined,
+    backendSupportsFastMode(backend)
+      ? `speed ${codexFastMode ? "Fast" : "Standard"}`
+      : undefined,
+  ]
+    .filter((label): label is string => Boolean(label))
+    .join(", ");
   const effortIsRainbow =
     effortSupported &&
     (selectedEffort === "xhigh" ||
@@ -179,11 +196,7 @@ export default function MobilePromptToolbar({
           onClick={() => setSheet("settings")}
           disabled={isReadOnly || isBusy}
           aria-haspopup="dialog"
-          aria-label={
-            effortSupported && chipEffortLabel
-              ? `Model ${chipModelLabel}, reasoning ${chipEffortLabel}`
-              : `Model ${chipModelLabel}`
-          }
+          aria-label={chipSettingsLabel}
         >
           <span className="font-semibold">{chipModelLabel}</span>
           {effortSupported && chipEffortLabel && (
@@ -369,7 +382,11 @@ export default function MobilePromptToolbar({
           anchor="stretch"
           scrimClassName={MOBILE_SHEET_SCRIM}
           contentClassName={MOBILE_SHEET_CARD}
-          aria-label="Model and reasoning"
+          aria-label={
+            backendSupportsFastMode(backend)
+              ? "Speed, model, and reasoning"
+              : "Model and reasoning"
+          }
         >
           <div className="mobile-action-sheet-header">
             <div className="mobile-action-sheet-handle" />
@@ -382,6 +399,24 @@ export default function MobilePromptToolbar({
               {"\u2715"}
             </button>
           </div>
+
+          {backendSupportsFastMode(backend) && (
+            <>
+              <div className="mobile-action-sheet-section">
+                <div className="mobile-action-sheet-label">Speed</div>
+                <div className="px-sm pb-sm">
+                  <CodexSpeedToggle
+                    fastMode={codexFastMode}
+                    onFastModeChange={onCodexFastModeChange}
+                    disabled={isBusy || isReadOnly}
+                    presentation="fullWidth"
+                  />
+                </div>
+              </div>
+
+              <div className="mobile-action-sheet-divider" />
+            </>
+          )}
 
           <div className="mobile-action-sheet-section">
             <div className="mobile-action-sheet-label">Model</div>

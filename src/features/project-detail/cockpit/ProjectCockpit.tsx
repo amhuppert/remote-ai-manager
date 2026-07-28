@@ -552,6 +552,9 @@ export default function ProjectCockpit({
         backend: input.backend,
         modelId: input.modelId,
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.codexFastMode !== undefined
+          ? { codexFastMode: input.codexFastMode }
+          : {}),
       });
       return (await submission.accepted) ? "accepted" : "rejected";
     },
@@ -609,6 +612,7 @@ export default function ProjectCockpit({
       onDismissError={handleDismissError}
       lastUsedModelId={lastUserTurnAgentSettings.modelId}
       lastUsedEffort={lastUserTurnAgentSettings.effort}
+      lastUsedCodexFastMode={lastUserTurnAgentSettings.codexFastMode}
       initialDocument={initialComposerDocument}
       onDocumentChange={handleComposerDocumentChange}
       onRunCommand={onRunCommand}

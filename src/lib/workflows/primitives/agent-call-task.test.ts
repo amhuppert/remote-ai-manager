@@ -153,6 +153,22 @@ describe("dispatchTaskRun", () => {
     expect(capturedInput.value?.timeoutMs).toBe(0);
   });
 
+  it("forwards an explicit Codex fast-mode choice to the task runner", async () => {
+    const { runner, capturedInput } = makeStubRunner("codex");
+
+    await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+        codexFastMode: false,
+      },
+    );
+
+    expect(capturedInput.value?.codexFastMode).toBe(false);
+  });
+
   it("applies workflow tooling onto the task request as portable MCP tooling", async () => {
     const tooling: PortableMcpConfig = {
       servers: [{ id: "s1", transport: "stdio", command: "echo" }],

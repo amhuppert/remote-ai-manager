@@ -24,6 +24,8 @@ function makeProps(
     onModelChange: vi.fn(),
     selectedEffort: "medium",
     onEffortChange: vi.fn(),
+    codexFastMode: false,
+    onCodexFastModeChange: vi.fn(),
     availableEffortLevels: ["low", "medium", "high"],
     effortSupported: true,
     isReadOnly: false,
@@ -118,4 +120,61 @@ describe("PromptDesktopToolbar", () => {
     expect(trigger).not.toBeNull();
     expect(trigger.disabled).toBe(true);
   });
+
+  it("shows the speed control only for Codex", () => {
+    const { unmount } = renderWithQuery(
+      <PromptDesktopToolbar {...makeProps({ selectedBackend: "claude" })} />,
+    );
+    expect(
+      screen.queryByRole("radiogroup", { name: "Codex speed" }),
+    ).toBeNull();
+
+    unmount();
+    renderWithQuery(
+      <PromptDesktopToolbar {...makeProps({ selectedBackend: "codex" })} />,
+    );
+    expect(
+      screen.getByRole("radiogroup", { name: "Codex speed" }),
+    ).toBeInTheDocument();
+  });
+
+  it("changes the conversation speed from the Codex control", () => {
+    const onCodexFastModeChange = vi.fn();
+    renderWithQuery(
+      <PromptDesktopToolbar
+        {...makeProps({
+          selectedBackend: "codex",
+          codexFastMode: false,
+          onCodexFastModeChange,
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "Fast" }));
+    expect(onCodexFastModeChange).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    { sending: true, isReadOnly: false },
+    { sending: false, isReadOnly: true },
+  ])(
+    "disables the Codex speed control when prompt controls are unavailable",
+    ({ sending, isReadOnly }) => {
+      renderWithQuery(
+        <PromptDesktopToolbar
+          {...makeProps({
+            selectedBackend: "codex",
+            sending,
+            isReadOnly,
+          })}
+        />,
+      );
+
+      for (const option of screen.getAllByRole("radio", {
+        name: /Standard|Fast/,
+      })) {
+        expect(option).toBeDisabled();
+      }
+    },
+  );
 });

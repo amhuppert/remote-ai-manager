@@ -454,6 +454,25 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
     expect(response.headers.get("Content-Type")).toBe("text/event-stream");
   });
 
+  it("forwards the conversation's explicit Codex speed to prompt execution", async () => {
+    const response = await handlers.conversationPOST(
+      makeRequest({
+        prompt: "Hello",
+        backend: "codex",
+        codexFastMode: true,
+      }),
+      makeConvParams(),
+    );
+
+    expect(response.status).toBe(200);
+    await response.text();
+    const callArgs = vi.mocked(deps.executePromptStream).mock.calls[0]!;
+    expect(callArgs[7]).toMatchObject({
+      backend: "codex",
+      codexFastMode: true,
+    });
+  });
+
   // Submission is the user committing pendingPromptText into the conversation
   // history; if the server doesn't clear it atomically, SSE-driven session
   // refetches (triggered by the status→running transition) can re-hydrate

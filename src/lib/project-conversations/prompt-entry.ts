@@ -18,6 +18,7 @@ import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-reso
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { publishEvent } from "@/lib/events/publication";
 import { resolveProjectExecutionTarget } from "./execution-target";
 import { createProjectConversationService } from "./service";
@@ -86,6 +87,7 @@ export interface ExecuteProjectPromptStreamInput {
   images?: ImagePayload[];
   backend?: AgentBackendId;
   effort?: string;
+  codexFastMode?: boolean;
   /**
    * Opaque token the posting client generated for this submission. Recorded on
    * the conversation this entry creates, so the client can identify its own
@@ -252,6 +254,10 @@ export function createProjectPromptExecutor(
         executionTarget,
         actorInput,
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(backendSupportsFastMode(conversation.agentBackend) &&
+        input.codexFastMode !== undefined
+          ? { codexFastMode: input.codexFastMode }
+          : {}),
       },
     );
   }

@@ -33,6 +33,7 @@ import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
@@ -768,6 +769,60 @@ describe("project page: per-conversation model memory", () => {
       modelId: "sonnet",
       effort: "medium",
     });
+  });
+
+  it("restores the active Codex conversation's speed from its last user turn", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    const conversation = makeConversation("c1", {
+      agentBackend: "codex",
+      promptCount: 2,
+    });
+    client.setQueryData(
+      projectConversationKeys.messages("proj", conversation.id),
+      [
+        {
+          role: "user",
+          content: [],
+          timestamp: "2026-01-01T00:00:00Z",
+          codexFastMode: false,
+        },
+      ] satisfies TranscriptMessage[],
+    );
+
+    render(
+      <QueryClientProvider client={client}>
+        <ProjectCockpit
+          projectName="proj"
+          openConversations={[conversation]}
+          conversationCreations={[
+            { conversationId: conversation.id, creationRequestId: null },
+          ]}
+          sessions={[runningSession]}
+          archivedCount={0}
+          tokens={[]}
+          onTokensChange={vi.fn()}
+          onRunCommand={vi.fn()}
+          selectedBackend="codex"
+          onSelectedBackendChange={vi.fn()}
+          backendDefaults={{
+            ...BACKEND_DEFAULTS,
+            codex: {
+              ...BACKEND_DEFAULTS.codex,
+              codexFastMode: true,
+            },
+          }}
+          rail={<div data-testid="rail-stub" />}
+        />
+      </QueryClientProvider>,
+    );
+    showConversationsView();
+
+    expect(screen.getByRole("radio", { name: "Standard" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 });
 

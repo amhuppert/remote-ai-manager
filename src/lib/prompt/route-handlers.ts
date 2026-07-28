@@ -232,6 +232,7 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             {
               effort: body.effort,
               backend: body.backend,
+              codexFastMode: body.codexFastMode,
               ...(body.documentFeedback
                 ? { documentFeedback: body.documentFeedback }
                 : {}),
@@ -401,6 +402,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
           ...(body.modelId !== undefined ? { modelId: body.modelId } : {}),
           ...(body.effort !== undefined ? { effort: body.effort } : {}),
+          ...(body.codexFastMode !== undefined
+            ? { codexFastMode: body.codexFastMode }
+            : {}),
           ...(body.images?.length ? { images: body.images } : {}),
         });
         try {
@@ -475,6 +479,7 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             {
               effort: body.effort,
               backend: body.backend,
+              codexFastMode: body.codexFastMode,
               onAccepted: async () => {
                 await deps.clearConversationPendingPromptTextIfMatches(
                   projectPath,

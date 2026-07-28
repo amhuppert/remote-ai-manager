@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 describe("useSendPrompt — send()", () => {
-  it("stamps the optimistic user and streaming assistant rows with the turn's model/effort", async () => {
+  it("stamps Codex fast mode on the request and optimistic turn", async () => {
     const sse =
       'event: content\ndata: {"type":"text","text":"partial answer"}\n\n' +
       "event: done\ndata: {}\n\n";
@@ -93,8 +93,9 @@ describe("useSendPrompt — send()", () => {
         "fable",
         undefined,
         "max",
-        "claude",
+        "codex",
         "  hi  ",
+        true,
       );
     });
 
@@ -103,13 +104,16 @@ describe("useSendPrompt — send()", () => {
       role: "user",
       model: "fable",
       effort: "max",
+      codexFastMode: true,
     });
     expect(messages[1]).toMatchObject({
       role: "assistant",
       model: "fable",
       effort: "max",
+      codexFastMode: true,
     });
     expect(requestBody?.submittedPendingPromptText).toBe("  hi  ");
+    expect(requestBody?.codexFastMode).toBe(true);
   });
 });
 

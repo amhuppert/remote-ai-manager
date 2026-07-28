@@ -16,6 +16,7 @@ import {
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import { consumePromptStream } from "@/lib/prompt/stream-transport";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
@@ -36,6 +37,7 @@ export interface SendPromptHandle {
     effort?: EffortLevel,
     backend?: AgentBackendId,
     submittedPendingPromptText?: string,
+    codexFastMode?: boolean,
   ) => Promise<void>;
   /** Queue a message into a running conversation. */
   queue: (
@@ -85,6 +87,7 @@ export function useSendPrompt(
       effort?: EffortLevel,
       backend?: AgentBackendId,
       submittedPendingPromptText?: string,
+      codexFastMode?: boolean,
     ) => {
       const trimmed = text.trim();
       const hasImages = images && images.length > 0;
@@ -123,6 +126,11 @@ export function useSendPrompt(
       const agentSettings = {
         ...(modelId !== undefined ? { model: modelId } : {}),
         ...(effort !== undefined ? { effort } : {}),
+        ...(backend !== undefined &&
+        backendSupportsFastMode(backend) &&
+        codexFastMode !== undefined
+          ? { codexFastMode }
+          : {}),
       };
       submitPrompt(
         conversationId,
@@ -150,6 +158,11 @@ export function useSendPrompt(
             effort,
             images: hasImages ? images : undefined,
             backend,
+            ...(backend !== undefined &&
+            backendSupportsFastMode(backend) &&
+            codexFastMode !== undefined
+              ? { codexFastMode }
+              : {}),
           }),
           signal: controller.signal,
         });

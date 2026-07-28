@@ -36,6 +36,7 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
       codex: {
         model: "gpt-5.6-sol",
         reasoningEffort: "ultra",
+        fastMode: true,
         timeoutMs: 90_000,
         stallTimeoutMs: 60_000,
       },
@@ -44,12 +45,14 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
     expect(resolveConfiguredAgentBackendDefaults(config, "claude")).toEqual({
       modelId: "sonnet",
       reasoningEffort: "medium",
+      codexFastMode: false,
       timeoutMs: 45_000,
       stallTimeoutMs: 0,
     });
     expect(resolveConfiguredAgentBackendDefaults(config, "codex")).toEqual({
       modelId: "gpt-5.6-sol",
       reasoningEffort: "ultra",
+      codexFastMode: true,
       timeoutMs: 90_000,
       stallTimeoutMs: 60_000,
     });

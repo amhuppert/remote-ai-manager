@@ -698,7 +698,7 @@ describe("executePromptStream (facade)", () => {
       "conv-123",
       undefined,
       undefined,
-      { autonomous: true, effort: "high" },
+      { autonomous: true, effort: "high", codexFastMode: true },
     );
 
     expect(deps.sendConversationEvent).toHaveBeenCalledWith(
@@ -710,6 +710,7 @@ describe("executePromptStream (facade)", () => {
         promptText: "Hello Claude",
         autonomous: true,
         effort: "high",
+        codexFastMode: true,
       }),
     );
   });

@@ -4,6 +4,7 @@ import {
   resolveBackendStallTimeoutMs,
   resolveBackendTimeoutMs,
   resolveBackendTurnSettings,
+  resolveTurnCodexFastMode,
   resolveTurnModelEffort,
   type ActorConfig,
 } from "./resolve-model-effort";
@@ -19,6 +20,7 @@ function makeConfig(): ActorConfig {
       codex: {
         model: "gpt-5.4",
         reasoningEffort: "medium",
+        fastMode: true,
         timeoutMs: null,
       },
     },
@@ -27,13 +29,18 @@ function makeConfig(): ActorConfig {
   };
 }
 
-function userTurn(model?: string, effort?: string): TranscriptMessage {
+function userTurn(
+  model?: string,
+  effort?: string,
+  codexFastMode?: boolean,
+): TranscriptMessage {
   return {
     role: "user",
     content: [{ type: "text", text: "hi" }],
     timestamp: null,
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
+    ...(codexFastMode !== undefined ? { codexFastMode } : {}),
   };
 }
 
@@ -44,6 +51,56 @@ function assistantTurn(): TranscriptMessage {
     timestamp: null,
   };
 }
+
+describe("resolveTurnCodexFastMode", () => {
+  it("prefers an explicit conversation selection over the last turn and global default", () => {
+    expect(
+      resolveTurnCodexFastMode({
+        backend: "codex",
+        config: makeConfig(),
+        explicitCodexFastMode: false,
+        priorMessages: [userTurn("gpt-5.4", "high", true)],
+      }),
+    ).toBe(false);
+  });
+
+  it("uses the conversation's latest selection before the global default", () => {
+    expect(
+      resolveTurnCodexFastMode({
+        backend: "codex",
+        config: makeConfig(),
+        explicitCodexFastMode: null,
+        priorMessages: [
+          userTurn("gpt-5.4", "high", true),
+          assistantTurn(),
+          userTurn("gpt-5.4", "high", false),
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("uses the global Codex default for a conversation without a prior selection", () => {
+    expect(
+      resolveTurnCodexFastMode({
+        backend: "codex",
+        config: makeConfig(),
+        explicitCodexFastMode: null,
+        priorMessages: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("never enables Codex fast mode for Claude", () => {
+    expect(
+      resolveTurnCodexFastMode({
+        backend: "claude",
+        config: makeConfig(),
+        explicitCodexFastMode: true,
+        priorMessages: [],
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("resolveBackendTurnSettings", () => {
   it("uses the selected backend's profile without consulting the default backend", () => {

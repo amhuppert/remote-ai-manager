@@ -23,6 +23,7 @@ function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
       codex: {
         model: "gpt-5.4",
         reasoningEffort: "high",
+        fastMode: false,
         timeoutMs: null,
       },
     },

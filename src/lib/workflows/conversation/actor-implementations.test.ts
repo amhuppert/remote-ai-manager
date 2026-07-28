@@ -279,6 +279,7 @@ function makeExecutePromptInput(
     autonomous: false,
     debugMode: null,
     ...overrides,
+    codexFastMode: overrides.codexFastMode ?? null,
   };
 }
 
@@ -1558,6 +1559,39 @@ describe("executePromptForMachine", () => {
       modelId: "opus",
       reasoningEffort: "high",
     });
+  });
+
+  it("sends and records the explicit Codex speed without reading prior turns", async () => {
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex",
+      modelId: "gpt-5.4",
+    });
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+    const input = makeExecutePromptInput({
+      agentBackend: "codex",
+      modelId: "gpt-5.4",
+      effort: "high",
+      codexFastMode: true,
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(mockDeps.readConversationMessages).not.toHaveBeenCalled();
+    expect(mockSendTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ codexFastMode: true }),
+    );
+    const userAppend = vi
+      .mocked(mockDeps.safeAppendTranscriptEntry)
+      .mock.calls.find(([, entry]) => entry.role === "user");
+    expect(userAppend?.[1]).toMatchObject({ codexFastMode: true });
   });
 
   describe("pre-turn readiness gate", () => {

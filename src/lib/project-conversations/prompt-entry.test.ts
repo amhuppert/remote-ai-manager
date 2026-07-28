@@ -65,6 +65,7 @@ interface ExecCall {
         executionTarget?: ExecutionTarget;
         actorInput?: EnsureActorInputData;
         effort?: string;
+        codexFastMode?: boolean;
         backend?: unknown;
       }
     | undefined;
@@ -312,6 +313,36 @@ describe("executeProjectPromptStream", () => {
       "codex",
     );
     expect(h.calls[0]?.options).not.toHaveProperty("backend");
+  });
+
+  it("forwards an explicit speed selection only for Codex conversations", async () => {
+    const codex = harness({
+      seed: [makeConv({ id: "codex", promptCount: 1, agentBackend: "codex" })],
+    });
+    await codex.executeProjectPromptStream({
+      projectPath: "/repo",
+      conversationId: "codex",
+      promptText: "next",
+      backend: "codex",
+      codexFastMode: true,
+      emit: () => {},
+    });
+    expect(codex.calls[0]?.options?.codexFastMode).toBe(true);
+
+    const claude = harness({
+      seed: [
+        makeConv({ id: "claude", promptCount: 1, agentBackend: "claude" }),
+      ],
+    });
+    await claude.executeProjectPromptStream({
+      projectPath: "/repo",
+      conversationId: "claude",
+      promptText: "next",
+      backend: "claude",
+      codexFastMode: true,
+      emit: () => {},
+    });
+    expect(claude.calls[0]?.options).not.toHaveProperty("codexFastMode");
   });
 
   it("rejects a backend change after the first turn with BackendMismatchError", async () => {

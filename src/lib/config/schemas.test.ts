@@ -50,16 +50,24 @@ describe("agent backend config", () => {
         defaultAgentBackend: "codex",
         agentBackends: {
           claude: { model: "sonnet" },
-          codex: { timeoutMs: null },
+          codex: { fastMode: true, timeoutMs: null },
         },
       }),
     ).toEqual({
       defaultAgentBackend: "codex",
       agentBackends: {
         claude: { model: "sonnet" },
-        codex: { timeoutMs: null },
+        codex: { fastMode: true, timeoutMs: null },
       },
     });
+  });
+
+  it("rejects non-boolean Codex fast mode values", () => {
+    expect(
+      rawGlobalConfigSchema.safeParse({
+        agentBackends: { codex: { fastMode: "fast" } },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts custom Codex models with provider-valid effort", () => {

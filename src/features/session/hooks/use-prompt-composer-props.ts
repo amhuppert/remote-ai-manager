@@ -55,6 +55,8 @@ export interface UsePromptComposerPropsArgs {
   backendLocked: boolean;
   selectedBackend: AgentBackendId;
   handleBackendChange: (backend: AgentBackendId) => void;
+  codexFastMode: boolean;
+  setCodexFastMode: (enabled: boolean) => void;
   selectedModel: string;
   handleModelChange: (model: string) => void;
   selectedEffort: EffortLevel;
@@ -119,6 +121,8 @@ export function usePromptComposerProps(
     backendLocked,
     selectedBackend,
     handleBackendChange,
+    codexFastMode,
+    setCodexFastMode,
     selectedModel,
     handleModelChange,
     selectedEffort,
@@ -167,6 +171,8 @@ export function usePromptComposerProps(
       backendLocked,
       selectedBackend,
       onBackendChange: handleBackendChange,
+      codexFastMode,
+      onCodexFastModeChange: setCodexFastMode,
       selectedModel,
       onModelChange: handleModelChange,
       selectedEffort,
@@ -222,6 +228,8 @@ export function usePromptComposerProps(
       backendLocked,
       selectedBackend,
       handleBackendChange,
+      codexFastMode,
+      setCodexFastMode,
       selectedModel,
       handleModelChange,
       selectedEffort,

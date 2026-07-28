@@ -20,7 +20,7 @@ export function ConfigToggle({
   disabled?: boolean;
 }) {
   return (
-    <label className="ml-auto inline-flex w-fit cursor-pointer items-center gap-sm font-mono text-[0.72rem] font-semibold tracking-[0.06em] text-text-secondary uppercase">
+    <label className="ml-auto inline-flex w-fit cursor-pointer items-center gap-sm font-mono text-[0.72rem] font-semibold tracking-[0.06em] text-text-secondary uppercase max-768:min-h-[var(--touch-target-min)]">
       <Switch
         aria-label={label}
         checked={value}

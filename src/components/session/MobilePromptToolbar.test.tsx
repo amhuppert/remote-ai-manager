@@ -33,6 +33,8 @@ const baseProps: MobilePromptToolbarProps = {
   backend: "claude",
   backendLocked: false,
   onSelectBackend: vi.fn(),
+  codexFastMode: false,
+  onCodexFastModeChange: vi.fn(),
   onAttach: vi.fn(),
   debugActive: false,
   debugSupported: true,
@@ -122,5 +124,45 @@ describe("MobilePromptToolbar sheet open-state reporting", () => {
 
     unmount();
     expect(onSheetOpenChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("MobilePromptToolbar Codex speed", () => {
+  it("does not show speed configuration for Claude", () => {
+    renderToolbar({ backend: "claude" });
+    fireEvent.click(screen.getByRole("button", { name: /^Model Opus/ }));
+
+    expect(
+      screen.queryByRole("radiogroup", { name: "Codex speed" }),
+    ).toBeNull();
+    expect(screen.queryByText("Speed")).toBeNull();
+  });
+
+  it("shows a Speed section for Codex and changes its conversation value", () => {
+    const onCodexFastModeChange = vi.fn();
+    renderToolbar({
+      backend: "codex",
+      codexFastMode: true,
+      onCodexFastModeChange,
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Model Opus, reasoning High, speed Fast",
+      }),
+    );
+
+    expect(screen.getByText("Speed")).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", {
+        name: "Speed, model, and reasoning",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Fast" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("radio", { name: "Standard" }));
+    expect(onCodexFastModeChange).toHaveBeenCalledWith(false);
   });
 });

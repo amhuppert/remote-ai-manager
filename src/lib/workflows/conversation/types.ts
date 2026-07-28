@@ -59,6 +59,7 @@ export interface ConversationTurnActive {
   backend: AgentBackendId;
   modelId: string | null;
   effort: string | null;
+  codexFastMode: boolean | null;
   autonomous: boolean;
   startedAt: string | null;
   streamId: string | null;
@@ -189,6 +190,7 @@ export type ConversationEvent =
       backend?: AgentBackendId;
       modelId?: string;
       effort?: string;
+      codexFastMode?: boolean;
       autonomous?: boolean;
       streamId: string;
       outputFormat?: StructuredOutputFormat;
@@ -341,6 +343,7 @@ export interface ExecutePromptInput {
   streamId: string | null;
   modelId: string | null;
   effort: string | null;
+  codexFastMode: boolean | null;
   autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
   outputFormat?: StructuredOutputFormat;

@@ -10,6 +10,7 @@ export const runPromptRequestSchema = z
     submittedPendingPromptText: z.string().optional(),
     modelId: z.string().trim().min(1).optional(),
     effort: z.string().trim().min(1).optional(),
+    codexFastMode: z.boolean().optional(),
     images: z.array(imagePayloadSchema).max(5).optional(),
     backend: agentBackendSchema.optional(),
     documentFeedback: documentFeedbackPayloadSchema.optional(),

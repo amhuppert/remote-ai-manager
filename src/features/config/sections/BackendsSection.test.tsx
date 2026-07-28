@@ -17,6 +17,9 @@ describe("BackendsSection", () => {
     expect(screen.getByText(/^Claude$/)).toBeVisible();
     expect(screen.getByText(/^Codex$/)).toBeVisible();
     expect(
+      screen.getByText("Defaults used to initialize new Codex conversations."),
+    ).toBeVisible();
+    expect(
       screen.getByText("Claude model").closest("[data-field]"),
     ).toHaveAttribute("data-field", "agentBackends.claude.model");
     expect(
@@ -31,6 +34,12 @@ describe("BackendsSection", () => {
     expect(
       screen.getByText("Codex effort").closest("[data-field]"),
     ).toHaveAttribute("data-field", "agentBackends.codex.reasoningEffort");
+    expect(
+      screen.getByText("Codex fast mode").closest("[data-field]"),
+    ).toHaveAttribute("data-field", "agentBackends.codex.fastMode");
+    expect(
+      screen.getByRole("switch", { name: "Codex fast mode" }),
+    ).toHaveAttribute("aria-checked", "false");
     expect(
       screen.getByText("Codex timeout").closest("[data-field]"),
     ).toHaveAttribute("data-field", "agentBackends.codex.timeoutMs");
@@ -92,6 +101,20 @@ describe("BackendsSection", () => {
     expect(getState().agentBackends.codex.model).toBe("gpt-5.4-mini");
   });
 
+  it("stores the Codex fast mode default in the Codex backend profile", () => {
+    const { controller, getState } = makeController();
+    const view = renderWithQuery(<BackendsSection controller={controller} />);
+
+    fireEvent.click(screen.getByRole("switch", { name: "Codex fast mode" }));
+
+    expect(getState().agentBackends.codex.fastMode).toBe(true);
+    view.unmount();
+    renderWithQuery(<BackendsSection controller={controller} />);
+    expect(
+      screen.getByRole("switch", { name: "Codex fast mode" }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
   it("keeps a configured custom Codex model visible and selected", () => {
     const { controller, getState } = makeController({
       agentBackends: {
@@ -101,6 +124,7 @@ describe("BackendsSection", () => {
           timeoutMs: 3_600_000,
         },
         codex: {
+          fastMode: false,
           model: "custom-codex-model",
           reasoningEffort: "ultra",
           timeoutMs: null,
@@ -162,6 +186,7 @@ describe("BackendsSection", () => {
           timeoutMs: 3_600_000,
         },
         codex: {
+          fastMode: false,
           model: "gpt-5.4",
           reasoningEffort: "high",
           timeoutMs: null,

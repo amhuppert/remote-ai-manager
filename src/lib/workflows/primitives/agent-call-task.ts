@@ -43,6 +43,7 @@ export interface DispatchTaskRunDeps {
   workingDirectory: string;
   modelId?: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   imagePaths?: readonly string[];
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
@@ -122,6 +123,9 @@ export async function dispatchTaskRun(
     ...(deps.modelId !== undefined ? { modelId: deps.modelId } : {}),
     ...(deps.reasoningEffort !== undefined
       ? { reasoningEffort: deps.reasoningEffort }
+      : {}),
+    ...(deps.codexFastMode !== undefined
+      ? { codexFastMode: deps.codexFastMode }
       : {}),
     ...(deps.resumeRef !== undefined ? { resumeRef: deps.resumeRef } : {}),
     ...(deps.executionProfile !== undefined

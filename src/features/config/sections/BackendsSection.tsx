@@ -8,6 +8,7 @@ import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigNumericInput } from "../components/ConfigNumericInput";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
+import { ConfigToggle } from "../components/ConfigToggle";
 import { SettingsPage } from "../components/SettingsPage";
 import { SettingsSubSection } from "../components/SettingsSubSection";
 import type { ConfigFormController } from "./types";
@@ -15,6 +16,7 @@ import type { ConfigFormController } from "./types";
 interface BackendProfile {
   model: string;
   reasoningEffort?: EffortLevel;
+  fastMode?: boolean;
   timeoutMs: number | null;
 }
 
@@ -45,6 +47,7 @@ function BackendProfileFields({
   const pathPrefix = `agentBackends.${entry.id}`;
   const modelPath = `${pathPrefix}.model`;
   const effortPath = `${pathPrefix}.reasoningEffort`;
+  const fastModePath = `${pathPrefix}.fastMode`;
   const timeoutPath = `${pathPrefix}.timeoutMs`;
   const modelOptions = modelOptionsForCatalogEntry(entry, profile.model);
   const effortOptions = effortLevelsForCatalogEntry(entry, profile.model);
@@ -95,6 +98,21 @@ function BackendProfileFields({
             options={effortOptions}
             onChange={(value) => handleChange(effortPath, value)}
             aria-labelledby={`${effortPath}-label`}
+          />
+        </ConfigField>
+      ) : null}
+      {entry.id === "codex" ? (
+        <ConfigField
+          label="Codex fast mode"
+          fieldPath={fastModePath}
+          isDefault={isDefault(fastModePath)}
+          isModified={isModified(fastModePath)}
+          hint="Sets the initial speed for new Codex conversations. Fast mode uses more credits."
+        >
+          <ConfigToggle
+            label="Codex fast mode"
+            value={profile.fastMode ?? false}
+            onChange={(value) => handleChange(fastModePath, value)}
           />
         </ConfigField>
       ) : null}
@@ -171,7 +189,7 @@ export function BackendsSection({
       </SettingsSubSection>
       <SettingsSubSection
         title={codexEntry.label}
-        hint="Defaults used whenever a Codex conversation has no override."
+        hint="Defaults used to initialize new Codex conversations."
       >
         <BackendProfileFields
           controller={controller}

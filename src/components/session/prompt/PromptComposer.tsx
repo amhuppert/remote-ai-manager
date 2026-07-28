@@ -221,6 +221,8 @@ interface PromptComposerProps {
   onModelChange: (model: string) => void;
   selectedEffort: EffortLevel;
   onEffortChange: (effort: EffortLevel) => void;
+  codexFastMode: boolean;
+  onCodexFastModeChange: (enabled: boolean) => void;
   availableEffortLevels: EffortLevel[];
   effortSupported: boolean;
   hasCollabChip: boolean;
@@ -273,6 +275,8 @@ export default function PromptComposer({
   onModelChange,
   selectedEffort,
   onEffortChange,
+  codexFastMode,
+  onCodexFastModeChange,
   availableEffortLevels,
   effortSupported,
   hasCollabChip,
@@ -575,6 +579,8 @@ export default function PromptComposer({
             onModelChange={onModelChange}
             selectedEffort={selectedEffort}
             onEffortChange={onEffortChange}
+            codexFastMode={codexFastMode}
+            onCodexFastModeChange={onCodexFastModeChange}
             availableEffortLevels={availableEffortLevels}
             effortSupported={effortSupported}
             isReadOnly={isReadOnly}
@@ -600,6 +606,8 @@ export default function PromptComposer({
             )}
             selectedModel={selectedModel}
             selectedEffort={selectedEffort}
+            codexFastMode={codexFastMode}
+            onCodexFastModeChange={onCodexFastModeChange}
             effortSupported={effortSupported}
             effortDisabledReason={
               !effortSupported

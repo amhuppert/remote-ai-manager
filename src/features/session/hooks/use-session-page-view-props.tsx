@@ -187,6 +187,8 @@ function useComposerProps(
     backendLocked: backendModelEffort.backendLocked,
     selectedBackend: backendModelEffort.selectedBackend,
     handleBackendChange: backendModelEffort.handleBackendChange,
+    codexFastMode: backendModelEffort.codexFastMode,
+    setCodexFastMode: backendModelEffort.setCodexFastMode,
     selectedModel: backendModelEffort.selectedModel,
     handleModelChange: backendModelEffort.handleModelChange,
     selectedEffort: backendModelEffort.selectedEffort,

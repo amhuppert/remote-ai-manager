@@ -1341,6 +1341,47 @@ describe("runAsymmetricCollaborationSlice — captured session context durabilit
   });
 });
 
+describe("runAsymmetricCollaborationSlice — Codex speed durability", () => {
+  it.each([false, true])(
+    "persists an explicit Codex-primary fast-mode value of %s through a user-input pause",
+    async (codexFastMode) => {
+      const programmed = makeProgrammedCallAgent({
+        claude: [
+          makeBackendResult("claude", makeAgentTwoInitialDraft()),
+          makeBackendResult("claude", makeAgentTwoCrossReview()),
+          makeBackendResult("claude", makeAgentTwoCounterProposalRound1()),
+        ],
+        codex: [
+          makeBackendResult("codex", makeAgentOneInitialDraft()),
+          makeBackendResult("codex", makeAgentOneProposedChanges()),
+          makeBackendResult(
+            "codex",
+            makeResolutionDecisionContinue({
+              remaining_disagreements: [makeObjectiveDisagreement()],
+            }),
+          ),
+        ],
+      });
+      const built = await buildDeps(programmed);
+
+      const result = await runAsymmetricCollaborationSlice(
+        baseInput({
+          primaryAgentBackend: "codex",
+          codexFastMode,
+          autonomousResolutionThreshold: "blocking",
+          negotiationRounds: 5,
+        }),
+        built.deps,
+      );
+
+      expect(result.kind).toBe("paused_for_user_input");
+      const stored = await built.envelopeStore.read("wf-asym");
+      const snapshot = stored?.featureSnapshot as Record<string, unknown>;
+      expect(snapshot["codexFastMode"]).toBe(codexFastMode);
+    },
+  );
+});
+
 describe("runAsymmetricCollaborationSlice — mid-run progress envelopes", () => {
   // Regression: without per-artifact progress envelopes, the UI cache only
   // invalidates at lifecycle boundaries (running/paused/completed/failed),

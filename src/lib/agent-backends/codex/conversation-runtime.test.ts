@@ -1841,7 +1841,11 @@ describe("CodexConversationRuntime", () => {
       const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
         .calls[0]![0];
       expect(codexCall).toHaveProperty("config");
-      expect(codexCall.config).toEqual({ mcp_servers: {} });
+      expect(codexCall.config).toEqual({
+        mcp_servers: {},
+        service_tier: "default",
+        features: { fast_mode: false },
+      });
     });
 
     it("adds enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
@@ -1920,10 +1924,12 @@ describe("CodexConversationRuntime", () => {
             enabled: false,
           },
         },
+        service_tier: "default",
+        features: { fast_mode: false },
       });
     });
 
-    it("omits config entirely when no portable MCP has been staged", async () => {
+    it("still emits the explicit standard speed when no portable MCP has been staged", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(
         makeCreateInput({ tooling: {} }),
@@ -1934,7 +1940,46 @@ describe("CodexConversationRuntime", () => {
 
       const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
         .calls[0]![0];
-      expect(codexCall).not.toHaveProperty("config");
+      expect(codexCall.config).toEqual({
+        service_tier: "default",
+        features: { fast_mode: false },
+      });
+    });
+  });
+
+  describe("Codex fast mode", () => {
+    it("rebuilds SDK options from the speed selected for each turn", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      await runtime.sendTurn(makeTurnInput({ codexFastMode: false }));
+      setupThread(minimalSuccessEvents("thread-123"));
+      await runtime.sendTurn(makeTurnInput({ codexFastMode: true }));
+
+      const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
+        .mock.calls;
+      expect(createCodexCalls[0]![0].config).toEqual({
+        service_tier: "default",
+        features: { fast_mode: false },
+      });
+      expect(createCodexCalls[1]![0].config).toEqual({
+        service_tier: "fast",
+        features: { fast_mode: true },
+      });
+    });
+
+    it("defaults omitted speed settings to standard", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      expect(codexCall.config).toMatchObject({
+        service_tier: "default",
+        features: { fast_mode: false },
+      });
     });
   });
 

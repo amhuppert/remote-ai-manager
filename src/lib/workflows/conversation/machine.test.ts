@@ -1699,6 +1699,37 @@ describe("conversationMachine", () => {
     });
   });
 
+  describe("turn configuration threading", () => {
+    it("preserves an explicit Standard Codex speed in executePrompt input", async () => {
+      let capturedInput: ExecutePromptInput | null = null;
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          capturedInput = input;
+          return successResult();
+        },
+      );
+
+      const machine = makeTestMachine({ executePrompt });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+      await waitForState(actor, "idle");
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Use Standard speed",
+        streamId: "standard-speed",
+        codexFastMode: false,
+      });
+
+      await waitForState(actor, "executing");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.codexFastMode).toBe(false);
+    });
+  });
+
   describe("queuedDelivery threading", () => {
     it("threads SUBMIT_PROMPT.queuedDelivery into executePrompt input", async () => {
       let capturedInput: ExecutePromptInput | null = null;

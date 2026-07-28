@@ -367,6 +367,7 @@ describe("useSendProjectPrompt", () => {
         backend: "codex",
         modelId: "gpt-5.4",
         effort: "high",
+        codexFastMode: true,
       }).settled;
     });
     const [url, init] = fetchSpy.mock.calls[0]!;
@@ -376,7 +377,28 @@ describe("useSendProjectPrompt", () => {
       backend: "codex",
       modelId: "gpt-5.4",
       effort: "high",
+      codexFastMode: true,
     });
+  });
+
+  it("does not send a Codex speed override to Claude", async () => {
+    fetchSpy.mockResolvedValue(sseResponse(["event: done\ndata: {}\n\n"]));
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+    await act(async () => {
+      await result.current.send({
+        target: conversationTurnKey("c1"),
+        text: "go",
+        backend: "claude",
+        codexFastMode: true,
+      }).settled;
+    });
+
+    const body = JSON.parse(
+      String(fetchSpy.mock.calls[0]?.[1]?.body),
+    ) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("codexFastMode");
   });
 
   it("surfaces a backend-mismatch error frame through the error envelope", async () => {

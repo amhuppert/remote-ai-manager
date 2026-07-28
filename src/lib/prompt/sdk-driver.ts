@@ -325,6 +325,7 @@ export interface PromptDeps {
     autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
     modelId?: string;
     effort?: string;
+    codexFastMode?: boolean;
     images?: ImagePayload[];
   }): Promise<{ workflowId: string }>;
 
@@ -376,6 +377,9 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
           DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD,
         ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.codexFastMode !== undefined
+          ? { codexFastMode: input.codexFastMode }
+          : {}),
         ...(input.images?.length ? { images: input.images } : {}),
       };
       const result = await collabManager.start(startInput);
@@ -463,6 +467,7 @@ export interface PromptStreamOptions {
   autonomous?: boolean;
   effort?: string;
   backend?: AgentBackendId;
+  codexFastMode?: boolean;
   /**
    * Called once the prompt, command, or collaboration request has been
    * accepted by its execution owner. Failures are logged without changing the
@@ -802,6 +807,9 @@ export async function executePromptStream(
           : {}),
         ...(modelId !== undefined ? { modelId } : {}),
         ...(options?.effort !== undefined ? { effort: options.effort } : {}),
+        ...(options?.codexFastMode !== undefined
+          ? { codexFastMode: options.codexFastMode }
+          : {}),
         ...(images?.length ? { images } : {}),
       });
       await notifyPromptAccepted(options, scopeRef, conversationId);
@@ -930,6 +938,7 @@ export async function executePromptStream(
       backend: resolvedBackend,
       modelId,
       effort: options?.effort,
+      codexFastMode: options?.codexFastMode,
       autonomous: options?.autonomous,
       outputFormat: options?.outputFormat,
       ...(options?.waitForBackgroundTasks

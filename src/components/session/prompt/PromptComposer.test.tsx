@@ -100,6 +100,8 @@ function makeProps(): React.ComponentProps<typeof PromptComposer> {
     onModelChange: vi.fn(),
     selectedEffort: "medium",
     onEffortChange: vi.fn(),
+    codexFastMode: false,
+    onCodexFastModeChange: vi.fn(),
     availableEffortLevels: ["low", "medium", "high"],
     effortSupported: true,
     hasCollabChip: false,

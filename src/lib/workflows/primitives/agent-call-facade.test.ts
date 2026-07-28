@@ -1046,6 +1046,25 @@ describe("executeAgentCall — semantic task execution intent", () => {
       conversationId: "conv-originating",
     });
   });
+
+  it("forwards a resolver-supplied Codex fast-mode choice to the runner", async () => {
+    const capture = { value: null as AgentTaskRequest | null };
+    const runner = makeTaskRunner("codex", { capture });
+
+    await executeAgentCall(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        resolveTaskRunner: () => ({
+          runner,
+          capabilityView: CODEX_VIEW,
+          workingDirectory: "/tmp/wt-collab",
+          codexFastMode: false,
+        }),
+      },
+    );
+
+    expect(capture.value?.codexFastMode).toBe(false);
+  });
 });
 
 describe("executeAgentCall — pre-turn MCP apply hook", () => {

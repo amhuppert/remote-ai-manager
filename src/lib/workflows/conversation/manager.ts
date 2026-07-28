@@ -69,6 +69,7 @@ export interface ConversationTurnRequest {
   backend: AgentBackendId;
   modelId?: string;
   effort?: string;
+  codexFastMode?: boolean;
   autonomous?: boolean;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   waitForBackgroundTasks?: boolean;
@@ -673,6 +674,7 @@ export async function executeConversationTurn(
       backend: input.turn.backend,
       modelId: input.turn.modelId,
       effort: input.turn.effort,
+      codexFastMode: input.turn.codexFastMode,
       autonomous: input.turn.autonomous,
       streamId: input.streamId,
       outputFormat: input.turn.outputFormat,

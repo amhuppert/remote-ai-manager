@@ -10,7 +10,11 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversa
 
 const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
   claude: { modelId: "sonnet", effort: "medium" },
-  codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+  codex: {
+    modelId: "gpt-5.6-sol",
+    effort: "ultra",
+    codexFastMode: true,
+  },
 };
 
 function makeConversation(

@@ -127,6 +127,7 @@ const rawCodexBackendConfigSchema = z
       .optional(),
     model: z.string().trim().min(1).optional(),
     reasoningEffort: codexReasoningEffortSchema.optional(),
+    fastMode: z.boolean().optional(),
     timeoutMs: backendTimeoutMsSchema.optional(),
     stallTimeoutMs: backendTimeoutMsSchema.optional(),
     pricing: codexPricingTableSchema.optional(),

@@ -497,6 +497,7 @@ describe("collaboration route handlers — START", () => {
           conversationId: "conv-stamp",
           modelId: "fable",
           effort: "max",
+          codexFastMode: true,
         }),
       }),
       buildContext("example", "sess-1"),
@@ -507,6 +508,7 @@ describe("collaboration route handlers — START", () => {
     expect(startCalls[0]).toMatchObject({
       modelId: "fable",
       effort: "max",
+      codexFastMode: true,
     });
   });
 

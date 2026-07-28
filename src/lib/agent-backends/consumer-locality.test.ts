@@ -472,6 +472,7 @@ describe("E2: executePromptForMachine drives a testfake turn end-to-end", () => 
       streamId: "stream-e2",
       modelId: "fake-1",
       effort: "medium",
+      codexFastMode: null,
       autonomous: false,
       debugMode: null,
     };

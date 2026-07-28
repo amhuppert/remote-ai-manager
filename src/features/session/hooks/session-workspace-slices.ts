@@ -81,6 +81,8 @@ export interface CollaborationSlice {
 export interface BackendModelEffortSlice {
   backendLocked: boolean;
   selectedBackend: PromptComposerArgs["selectedBackend"];
+  codexFastMode: boolean;
+  setCodexFastMode: (enabled: boolean) => void;
   selectedModel: string;
   selectedEffort: EffortLevel;
   availableEffortLevels: EffortLevel[];

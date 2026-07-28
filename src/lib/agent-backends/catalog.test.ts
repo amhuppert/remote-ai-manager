@@ -10,6 +10,7 @@ import {
   resolveConfiguredBackendSelectionDefaults,
   skillTriggerPrefixForBackend,
   backendLabel,
+  backendSupportsFastMode,
   backendToneToken,
 } from "./catalog";
 import { getBackendDescriptor } from "./registry";
@@ -53,6 +54,13 @@ describe("queueCapabilityForBackend", () => {
   });
 });
 
+describe("backendSupportsFastMode", () => {
+  it("is enabled only for Codex", () => {
+    expect(backendSupportsFastMode("codex")).toBe(true);
+    expect(backendSupportsFastMode("claude")).toBe(false);
+  });
+});
+
 describe("unknown backend ids", () => {
   it("throws instead of silently coercing to a real backend", () => {
     const unknown = "mystery" as AgentBackendId;
@@ -72,12 +80,20 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
       resolveConfiguredBackendSelectionDefaults({
         agentBackends: {
           claude: { model: "sonnet", reasoningEffort: "medium" },
-          codex: { model: "gpt-5.6-sol", reasoningEffort: "xhigh" },
+          codex: {
+            model: "gpt-5.6-sol",
+            reasoningEffort: "xhigh",
+            fastMode: true,
+          },
         },
       }),
     ).toEqual({
       claude: { modelId: "sonnet", effort: "medium" },
-      codex: { modelId: "gpt-5.6-sol", effort: "xhigh" },
+      codex: {
+        modelId: "gpt-5.6-sol",
+        effort: "xhigh",
+        codexFastMode: true,
+      },
     });
   });
 
@@ -91,7 +107,11 @@ describe("resolveConfiguredBackendSelectionDefaults", () => {
       }),
     ).toEqual({
       claude: { modelId: "haiku", effort: "high" },
-      codex: { modelId: "gpt-5.4", effort: "high" },
+      codex: {
+        modelId: "gpt-5.4",
+        effort: "high",
+        codexFastMode: false,
+      },
     });
   });
 });

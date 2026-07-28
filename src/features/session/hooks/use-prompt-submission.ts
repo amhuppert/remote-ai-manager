@@ -14,7 +14,10 @@ import {
   hasCollabPrefix,
   stripCollabPrefix,
 } from "@/lib/conversation-commands/parse";
-import { queueCapabilityForBackend as defaultQueueCapabilityForBackend } from "@/lib/agent-backends/catalog";
+import {
+  backendSupportsFastMode,
+  queueCapabilityForBackend as defaultQueueCapabilityForBackend,
+} from "@/lib/agent-backends/catalog";
 import type { QueueCapability } from "@/lib/agent-backends/descriptor";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
@@ -72,6 +75,7 @@ export interface UsePromptSubmissionArgs {
   selectedEffort: EffortLevel;
   effortSupported: boolean;
   selectedBackend: AgentBackendId;
+  selectedCodexFastMode?: boolean;
   sendPrompt: (
     prompt: string,
     messageCount: number,
@@ -80,6 +84,7 @@ export interface UsePromptSubmissionArgs {
     effort: EffortLevel | undefined,
     backend: AgentBackendId,
     submittedPendingPromptText?: string,
+    codexFastMode?: boolean,
   ) => Promise<void>;
   queueMessage: (
     text: string,
@@ -98,6 +103,7 @@ export interface UsePromptSubmissionArgs {
         backend?: AgentBackendId;
         modelId?: string;
         effort?: string;
+        codexFastMode?: boolean;
         images?: ImagePayload[];
       },
       options?: {
@@ -146,6 +152,7 @@ export function usePromptSubmission({
   selectedEffort,
   effortSupported,
   selectedBackend,
+  selectedCodexFastMode = false,
   sendPrompt,
   queueMessage,
   queueCapabilityForBackend = defaultQueueCapabilityForBackend,
@@ -182,6 +189,7 @@ export function usePromptSubmission({
         effortSupported ? selectedEffort : undefined,
         selectedBackend,
         submittedPendingPromptText,
+        selectedCodexFastMode,
       );
     },
     [
@@ -191,6 +199,7 @@ export function usePromptSubmission({
       effortSupported,
       selectedEffort,
       selectedBackend,
+      selectedCodexFastMode,
       clearImages,
       suppressPendingPromptAutosaveAfterSubmit,
       editorRef,
@@ -222,6 +231,9 @@ export function usePromptSubmission({
           backend: selectedBackend,
           modelId: selectedModel,
           ...(effortSupported ? { effort: selectedEffort } : {}),
+          ...(backendSupportsFastMode(selectedBackend)
+            ? { codexFastMode: selectedCodexFastMode }
+            : {}),
           ...(hasImages ? { images: serialized.images } : {}),
         },
         {
@@ -315,6 +327,7 @@ export function usePromptSubmission({
     editorRef,
     setPromptText,
     selectedBackend,
+    selectedCodexFastMode,
     selectedModel,
     selectedEffort,
     effortSupported,
@@ -351,8 +364,16 @@ export function usePromptSubmission({
         undefined,
         undefined,
         selectedBackend,
+        undefined,
+        selectedCodexFastMode,
       ),
-    [sendPrompt, messagesLength, selectedModel, selectedBackend],
+    [
+      sendPrompt,
+      messagesLength,
+      selectedModel,
+      selectedBackend,
+      selectedCodexFastMode,
+    ],
   );
 
   return {

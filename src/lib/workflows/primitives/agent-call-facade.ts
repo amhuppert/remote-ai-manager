@@ -84,6 +84,7 @@ export interface ConversationRuntimeResolution {
   signal: AbortSignal;
   modelId?: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   autonomous?: boolean;
   waitForBackgroundTasks?: boolean;
   sessionInstructions?: string[];
@@ -99,6 +100,7 @@ interface TaskRunnerResolution {
   workingDirectory: string;
   modelId?: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   autonomous?: boolean;
   resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
@@ -384,6 +386,9 @@ async function executeConversationTurn(
     ...(resolution.reasoningEffort !== undefined
       ? { reasoningEffort: resolution.reasoningEffort }
       : {}),
+    ...(resolution.codexFastMode !== undefined
+      ? { codexFastMode: resolution.codexFastMode }
+      : {}),
     ...(resolution.autonomous !== undefined
       ? { autonomous: resolution.autonomous }
       : {}),
@@ -513,6 +518,9 @@ async function executeTaskRun(
       : {}),
     ...(resolution.reasoningEffort !== undefined
       ? { reasoningEffort: resolution.reasoningEffort }
+      : {}),
+    ...(resolution.codexFastMode !== undefined
+      ? { codexFastMode: resolution.codexFastMode }
       : {}),
     ...(resolution.autonomous !== undefined
       ? { autonomous: resolution.autonomous }

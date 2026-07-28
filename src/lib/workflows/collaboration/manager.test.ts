@@ -79,6 +79,7 @@ describe("resolveCollaborationBackendModelConfig", () => {
       codex: {
         model: "gpt-5.6-sol",
         reasoningEffort: "ultra",
+        fastMode: true,
         timeoutMs: null,
         stallTimeoutMs: 60_000,
       },
@@ -100,6 +101,7 @@ describe("resolveCollaborationBackendModelConfig", () => {
       {
         model: "gpt-5.6-sol",
         reasoningEffort: "ultra",
+        codexFastMode: true,
         timeoutMs: 0,
         stallTimeoutMs: 60_000,
       },
@@ -243,6 +245,7 @@ interface ScriptedDepsOptions {
   resolveCodexModelConfigResult?: {
     model: string;
     reasoningEffort?: string;
+    codexFastMode?: boolean;
     timeoutMs?: number;
     stallTimeoutMs?: number;
   };
@@ -275,6 +278,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     worktreePath: string;
     codexModel?: string;
     codexReasoningEffort?: string;
+    codexFastMode?: boolean;
     codexTimeoutMs?: number;
     codexStallTimeoutMs?: number;
     claudeModel?: string;
@@ -314,6 +318,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     worktreePath: string;
     codexModel?: string;
     codexReasoningEffort?: string;
+    codexFastMode?: boolean;
     codexTimeoutMs?: number;
     codexStallTimeoutMs?: number;
     claudeModel?: string;
@@ -428,6 +433,9 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         worktreePath: input.worktreePath,
         codexModel: input.codexModel,
         codexReasoningEffort: input.codexReasoningEffort,
+        ...(input.codexFastMode !== undefined
+          ? { codexFastMode: input.codexFastMode }
+          : {}),
         codexTimeoutMs: input.codexTimeoutMs,
         codexStallTimeoutMs: input.codexStallTimeoutMs,
         claudeModel: input.claudeModel,
@@ -441,6 +449,7 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     },
     resolveCodexModelConfig: async () => ({
       model: "gpt-5.4",
+      codexFastMode: false,
       timeoutMs: 0,
       stallTimeoutMs: 60_000,
       ...options.resolveCodexModelConfigResult,
@@ -1071,6 +1080,7 @@ describe("createCollaborationManager.start", () => {
       conversationId: "conv-1",
       modelId: "gpt-5.5-codex",
       effort: "medium",
+      codexFastMode: true,
     });
 
     await runSliceCompletion;
@@ -1081,6 +1091,7 @@ describe("createCollaborationManager.start", () => {
         worktreePath: "/wt/xyz",
         codexModel: "gpt-5.5-codex",
         codexReasoningEffort: "medium",
+        codexFastMode: true,
         codexTimeoutMs: 0,
         codexStallTimeoutMs: 60_000,
         claudeModel: "opus",
@@ -1090,6 +1101,97 @@ describe("createCollaborationManager.start", () => {
       },
     ]);
   });
+
+  it.each([false, true])(
+    "carries an explicit Codex fast-mode value of %s into the Codex-primary slice runtime",
+    async (codexFastMode) => {
+      const { deps, buildCallAgentCalls, runSliceCalls, runSliceCompletion } =
+        buildScriptedDeps({
+          resolveConversationResult: { agentBackend: "codex" },
+        });
+      const manager = createCollaborationManager(deps);
+
+      await manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 2,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+        codexFastMode,
+      });
+
+      await runSliceCompletion;
+
+      expect(buildCallAgentCalls[0]?.codexFastMode).toBe(codexFastMode);
+      expect(runSliceCalls[0]?.input.codexFastMode).toBe(codexFastMode);
+    },
+  );
+
+  it.each([false, true])(
+    "uses and persists the resolved global Codex fast-mode default of %s when a Codex-primary start omits it",
+    async (codexFastMode) => {
+      const {
+        deps,
+        buildCallAgentCalls,
+        persistedStarts,
+        runSliceCalls,
+        runSliceCompletion,
+      } = buildScriptedDeps({
+        resolveConversationResult: { agentBackend: "codex" },
+        resolveCodexModelConfigResult: {
+          model: "gpt-5.4",
+          codexFastMode,
+        },
+      });
+      const manager = createCollaborationManager(deps);
+
+      await manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 2,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+      });
+
+      await runSliceCompletion;
+
+      expect(buildCallAgentCalls[0]?.codexFastMode).toBe(codexFastMode);
+      expect(runSliceCalls[0]?.input.codexFastMode).toBe(codexFastMode);
+      expect(persistedStarts[0]?.codexFastMode).toBe(codexFastMode);
+    },
+  );
+
+  it.each([false, true])(
+    "does not apply a conversation Codex fast-mode value of %s to the secondary Codex lane",
+    async (codexFastMode) => {
+      const { deps, buildCallAgentCalls, runSliceCalls, runSliceCompletion } =
+        buildScriptedDeps({
+          resolveConversationResult: { agentBackend: "claude" },
+          resolveCodexModelConfigResult: {
+            model: "gpt-5.4",
+            codexFastMode: true,
+          },
+        });
+      const manager = createCollaborationManager(deps);
+
+      await manager.start({
+        projectPath: "/p",
+        sessionName: "s",
+        brief: "design X",
+        negotiationRounds: 2,
+        autonomousResolutionThreshold: "major",
+        conversationId: "conv-1",
+        codexFastMode,
+      });
+
+      await runSliceCompletion;
+
+      expect(buildCallAgentCalls[0]?.codexFastMode).toBeUndefined();
+      expect(runSliceCalls[0]?.input.codexFastMode).toBeUndefined();
+    },
+  );
 
   it("keeps the request effort out of the non-primary lane when only effort is sent", async () => {
     const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(
@@ -2291,6 +2393,82 @@ describe("createCollaborationManager.resume", () => {
         claudeStallTimeoutMs: 0,
       }),
     );
+  });
+
+  it.each([false, true])(
+    "restores a persisted Codex-primary fast-mode value of %s for resumed Codex calls",
+    async (codexFastMode) => {
+      const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+      const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+      await repo.create(
+        buildEnvelope({
+          workflowId: "wf-paused",
+          status: "running",
+          featureSnapshot: {
+            brief: "design X",
+            negotiationRounds: 5,
+            negotiationRoundsCompleted: 2,
+            conversationId: "conv-1",
+            primaryAgentBackend: "codex",
+            autonomousResolutionThreshold: "major",
+            sessionContext: PERSISTED_CONTEXT,
+            codexFastMode,
+          },
+        }),
+      );
+      await repo.markPaused("wf-paused", {
+        pauseKind: "post_turn",
+        gateKind: "human_approval",
+        resumeToken: "good-token",
+      });
+
+      const { deps, runSliceCalls, buildCallAgentCalls, runSliceCompletion } =
+        buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+      const manager = createCollaborationManager(deps);
+
+      await manager.resume({
+        projectPath: "/p",
+        sessionName: "s",
+        workflowId: "wf-paused",
+        resumeToken: "good-token",
+        conversationId: "conv-1",
+        userAnswers: { q1: "continue" },
+      });
+      await runSliceCompletion;
+
+      expect(buildCallAgentCalls[0]?.codexFastMode).toBe(codexFastMode);
+      expect(runSliceCalls[0]?.input.codexFastMode).toBe(codexFastMode);
+    },
+  );
+
+  it("does not restore a persisted fast-mode field onto a Claude-primary run", async () => {
+    const envelopeStore = await seedPausedEnvelope(PERSISTED_CONTEXT);
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    const existing = await repo.get("wf-paused");
+    if (!existing) throw new Error("paused envelope missing");
+    await repo.update("wf-paused", {
+      featureSnapshot: {
+        ...(existing.featureSnapshot as Record<string, unknown>),
+        codexFastMode: true,
+      },
+    });
+
+    const { deps, runSliceCalls, buildCallAgentCalls, runSliceCompletion } =
+      buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const manager = createCollaborationManager(deps);
+
+    await manager.resume({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-paused",
+      resumeToken: "good-token",
+      conversationId: "conv-1",
+      userAnswers: {},
+    });
+    await runSliceCompletion;
+
+    expect(buildCallAgentCalls[0]?.codexFastMode).toBeUndefined();
+    expect(runSliceCalls[0]?.input.codexFastMode).toBeUndefined();
   });
 });
 

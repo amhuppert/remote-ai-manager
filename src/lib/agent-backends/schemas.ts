@@ -205,6 +205,7 @@ export const codexConfigSchema = z
   .object({
     model: z.string().trim().min(1),
     reasoningEffort: codexReasoningEffortSchema.optional(),
+    fastMode: z.boolean().default(false),
     timeoutMs: backendTimeoutMsSchema,
     /**
      * Per-turn inactivity bound override; unset falls back to the Codex

@@ -46,6 +46,7 @@ export interface AgentTaskRequest {
   systemInstructions?: string[];
   modelId?: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   resumeRef?: AgentSessionRef | null;
   outputSchema?: Record<string, unknown>;
   timeoutMs: number;

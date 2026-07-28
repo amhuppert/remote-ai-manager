@@ -117,6 +117,12 @@ export interface AsymmetricCollaborationSliceInput {
    */
   primaryAgentBackend: CollaborationAgent;
   /**
+   * The originating conversation's explicit speed selection when Codex is the
+   * primary backend. Omitted for Claude-primary runs so their secondary Codex
+   * lane keeps the task runner's Standard behavior.
+   */
+  codexFastMode?: boolean;
+  /**
    * The model + effort each lane runs with, resolved by the manager.
    * Written into the envelope's feature snapshot so the UI can label
    * artifacts with the model that produced them.
@@ -735,6 +741,9 @@ async function initializeEnvelope(
         primaryAgentBackend: input.primaryAgentBackend,
         primaryBackend: backends.primaryBackend,
         secondaryBackend: backends.secondaryBackend,
+        ...(input.codexFastMode !== undefined
+          ? { codexFastMode: input.codexFastMode }
+          : {}),
         ...(input.agentModelSettings !== undefined
           ? { agentModelSettings: input.agentModelSettings }
           : {}),

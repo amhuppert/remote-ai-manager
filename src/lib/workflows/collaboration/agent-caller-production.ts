@@ -126,6 +126,8 @@ export interface CollaborationProductionAgentCallerInput {
   codexModel?: string;
   /** Reasoning effort the Codex lane runs with, resolved alongside `codexModel`. */
   codexReasoningEffort?: string;
+  /** Per-conversation speed choice when Codex is the primary collaboration lane. */
+  codexFastMode?: boolean;
   /** Whole-turn safety bound from the Codex backend profile; zero disables it. */
   codexTimeoutMs?: number;
   /** Inactivity bound from the Codex backend profile; zero disables it. */
@@ -273,6 +275,9 @@ function buildInnerCallAgent(
             : {}),
           ...(effectiveReasoningEffort !== undefined
             ? { reasoningEffort: effectiveReasoningEffort }
+            : {}),
+          ...(isCodex && input.codexFastMode !== undefined
+            ? { codexFastMode: input.codexFastMode }
             : {}),
           ...(laneDefaults.timeoutMs !== undefined
             ? { defaultTimeoutMs: laneDefaults.timeoutMs }

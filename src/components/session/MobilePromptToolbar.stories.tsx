@@ -53,6 +53,7 @@ interface DemoProps {
   mcpTotalCount?: number;
   mcpHasOverrides?: boolean;
   attachDisabled?: boolean;
+  initialFastMode?: boolean;
 }
 
 function McpRowStub({
@@ -112,11 +113,13 @@ function DemoToolbar({
   mcpTotalCount = 3,
   mcpHasOverrides = false,
   attachDisabled = false,
+  initialFastMode = false,
 }: DemoProps) {
   const [model, setModel] = useState(initialModel);
   const [effort, setEffort] = useState<EffortLevel>(initialEffort);
   const [backend, setBackend] = useState<AgentBackendId>(initialBackend);
   const [debug, setDebug] = useState(initialDebug);
+  const [fastMode, setFastMode] = useState(initialFastMode);
   const [text, setText] = useState("");
 
   const modelOptions = getModelsForBackend(backend);
@@ -161,6 +164,8 @@ function DemoToolbar({
         setEffort(allowed.includes("high") ? "high" : allowed[0]!);
       }
     },
+    codexFastMode: fastMode,
+    onCodexFastModeChange: setFastMode,
     onAttach: fn(),
     attachDisabled,
     debugActive: debug,
@@ -225,7 +230,7 @@ function DemoToolbar({
           placeholder={
             isReadOnly
               ? "Session is merged and read-only"
-              : "Send a prompt to Claude..."
+              : `Send a prompt to ${backend === "codex" ? "Codex" : "Claude"}...`
           }
           rows={1}
           value={text}
@@ -307,6 +312,15 @@ export const CodexBackend: Story = {
   args: {
     initialBackend: "codex",
     initialModel: "gpt-5.5",
+  },
+};
+
+/** Codex Fast mode selected in the Speed section of prompt settings. */
+export const CodexFastMode: Story = {
+  args: {
+    initialBackend: "codex",
+    initialModel: "gpt-5.5",
+    initialFastMode: true,
   },
 };
 

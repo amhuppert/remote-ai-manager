@@ -56,6 +56,7 @@ describe("ALL_FIELD_PATHS", () => {
       "agentBackends.claude.timeoutMs",
       "agentBackends.codex.model",
       "agentBackends.codex.reasoningEffort",
+      "agentBackends.codex.fastMode",
       "agentBackends.codex.timeoutMs",
     ]) {
       expect(ALL_FIELD_PATHS).toContain(path);

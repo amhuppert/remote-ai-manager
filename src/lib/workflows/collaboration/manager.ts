@@ -79,6 +79,7 @@ import {
   resolveConfiguredAgentBackendDefaults,
   type ConversationTurnConfig,
 } from "@/lib/agent-backends/conversation-policy";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import {
@@ -219,6 +220,7 @@ export const collaborationStartRequestSchema = z.object({
   // and direct API callers keep working.
   modelId: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
+  codexFastMode: z.boolean().optional(),
   images: z.array(imagePayloadSchema).max(5).optional(),
 });
 type CollaborationStartRequest = z.infer<
@@ -290,6 +292,7 @@ interface CollaborationStartPersistenceInput {
   imageRefs: readonly ConversationImageRef[];
   modelId?: string;
   effort?: string;
+  codexFastMode?: boolean;
 }
 
 interface CollaborationStartPersisterDeps {
@@ -363,6 +366,9 @@ export function createCollaborationStartPersister(
           imageRefs: input.imageRefs,
           ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
           ...(input.effort !== undefined ? { effort: input.effort } : {}),
+          ...(input.codexFastMode !== undefined
+            ? { codexFastMode: input.codexFastMode }
+            : {}),
         }) as ReturnType<typeof buildCollaborationUserTranscriptEntry> & {
           id: string;
         },
@@ -469,6 +475,7 @@ export async function prepareCollaborationInitialImages(
 export interface CollaborationBackendRuntimeConfig {
   model: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   timeoutMs: number;
   stallTimeoutMs: number;
 }
@@ -648,6 +655,7 @@ export interface CollaborationManagerDeps {
     imageRefs: readonly ConversationImageRef[];
     modelId?: string;
     effort?: string;
+    codexFastMode?: boolean;
   }): Promise<void>;
 
   /**
@@ -702,6 +710,7 @@ export interface CollaborationManagerDeps {
     laneService: LaneService;
     codexModel: string;
     codexReasoningEffort?: string;
+    codexFastMode?: boolean;
     codexTimeoutMs: number;
     codexStallTimeoutMs: number;
     claudeModel: string;
@@ -870,6 +879,9 @@ export function buildStandaloneCollaborationCallerInput(
     ...(input.codexReasoningEffort !== undefined
       ? { codexReasoningEffort: input.codexReasoningEffort }
       : {}),
+    ...(input.codexFastMode !== undefined
+      ? { codexFastMode: input.codexFastMode }
+      : {}),
     codexTimeoutMs: input.codexTimeoutMs,
     codexStallTimeoutMs: input.codexStallTimeoutMs,
     claudeModel: input.claudeModel,
@@ -897,6 +909,9 @@ export function resolveCollaborationBackendModelConfig(
     model: resolved.modelId,
     ...(resolved.reasoningEffort !== undefined
       ? { reasoningEffort: resolved.reasoningEffort }
+      : {}),
+    ...(backendSupportsFastMode(backend)
+      ? { codexFastMode: resolved.codexFastMode }
       : {}),
     timeoutMs: resolved.timeoutMs,
     stallTimeoutMs: resolved.stallTimeoutMs,
@@ -1141,6 +1156,7 @@ export function createCollaborationManager(
         conversationId: input.conversationId,
         modelId: input.modelId,
         effort: input.effort,
+        codexFastMode: input.codexFastMode,
         images: input.images,
       });
 
@@ -1215,6 +1231,9 @@ export function createCollaborationManager(
         ...(await deps.resolveCodexModelConfig()),
         ...(primaryAgentBackend === "codex" ? primaryOverride : {}),
       };
+      const codexFastMode = backendSupportsFastMode(primaryAgentBackend)
+        ? (parsed.codexFastMode ?? codexModelConfig.codexFastMode ?? false)
+        : undefined;
       const claudeModelConfig = {
         ...(await deps.resolveClaudeModelConfig()),
         ...(primaryAgentBackend === "claude" ? primaryOverride : {}),
@@ -1245,6 +1264,7 @@ export function createCollaborationManager(
         ...(codexModelConfig.reasoningEffort !== undefined
           ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
           : {}),
+        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
         codexTimeoutMs: codexModelConfig.timeoutMs,
         codexStallTimeoutMs: codexModelConfig.stallTimeoutMs,
         claudeModel: claudeModelConfig.model,
@@ -1271,6 +1291,7 @@ export function createCollaborationManager(
         worktreePath: session.worktreePath,
         sessionKey,
         primaryAgentBackend,
+        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
         agentModelSettings,
         negotiationRounds: parsed.negotiationRounds,
         autonomousResolutionThreshold: parsed.autonomousResolutionThreshold,
@@ -1292,6 +1313,7 @@ export function createCollaborationManager(
           imageRefs,
           ...(parsed.modelId !== undefined ? { modelId: parsed.modelId } : {}),
           ...(parsed.effort !== undefined ? { effort: parsed.effort } : {}),
+          ...(codexFastMode !== undefined ? { codexFastMode } : {}),
         });
       } catch (error) {
         deps.stopRegistry.release(workflowId);
@@ -1307,6 +1329,7 @@ export function createCollaborationManager(
         primaryAgentBackend,
         requestModelId: parsed.modelId ?? null,
         requestEffort: parsed.effort ?? null,
+        requestCodexFastMode: codexFastMode ?? null,
         claudeModel: agentModelSettings.claude.model,
         claudeEffort: agentModelSettings.claude.effort ?? null,
         codexModel: agentModelSettings.codex.model,
@@ -1428,6 +1451,12 @@ export function createCollaborationManager(
       const primaryAgentBackend: AgentBackendId = primaryBackendParse.success
         ? primaryBackendParse.data
         : "claude";
+      const persistedCodexFastMode = existingSnapshot["codexFastMode"];
+      const codexFastMode =
+        backendSupportsFastMode(primaryAgentBackend) &&
+        typeof persistedCodexFastMode === "boolean"
+          ? persistedCodexFastMode
+          : undefined;
       const autonomousResolutionThreshold =
         collaborationAutonomousResolutionThresholdSchema.safeParse(
           existingSnapshot["autonomousResolutionThreshold"],
@@ -1485,6 +1514,7 @@ export function createCollaborationManager(
         ...(codexModelConfig.reasoningEffort !== undefined
           ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
           : {}),
+        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
         codexTimeoutMs: codexModelConfig.timeoutMs,
         codexStallTimeoutMs: codexModelConfig.stallTimeoutMs,
         claudeModel: claudeModelConfig.model,
@@ -1510,6 +1540,7 @@ export function createCollaborationManager(
         worktreePath: session.worktreePath,
         sessionKey,
         primaryAgentBackend,
+        ...(codexFastMode !== undefined ? { codexFastMode } : {}),
         negotiationRounds,
         autonomousResolutionThreshold: autonomousResolutionThreshold.success
           ? autonomousResolutionThreshold.data
@@ -1526,6 +1557,7 @@ export function createCollaborationManager(
         workflowId: input.workflowId,
         userAnswerCount: Object.keys(parsed.userAnswers).length,
         completedRounds,
+        codexFastMode: codexFastMode ?? null,
       });
 
       void deps

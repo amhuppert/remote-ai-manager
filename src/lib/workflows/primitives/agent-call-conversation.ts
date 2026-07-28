@@ -46,6 +46,7 @@ export interface DispatchConversationTurnDeps {
   signal: AbortSignal;
   modelId?: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   autonomous?: boolean;
   /**
    * Opt-in: hold the turn open until in-flight waitable background tasks
@@ -123,6 +124,9 @@ export async function dispatchConversationTurn(
     sessionInstructions: [...(deps.sessionInstructions ?? [])],
     modelId: deps.modelId,
     reasoningEffort: deps.reasoningEffort,
+    ...(deps.codexFastMode !== undefined
+      ? { codexFastMode: deps.codexFastMode }
+      : {}),
     autonomous: deps.autonomous ?? false,
     ...(deps.waitForBackgroundTasks ? { waitForBackgroundTasks: true } : {}),
     outputFormat: request.outputSchema

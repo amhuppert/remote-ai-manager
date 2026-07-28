@@ -354,6 +354,8 @@ describe("CodexTaskRunner", () => {
           args: ["server.js"],
         },
       },
+      service_tier: "default",
+      features: { fast_mode: false },
     });
   });
 
@@ -416,6 +418,8 @@ describe("CodexTaskRunner", () => {
           enabled: false,
         },
       },
+      service_tier: "default",
+      features: { fast_mode: false },
     });
   });
 
@@ -432,16 +436,41 @@ describe("CodexTaskRunner", () => {
     expect(codexCalls).toHaveLength(1);
     const passedOptions = codexCalls[0]![0]!;
     expect(passedOptions).toHaveProperty("config");
-    expect(passedOptions.config).toEqual({ mcp_servers: {} });
+    expect(passedOptions.config).toEqual({
+      mcp_servers: {},
+      service_tier: "default",
+      features: { fast_mode: false },
+    });
   });
 
-  it("omits config entirely when no portableMcp is provided", async () => {
+  it("uses standard mode when a task omits an explicit choice", async () => {
     await runner.run(makeRequest());
 
-    const codexCalls = vi.mocked(Codex).mock.calls;
-    expect(codexCalls).toHaveLength(1);
-    const passedOptions = codexCalls[0]![0]!;
-    expect(passedOptions).not.toHaveProperty("config");
+    const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
+    expect(passedOptions.config).toEqual({
+      service_tier: "default",
+      features: { fast_mode: false },
+    });
+  });
+
+  it("honors an explicit standard-mode task choice", async () => {
+    await runner.run(makeRequest({ codexFastMode: false }));
+
+    const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
+    expect(passedOptions.config).toEqual({
+      service_tier: "default",
+      features: { fast_mode: false },
+    });
+  });
+
+  it("honors an explicit fast-mode task choice", async () => {
+    await runner.run(makeRequest({ codexFastMode: true }));
+
+    const passedOptions = vi.mocked(Codex).mock.calls[0]![0]!;
+    expect(passedOptions.config).toEqual({
+      service_tier: "fast",
+      features: { fast_mode: true },
+    });
   });
 
   it("maps isolated one-shot execution to a fresh constrained Codex thread", async () => {
@@ -499,6 +528,7 @@ describe("CodexTaskRunner", () => {
         deferred_executor: false,
         enable_fanout: false,
         enable_mcp_apps: false,
+        fast_mode: false,
         goals: false,
         hooks: false,
         image_generation: false,
@@ -547,6 +577,7 @@ describe("CodexTaskRunner", () => {
       },
       project_doc_fallback_filenames: [],
       project_doc_max_bytes: 0,
+      service_tier: "default",
       skills: {
         bundled: { enabled: false },
         include_instructions: false,

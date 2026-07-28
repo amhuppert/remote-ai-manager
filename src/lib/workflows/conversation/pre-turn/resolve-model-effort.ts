@@ -89,6 +89,26 @@ export function resolveTurnModelEffort(input: {
 }
 
 /**
+ * Resolve the Codex speed attached to a conversation turn. An explicit
+ * composer choice wins, then the conversation's most recent user turn, then
+ * the global Codex profile that seeds conversations without a selection.
+ */
+export function resolveTurnCodexFastMode(input: {
+  backend: AgentBackendId;
+  config: ActorConfig;
+  explicitCodexFastMode: boolean | null;
+  priorMessages: readonly TranscriptMessage[];
+}): boolean {
+  const lastUsed = selectLastUserTurnAgentSettings(input.priorMessages);
+  return resolveAgentBackendTurnDefaults({
+    backend: input.backend,
+    config: input.config,
+    explicit: { codexFastMode: input.explicitCodexFastMode },
+    scoped: { codexFastMode: lastUsed.codexFastMode },
+  }).codexFastMode;
+}
+
+/**
  * Resolve the safety-net timeout for a turn based on the backend.
  * Returns 0 when the backend has no timeout.
  */

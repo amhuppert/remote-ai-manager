@@ -132,6 +132,7 @@ function defaultConfig(): GlobalConfig {
         timeoutMs: 3_600_000,
       },
       codex: {
+        fastMode: false,
         model: "gpt-5.4",
         reasoningEffort: "high",
         timeoutMs: null,

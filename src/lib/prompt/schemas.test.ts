@@ -94,6 +94,30 @@ describe("queueEnqueueRequestSchema", () => {
 });
 
 describe("runPromptRequestSchema documentFeedback", () => {
+  it("accepts an explicit Codex fast-mode selection", () => {
+    expect(
+      runPromptRequestSchema.parse({
+        prompt: "ship it",
+        codexFastMode: true,
+      }).codexFastMode,
+    ).toBe(true);
+    expect(
+      runPromptRequestSchema.parse({
+        prompt: "take the standard route",
+        codexFastMode: false,
+      }).codexFastMode,
+    ).toBe(false);
+  });
+
+  it("rejects a non-boolean Codex fast-mode selection", () => {
+    expect(
+      runPromptRequestSchema.safeParse({
+        prompt: "ship it",
+        codexFastMode: "fast",
+      }).success,
+    ).toBe(false);
+  });
+
   it("preserves the exact pending-prompt ownership token while trimming the dispatched prompt", () => {
     const result = runPromptRequestSchema.parse({
       prompt: "  hi  ",

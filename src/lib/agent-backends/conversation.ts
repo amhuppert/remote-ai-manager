@@ -82,6 +82,7 @@ export interface ConversationBackendTurnInput {
   sessionInstructions: string[];
   modelId?: string;
   reasoningEffort?: string;
+  codexFastMode?: boolean;
   autonomous: boolean;
   outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
   signal: AbortSignal;

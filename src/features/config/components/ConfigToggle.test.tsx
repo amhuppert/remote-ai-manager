@@ -45,6 +45,14 @@ describe("ConfigToggle", () => {
     ).toBeInTheDocument();
   });
 
+  it("provides a 44px mobile touch target across the full toggle row", () => {
+    render(<ConfigToggle label="x" value={false} onChange={() => {}} />);
+
+    expect(screen.getByRole("switch").closest("label")).toHaveClass(
+      "max-768:min-h-[var(--touch-target-min)]",
+    );
+  });
+
   it("calls onChange with toggled value on switch click", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

@@ -65,6 +65,7 @@ import {
   type ContinuationDisposition,
 } from "@/lib/agent-backends/errors";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
+import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -98,6 +99,7 @@ import { getDebugManifestPath } from "@/lib/debug-log/service";
 import type { ActorConfig } from "./pre-turn/resolve-model-effort";
 import {
   resolveTurnModelEffort,
+  resolveTurnCodexFastMode,
   resolveBackendTimeoutMs,
   resolveBackendStallTimeoutMs,
 } from "./pre-turn/resolve-model-effort";
@@ -799,6 +801,7 @@ interface DispatchTurnViaAgentCallInput {
   imageRefs: ConversationBackendTurnInput["imageRefs"] | undefined;
   modelId: string | null | undefined;
   reasoningEffort: string | undefined;
+  codexFastMode: boolean | undefined;
   autonomous: boolean;
   waitForBackgroundTasks: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
@@ -851,6 +854,9 @@ async function dispatchTurnViaAgentCall(
         ...(input.modelId != null ? { modelId: input.modelId } : {}),
         ...(input.reasoningEffort !== undefined
           ? { reasoningEffort: input.reasoningEffort }
+          : {}),
+        ...(input.codexFastMode !== undefined
+          ? { codexFastMode: input.codexFastMode }
           : {}),
         autonomous: input.autonomous,
         ...(input.waitForBackgroundTasks
@@ -1048,7 +1054,9 @@ export async function executePromptForMachine(
   // needed when a tier below "explicit" could apply, so the common composer
   // path (both supplied) skips it.
   const priorMessages =
-    input.modelId == null || input.effort == null
+    input.modelId == null ||
+    input.effort == null ||
+    (backendSupportsFastMode(input.agentBackend) && input.codexFastMode == null)
       ? await deps.readConversationMessages(input.transcriptPath ?? null)
       : [];
   const { effectiveModel, effectiveEffort } = resolveTurnModelEffort({
@@ -1056,6 +1064,12 @@ export async function executePromptForMachine(
     config,
     explicitModel: input.modelId,
     explicitEffort: input.effort,
+    priorMessages,
+  });
+  const effectiveCodexFastMode = resolveTurnCodexFastMode({
+    backend: input.agentBackend,
+    config,
+    explicitCodexFastMode: input.codexFastMode,
     priorMessages,
   });
   const factory = deps.getConversationBackendFactory(input.agentBackend);
@@ -1124,6 +1138,9 @@ export async function executePromptForMachine(
     content: transcriptBlocks,
     model: effectiveModel ?? undefined,
     effort: effectiveEffort,
+    ...(backendSupportsFastMode(input.agentBackend)
+      ? { codexFastMode: effectiveCodexFastMode }
+      : {}),
   });
 
   const queuedAccounting = createQueuedDeliveryAccounting(deps, {
@@ -1751,6 +1768,9 @@ export async function executePromptForMachine(
       imageRefs: imageRefs.length > 0 ? imageRefs : undefined,
       modelId: effectiveModel,
       reasoningEffort: effectiveEffort,
+      codexFastMode: backendSupportsFastMode(input.agentBackend)
+        ? effectiveCodexFastMode
+        : undefined,
       autonomous: input.autonomous ?? false,
       waitForBackgroundTasks: input.waitForBackgroundTasks ?? false,
       outputFormat: input.outputFormat,

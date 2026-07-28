@@ -51,6 +51,7 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
         timeoutMs: 3_600_000,
       },
       codex: {
+        fastMode: false,
         model: "gpt-5.4",
         reasoningEffort: "high",
         timeoutMs: null,
@@ -191,6 +192,9 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(screen.getByText("Claude model")).toBeVisible();
     expect(screen.getByText("Codex model")).toBeVisible();
     expect(
+      screen.getByRole("switch", { name: "Codex fast mode" }),
+    ).toHaveAttribute("aria-checked", "false");
+    expect(
       screen.getByRole("tab", { name: "Agent backends" }).className,
     ).toContain("max-768:min-h-[var(--touch-target-min)]");
     expect(
@@ -239,6 +243,7 @@ describe("ConfigPage — Workflow Defaults", () => {
         (button) => button.textContent === "Sonnet",
       )!,
     );
+    fireEvent.click(screen.getByRole("switch", { name: "Codex fast mode" }));
     fireEvent.click(screen.getByRole("button", { name: /Save changes/i }));
 
     await vi.waitFor(() =>
@@ -250,7 +255,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       defaultAgentBackend: "codex",
       agentBackends: {
         claude: { model: "sonnet" },
-        codex: { model: "gpt-5.4-mini" },
+        codex: { fastMode: true, model: "gpt-5.4-mini" },
       },
     });
   });

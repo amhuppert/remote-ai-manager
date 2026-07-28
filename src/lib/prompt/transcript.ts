@@ -57,6 +57,8 @@ export interface TranscriptEntry {
   model?: string;
   /** Reasoning effort level used for this turn (stored on user entries) */
   effort?: string;
+  /** Whether this Codex turn used Fast mode (stored on user entries). */
+  codexFastMode?: boolean;
   /** SDK message UUID (stored on assistant entries for fork resumeSessionAt) */
   uuid?: string;
   /** Where this entry originated. Absent on legacy entries and any caller that
@@ -290,6 +292,9 @@ export async function appendTranscriptEntry(
         timestamp: entry.timestamp ?? null,
         ...(entry.model !== undefined ? { model: entry.model } : {}),
         ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
+        ...(entry.codexFastMode !== undefined
+          ? { codexFastMode: entry.codexFastMode }
+          : {}),
         ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
       },
     });
@@ -814,10 +819,15 @@ async function readConversationMessagesWithSeqImpl(
   const entries: LogicalUnitEntry[] = [];
   const turnMetaBySeq = new Map<
     number,
-    { model: string | undefined; effort: string | undefined }
+    {
+      model: string | undefined;
+      effort: string | undefined;
+      codexFastMode: boolean | undefined;
+    }
   >();
   let currentModel: string | undefined;
   let currentEffort: string | undefined;
+  let currentCodexFastMode: boolean | undefined;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex];
@@ -838,14 +848,17 @@ async function readConversationMessagesWithSeqImpl(
       // Always reset effort when we see a new user entry — if the entry
       // has no effort field, the model didn't support it for this turn.
       currentEffort = entry.effort;
+      currentCodexFastMode = entry.codexFastMode;
       turnMetaBySeq.set(lineIndex, {
         model: entry.model,
         effort: entry.effort,
+        codexFastMode: entry.codexFastMode,
       });
     } else if (entry.role === "assistant") {
       turnMetaBySeq.set(lineIndex, {
         model: currentModel,
         effort: currentEffort,
+        codexFastMode: currentCodexFastMode,
       });
     }
 
@@ -879,6 +892,7 @@ async function readConversationMessagesWithSeqImpl(
           : {
               model: meta?.model,
               effort: meta?.effort,
+              codexFastMode: meta?.codexFastMode,
             }),
         seq: lastPart.seq,
       };

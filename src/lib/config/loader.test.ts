@@ -80,10 +80,29 @@ describe("createConfigReader", () => {
         timeoutMs: 3_600_000,
       },
       codex: {
+        fastMode: false,
         model: "gpt-5.4",
         reasoningEffort: "high",
         timeoutMs: null,
       },
+    });
+  });
+
+  it("reads the Codex fast mode default from disk", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ agentBackends: { codex: { fastMode: true } } }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+
+    await expect(reader.readConfig()).resolves.toMatchObject({
+      agentBackends: { codex: { fastMode: true } },
+    });
+    await expect(reader.readRawConfig()).resolves.toMatchObject({
+      agentBackends: { codex: { fastMode: true } },
     });
   });
 

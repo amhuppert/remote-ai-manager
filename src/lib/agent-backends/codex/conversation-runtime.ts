@@ -64,6 +64,7 @@ import {
   listNativeCodexMcpServers,
   type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
+import { withCodexFastMode } from "./fast-mode-config";
 
 const logger = createLogger("codex:conversation-runtime");
 
@@ -223,7 +224,8 @@ export class CodexConversationRuntime
       const promptInput = this.buildPromptInput(input);
 
       // Build per-turn Codex client options
-      const codexOptions = await this.buildCodexOptions();
+      const codexFastMode = input.codexFastMode ?? false;
+      const codexOptions = await this.buildCodexOptions(codexFastMode);
 
       // Create Codex client and thread
       const codex = this.deps.createCodex(codexOptions);
@@ -242,7 +244,8 @@ export class CodexConversationRuntime
         modelId: this.modelId,
         reasoningEffort: this.reasoningEffort,
         hasOutputFormat: !!this.outputFormat,
-        hasMcpServers: !!codexOptions.config,
+        codexFastMode,
+        hasMcpServers: codexOptions.config?.mcp_servers !== undefined,
         promptLength:
           typeof promptInput === "string"
             ? promptInput.length
@@ -535,7 +538,9 @@ export class CodexConversationRuntime
     return [{ type: "text", text: finalPrompt }, ...imageInputs];
   }
 
-  private async buildCodexOptions(): Promise<CodexOptions> {
+  private async buildCodexOptions(
+    codexFastMode: boolean,
+  ): Promise<CodexOptions> {
     // Thread the same cctl env contract every spawned session gets (doc 01 §2):
     // identity + server coordinates + PATH prepend, plus the graph-workflow lane
     // identity when this is an implementer lane, so `cctl workflow …` resolves
@@ -583,9 +588,10 @@ export class CodexConversationRuntime
       Object.assign(configMerged, this.stagedCapabilityConfig.config);
     }
 
-    if (Object.keys(configMerged).length > 0) {
-      options.config = configMerged as CodexOptions["config"];
-    }
+    options.config = withCodexFastMode(
+      configMerged as CodexOptions["config"],
+      codexFastMode,
+    );
 
     return options;
   }

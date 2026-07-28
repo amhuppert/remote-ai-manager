@@ -14,6 +14,7 @@ import { getBackendDescriptor } from "./registry-core";
 interface BackendProfileConfig {
   model: string;
   reasoningEffort?: string;
+  fastMode?: boolean;
   timeoutMs: number | null;
   stallTimeoutMs?: number | null;
 }
@@ -29,6 +30,7 @@ export interface ConversationTurnConfig {
 export interface ResolvedAgentBackendDefaults {
   modelId: string;
   reasoningEffort: EffortLevel | undefined;
+  codexFastMode: boolean;
   /** Runtime sentinel: zero means unbounded. */
   timeoutMs: number;
   /** Runtime sentinel: zero means disabled. */
@@ -38,6 +40,7 @@ export interface ResolvedAgentBackendDefaults {
 export interface AgentBackendSettingsOverride {
   modelId?: string | null;
   reasoningEffort?: string | null;
+  codexFastMode?: boolean | null;
 }
 
 // Selection defaults are resolved by the client-safe catalog; the aliases keep
@@ -113,6 +116,13 @@ export function resolveAgentBackendTurnDefaults(input: {
   return {
     modelId,
     reasoningEffort: resolveModelValidEffort(backend, modelId, reasoningEffort),
+    codexFastMode:
+      backend === "codex"
+        ? (input.explicit?.codexFastMode ??
+          input.scoped?.codexFastMode ??
+          profile?.fastMode ??
+          false)
+        : false,
     timeoutMs: resolveConfiguredTimeoutMs(
       profile === undefined
         ? descriptor!.metadata.defaultTimeoutMs

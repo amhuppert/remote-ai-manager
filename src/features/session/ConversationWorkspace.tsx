@@ -24,6 +24,7 @@ import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversa
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import { useDevServers } from "@/hooks/use-dev-servers";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
+import { useCodexFastMode } from "@/hooks/use-codex-fast-mode";
 import { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page-display";
@@ -196,6 +197,12 @@ export default function ConversationWorkspace({
     backendDefaults,
     lastUsedModelId: lastUserTurnAgentSettings.modelId,
     lastUsedEffort: lastUserTurnAgentSettings.effort,
+  });
+  const { codexFastMode, setCodexFastMode } = useCodexFastMode({
+    conversationId,
+    promptCount: activeConversation?.promptCount ?? 0,
+    defaultValue: backendDefaults.codex.codexFastMode ?? false,
+    lastUsedValue: lastUserTurnAgentSettings.codexFastMode,
   });
 
   // Stable identity required: the draft hook's flush and beacon effects key off
@@ -390,6 +397,7 @@ export default function ConversationWorkspace({
     selectedEffort,
     effortSupported,
     selectedBackend,
+    selectedCodexFastMode: codexFastMode,
     sendPrompt,
     queueMessage,
     collaborationStartMutation,
@@ -460,6 +468,8 @@ export default function ConversationWorkspace({
     backendModelEffort: {
       backendLocked,
       selectedBackend,
+      codexFastMode,
+      setCodexFastMode,
       selectedModel,
       selectedEffort,
       availableEffortLevels,

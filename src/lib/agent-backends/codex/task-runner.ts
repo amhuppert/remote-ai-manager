@@ -46,6 +46,7 @@ import {
 import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
+import { withCodexFastMode } from "./fast-mode-config";
 
 const logger = createLogger("codex:task-runner");
 const codexFailureClassifier = createCodexFailureClassifier();
@@ -342,6 +343,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       skipGitRepoCheck: threadOptions.skipGitRepoCheck,
       executionProfile: input.executionProfile ?? "standard",
       hasCcSessionScope: input.ccSessionScope !== undefined,
+      codexFastModeOverride: input.codexFastMode ?? null,
     });
 
     if (
@@ -412,6 +414,21 @@ export class CodexTaskRunner implements AgentTaskRunner {
       });
     }
     const env = toStringEnv(sessionEnv);
+    const abortController = new AbortController();
+    const externalSignal = input.signal;
+    const onExternalAbort = () => abortController.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) abortController.abort();
+      else externalSignal.addEventListener("abort", onExternalAbort);
+    }
+
+    const codexFastMode = input.codexFastMode ?? false;
+    logger.debug("codex-task-runner.fast_mode_resolved", {
+      workingDirectory: input.workingDirectory,
+      codexFastMode,
+      source: input.codexFastMode === undefined ? "task_default" : "request",
+    });
+
     let mcpServersConfig: Record<string, unknown> | undefined;
     if (isolatedOneShot) {
       const nativeServers = await listNativeMcpServers(
@@ -453,45 +470,42 @@ export class CodexTaskRunner implements AgentTaskRunner {
       });
     }
 
+    const baseConfig = isolatedOneShot
+      ? {
+          apps: { _default: { enabled: false } },
+          developer_instructions: "",
+          features: ISOLATED_ONE_SHOT_CODEX_FEATURES,
+          history: { persistence: "none" },
+          include_apps_instructions: false,
+          include_collaboration_mode_instructions: false,
+          include_environment_context: false,
+          include_permissions_instructions: false,
+          memories: {
+            dedicated_tools: false,
+            generate_memories: false,
+            use_memories: false,
+          },
+          mcp_servers: mcpServersConfig ?? {},
+          project_doc_fallback_filenames: [],
+          project_doc_max_bytes: 0,
+          skills: {
+            bundled: { enabled: false },
+            include_instructions: false,
+          },
+        }
+      : mcpServersConfig !== undefined
+        ? { mcp_servers: mcpServersConfig }
+        : undefined;
     const codexOptions: CodexOptions = {
       env,
-      ...(isolatedOneShot
-        ? {
-            config: {
-              apps: { _default: { enabled: false } },
-              developer_instructions: "",
-              features: ISOLATED_ONE_SHOT_CODEX_FEATURES,
-              history: { persistence: "none" },
-              include_apps_instructions: false,
-              include_collaboration_mode_instructions: false,
-              include_environment_context: false,
-              include_permissions_instructions: false,
-              memories: {
-                dedicated_tools: false,
-                generate_memories: false,
-                use_memories: false,
-              },
-              mcp_servers: mcpServersConfig ?? {},
-              project_doc_fallback_filenames: [],
-              project_doc_max_bytes: 0,
-              skills: {
-                bundled: { enabled: false },
-                include_instructions: false,
-              },
-            } as CodexOptions["config"],
-          }
-        : mcpServersConfig !== undefined
-          ? {
-              config: {
-                mcp_servers: mcpServersConfig,
-              } as CodexOptions["config"],
-            }
-          : {}),
+      config: withCodexFastMode(
+        baseConfig as CodexOptions["config"],
+        codexFastMode,
+      ),
     };
 
     const prompt = buildPrompt(input);
 
-    const abortController = new AbortController();
     let timedOut = false;
 
     // timeoutMs=0 means "no timeout" — skip the timer entirely
@@ -509,13 +523,6 @@ export class CodexTaskRunner implements AgentTaskRunner {
 
     // Fold an external cancellation signal into the same abort path so a
     // job-shaped caller can cancel a live run.
-    const externalSignal = input.signal;
-    const onExternalAbort = () => abortController.abort();
-    if (externalSignal) {
-      if (externalSignal.aborted) abortController.abort();
-      else externalSignal.addEventListener("abort", onExternalAbort);
-    }
-
     // Inactivity watchdog: unlike the whole-run timeout above, this only
     // trips on dead air — every streamed thread event resets it.
     const stallTimeoutMs =
@@ -541,6 +548,12 @@ export class CodexTaskRunner implements AgentTaskRunner {
     const wasResume = !isolatedOneShot && input.resumeRef?.backend === "codex";
 
     try {
+      if (abortController.signal.aborted) {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        throw error;
+      }
+
       const codex = this.deps.createCodex(codexOptions);
 
       let thread;

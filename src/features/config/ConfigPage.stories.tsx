@@ -26,6 +26,7 @@ const defaultConfig: GlobalConfig = {
       timeoutMs: 3_600_000,
     },
     codex: {
+      fastMode: false,
       model: "gpt-5.4",
       reasoningEffort: "high",
       timeoutMs: null,
@@ -68,6 +69,7 @@ const fullyConfiguredRaw: RawGlobalConfig = {
       timeoutMs: 7_200_000,
     },
     codex: {
+      fastMode: true,
       model: "gpt-5.4-mini",
       reasoningEffort: "high",
       timeoutMs: 5_400_000,
@@ -103,6 +105,7 @@ const fullyConfiguredConfig: GlobalConfig = {
       timeoutMs: 7_200_000,
     },
     codex: {
+      fastMode: true,
       model: "gpt-5.4-mini",
       reasoningEffort: "high",
       timeoutMs: 5_400_000,

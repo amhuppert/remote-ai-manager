@@ -37,21 +37,24 @@ export interface SpecBrowserSelection {
 }
 
 /**
- * The model/effort the in-flight turn runs with, stamped onto the optimistic
- * user + streaming assistant rows so MessageRow shows the same metadata while
- * the agent is still working as it does once the transcript rows land.
+ * The agent settings the in-flight turn runs with, stamped onto the optimistic
+ * user + streaming assistant rows so they match the durable transcript.
  */
 export interface OptimisticAgentSettings {
   model?: string;
   effort?: string;
+  codexFastMode?: boolean;
 }
 
 export function agentSettingsStamp(
   settings: OptimisticAgentSettings | undefined,
-): Pick<TranscriptMessage, "model" | "effort"> {
+): Pick<TranscriptMessage, "model" | "effort" | "codexFastMode"> {
   return {
     ...(settings?.model !== undefined ? { model: settings.model } : {}),
     ...(settings?.effort !== undefined ? { effort: settings.effort } : {}),
+    ...(settings?.codexFastMode !== undefined
+      ? { codexFastMode: settings.codexFastMode }
+      : {}),
   };
 }
 

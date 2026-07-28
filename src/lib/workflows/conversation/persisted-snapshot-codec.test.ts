@@ -42,6 +42,7 @@ function makeFullSnapshot(): Snapshot<unknown> {
       backend: "claude",
       modelId: null,
       effort: null,
+      codexFastMode: null,
       autonomous: false,
       startedAt: "2024-01-02T00:00:00Z",
       streamId: "stream-1",

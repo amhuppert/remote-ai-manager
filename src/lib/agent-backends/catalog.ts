@@ -278,6 +278,7 @@ export interface BackendSelectionDefaults {
   modelId: string;
   /** UI preference retained even when the selected model hides effort input. */
   effort: EffortLevel;
+  codexFastMode?: boolean;
 }
 
 export type BackendSelectionDefaultsById = Readonly<
@@ -293,7 +294,11 @@ export interface ConfiguredBackendSelectionProfiles {
   agentBackends: Readonly<
     Record<
       AgentBackendId,
-      { model: string; reasoningEffort?: string | undefined }
+      {
+        model: string;
+        reasoningEffort?: string | undefined;
+        fastMode?: boolean | undefined;
+      }
     >
   >;
 }
@@ -311,6 +316,9 @@ export function resolveConfiguredBackendSelectionDefaults(
         {
           modelId: profile.model,
           effort: parsed.success ? parsed.data : "high",
+          ...(backend === "codex"
+            ? { codexFastMode: profile.fastMode ?? false }
+            : {}),
         },
       ];
     }),
@@ -323,6 +331,10 @@ export function backendLabel(backend: AgentBackendId): string {
 
 export function backendToneToken(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).toneToken;
+}
+
+export function backendSupportsFastMode(backend: AgentBackendId): boolean {
+  return backend === "codex";
 }
 
 export function skillTriggerPrefixForBackend(

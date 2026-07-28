@@ -90,6 +90,7 @@ export const transcriptMessageSchema = z.object({
   timestamp: z.string().nullable(),
   model: z.string().optional(),
   effort: z.string().optional(),
+  codexFastMode: z.boolean().optional(),
   origin: transcriptMessageOriginSchema.optional(),
 });
 
@@ -107,6 +108,8 @@ export interface TranscriptMessage {
   model?: string;
   /** Reasoning effort level used for this turn */
   effort?: string;
+  /** Codex speed selected for this turn. Absent on Claude and legacy turns. */
+  codexFastMode?: boolean;
   /** Where this message originated. Absent on legacy transcripts. */
   origin?: TranscriptMessageOrigin;
 }
