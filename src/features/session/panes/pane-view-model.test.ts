@@ -25,6 +25,7 @@ function makeConversation(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: "tabs-split",
     branchName: "csm/tabs-split",
     ...overrides,

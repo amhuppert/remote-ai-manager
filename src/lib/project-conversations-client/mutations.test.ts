@@ -170,6 +170,7 @@ const activeResponse: ActiveConversationsResponse = {
       lastActivitySummary: null,
       unread: true,
       pendingApproval: null,
+      backgroundActivity: null,
       open: true,
     },
   ],

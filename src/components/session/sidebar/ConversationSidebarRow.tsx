@@ -161,6 +161,7 @@ export default function ConversationSidebarRow({
     pendingQuestion,
     unread,
     pendingApproval,
+    backgroundActivity,
   } = conversation;
 
   const contextLabel =
@@ -195,6 +196,13 @@ export default function ConversationSidebarRow({
   // is suppressed until the gate is decided.
   const showAck =
     isUnreadFinished && pendingApproval === null && onAcknowledge !== undefined;
+
+  // A settled turn with harness background work still running: the row would
+  // otherwise read as finished-and-idle. Only meaningful for `awaiting` — a
+  // running row already advertises activity, and a gated/unread row's amber
+  // standing takes precedence over an ambient background signal.
+  const hasBackgroundActivity =
+    !isClosed && backgroundActivity !== null && status === "awaiting";
 
   const gated = !isClosed && pendingApproval !== null;
   const hasOverlay =
@@ -296,7 +304,7 @@ export default function ConversationSidebarRow({
       data-status={status}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
-      aria-label={`${title} — ${isClosed ? "closed, click to reopen" : STATUS_LABEL[status]}`}
+      aria-label={`${title} — ${isClosed ? "closed, click to reopen" : STATUS_LABEL[status]}${hasBackgroundActivity ? " — background activity" : ""}`}
       aria-current={isActive ? "page" : undefined}
     >
       <span className="relative z-[1] flex w-full min-w-0 flex-1 flex-col gap-[5px]">
@@ -304,7 +312,11 @@ export default function ConversationSidebarRow({
           <span
             className={cn(
               "mt-0 size-[7px] shrink-0 rounded-full",
-              isUnreadFinished || gated ? DOT_AMBER : DOT_STATUS[status],
+              isUnreadFinished || gated
+                ? DOT_AMBER
+                : hasBackgroundActivity
+                  ? DOT_STATUS.running
+                  : DOT_STATUS[status],
             )}
             aria-hidden="true"
           />

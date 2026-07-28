@@ -14,6 +14,7 @@ import ConversationVirtuosoList, {
 } from "./ConversationVirtuosoList";
 import MessageRow from "./MessageRow";
 import TypingIndicator from "./TypingIndicator";
+import BackgroundActivityIndicator from "./BackgroundActivityIndicator";
 import {
   buildConversationRows,
   computeLastVisibleMessageIndex,
@@ -34,6 +35,7 @@ import {
 } from "@/stores/session-detail.store";
 import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import type {
+  ConversationBackgroundActivity,
   ConversationStatus,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
@@ -97,6 +99,12 @@ export interface ConversationTranscriptProps {
   status?: ConversationStatus | undefined;
   /** Durable queued messages, rendered as pending rows after the transcript. */
   pendingQueue?: readonly PendingQueuedMessage[] | undefined;
+  /**
+   * Live harness background work for this conversation. Shown only between
+   * turns: while a turn streams the typing indicator already reports activity.
+   * Surfaces that cannot resolve it (the workflow viewer) leave it unset.
+   */
+  backgroundActivity?: ConversationBackgroundActivity | null | undefined;
   worktreePath?: string | undefined;
   thinkingExpansionCommand?: ThinkingBlockExpansionCommand | undefined;
   /**
@@ -208,6 +216,7 @@ function TranscriptCore({
   backend,
   status,
   pendingQueue,
+  backgroundActivity,
   worktreePath,
   thinkingExpansionCommand,
   renderMessageRow,
@@ -355,13 +364,19 @@ function TranscriptCore({
 
   const renderFooter = useCallback(
     () => (
-      <TypingIndicator
-        conversationId={conversationId}
-        selectedBackend={backend}
-        visible={responding}
-      />
+      <>
+        <TypingIndicator
+          conversationId={conversationId}
+          selectedBackend={backend}
+          visible={responding}
+        />
+        <BackgroundActivityIndicator
+          activity={backgroundActivity ?? null}
+          visible={!responding}
+        />
+      </>
     ),
-    [conversationId, backend, responding],
+    [conversationId, backend, responding, backgroundActivity],
   );
 
   return (

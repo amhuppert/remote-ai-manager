@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type {
+  SDKBackgroundTasksChangedMessage,
   SDKTaskStartedMessage,
   SDKTaskUpdatedMessage,
   SDKTaskNotificationMessage,
@@ -11,6 +12,7 @@ import {
   applyTaskMessage,
   getWaitableInFlightTaskIds,
   demoteTasksToExcluded,
+  snapshotBackgroundActivity,
   WATCH_TOOL_NAMES,
   type BackgroundTaskState,
 } from "./background-task-tracker";
@@ -63,13 +65,29 @@ function taskUpdated(
   };
 }
 
-function taskProgress(task_id: string): SDKTaskProgressMessage {
+function taskProgress(
+  task_id: string,
+  overrides: Partial<SDKTaskProgressMessage> = {},
+): SDKTaskProgressMessage {
   return {
     type: "system",
     subtype: "task_progress",
     task_id,
     description: "still running",
     usage: { total_tokens: 1, tool_uses: 0, duration_ms: 10 },
+    uuid: UUID,
+    session_id: SESSION,
+    ...overrides,
+  };
+}
+
+function backgroundTasksChanged(
+  tasks: SDKBackgroundTasksChangedMessage["tasks"],
+): SDKBackgroundTasksChangedMessage {
+  return {
+    type: "system",
+    subtype: "background_tasks_changed",
+    tasks,
     uuid: UUID,
     session_id: SESSION,
   };
@@ -436,6 +454,334 @@ describe("background-task-tracker", () => {
       expect(getWaitableInFlightTaskIds(next)).toEqual([]);
       expect(next.tasks.get("t1")?.classification).toBe("excluded");
       expect(next.tasks.get("t2")?.classification).toBe("waitable");
+    });
+  });
+
+  describe("activity metadata and timestamps", () => {
+    it("stamps startedAtMs and lastActivityAtMs from opts.nowMs on task_started", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+        { nowMs: 1_000 },
+      );
+      expect(state.tasks.get("t1")).toMatchObject({
+        startedAtMs: 1_000,
+        lastActivityAtMs: 1_000,
+      });
+    });
+
+    it("defaults timestamps to 0 when nowMs is absent", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      expect(state.tasks.get("t1")).toMatchObject({
+        startedAtMs: 0,
+        lastActivityAtMs: 0,
+      });
+    });
+
+    it("captures the descriptive metadata carried by task_started", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({
+          task_id: "wf-1",
+          task_type: "local_workflow",
+          workflow_name: "spec",
+          subagent_type: "reviewer",
+          skip_transcript: true,
+        }),
+      );
+      expect(state.tasks.get("wf-1")).toMatchObject({
+        taskType: "local_workflow",
+        workflowName: "spec",
+        subagentType: "reviewer",
+        skipTranscript: true,
+      });
+    });
+
+    it("defaults the descriptive metadata when task_started omits it", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      expect(state.tasks.get("t1")).toMatchObject({
+        taskType: null,
+        workflowName: null,
+        subagentType: null,
+        skipTranscript: false,
+        lastToolName: null,
+        totalTokens: null,
+        toolUses: null,
+      });
+    });
+
+    it("advances lastActivityAtMs when a task settles", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+        { nowMs: 1_000 },
+      );
+      state = applyTaskMessage(state, taskNotification("t1", "completed"), {
+        nowMs: 5_000,
+      });
+      expect(state.tasks.get("t1")).toMatchObject({
+        status: "completed",
+        startedAtMs: 1_000,
+        lastActivityAtMs: 5_000,
+      });
+    });
+
+    it("advances lastActivityAtMs on a non-terminal task_updated patch", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+        { nowMs: 1_000 },
+      );
+      state = applyTaskMessage(state, taskUpdated("t1", { status: "paused" }), {
+        nowMs: 4_000,
+      });
+      expect(state.tasks.get("t1")).toMatchObject({
+        status: "running",
+        lastActivityAtMs: 4_000,
+      });
+      expect(getWaitableInFlightTaskIds(state)).toEqual(["t1"]);
+    });
+  });
+
+  describe("task_progress as a liveness signal", () => {
+    it("updates activity metadata for a known running task", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+        { nowMs: 1_000 },
+      );
+      state = applyTaskMessage(
+        state,
+        taskProgress("t1", {
+          description: "phase 2",
+          subagent_type: "explorer",
+          last_tool_name: "Grep",
+          usage: { total_tokens: 4_200, tool_uses: 7, duration_ms: 900 },
+        }),
+        { nowMs: 9_000 },
+      );
+      expect(state.tasks.get("t1")).toMatchObject({
+        description: "phase 2",
+        subagentType: "explorer",
+        lastToolName: "Grep",
+        totalTokens: 4_200,
+        toolUses: 7,
+        lastActivityAtMs: 9_000,
+        startedAtMs: 1_000,
+        status: "running",
+      });
+    });
+
+    it("adds an unknown task id as waitable and running (missed task_started)", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskProgress("ghost"),
+        { nowMs: 7_000 },
+      );
+      expect(state.tasks.get("ghost")).toMatchObject({
+        classification: "waitable",
+        status: "running",
+        startedAtMs: 7_000,
+        lastActivityAtMs: 7_000,
+      });
+      expect(getWaitableInFlightTaskIds(state)).toEqual(["ghost"]);
+    });
+
+    it("never resurrects a settled task", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      state = applyTaskMessage(state, taskNotification("t1", "completed"));
+      const settled = state;
+      state = applyTaskMessage(state, taskProgress("t1"), { nowMs: 9_000 });
+      expect(state).toBe(settled);
+      expect(state.tasks.get("t1")?.status).toBe("completed");
+    });
+  });
+
+  describe("background_tasks_changed reconciliation (level signal)", () => {
+    it("settles running tasks absent from the payload", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      state = applyTaskMessage(state, taskStarted({ task_id: "t2" }));
+      state = applyTaskMessage(
+        state,
+        backgroundTasksChanged([
+          { task_id: "t2", task_type: "bash", description: "still here" },
+        ]),
+        { nowMs: 3_000 },
+      );
+      expect(state.tasks.get("t1")?.status).toBe("completed");
+      expect(getWaitableInFlightTaskIds(state)).toEqual(["t2"]);
+    });
+
+    it("adds payload tasks unknown to state", () => {
+      const state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        backgroundTasksChanged([
+          {
+            task_id: "new-1",
+            task_type: "local_workflow",
+            description: "spec run",
+          },
+        ]),
+        { nowMs: 2_500 },
+      );
+      expect(state.tasks.get("new-1")).toMatchObject({
+        classification: "waitable",
+        status: "running",
+        taskType: "local_workflow",
+        description: "spec run",
+        startedAtMs: 2_500,
+        lastActivityAtMs: 2_500,
+      });
+    });
+
+    it("touches lastActivityAtMs for tasks present in both", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+        { nowMs: 1_000 },
+      );
+      state = applyTaskMessage(
+        state,
+        backgroundTasksChanged([
+          { task_id: "t1", task_type: "bash", description: "ignored" },
+        ]),
+        { nowMs: 6_000 },
+      );
+      expect(state.tasks.get("t1")).toMatchObject({
+        lastActivityAtMs: 6_000,
+        // The edge bookend owns the description; the level payload must not
+        // overwrite the richer started/progress metadata.
+        description: "background work",
+      });
+    });
+
+    it("never resurrects a settled task named in the payload", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "t1" }),
+      );
+      state = applyTaskMessage(state, taskNotification("t1", "failed"));
+      state = applyTaskMessage(
+        state,
+        backgroundTasksChanged([
+          { task_id: "t1", task_type: "bash", description: "zombie" },
+        ]),
+        { nowMs: 8_000 },
+      );
+      expect(state.tasks.get("t1")?.status).toBe("failed");
+      expect(getWaitableInFlightTaskIds(state)).toEqual([]);
+    });
+
+    it("leaves excluded watches alone when they are absent from the payload", () => {
+      // A Monitor watch is not waitable, but it is still live; the level signal
+      // only settles what it is authoritative about.
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "mon-1", tool_use_id: "tu-mon" }),
+        { toolNamesById: toolNames({ "tu-mon": "Monitor" }) },
+      );
+      state = applyTaskMessage(state, backgroundTasksChanged([]), {
+        nowMs: 3_000,
+      });
+      expect(state.tasks.get("mon-1")?.status).toBe("completed");
+      expect(state.tasks.get("mon-1")?.classification).toBe("excluded");
+    });
+  });
+
+  describe("snapshotBackgroundActivity", () => {
+    it("returns null for an empty state", () => {
+      expect(snapshotBackgroundActivity(emptyBackgroundTaskState(), 0)).toBe(
+        null,
+      );
+    });
+
+    it("returns null when every task is settled, excluded, or transcript-skipped", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "done" }),
+      );
+      state = applyTaskMessage(state, taskNotification("done", "completed"));
+      state = applyTaskMessage(
+        state,
+        taskStarted({ task_id: "mon", tool_use_id: "tu-mon" }),
+        { toolNamesById: toolNames({ "tu-mon": "Monitor" }) },
+      );
+      state = applyTaskMessage(
+        state,
+        taskStarted({ task_id: "ambient", skip_transcript: true }),
+      );
+
+      expect(snapshotBackgroundActivity(state, 10_000)).toBe(null);
+    });
+
+    it("projects the waitable running tasks as ISO-timestamped views", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({
+          task_id: "wf-1",
+          description: "run the spec workflow",
+          task_type: "local_workflow",
+          workflow_name: "spec",
+        }),
+        { nowMs: 1_000 },
+      );
+      state = applyTaskMessage(
+        state,
+        taskProgress("wf-1", {
+          description: "run the spec workflow",
+          last_tool_name: "Read",
+          usage: { total_tokens: 120, tool_uses: 3, duration_ms: 400 },
+        }),
+        { nowMs: 4_000 },
+      );
+
+      expect(snapshotBackgroundActivity(state, 5_000)).toEqual({
+        updatedAt: new Date(5_000).toISOString(),
+        tasks: [
+          {
+            taskId: "wf-1",
+            description: "run the spec workflow",
+            taskType: "local_workflow",
+            workflowName: "spec",
+            subagentType: null,
+            lastToolName: "Read",
+            totalTokens: 120,
+            toolUses: 3,
+            startedAt: new Date(1_000).toISOString(),
+            lastActivityAt: new Date(4_000).toISOString(),
+          },
+        ],
+      });
+    });
+
+    it("drops a task once it settles", () => {
+      let state = applyTaskMessage(
+        emptyBackgroundTaskState(),
+        taskStarted({ task_id: "a" }),
+        { nowMs: 1_000 },
+      );
+      state = applyTaskMessage(state, taskStarted({ task_id: "b" }), {
+        nowMs: 1_000,
+      });
+      expect(snapshotBackgroundActivity(state, 2_000)?.tasks).toHaveLength(2);
+
+      state = applyTaskMessage(state, taskNotification("a", "completed"), {
+        nowMs: 3_000,
+      });
+      const snapshot = snapshotBackgroundActivity(state, 3_000);
+      expect(snapshot?.tasks.map((t) => t.taskId)).toEqual(["b"]);
     });
   });
 

@@ -560,6 +560,49 @@ export const answerQuestionRequestSchema = z.object({
 export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
 
 // ============================================================
+// Background task activity (harness background work between turns)
+// ============================================================
+
+/**
+ * One live harness background task (a Workflow-tool run, a backgrounded shell,
+ * a subagent) as the conversation surfaces it. Backend-neutral: the Claude
+ * tracker projects its SDK-derived record onto this shape, and nothing above
+ * the backend seam sees a provider payload.
+ *
+ * `startedAt` and `lastActivityAt` are equal until the backend delivers its
+ * first progress signal for the task; the UI reads that equality as "no
+ * liveness proof yet" and degrades to showing the start time.
+ */
+export const conversationBackgroundTaskViewSchema = z.object({
+  taskId: z.string().min(1),
+  description: z.string().nullable(),
+  taskType: z.string().nullable(),
+  workflowName: z.string().nullable(),
+  subagentType: z.string().nullable(),
+  lastToolName: z.string().nullable(),
+  totalTokens: z.number().nullable(),
+  toolUses: z.number().nullable(),
+  startedAt: z.string(),
+  lastActivityAt: z.string(),
+});
+export type ConversationBackgroundTaskView = z.infer<
+  typeof conversationBackgroundTaskViewSchema
+>;
+
+/**
+ * The conversation's live background-task set. Absence is expressed as a null
+ * snapshot (never an empty `tasks` array), so "no background work" is one
+ * representation everywhere: registry, wire, row field, and component prop.
+ */
+export const conversationBackgroundActivitySchema = z.object({
+  tasks: z.array(conversationBackgroundTaskViewSchema).min(1),
+  updatedAt: z.string(),
+});
+export type ConversationBackgroundActivity = z.infer<
+  typeof conversationBackgroundActivitySchema
+>;
+
+// ============================================================
 // SSE Event Schemas (scope-discriminated)
 // ============================================================
 
@@ -602,6 +645,34 @@ export const conversationStatusEventSchema = z.discriminatedUnion("scope", [
 ]);
 export type ConversationStatusEvent = z.infer<
   typeof conversationStatusEventSchema
+>;
+
+/**
+ * Replace-semantics snapshot of the conversation's live background-task set.
+ * The payload carries the whole (small) set, so a client applies it with
+ * `setQueryData` and repeat delivery is idempotent by construction.
+ */
+export const conversationBackgroundActivityEventSchema = z.discriminatedUnion(
+  "scope",
+  [
+    z.object({
+      type: z.literal("conversation-background-activity"),
+      ...sessionEventIdentity,
+      conversationId: z.string().min(1),
+      activity: conversationBackgroundActivitySchema.nullable(),
+    }),
+    z
+      .object({
+        type: z.literal("conversation-background-activity"),
+        ...projectEventIdentity,
+        conversationId: z.string().min(1),
+        activity: conversationBackgroundActivitySchema.nullable(),
+      })
+      .strict(),
+  ],
+);
+export type ConversationBackgroundActivityEvent = z.infer<
+  typeof conversationBackgroundActivityEventSchema
 >;
 
 export const messageAppendedEventSchema = z.discriminatedUnion("scope", [

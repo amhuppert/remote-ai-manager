@@ -163,6 +163,7 @@ function createTestDeps(): TestDeps {
       return map;
     }),
     listActiveSpecExecutions: vi.fn(async () => []),
+    getBackgroundActivity: () => null,
   };
 }
 

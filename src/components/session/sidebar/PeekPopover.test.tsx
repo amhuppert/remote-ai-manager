@@ -38,6 +38,7 @@ const BASE_CONVERSATION: SessionActiveConversation = {
   lastActivitySummary: "Reading the popover spec.",
   unread: false,
   pendingApproval: null,
+  backgroundActivity: null,
 };
 
 const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [

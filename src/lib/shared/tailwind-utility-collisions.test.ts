@@ -135,6 +135,11 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}ConversationTranscript.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}MessageRow.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}TypingIndicator.tsx`,
+  // BackgroundActivityIndicator sits in the same transcript footer slot as
+  // TypingIndicator and reuses its geometry — utility-first by design (cn() +
+  // ui/StatusChip + design tokens). Component and story are both exempt.
+  `${path.sep}components${path.sep}conversation${path.sep}BackgroundActivityIndicator.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}BackgroundActivityIndicator.stories.tsx`,
   // EffortLabel (the message-metadata effort cell, shown inside MessageRow) is
   // utility-first by design — `cn()` + design-system tokens + the preserved
   // `cc-rainbow-text` treatment. Both the component and its story are exempt;

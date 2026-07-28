@@ -11,6 +11,7 @@ import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversat
 import { useForkConversationMutation } from "@/lib/conversations/mutations";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useCollaborationListQuery } from "@/lib/workflows/queries";
+import { useConversationBackgroundActivity } from "@/lib/active-conversations/queries";
 import { useFailPrompt, useOpenDocById } from "@/stores/session-detail.store";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
@@ -70,6 +71,7 @@ export default function PaneConversationBody({
   const openDocById = useOpenDocById();
   const failPrompt = useFailPrompt();
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys(isActive);
+  const backgroundActivity = useConversationBackgroundActivity(conversationId);
 
   const collab = useCollabContext({
     projectName,
@@ -155,6 +157,7 @@ export default function PaneConversationBody({
         backend={selectedBackend}
         status={status}
         pendingQueue={conversationState?.pendingQueue}
+        backgroundActivity={backgroundActivity}
         worktreePath={sessionQuery.data?.worktreePath}
         thinkingExpansionCommand={thinkingExpansionCommand}
         renderMessageRow={renderMessageRow}

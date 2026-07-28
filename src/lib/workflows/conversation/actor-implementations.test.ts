@@ -10,8 +10,12 @@ import type {
   AgentCapabilityDiagnostic,
   AgentCapabilityRuntimeApplicationState,
 } from "@/lib/agent-capabilities/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type {
+  ConversationBackgroundActivity,
+  ConversationState,
+} from "@/lib/conversations/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -5113,6 +5117,90 @@ describe("executePromptForMachine pending agent notices", () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(mutatorCalls("background_tasks_lost")).toHaveLength(0);
+  });
+
+  describe("background-activity wiring", () => {
+    function backgroundActivityHandler(): (
+      activity: ConversationBackgroundActivity | null,
+    ) => void {
+      return capturedCreateInput()["onBackgroundActivity"] as (
+        activity: ConversationBackgroundActivity | null,
+      ) => void;
+    }
+
+    function snapshot(taskId: string): ConversationBackgroundActivity {
+      return {
+        updatedAt: "2026-07-28T10:00:01.000Z",
+        tasks: [
+          {
+            taskId,
+            description: "full regression suite",
+            taskType: null,
+            workflowName: null,
+            subagentType: null,
+            lastToolName: null,
+            totalTokens: null,
+            toolUses: null,
+            startedAt: "2026-07-28T10:00:00.000Z",
+            lastActivityAt: "2026-07-28T10:00:01.000Z",
+          },
+        ],
+      };
+    }
+
+    beforeEach(() => {
+      getBackgroundActivityChannel()._resetForTesting();
+      mockDeps = createMockDeps({
+        getConversation: vi.fn(async () => makeConversationState()),
+      });
+      setActorDeps(mockDeps);
+    });
+
+    it("records the backend's snapshot against the conversation", async () => {
+      const input = makeExecutePromptInput();
+      registerFreshRuntime(input);
+      await executePromptForMachine(input);
+
+      backgroundActivityHandler()(snapshot("task-a"));
+
+      expect(getBackgroundActivityChannel().get("conv-1")).toEqual(
+        snapshot("task-a"),
+      );
+    });
+
+    it("clears the recorded snapshot when the backend session dies with tasks in flight", async () => {
+      const input = makeExecutePromptInput();
+      registerFreshRuntime(input);
+      await executePromptForMachine(input);
+
+      backgroundActivityHandler()(snapshot("task-a"));
+      (
+        capturedCreateInput()["onBackgroundTasksLost"] as (info: {
+          tasks: Array<{ taskId: string; description: string | null }>;
+          reason: string;
+        }) => void
+      )({
+        tasks: [{ taskId: "task-a", description: null }],
+        reason: "pump_completed",
+      });
+
+      expect(getBackgroundActivityChannel().get("conv-1")).toBe(null);
+    });
+
+    it("clears the recorded snapshot before a replacement runtime is created", async () => {
+      const input = makeExecutePromptInput();
+      registerFreshRuntime(input);
+      await executePromptForMachine(input);
+      backgroundActivityHandler()(snapshot("task-a"));
+
+      // A second turn that recreates the runtime: the new subprocess starts
+      // with an empty set, so the previous subprocess's snapshot must not
+      // survive as a phantom "still running" indicator.
+      registerFreshRuntime(input);
+      await executePromptForMachine(input);
+
+      expect(getBackgroundActivityChannel().get("conv-1")).toBe(null);
+    });
   });
 });
 

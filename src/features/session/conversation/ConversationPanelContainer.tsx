@@ -7,6 +7,7 @@ import ConversationTranscript, {
 } from "@/components/conversation/ConversationTranscript";
 import AlignmentGate from "@/features/session/conversation/AlignmentGate";
 import { useOpenMobileSidebar } from "@/stores/session-detail.store";
+import { useConversationBackgroundActivity } from "@/lib/active-conversations/queries";
 import { useCollabPassageVisibility } from "@/features/session/hooks/use-collab-passage-visibility";
 import { useCollabRowRenderer } from "@/features/session/hooks/use-collab-row-renderer";
 import { useMessageRowRenderer } from "@/features/session/hooks/use-message-row-renderer";
@@ -87,6 +88,7 @@ export default function ConversationPanelContainer({
   } = collab;
   const openMobileSidebar = useOpenMobileSidebar();
   const thinkingExpansionCommand = useThinkingBlockExpansionHotkeys();
+  const backgroundActivity = useConversationBackgroundActivity(conversationId);
   const [nav, setNav] = useState<TranscriptNav | null>(null);
 
   const renderMessageRow = useMessageRowRenderer({
@@ -129,6 +131,7 @@ export default function ConversationPanelContainer({
       backend={selectedBackend}
       status={activeConversation?.status}
       pendingQueue={activeConversation?.pendingQueue}
+      backgroundActivity={backgroundActivity}
       worktreePath={worktreePath}
       thinkingExpansionCommand={thinkingExpansionCommand}
       renderMessageRow={renderMessageRow}

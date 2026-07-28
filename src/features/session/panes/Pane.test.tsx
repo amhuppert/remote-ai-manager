@@ -38,6 +38,7 @@ function baseConversation(
     lastActivitySummary: "Edited three files",
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: SESSION,
     branchName: "csm/sess",
     ...overrides,

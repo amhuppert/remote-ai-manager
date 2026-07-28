@@ -26,8 +26,10 @@ import type {
   ActiveConversation,
   ActiveConversationForkedFrom,
 } from "@/lib/active-conversations/schemas";
+import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type {
   AskQuestionItem,
+  ConversationBackgroundActivity,
   ConversationState,
   ConversationStatus,
   MessageContentBlock,
@@ -71,6 +73,15 @@ export interface ActiveConversationsRouteDeps {
   >;
   /** Every spec execution in definition_review or running, across all specs. */
   listActiveSpecExecutions(): Promise<ActiveSpecExecutionFeedItem[]>;
+  /**
+   * Live background-task snapshot for a conversation, read synchronously from
+   * the in-memory channel. Deliberately not persisted: background tasks are
+   * children of the backend subprocess and die with the server, so an empty
+   * registry after a restart is the truth.
+   */
+  getBackgroundActivity(
+    conversationId: string,
+  ): ConversationBackgroundActivity | null;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
@@ -81,6 +92,8 @@ const defaultDeps: ActiveConversationsRouteDeps = {
   listProjectConversations: defaultListAllProjectConversations,
   listActiveGraphWorkflowExecutions: defaultListActiveGraphWorkflowExecutions,
   listActiveSpecExecutions: defaultListActiveSpecExecutions,
+  getBackgroundActivity: (conversationId) =>
+    getBackgroundActivityChannel().get(conversationId),
 };
 
 /** Map key for {@link ActiveConversationsRouteDeps.listActiveGraphWorkflowExecutions}. */
@@ -630,6 +643,7 @@ export function createActiveConversationsRouteHandlers(
               ),
               unread: convo.unread === true,
               pendingApproval,
+              backgroundActivity: deps.getBackgroundActivity(convo.id),
             });
           }
 
@@ -795,6 +809,7 @@ export function createActiveConversationsRouteHandlers(
           ),
           unread: conversation.unread === true,
           pendingApproval: null,
+          backgroundActivity: deps.getBackgroundActivity(conversation.id),
         });
       }
 

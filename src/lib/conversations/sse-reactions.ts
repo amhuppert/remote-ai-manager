@@ -12,6 +12,7 @@ import { conversationKeys } from "@/lib/conversations/query-keys";
 import {
   askQuestionEventSchema,
   conversationArchivedEventSchema,
+  conversationBackgroundActivityEventSchema,
   conversationCreatedEventSchema,
   conversationOpenEventSchema,
   conversationRenamedEventSchema,
@@ -22,7 +23,11 @@ import {
   messageQueueUpdatedEventSchema,
   messageUpdatedEventSchema,
 } from "@/lib/conversations/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type {
+  ConversationBackgroundActivity,
+  ConversationState,
+} from "@/lib/conversations/schemas";
+import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { isTerminalQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 import { createTurnEndArtifactInvalidator } from "@/lib/context-artifacts/sse-cache";
 import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
@@ -177,6 +182,30 @@ function updateSessionConversationListStatus(
       );
     },
   );
+}
+
+/**
+ * Whether two snapshots describe the same observation. `updatedAt` is stamped
+ * once per snapshot at the source, so a redelivered event compares equal and
+ * the cache write bails out — keeping the reaction idempotent without a deep
+ * structural compare on every frame.
+ */
+function sameBackgroundActivity(
+  a: ConversationBackgroundActivity | null,
+  b: ConversationBackgroundActivity | null,
+): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (a.updatedAt !== b.updatedAt) return false;
+  if (a.tasks.length !== b.tasks.length) return false;
+  return a.tasks.every((task, index) => {
+    const other = b.tasks[index];
+    return (
+      other !== undefined &&
+      task.taskId === other.taskId &&
+      task.lastActivityAt === other.lastActivityAt
+    );
+  });
 }
 
 export function registerConversationSseReactions(
@@ -420,6 +449,40 @@ export function registerConversationSseReactions(
         { unread: d.unread },
       );
       invalidateProjectConversationActivity(queryClient, d.projectName);
+    },
+  );
+
+  // Replace semantics: the event carries the conversation's whole (small)
+  // background-task set, so the row field is overwritten rather than
+  // invalidated. Never a refetch — this fires while the conversation is
+  // otherwise idle, and a refetch per progress tick would be pure waste. Row
+  // membership belongs to the other list events, so an unmatched id is a no-op.
+  addSseListener(
+    es,
+    "conversation-background-activity",
+    conversationBackgroundActivityEventSchema,
+    (d) => {
+      queryClient.setQueryData(
+        conversationKeys.active(),
+        (prev: ActiveConversationsResponse | undefined) => {
+          if (!prev || !Array.isArray(prev.conversations)) return prev;
+          let changed = false;
+          const conversations = prev.conversations.map((conversation) => {
+            if (conversation.id !== d.conversationId) return conversation;
+            if (
+              sameBackgroundActivity(
+                conversation.backgroundActivity,
+                d.activity,
+              )
+            ) {
+              return conversation;
+            }
+            changed = true;
+            return { ...conversation, backgroundActivity: d.activity };
+          });
+          return changed ? { ...prev, conversations } : prev;
+        },
+      );
     },
   );
 

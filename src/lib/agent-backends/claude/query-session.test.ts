@@ -3132,3 +3132,249 @@ describe("QuerySession onBackgroundTasksLost", () => {
     expect(session.status).toBe("dead");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Background-task ACTIVITY: while a task runs between turns the conversation
+// looks idle. The pump must surface a liveness snapshot so the UI can tell
+// "working in the background" apart from "dead".
+// ---------------------------------------------------------------------------
+
+describe("QuerySession onBackgroundActivity", () => {
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      description: "full regression suite",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+      ...extra,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskProgress(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_progress",
+      task_id: taskId,
+      description: "still running",
+      usage: { total_tokens: 42, tool_uses: 2, duration_ms: 900 },
+      last_tool_name: "Bash",
+      session_id: "sess-1",
+      uuid,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  async function settle(): Promise<void> {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  it("reports the snapshot when a task starts and when the set drains", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundActivity = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundActivity }),
+    );
+    const turn = session.sendPrompt("run it in the background", vi.fn());
+    pushTaskStarted(mock, "task-a", {
+      task_type: "local_workflow",
+      workflow_name: "spec",
+    });
+    pushResult(mock, "u-r1");
+    await turn;
+
+    expect(onBackgroundActivity).toHaveBeenCalled();
+    const started = onBackgroundActivity.mock.lastCall![0];
+    expect(started).toMatchObject({
+      tasks: [{ taskId: "task-a", workflowName: "spec" }],
+    });
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task-a",
+      status: "completed",
+      output_file: "/tmp/out.log",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: "u-notif",
+    } as unknown as SDKMessage);
+    await settle();
+
+    expect(onBackgroundActivity).toHaveBeenLastCalledWith(null);
+    session.close();
+  });
+
+  it("reports a between-turn task_progress without opening an external turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundActivity = vi.fn();
+    const externalTurnHandler = { emit: vi.fn(), onComplete: vi.fn() };
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundActivity, externalTurnHandler }),
+    );
+    const turn = session.sendPrompt("run it in the background", vi.fn());
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-r1");
+    await turn;
+    onBackgroundActivity.mockClear();
+
+    pushTaskProgress(mock, "task-a", "u-prog-1");
+    await settle();
+
+    expect(session.isTurnActive).toBe(false);
+    expect(externalTurnHandler.emit).not.toHaveBeenCalled();
+    expect(onBackgroundActivity).toHaveBeenCalledTimes(1);
+    expect(onBackgroundActivity.mock.lastCall![0]).toMatchObject({
+      tasks: [
+        {
+          taskId: "task-a",
+          lastToolName: "Bash",
+          totalTokens: 42,
+          toolUses: 2,
+        },
+      ],
+    });
+
+    session.close();
+  });
+
+  it("adopts a task the SDK's level signal reports and drops one it omits", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundActivity = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundActivity }),
+    );
+    const turn = session.sendPrompt("start work", vi.fn());
+    pushResult(mock, "u-r1");
+    await turn;
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { task_id: "lvl-1", task_type: "bash", description: "build watcher" },
+      ],
+      session_id: "sess-1",
+      uuid: "u-level-1",
+    } as unknown as SDKMessage);
+    await settle();
+
+    expect(onBackgroundActivity.mock.lastCall![0]).toMatchObject({
+      tasks: [{ taskId: "lvl-1", description: "build watcher" }],
+    });
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "lvl-1",
+    ]);
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+      session_id: "sess-1",
+      uuid: "u-level-2",
+    } as unknown as SDKMessage);
+    await settle();
+
+    expect(onBackgroundActivity).toHaveBeenLastCalledWith(null);
+    session.close();
+  });
+
+  it("reports the shrunken set when a wait timeout demotes a survivor", async () => {
+    vi.useFakeTimers();
+    try {
+      const mock = createControllableMockQuery();
+      queryMock.mockReturnValue(mock.query);
+      const onBackgroundActivity = vi.fn();
+
+      const session = createQuerySession(
+        makeDefaultOptions({ onBackgroundActivity }),
+      );
+      const turn = session.sendPrompt("start a dev server", vi.fn());
+      pushTaskStarted(mock, "server-1");
+      pushResult(mock, "u-r1");
+      await vi.advanceTimersByTimeAsync(0);
+      await turn;
+      onBackgroundActivity.mockClear();
+
+      const wait = session.awaitBackgroundTaskSettlement(1_000);
+      await vi.advanceTimersByTimeAsync(1_100);
+      const outcome = await wait;
+
+      expect(outcome.timedOut).toBe(true);
+      expect(onBackgroundActivity).toHaveBeenLastCalledWith(null);
+      session.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps pumping when the activity callback throws", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundActivity = vi.fn(() => {
+      throw new Error("subscriber exploded");
+    });
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundActivity }),
+    );
+    const turn = session.sendPrompt("run it in the background", vi.fn());
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-r1");
+
+    await expect(turn).resolves.toMatchObject({ error: null });
+    expect(session.status).toBe("alive");
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    session.close();
+  });
+
+  it("stays silent for a session with no background tasks", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const onBackgroundActivity = vi.fn();
+
+    const session = createQuerySession(
+      makeDefaultOptions({ onBackgroundActivity }),
+    );
+    const turn = session.sendPrompt("nothing in the background", vi.fn());
+    pushResult(mock, "u-r1");
+    await turn;
+
+    expect(onBackgroundActivity).not.toHaveBeenCalled();
+    session.close();
+  });
+});

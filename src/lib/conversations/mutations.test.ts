@@ -52,6 +52,7 @@ function activeConvo(
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
     pendingApproval: overrides.pendingApproval ?? null,
+    backgroundActivity: overrides.backgroundActivity ?? null,
   };
 }
 
@@ -78,6 +79,7 @@ function activeProjectConvo(
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
     pendingApproval: overrides.pendingApproval ?? null,
+    backgroundActivity: overrides.backgroundActivity ?? null,
     open: overrides.open ?? true,
   };
 }

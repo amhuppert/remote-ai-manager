@@ -119,6 +119,11 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // `actor-implementations.test.ts`, since this test reads imports, not
   // diagnostics.
   ["lib/conversations/mark-unread.ts", "scope-derivation"],
+  // The background-activity channel is keyed by the session-keyed store name
+  // its wiring layer already holds, and derives the SSE scope variant from it:
+  // a project conversation's activity event has no `sessionName` field at all.
+  // Its own warn carries only `conversationId`.
+  ["lib/conversations/background-activity.ts", "scope-derivation"],
   // The queue is session-keyed storage serving both scopes, so its two SSE
   // producers derive the scope variant from the store key: a project
   // conversation's queue events have no `sessionName` field at all.

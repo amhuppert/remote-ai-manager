@@ -29,6 +29,7 @@ const BASE: SessionActiveConversation = {
   lastActivitySummary: null,
   unread: false,
   pendingApproval: null,
+  backgroundActivity: null,
 };
 
 const PROJECT_BASE: ProjectActiveConversation = {
@@ -51,6 +52,7 @@ const PROJECT_BASE: ProjectActiveConversation = {
   lastActivitySummary: "Checked repo root health",
   unread: true,
   pendingApproval: null,
+  backgroundActivity: null,
   open: true,
 };
 
@@ -475,5 +477,70 @@ describe("ConversationSidebarRow", () => {
     // The native anchor handles the modified click (new tab); no client-side nav.
     expect(onClick).not.toHaveBeenCalled();
     expect(notCancelled).toBe(true);
+  });
+  describe("background activity", () => {
+    const ACTIVITY = {
+      updatedAt: "2026-05-15T12:41:00.000Z",
+      tasks: [
+        {
+          taskId: "task-a",
+          description: "full regression suite",
+          taskType: null,
+          workflowName: null,
+          subagentType: null,
+          lastToolName: null,
+          totalTokens: null,
+          toolUses: null,
+          startedAt: "2026-05-15T12:30:00.000Z",
+          lastActivityAt: "2026-05-15T12:41:00.000Z",
+        },
+      ],
+    };
+
+    it("marks an idle-looking row that still has background work running", () => {
+      render(
+        <ConversationSidebarRow
+          conversation={{
+            ...BASE,
+            status: "awaiting",
+            backgroundActivity: ACTIVITY,
+          }}
+        />,
+      );
+
+      expect(
+        screen.getByLabelText(
+          "Some conversation \u2014 awaiting \u2014 background activity",
+        ),
+      ).toBeDefined();
+    });
+
+    it("leaves the label alone while the conversation is visibly running", () => {
+      render(
+        <ConversationSidebarRow
+          conversation={{
+            ...BASE,
+            status: "running",
+            backgroundActivity: ACTIVITY,
+          }}
+        />,
+      );
+
+      expect(
+        screen.getByLabelText("Some conversation \u2014 running"),
+      ).toBeDefined();
+    });
+
+    it("leaves the label alone when nothing is running in the background", () => {
+      render(
+        <ConversationSidebarRow
+          conversation={{ ...BASE, status: "awaiting" }}
+        />,
+      );
+
+      expect(
+        screen.getByLabelText("Some conversation \u2014 awaiting"),
+      ).toBeDefined();
+    });
   });
 });

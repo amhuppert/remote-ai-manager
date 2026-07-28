@@ -41,6 +41,7 @@ function makeRow(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     ...overrides,
   };
 }
@@ -72,6 +73,7 @@ function makeProjectRow(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     open: true,
     ...overrides,
   };

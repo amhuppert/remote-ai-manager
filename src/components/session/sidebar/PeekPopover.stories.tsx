@@ -35,6 +35,7 @@ const BASE_CONVERSATION: SessionActiveConversation = {
   lastActivitySummary: "Wiring the FloatingUI shell.",
   unread: false,
   pendingApproval: null,
+  backgroundActivity: null,
 };
 
 function buildConversation(

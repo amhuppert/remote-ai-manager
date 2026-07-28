@@ -303,6 +303,7 @@ vi.mock("@/lib/commands/queries", () => ({
 }));
 vi.mock("@/lib/active-conversations/queries", () => ({
   useActiveConversationsQuery: () => ({ data: undefined }),
+  useConversationBackgroundActivity: () => null,
 }));
 vi.mock("@/lib/reference-documents/queries", () => ({
   useReferenceDocumentsQuery: () => ({ data: [], isPending: false }),

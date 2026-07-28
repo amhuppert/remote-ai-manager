@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type {
+  ConversationBackgroundActivityEvent,
   ConversationStatusEvent,
   MessageAppendedEvent,
   MessageUpdatedEvent,
@@ -195,6 +196,7 @@ export type SSEEvent =
   | ConversationRenamedEvent
   | ConversationArchivedEvent
   | ConversationUnreadEvent
+  | ConversationBackgroundActivityEvent
   | AskQuestionEvent
   | JobStatusEvent
   | NotificationCreatedEvent

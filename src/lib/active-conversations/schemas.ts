@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
-import { askQuestionItemSchema } from "@/lib/conversations/schemas";
+import {
+  askQuestionItemSchema,
+  conversationBackgroundActivitySchema,
+} from "@/lib/conversations/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   graphWorkflowCleanupStatusValueSchema,
@@ -45,6 +48,13 @@ const activeConversationSharedFields = {
   worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
   unread: z.boolean(),
+  // Live harness background work (a Workflow-tool run, a backgrounded shell, a
+  // subagent) that keeps running between turns. Read from the in-memory
+  // background-activity channel at assembly time and patched live by the
+  // `conversation-background-activity` SSE event; null when nothing is running.
+  backgroundActivity: conversationBackgroundActivitySchema
+    .nullable()
+    .default(null),
   // Human-review-gate standing: present when the conversation's workflow
   // context is parked awaiting approval with no recorded decision. Always
   // null for project-scope rows (gates exist only on session executions).

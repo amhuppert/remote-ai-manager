@@ -36,6 +36,7 @@ function convo(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: `session-${id}`,
     branchName: `csm/${id}`,
     ...overrides,

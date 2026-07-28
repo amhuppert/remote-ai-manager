@@ -25,6 +25,7 @@ function conversation(id: string): SessionActiveConversation {
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: "hotkeys",
     branchName: "cc/hotkeys",
   };

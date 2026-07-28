@@ -81,6 +81,8 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/conversation/ConversationPanel.tsx",
   "src/components/conversation/MessageRow.tsx",
   "src/components/conversation/TypingIndicator.tsx",
+  "src/components/conversation/BackgroundActivityIndicator.tsx",
+  "src/components/conversation/BackgroundActivityIndicator.stories.tsx",
   "src/components/conversation/EffortLabel.tsx",
   "src/components/conversation/EffortLabel.stories.tsx",
   "src/features/session/conversation/collab/**/*.{ts,tsx}",

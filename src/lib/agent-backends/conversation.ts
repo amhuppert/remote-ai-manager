@@ -1,5 +1,8 @@
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
-import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type {
+  ConversationBackgroundActivity,
+  MessageContentBlock,
+} from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import type { ConversationToolingOverrides } from "./types";
 import type {
@@ -21,6 +24,16 @@ export interface BackgroundTasksLostInfo {
   /** Why the session died — e.g. "closed", "pump_completed", "pump_error". */
   reason: string;
 }
+
+/**
+ * The conversation-visible view of a backend's live background work. The Zod
+ * schema in the conversations domain is the source of truth for this shape;
+ * re-exported here so backend-neutral code has one vocabulary to import.
+ */
+export type {
+  ConversationBackgroundActivity,
+  ConversationBackgroundTaskView,
+} from "@/lib/conversations/schemas";
 
 /**
  * Server-side reference to an image already saved on disk under the
@@ -270,6 +283,16 @@ export interface ConversationBackendCreateInput {
    * the user (transcript notice) and to the conversation's next turn.
    */
   onBackgroundTasksLost?: (info: BackgroundTasksLostInfo) => void;
+  /**
+   * Optional callback invoked whenever the backend's live background-task set
+   * changes — a task starting, settling, or reporting progress. `null` means
+   * nothing is running. Backends without background-task lifecycle signals
+   * never call it. The caller publishes the snapshot so a conversation running
+   * background work between turns does not read as idle.
+   */
+  onBackgroundActivity?: (
+    activity: ConversationBackgroundActivity | null,
+  ) => void;
 }
 
 export interface ConversationBackendFactory {

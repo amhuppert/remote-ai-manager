@@ -8,6 +8,7 @@ import { activeConversationsResponseSchema } from "./schemas";
 import {
   conversationStateSchema,
   type AskQuestionItem,
+  type ConversationBackgroundActivity,
   type ConversationState,
 } from "@/lib/conversations/schemas";
 import type {
@@ -171,6 +172,7 @@ function activeExecutionsMap(
 async function listRows(
   conversations: ConversationState[],
   graphWorkflowExecution: GraphWorkflowExecution | null = null,
+  overrides: Partial<ActiveConversationsRouteDeps> = {},
 ) {
   const deps: ActiveConversationsRouteDeps = {
     ...stateToActiveDeps(makeState(conversations, graphWorkflowExecution)),
@@ -181,6 +183,8 @@ async function listRows(
       .fn()
       .mockResolvedValue(activeExecutionsMap(graphWorkflowExecution)),
     listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
+    getBackgroundActivity: () => null,
+    ...overrides,
   };
   const handlers = createActiveConversationsRouteHandlers(deps);
   const response = await handlers.GET();
@@ -221,6 +225,7 @@ describe("GET — active spec executions", () => {
       listActiveSpecExecutions: vi
         .fn()
         .mockResolvedValue([liveItem, archivedItem]),
+      getBackgroundActivity: () => null,
     };
 
     const handlers = createActiveConversationsRouteHandlers(deps);
@@ -253,6 +258,7 @@ describe("GET — top-level read concurrency", () => {
       listProjectConversations,
       listActiveGraphWorkflowExecutions,
       listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
+      getBackgroundActivity: () => null,
     };
     const handlers = createActiveConversationsRouteHandlers(deps);
 
@@ -628,6 +634,7 @@ describe("GET /api/conversations/active pending approval standing", () => {
         .fn()
         .mockResolvedValue(activeExecutionsMap(null)),
       listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
+      getBackgroundActivity: () => null,
     };
     const handlers = createActiveConversationsRouteHandlers(deps);
     const response = await handlers.GET();
@@ -636,5 +643,72 @@ describe("GET /api/conversations/active pending approval standing", () => {
 
     expect(body.conversations).toHaveLength(1);
     expect(body.conversations[0]?.pendingApproval).toBeNull();
+  });
+});
+
+describe("GET /api/conversations/active background activity", () => {
+  const ACTIVITY: ConversationBackgroundActivity = {
+    updatedAt: "2026-07-28T10:00:01.000Z",
+    tasks: [
+      {
+        taskId: "task-a",
+        description: "full regression suite",
+        taskType: "local_workflow",
+        workflowName: "spec",
+        subagentType: null,
+        lastToolName: "Bash",
+        totalTokens: 4200,
+        toolUses: 7,
+        startedAt: "2026-07-28T10:00:00.000Z",
+        lastActivityAt: "2026-07-28T10:00:01.000Z",
+      },
+    ],
+  };
+
+  it("carries the live snapshot onto the session row", async () => {
+    const rows = await listRows(
+      [makeConversation({ id: "conv-1", status: "awaiting" })],
+      null,
+      { getBackgroundActivity: (id) => (id === "conv-1" ? ACTIVITY : null) },
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.backgroundActivity).toEqual(ACTIVITY);
+  });
+
+  it("is null when the conversation has no live background work", async () => {
+    const rows = await listRows([
+      makeConversation({ id: "conv-1", status: "awaiting" }),
+    ]);
+
+    expect(rows[0]?.backgroundActivity).toBeNull();
+  });
+
+  it("carries the live snapshot onto a project-scope row", async () => {
+    const deps: ActiveConversationsRouteDeps = {
+      ...stateToActiveDeps(makeState([])),
+      getProjectDisplayName: vi.fn().mockReturnValue("project"),
+      readLastAssistantContent: vi.fn().mockResolvedValue(null),
+      listProjectConversations: vi.fn().mockResolvedValue([
+        {
+          projectPath: "/repo/project",
+          conversation: makeConversation({
+            id: "proj-conv",
+            status: "awaiting",
+          }),
+        },
+      ]),
+      listActiveGraphWorkflowExecutions: vi
+        .fn()
+        .mockResolvedValue(activeExecutionsMap(null)),
+      listActiveSpecExecutions: vi.fn().mockResolvedValue([]),
+      getBackgroundActivity: (id) => (id === "proj-conv" ? ACTIVITY : null),
+    };
+    const handlers = createActiveConversationsRouteHandlers(deps);
+    const body = activeConversationsResponseSchema.parse(
+      await (await handlers.GET()).json(),
+    );
+
+    expect(body.conversations[0]?.backgroundActivity).toEqual(ACTIVITY);
   });
 });

@@ -68,6 +68,8 @@ import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
 import { withRuntimeReplacementRetry } from "./with-runtime-replacement-retry";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
+import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
 import {
   projectConversationTarget,
   scopeRefFromStoreSessionName,
@@ -1425,13 +1427,37 @@ export async function executePromptForMachine(
         )
       : undefined;
 
-    const onBackgroundTasksLost = createBackgroundTasksLostHandler(deps, {
+    // Background-activity identity: scope-invariant project + conversation,
+    // plus the store-level session name the channel maps onto the event scope.
+    const backgroundActivityIdentity = {
+      projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+    };
+    const clearBackgroundActivity = (): void => {
+      getBackgroundActivityChannel().record(backgroundActivityIdentity, null);
+    };
+
+    const surfaceBackgroundTasksLost = createBackgroundTasksLostHandler(deps, {
       projectPath: input.projectPath,
       sessionName: input.sessionName,
       conversationId: input.conversationId,
       isProjectConversation,
       appendTranscriptEntry: safeAppendWithMeta,
     });
+    // This is also the teardown retraction. A non-null activity snapshot is a
+    // subset of the waitable in-flight set, so every backend death that could
+    // strand an indicator (close, idle timeout, pump death, actor stop, which
+    // closes the runtime) necessarily reports tasks lost here first.
+    const onBackgroundTasksLost = (info: BackgroundTasksLostInfo): void => {
+      clearBackgroundActivity();
+      surfaceBackgroundTasksLost(info);
+    };
+
+    // A replacement subprocess starts with an empty task set (the SDK's level
+    // signal is per-process and emits nothing at startup), so the outgoing
+    // subprocess's snapshot must not survive the swap.
+    clearBackgroundActivity();
 
     const newRuntime = await factory.createRuntime({
       conversationId: input.conversationId,
@@ -1469,6 +1495,12 @@ export async function executePromptForMachine(
         ? { onExternalTurnEvent: externalTurnHandler }
         : {}),
       onBackgroundTasksLost,
+      onBackgroundActivity: (activity) => {
+        getBackgroundActivityChannel().record(
+          backgroundActivityIdentity,
+          activity,
+        );
+      },
     });
 
     // Register in runtime-registry and local state

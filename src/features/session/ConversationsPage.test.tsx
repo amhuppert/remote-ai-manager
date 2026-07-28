@@ -65,6 +65,7 @@ function sessionRow(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
   };
 }
 

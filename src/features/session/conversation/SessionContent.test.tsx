@@ -130,6 +130,7 @@ function makeActiveConversation(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: "sess-1",
     branchName: "csm/sess-1",
     ...overrides,

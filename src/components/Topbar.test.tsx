@@ -138,6 +138,7 @@ function makeSessionConversation(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     ...overrides,
   };
 }
@@ -165,6 +166,7 @@ function makeProjectConversation(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     open: overrides.open ?? true,
     ...overrides,
   };

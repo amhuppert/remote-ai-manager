@@ -98,6 +98,7 @@ function makeDeps(
     listProjectConversations: async () => projectConvs,
     listActiveGraphWorkflowExecutions: async () => new Map(),
     listActiveSpecExecutions: async () => [],
+    getBackgroundActivity: () => null,
   };
 }
 

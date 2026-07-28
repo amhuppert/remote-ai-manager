@@ -21,6 +21,7 @@
  */
 
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { ConversationBackgroundActivity } from "@/lib/conversations/schemas";
 
 export type BackgroundTaskClassification = "waitable" | "excluded";
 
@@ -37,6 +38,19 @@ export interface BackgroundTaskRecord {
   classification: BackgroundTaskClassification;
   status: BackgroundTaskStatus;
   description: string | null;
+  /** `opts.nowMs` when the task entered the set. */
+  startedAtMs: number;
+  /** `opts.nowMs` at the most recent task-scoped message — the liveness proof. */
+  lastActivityAtMs: number;
+  /** Ambient/housekeeping task the SDK asks consumers to hide inline. */
+  skipTranscript: boolean;
+  taskType: string | null;
+  /** Workflow script `meta.name`; set only for `local_workflow` tasks. */
+  workflowName: string | null;
+  subagentType: string | null;
+  lastToolName: string | null;
+  totalTokens: number | null;
+  toolUses: number | null;
 }
 
 export interface BackgroundTaskState {
@@ -58,6 +72,13 @@ export interface ApplyTaskMessageOptions {
    * `task_started`; other message types ignore it.
    */
   toolNamesById?: ReadonlyMap<string, string>;
+  /**
+   * Wall clock the reducer stamps onto the record's activity timestamps. Passed
+   * in rather than read here so the reducer stays pure and unit-testable;
+   * defaults to 0 so a caller that does not care about liveness (and every
+   * pre-existing test) behaves exactly as before.
+   */
+  nowMs?: number;
 }
 
 export function emptyBackgroundTaskState(): BackgroundTaskState {
@@ -75,6 +96,8 @@ export function applyTaskMessage(
     return state;
   }
 
+  const nowMs = opts?.nowMs ?? 0;
+
   switch (message.subtype) {
     case "task_started": {
       const toolName = message.tool_use_id
@@ -85,20 +108,152 @@ export function applyTaskMessage(
         toolUseId: message.tool_use_id ?? null,
         classification: classifyByToolName(toolName),
         description: message.description ?? null,
+        nowMs,
+        skipTranscript: message.skip_transcript ?? false,
+        taskType: message.task_type ?? null,
+        workflowName: message.workflow_name ?? null,
+        subagentType: message.subagent_type ?? null,
       });
     }
     case "task_notification":
-      return settleTask(state, message.task_id, message.status);
+      return settleTask(state, message.task_id, message.status, nowMs);
     case "task_updated": {
       const next = message.patch.status;
       if (next === "completed" || next === "failed" || next === "killed") {
-        return settleTask(state, message.task_id, next);
+        return settleTask(state, message.task_id, next, nowMs);
       }
-      return state;
+      // A non-terminal patch (`paused`, `running`, a description edit) is still
+      // proof the task exists and the harness is talking about it.
+      return touchTask(state, message.task_id, nowMs);
     }
+    case "task_progress": {
+      const existing = state.tasks.get(message.task_id);
+      if (existing === undefined) {
+        // Progress without a `task_started` bookend proves the task exists;
+        // adopt it rather than losing the liveness signal entirely.
+        return addTask(state, {
+          taskId: message.task_id,
+          toolUseId: message.tool_use_id ?? null,
+          classification: "waitable",
+          description: message.description ?? null,
+          nowMs,
+          skipTranscript: false,
+          taskType: null,
+          workflowName: null,
+          subagentType: message.subagent_type ?? null,
+        });
+      }
+      if (existing.status !== "running") return state;
+      return replaceTask(state, {
+        ...existing,
+        description: message.description ?? existing.description,
+        subagentType: message.subagent_type ?? existing.subagentType,
+        lastToolName: message.last_tool_name ?? existing.lastToolName,
+        totalTokens: message.usage.total_tokens,
+        toolUses: message.usage.tool_uses,
+        lastActivityAtMs: nowMs,
+      });
+    }
+    case "background_tasks_changed":
+      return reconcileWithLevelSignal(state, message.tasks, nowMs);
     default:
       return state;
   }
+}
+
+/**
+ * Apply the SDK's `background_tasks_changed` level signal, which carries the
+ * full live set with REPLACE semantics. Reconciliation is deliberately
+ * monotone-safe in one direction only: a running task the payload omits is
+ * settled (neutrally, as `completed` — the edge bookend that may still arrive
+ * is then a no-op), and a payload task we have never seen is adopted, but a
+ * task we already settled is never resurrected. Ordering between this level
+ * signal and the edge bookends for the same transition is unspecified, so any
+ * rule that could move a task backwards would race.
+ */
+function reconcileWithLevelSignal(
+  state: BackgroundTaskState,
+  payload: readonly {
+    task_id: string;
+    task_type: string;
+    description: string;
+  }[],
+  nowMs: number,
+): BackgroundTaskState {
+  const live = new Map(payload.map((t) => [t.task_id, t]));
+  let tasks: Map<string, BackgroundTaskRecord> | null = null;
+  const mutable = (): Map<string, BackgroundTaskRecord> =>
+    (tasks ??= new Map(state.tasks));
+
+  for (const record of state.tasks.values()) {
+    if (record.status !== "running") continue;
+    if (live.has(record.taskId)) {
+      mutable().set(record.taskId, { ...record, lastActivityAtMs: nowMs });
+      continue;
+    }
+    mutable().set(record.taskId, {
+      ...record,
+      status: "completed",
+      lastActivityAtMs: nowMs,
+    });
+  }
+
+  for (const task of payload) {
+    if (state.tasks.has(task.task_id)) continue;
+    mutable().set(task.task_id, {
+      taskId: task.task_id,
+      toolUseId: null,
+      classification: "waitable",
+      status: "running",
+      description: task.description,
+      startedAtMs: nowMs,
+      lastActivityAtMs: nowMs,
+      skipTranscript: false,
+      taskType: task.task_type,
+      workflowName: null,
+      subagentType: null,
+      lastToolName: null,
+      totalTokens: null,
+      toolUses: null,
+    });
+  }
+
+  return tasks === null ? state : { tasks };
+}
+
+/**
+ * Project the tracker state onto the conversation-visible activity snapshot:
+ * the waitable, running, non-`skip_transcript` tasks only. Excluded watches,
+ * wait-timeout demotions, settled tasks, and ambient housekeeping tasks never
+ * reach the UI. Returns null when nothing qualifies, so absence has exactly one
+ * representation on the wire and in the row field.
+ */
+export function snapshotBackgroundActivity(
+  state: BackgroundTaskState,
+  nowMs: number,
+): ConversationBackgroundActivity | null {
+  const tasks = [...state.tasks.values()]
+    .filter(
+      (record) =>
+        record.classification === "waitable" &&
+        record.status === "running" &&
+        !record.skipTranscript,
+    )
+    .map((record) => ({
+      taskId: record.taskId,
+      description: record.description,
+      taskType: record.taskType,
+      workflowName: record.workflowName,
+      subagentType: record.subagentType,
+      lastToolName: record.lastToolName,
+      totalTokens: record.totalTokens,
+      toolUses: record.toolUses,
+      startedAt: new Date(record.startedAtMs).toISOString(),
+      lastActivityAt: new Date(record.lastActivityAtMs).toISOString(),
+    }));
+
+  if (tasks.length === 0) return null;
+  return { tasks, updatedAt: new Date(nowMs).toISOString() };
 }
 
 export function getWaitableInFlightTaskIds(
@@ -153,6 +308,11 @@ function addTask(
     toolUseId: string | null;
     classification: BackgroundTaskClassification;
     description: string | null;
+    nowMs: number;
+    skipTranscript: boolean;
+    taskType: string | null;
+    workflowName: string | null;
+    subagentType: string | null;
   },
 ): BackgroundTaskState {
   const existing = state.tasks.get(input.taskId);
@@ -167,8 +327,24 @@ function addTask(
     classification: input.classification,
     status: "running",
     description: input.description,
+    startedAtMs: input.nowMs,
+    lastActivityAtMs: input.nowMs,
+    skipTranscript: input.skipTranscript,
+    taskType: input.taskType,
+    workflowName: input.workflowName,
+    subagentType: input.subagentType,
+    lastToolName: null,
+    totalTokens: null,
+    toolUses: null,
   };
 
+  return replaceTask(state, record);
+}
+
+function replaceTask(
+  state: BackgroundTaskState,
+  record: BackgroundTaskRecord,
+): BackgroundTaskState {
   const tasks = new Map(state.tasks);
   tasks.set(record.taskId, record);
   return { tasks };
@@ -178,13 +354,25 @@ function settleTask(
   state: BackgroundTaskState,
   taskId: string,
   status: BackgroundTaskStatus,
+  nowMs: number,
 ): BackgroundTaskState {
   const existing = state.tasks.get(taskId);
   if (existing === undefined || existing.status !== "running") {
     return state;
   }
 
-  const tasks = new Map(state.tasks);
-  tasks.set(taskId, { ...existing, status });
-  return { tasks };
+  return replaceTask(state, { ...existing, status, lastActivityAtMs: nowMs });
+}
+
+/** Record liveness for a running task without changing set membership. */
+function touchTask(
+  state: BackgroundTaskState,
+  taskId: string,
+  nowMs: number,
+): BackgroundTaskState {
+  const existing = state.tasks.get(taskId);
+  if (existing === undefined || existing.status !== "running") {
+    return state;
+  }
+  return replaceTask(state, { ...existing, lastActivityAtMs: nowMs });
 }

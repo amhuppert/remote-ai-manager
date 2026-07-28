@@ -25,6 +25,7 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { BackgroundTasksLostInfo } from "@/lib/agent-backends/conversation";
+import type { ConversationBackgroundActivity } from "@/lib/conversations/schemas";
 import {
   captureTraceContext,
   createLogger,
@@ -51,6 +52,8 @@ import {
   applyTaskMessage,
   getWaitableInFlightTaskIds,
   demoteTasksToExcluded,
+  snapshotBackgroundActivity,
+  type BackgroundTaskRecord,
   type BackgroundTaskState,
 } from "./background-task-tracker";
 
@@ -60,6 +63,13 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { mapErrorSubtype } from "./process-message";
 
 const logger = createLogger("query-session");
+
+/**
+ * Minimum spacing between `background_task_progress` log lines for one task.
+ * The SDK's own progress cadence is unbounded; forensics reconstructing "was
+ * the background work alive at time T" only needs a coarse heartbeat.
+ */
+const BACKGROUND_PROGRESS_LOG_INTERVAL_MS = 60_000;
 
 // ============================================================
 // Types
@@ -273,6 +283,17 @@ export interface QuerySessionOptions {
    * reported: they carry no wake-on-complete promise.
    */
   onBackgroundTasksLost?: (info: BackgroundTasksLostInfo) => void;
+  /**
+   * Invoked whenever the background-task set changes in a way the conversation
+   * should see: a task added or settled, a progress signal, a wait-timeout
+   * demotion. `null` means nothing waitable is running. Between turns this is
+   * the only signal distinguishing "working in the background" from "dead", so
+   * the pump reports it even while no turn is open. Subscriber failures are
+   * logged and swallowed — the pump must never die on a listener.
+   */
+  onBackgroundActivity?: (
+    activity: ConversationBackgroundActivity | null,
+  ) => void;
 }
 
 // ============================================================
@@ -344,6 +365,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let awaitingSubsequentPromptDelivery = false;
   let backgroundTaskState = emptyBackgroundTaskState();
   const backgroundWaiters = new Set<BackgroundWaiter>();
+  // Per-task wall clock of the last emitted progress log. `task_progress` can
+  // fire every few seconds per task; forensics only needs proof of liveness at
+  // a coarse cadence, so each task logs at most once per
+  // BACKGROUND_PROGRESS_LOG_INTERVAL_MS. Entries are dropped when the task
+  // settles so a long-lived session cannot accumulate them.
+  const backgroundProgressLoggedAtMs = new Map<string, number>();
   // The SDK's `result.total_cost_usd` is CUMULATIVE for the session lineage,
   // while every consumer of `TurnResult.costUsd` (conversation totals, usage
   // accounting) sums per-turn values. Track the last attributed cumulative so
@@ -703,9 +730,96 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
             conversationId: options.conversationId,
             taskIds: stillInFlight,
           });
+          // Demotion shrinks the waitable set without any SDK message, so the
+          // pump's own emission never fires for it.
+          emitBackgroundActivity(Date.now());
           reconcileIdleTimer();
         }
       }, timeoutMs);
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // background-task observability
+  // ------------------------------------------------------------------
+
+  /**
+   * Hand the conversation-visible snapshot to the wiring layer. Never throws:
+   * a subscriber failure must not kill the message pump, which also carries
+   * every turn's transcript.
+   */
+  function emitBackgroundActivity(nowMs: number): void {
+    if (!options.onBackgroundActivity) return;
+    try {
+      options.onBackgroundActivity(
+        snapshotBackgroundActivity(backgroundTaskState, nowMs),
+      );
+    } catch (err) {
+      logger.warn("query-session.background_activity_callback_failed", {
+        conversationId: options.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  /**
+   * Info-level bookends for every background task, derived from the reducer's
+   * before/after state rather than from message subtypes: a single
+   * `background_tasks_changed` level signal can start and settle several tasks
+   * at once, and the diff catches all of them. These are the only durable
+   * record of background liveness — the harness transcript is not CC's to read.
+   */
+  function logBackgroundTaskTransitions(
+    before: BackgroundTaskState,
+    after: BackgroundTaskState,
+    nowMs: number,
+  ): void {
+    for (const record of after.tasks.values()) {
+      const prior = before.tasks.get(record.taskId);
+      if (prior === undefined) {
+        logger.info("query-session.background_task_started", {
+          conversationId: options.conversationId,
+          taskId: record.taskId,
+          description: record.description,
+          taskType: record.taskType,
+          workflowName: record.workflowName,
+        });
+        continue;
+      }
+      if (prior.status === "running" && record.status !== "running") {
+        backgroundProgressLoggedAtMs.delete(record.taskId);
+        logger.info("query-session.background_task_settled", {
+          conversationId: options.conversationId,
+          taskId: record.taskId,
+          status: record.status,
+          runningMs: nowMs - record.startedAtMs,
+        });
+      }
+    }
+  }
+
+  function logBackgroundTaskProgress(message: SDKMessage, nowMs: number): void {
+    if (message.type !== "system" || message.subtype !== "task_progress") {
+      return;
+    }
+    const record: BackgroundTaskRecord | undefined =
+      backgroundTaskState.tasks.get(message.task_id);
+    if (record === undefined || record.status !== "running") return;
+    const lastLoggedAtMs = backgroundProgressLoggedAtMs.get(message.task_id);
+    if (
+      lastLoggedAtMs !== undefined &&
+      nowMs - lastLoggedAtMs < BACKGROUND_PROGRESS_LOG_INTERVAL_MS
+    ) {
+      return;
+    }
+    backgroundProgressLoggedAtMs.set(message.task_id, nowMs);
+    logger.info("query-session.background_task_progress", {
+      conversationId: options.conversationId,
+      taskId: record.taskId,
+      lastToolName: record.lastToolName,
+      totalTokens: record.totalTokens,
+      toolUses: record.toolUses,
+      sinceStartMs: nowMs - record.startedAtMs,
     });
   }
 
@@ -935,9 +1049,17 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     // assistant tool_use is processed before task_started, so the name is
     // already recorded); when no turn is active the map is undefined and the
     // task defaults to waitable.
+    const priorTaskState = backgroundTaskState;
+    const nowMs = Date.now();
     backgroundTaskState = applyTaskMessage(backgroundTaskState, message, {
       toolNamesById: pendingTurn?.toolNamesById,
+      nowMs,
     });
+    if (backgroundTaskState !== priorTaskState) {
+      logBackgroundTaskTransitions(priorTaskState, backgroundTaskState, nowMs);
+      logBackgroundTaskProgress(message, nowMs);
+      emitBackgroundActivity(nowMs);
+    }
 
     if (!pendingTurn) {
       if (!options.externalTurnHandler || !opensExternalTurn(message)) {

@@ -30,6 +30,7 @@ function makeConversation(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: "sess",
     branchName: "csm/x",
     ...overrides,

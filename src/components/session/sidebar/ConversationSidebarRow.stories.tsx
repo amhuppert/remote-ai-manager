@@ -25,6 +25,7 @@ const BASE_CONVERSATION: SessionActiveConversation = {
   lastActivitySummary: "Refactoring the badge layout to use cc-badge tokens.",
   unread: false,
   pendingApproval: null,
+  backgroundActivity: null,
 };
 
 function buildConversation(

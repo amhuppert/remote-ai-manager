@@ -62,6 +62,7 @@ function sessionRow(
     lastActivitySummary: null,
     unread: false,
     pendingApproval: null,
+    backgroundActivity: null,
     sessionName: "fix-bug",
     branchName: "csm/fix-bug",
     ...overrides,

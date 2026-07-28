@@ -59,6 +59,7 @@ const currentProjectConversation: ProjectActiveConversationWithOpen = {
   lastActivitySummary: "Checking current project focus routing.",
   unread: false,
   pendingApproval: null,
+  backgroundActivity: null,
   open: true,
 };
 
@@ -355,6 +356,7 @@ describe("ConversationSidebar", () => {
       tasksCompleted: 6,
       tasksTotal: 6,
     },
+    backgroundActivity: null,
   };
 
   it("hides the archive affordance in the context menu while an approval gate is pending", () => {
@@ -440,6 +442,7 @@ describe("ConversationSidebar", () => {
       lastActivitySummary: "Awaiting your review.",
       unread: false,
       pendingApproval: null,
+      backgroundActivity: null,
     };
 
     const sessionRowHref = "/conversations?c=session-convo-1";
