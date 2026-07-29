@@ -16,6 +16,8 @@ We want to preserve the strengths of the current graph workflow functionality, w
 
 ### Goal: Graph Workflows can cleanly support general forms of at least the 6 workflow patterns described in the Anthropic blog post (and larger workflows that combine multiple of these patterns)
 
+[6 Workflow patterns](./workflow-patterns.png)
+
 Patterns:
 1. Classify-And-Act
 2. Fanout-And-Synthesize
