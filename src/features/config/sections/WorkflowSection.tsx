@@ -10,6 +10,7 @@ import { ContextValidatorFields } from "./workflow/ContextValidatorFields";
 import { ImplementerFields } from "./workflow/ImplementerFields";
 import { IterationPolicyFields } from "./workflow/IterationPolicyFields";
 import { MutabilityFields } from "./workflow/MutabilityFields";
+import { PlanRepairFields } from "./workflow/PlanRepairFields";
 import { ScriptValidatorFields } from "./workflow/ScriptValidatorFields";
 
 export function WorkflowSection({
@@ -68,6 +69,10 @@ function WorkflowDefaultsSubsections({
   const mutabilityIsDefault = deepEqual(
     effective.mutability,
     SEEDED_WORKFLOW_DEFAULTS.mutability,
+  );
+  const planRepairIsDefault = deepEqual(
+    effective.planRepair,
+    SEEDED_WORKFLOW_DEFAULTS.planRepair,
   );
   const collaborationIsDefault = deepEqual(
     effective.collaboration,
@@ -150,6 +155,17 @@ function WorkflowDefaultsSubsections({
         <CircuitBreakerFields
           value={effective.circuitBreaker}
           onChange={(v) => onChangeBlock("circuitBreaker", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="planRepair"
+        title="Plan repair"
+        isDefault={planRepairIsDefault}
+      >
+        <PlanRepairFields
+          value={effective.planRepair}
+          onChange={(v) => onChangeBlock("planRepair", v)}
         />
       </ConfigSubsection>
 

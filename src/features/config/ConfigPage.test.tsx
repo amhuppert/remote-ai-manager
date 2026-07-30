@@ -370,10 +370,10 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen.queryByRole("button", { name: /Implementer/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/^Implementer$/i)).toBeVisible();
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(8);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(9);
   });
 
-  it("renders all eight workflow default blocks at the page top level", async () => {
+  it("renders all nine workflow default blocks at the page top level", async () => {
     await renderConfigPage();
     expandWorkflowDefaults();
 
@@ -385,6 +385,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
+      "Plan repair",
       "Mutability",
     ];
     for (const title of expected) {
@@ -396,7 +397,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(8);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(9);
   });
 
   it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", async () => {
@@ -549,6 +550,31 @@ describe("ConfigPage — Workflow Defaults", () => {
       expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
     );
     expect(savedConfig().compaction).toEqual({ effort: "high" });
+  });
+
+  it("marks the Plan repair sub-section modified and saves the full block after disabling it", async () => {
+    const { container } = await renderConfigPage();
+    expandWorkflowDefaults();
+
+    const planRepair = container.querySelector(
+      '[data-subsection="planRepair"]',
+    ) as HTMLElement;
+    expect(planRepair.textContent).toContain("DEFAULT");
+
+    // The first switch in the block is the enabled toggle (on by default).
+    const toggle = planRepair.querySelector('[role="switch"]') as HTMLElement;
+    fireEvent.click(toggle);
+
+    expect(planRepair.textContent).toContain("MODIFIED");
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig().workflowDefaults).toEqual({
+      planRepair: { enabled: false, maxAttemptsPerContext: 2 },
+    });
   });
 
   it("marks the Script validator sub-section modified and saves only that block after enabling it", async () => {

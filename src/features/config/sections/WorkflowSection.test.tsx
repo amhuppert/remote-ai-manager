@@ -17,7 +17,7 @@ function render(ui: React.ReactElement) {
 }
 
 describe("WorkflowSection", () => {
-  it("renders all eight default sub-sections with DEFAULT badges when matching seed", () => {
+  it("renders all nine default sub-sections with DEFAULT badges when matching seed", () => {
     const { controller } = makeController();
     const { container } = render(<WorkflowSection controller={controller} />);
     const expected = [
@@ -28,13 +28,14 @@ describe("WorkflowSection", () => {
       "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
+      "Plan repair",
       "Mutability",
     ];
     for (const title of expected) {
       expect(screen.getByText(new RegExp(`^${title}$`))).toBeVisible();
     }
     const subs = container.querySelectorAll("[data-subsection]");
-    expect(subs.length).toBe(8);
+    expect(subs.length).toBe(9);
     for (const el of subs) {
       expect(el.textContent).toContain("DEFAULT");
       expect(el.textContent).not.toContain("MODIFIED");
