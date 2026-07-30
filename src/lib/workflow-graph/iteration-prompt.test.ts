@@ -554,6 +554,55 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
   });
 
+  it("renders the amendment log in the charter section when the run has amendments", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: makeCharter(),
+      charterAmendments: [
+        {
+          seq: 1,
+          amendedAt: "2026-07-29T10:00:00.000Z",
+          source: "cli",
+          rationale: "Invariant inv-1 was impossible against the shipped API",
+          fieldsChanged: ["invariants"],
+          charterHash: "hash-1",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("## Amendment log");
+    expect(prompt).toContain(
+      "Invariant inv-1 was impossible against the shipped API",
+    );
+  });
+
+  it("tells a continuation turn how many times the charter was amended", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask()],
+      taskStates: {},
+      attemptNumber: 2,
+      maxAttempts: 5,
+      charter: makeCharter(),
+      charterAmendments: [
+        {
+          seq: 1,
+          amendedAt: "2026-07-29T10:00:00.000Z",
+          source: "cli",
+          rationale: "Mission narrowed",
+          fieldsChanged: ["mission"],
+          charterHash: "hash-1",
+        },
+      ],
+    });
+
+    expect(prompt).toMatch(/amended 1 time/i);
+    expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
+  });
+
   it("instructs the implementer to cite the governing source and that external sources require permission", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

@@ -103,7 +103,11 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       "workingDefinition.**":
         "bounded: resolved workflow definition (contexts, tasks, edges, per-context charters) sized at resolve time and written on accepted live edits (lane-agent add_task and doc-06 live editing); every mutation is author-shaped content bounded by the same limits as the seeded definition. In graph_workflow_executions.definition_json.",
       "charter.**":
-        "bounded: author-fixed workflow charter. In graph_workflow_executions.definition_json.",
+        "bounded: workflow charter — author-shaped at seed, rewritten wholesale by an accepted amend-charter live edit (doc 07); every rewrite is author-shaped content under the same schema limits. In graph_workflow_executions.definition_json.",
+      charterAmendments:
+        "tracked: grows one metadata-only entry (seq/timestamp/source/rationale/fieldsChanged/hash) per accepted amend-charter live edit, no eviction — full charter snapshots are deliberately NOT stored (doc 07 F2 keeps growth to audit metadata). In graph_workflow_executions.runtime_json.",
+      "charterAmendments[].fieldsChanged":
+        "bounded: subset of the eight top-level charter content field names (CHARTER_CONTENT_EDIT_FIELDS). In graph_workflow_executions.runtime_json.",
       boundInputs:
         "bounded: one string value per author-declared launch parameter, fixed at seed and never mutated. In graph_workflow_executions.definition_json.",
       // --- runtime_json tier (hot, rewritten every tick) ---

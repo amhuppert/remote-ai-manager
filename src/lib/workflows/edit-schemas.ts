@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { sourceOfTruthSchema } from "./charter-schemas";
+import {
+  charterInvariantSchema,
+  sourceOfTruthSchema,
+} from "./charter-schemas";
 import {
   contextValidatorOverrideSchema,
   graphWorkflowAgentConfigSchema,
@@ -107,6 +110,29 @@ const definitionEditWorkflowConfigShape = {
     .optional(),
 };
 
+// Charter content fields shared by the saved-tier `update-charter` op and the
+// live `amend-charter` op (docs/design/cc-cli/07) — one shape so the two
+// vocabularies cannot drift apart again (the live op grew from a real gap where
+// `invariants` was added to the charter schema but never to this op). Partial
+// merge: a present scalar sets, an array replaces wholesale, `null` clears an
+// optional section, absent leaves untouched. `sourcesOfTruth` is not nullable —
+// a charter always keeps at least one ranked source.
+const charterContentEditShape = {
+  mission: z.string().trim().min(1).optional(),
+  conventions: z.array(z.string()).nullable().optional(),
+  nonGoals: z.array(z.string()).nullable().optional(),
+  vocabulary: z.array(z.string()).nullable().optional(),
+  testStrategy: z.string().nullable().optional(),
+  knownAmbiguities: z.array(z.string()).nullable().optional(),
+  invariants: z.array(charterInvariantSchema).nullable().optional(),
+  sourcesOfTruth: z.array(sourceOfTruthSchema).optional(),
+};
+
+/** Top-level charter fields an `update-charter`/`amend-charter` op may touch. */
+export const CHARTER_CONTENT_EDIT_FIELDS = Object.keys(
+  charterContentEditShape,
+) as readonly string[];
+
 export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
   "type",
   [
@@ -117,13 +143,7 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
     }),
     z.object({
       type: z.literal("update-charter"),
-      mission: z.string().trim().min(1).optional(),
-      conventions: z.array(z.string()).nullable().optional(),
-      nonGoals: z.array(z.string()).nullable().optional(),
-      vocabulary: z.array(z.string()).nullable().optional(),
-      testStrategy: z.string().nullable().optional(),
-      knownAmbiguities: z.array(z.string()).nullable().optional(),
-      sourcesOfTruth: z.array(sourceOfTruthSchema).optional(),
+      ...charterContentEditShape,
     }),
     z.object({
       type: z.literal("update-workflow-config"),
@@ -263,6 +283,26 @@ const liveEditContextConfigShape = {
 };
 
 export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
+  // Versioned charter amendment (docs/design/cc-cli/07): partial-merges the
+  // shared charter content shape onto the execution's charter, propagates to
+  // every non-frozen context copy, and appends a rationale-bearing entry to the
+  // execution's amendment log. Quiescence-gated like structural ops.
+  z
+    .object({
+      type: z.literal("amend-charter"),
+      // The "why" — recorded verbatim in the amendment log and rendered into
+      // prompts/charter.md so future agents see that the rules changed and why.
+      rationale: z.string().trim().min(1),
+      ...charterContentEditShape,
+    })
+    .refine(
+      (value) =>
+        Object.entries(value).some(
+          ([key, fieldValue]) =>
+            key !== "type" && key !== "rationale" && fieldValue !== undefined,
+        ),
+      { message: "amend-charter requires at least one charter field to change" },
+    ),
   z
     .object({
       type: z.literal("update-context"),

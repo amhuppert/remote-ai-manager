@@ -461,15 +461,21 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print the live outline of the active execution",
     description:
-      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress), per-task rows (id, order, status, title, instruction SIZE — never inlined), and a one-line config summary per context. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, collaboration), --full (every context expanded). At most one selector. No active execution exits 2.",
+      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress), per-task rows (id, order, status, title, instruction SIZE — never inlined), and a one-line config summary per context. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, collaboration), --charter (the current charter document rendered with its amendment log), --full (every context expanded). At most one selector. No active execution exits 2.",
     usage: [
-      "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --full] [--json]",
+      "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --full] [--json]",
     ],
     flags: [
       {
         name: "full",
         kind: "boolean",
         description: "expand every context: full prose + config + full tasks",
+      },
+      {
+        name: "charter",
+        kind: "boolean",
+        description:
+          "the current charter document (markdown) with its live amendment log",
       },
       {
         name: "context",

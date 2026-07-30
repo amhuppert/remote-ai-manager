@@ -14,6 +14,7 @@ Documents in this set:
 | [`04-progressive-disclosure.md`](./04-progressive-disclosure.md) | Help registry as single source of truth, graph-shaped progressive disclosure, dynamic help context, three-tier output contract (hint/reminders/instruction), lane reminders |
 | [`05-workflow-definition-editing.md`](./05-workflow-definition-editing.md) | Targeted editing of saved workflow definitions (`cctl workflow edit` + outline/selector reads), operation vocabulary, revision guard, invariant gates |
 | [`06-workflow-live-editing.md`](./06-workflow-live-editing.md) | Live editing of launched executions (`cctl workflow live …`), lifecycle classifier + frontier invariant, `liveRevision`, structural edit boundaries, execution-UI config display/editing |
+| [`07-workflow-charter-amendments.md`](./07-workflow-charter-amendments.md) | Live charter amendments (`amend-charter` op, versioned amendment log, frozen contexts keep as-run copies), doc 05 `invariants` gap fix, `charter-updated` event wiring — the doc 06 D13 future seam |
 
 ---
 

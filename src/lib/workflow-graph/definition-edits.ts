@@ -1,4 +1,8 @@
-import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import type {
+  CharterInvariant,
+  SourceOfTruth,
+  WorkflowCharter,
+} from "@/lib/workflows/charter-schemas";
 import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
@@ -183,6 +187,7 @@ function definitionEditTouchedPaths(
         "vocabulary",
         "testStrategy",
         "knownAmbiguities",
+        "invariants",
         "sourcesOfTruth",
       ]);
     case "update-workflow-config":
@@ -342,7 +347,7 @@ function applyOperation(
     }
 
     case "update-charter": {
-      applyCharterEdit(definition.charter, operation);
+      applyCharterContentEdit(definition.charter, operation);
       return null;
     }
 
@@ -876,10 +881,26 @@ function isPermutation(a: string[], b: string[]): boolean {
   return counts.size === 0;
 }
 
+/**
+ * The charter content fields a saved-tier `update-charter` or live
+ * `amend-charter` op may carry (`charterContentEditShape` in edit-schemas.ts) —
+ * structural so both op types satisfy it and share one merge.
+ */
+export interface CharterContentEdit {
+  mission?: string;
+  conventions?: string[] | null;
+  nonGoals?: string[] | null;
+  vocabulary?: string[] | null;
+  testStrategy?: string | null;
+  knownAmbiguities?: string[] | null;
+  invariants?: CharterInvariant[] | null;
+  sourcesOfTruth?: SourceOfTruth[];
+}
+
 /** Partial-merge a charter edit: arrays replace wholesale, `null` clears. */
-function applyCharterEdit(
+export function applyCharterContentEdit(
   charter: WorkflowCharter,
-  edit: Extract<DefinitionEditOperation, { type: "update-charter" }>,
+  edit: CharterContentEdit,
 ): void {
   if (edit.mission !== undefined) charter.mission = edit.mission;
   applyOptionalBlock(charter, "conventions", edit.conventions);
@@ -887,6 +908,7 @@ function applyCharterEdit(
   applyOptionalBlock(charter, "vocabulary", edit.vocabulary);
   applyOptionalBlock(charter, "testStrategy", edit.testStrategy);
   applyOptionalBlock(charter, "knownAmbiguities", edit.knownAmbiguities);
+  applyOptionalBlock(charter, "invariants", edit.invariants);
   if (edit.sourcesOfTruth !== undefined) {
     charter.sourcesOfTruth = edit.sourcesOfTruth;
   }

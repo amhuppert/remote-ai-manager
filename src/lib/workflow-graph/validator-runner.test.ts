@@ -530,6 +530,29 @@ describe("buildContextValidationPrompt", () => {
     expect(prompt).toContain("server-side-enforcement");
   });
 
+  it("renders the charter amendment log so the validator judges against the amended rules", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      charter,
+      charterAmendments: [
+        {
+          seq: 1,
+          amendedAt: "2026-07-29T10:00:00.000Z",
+          source: "cli",
+          rationale: "Invariant inv-old retracted; it contradicted the API",
+          fieldsChanged: ["invariants"],
+          charterHash: "hash-1",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("## Amendment log");
+    expect(prompt).toContain("Invariant inv-old retracted");
+  });
+
   it("omits the invariant-check instruction when the charter declares no invariants", () => {
     const withoutInvariants = buildContextValidationPrompt({
       context,

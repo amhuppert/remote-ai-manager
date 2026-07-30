@@ -561,6 +561,51 @@ describe("applyDefinitionEdits", () => {
     expect(badRanks.ok).toBe(false);
   });
 
+  it("sets, replaces, and clears charter invariants via update-charter", () => {
+    const record = createWorkflowDefinitionRecord();
+    const set = applyDefinitionEdits(
+      record,
+      ops({
+        type: "update-charter",
+        invariants: [
+          { id: "inv-1", statement: "Every mutation goes through the repo" },
+          { id: "inv-2", statement: "No back-compat shims without approval" },
+        ],
+      }),
+    );
+    expect(set.ok).toBe(true);
+    if (set.ok) {
+      expect(set.record.definition.charter.invariants).toEqual([
+        { id: "inv-1", statement: "Every mutation goes through the repo" },
+        { id: "inv-2", statement: "No back-compat shims without approval" },
+      ]);
+    }
+
+    const cleared = applyDefinitionEdits(
+      set.ok ? set.record : record,
+      ops({ type: "update-charter", invariants: null }),
+    );
+    expect(cleared.ok).toBe(true);
+    if (cleared.ok) {
+      expect(cleared.record.definition.charter.invariants).toBeUndefined();
+    }
+  });
+
+  it("rejects duplicate charter invariant ids via update-charter", () => {
+    const record = createWorkflowDefinitionRecord();
+    const result = applyDefinitionEdits(
+      record,
+      ops({
+        type: "update-charter",
+        invariants: [
+          { id: "inv-1", statement: "First statement" },
+          { id: "inv-1", statement: "Conflicting duplicate" },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("sets and clears a workflow-config override block (null clears)", () => {
     const record = createWorkflowDefinitionRecord({
       definition: createWorkflowDefinition({

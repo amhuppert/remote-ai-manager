@@ -16,6 +16,8 @@ import {
   type ContextLifecycle,
   type ExecutionEditability,
 } from "./lifecycle-classifier";
+import type { CharterAmendment } from "@/lib/workflows/charter-schemas";
+import { computeCharterHash, renderCharterMarkdown } from "./charter/render";
 
 /**
  * The server-side live-outline projection (doc 06, "Read API — live outline").
@@ -47,6 +49,8 @@ export interface LiveOutlineHeader {
    */
   editable: boolean;
   notEditableReason?: "completed" | "aborted" | "halt-not-resumable";
+  /** Accepted live charter amendments so far (doc 07); 0 for pre-field rows. */
+  charterAmendmentCount: number;
 }
 
 export interface LiveOutlineAgentSummary {
@@ -165,7 +169,19 @@ export type LiveOutlineSelector =
   | { kind: "full" }
   | { kind: "context"; contextId: string }
   | { kind: "task"; taskId: string }
-  | { kind: "config"; contextId: string };
+  | { kind: "config"; contextId: string }
+  | { kind: "charter" };
+
+/**
+ * The charter selector's payload (doc 07): the full rendered document (content +
+ * amendment log — the same markdown the worktree charter.md carries) plus the
+ * structured amendment entries and the current content hash.
+ */
+export interface LiveOutlineCharter {
+  markdown: string;
+  amendments: CharterAmendment[];
+  charterHash: string;
+}
 
 export type LiveOutlineResult =
   | { ok: true; section: "outline"; outline: LiveOutline }
@@ -178,6 +194,7 @@ export type LiveOutlineResult =
   | { ok: true; section: "context"; context: LiveOutlineContextSection }
   | { ok: true; section: "task"; task: LiveOutlineTaskFull }
   | { ok: true; section: "config"; config: LiveOutlineResolvedConfig }
+  | { ok: true; section: "charter"; charter: LiveOutlineCharter }
   | { ok: false; error: string };
 
 function buildHeader(execution: GraphWorkflowExecution): LiveOutlineHeader {
@@ -191,6 +208,7 @@ function buildHeader(execution: GraphWorkflowExecution): LiveOutlineHeader {
     seedDefinitionRevision: execution.seedDefinitionRevision,
     editable,
     ...(editable ? {} : { notEditableReason: editability.reason }),
+    charterAmendmentCount: execution.charterAmendments.length,
   };
 }
 
@@ -433,6 +451,21 @@ export function projectLiveOutline(
       return { ok: false, error: `unknown context "${selector.contextId}"` };
     }
     return { ok: true, section: "config", config: resolveFullConfig(context) };
+  }
+
+  if (selector.kind === "charter") {
+    return {
+      ok: true,
+      section: "charter",
+      charter: {
+        markdown: renderCharterMarkdown(
+          execution.charter,
+          execution.charterAmendments,
+        ),
+        amendments: execution.charterAmendments,
+        charterHash: computeCharterHash(execution.charter),
+      },
+    };
   }
 
   if (selector.kind === "full") {

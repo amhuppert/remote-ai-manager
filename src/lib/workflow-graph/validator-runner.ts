@@ -1,6 +1,9 @@
 import { workflowAgentValidatorResultSchema } from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import type {
+  CharterAmendment,
+  WorkflowCharter,
+} from "@/lib/workflows/charter-schemas";
 import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
@@ -93,6 +96,8 @@ export interface BuildContextValidationPromptInput {
   // Optional because the resolved context carries an optional charter; when
   // present the digest is prepended so the prompt opens with it (4.2).
   charter?: WorkflowCharter;
+  /** Live amendment history (doc 07) — the validator judges the amended rules. */
+  charterAmendments?: CharterAmendment[];
   // Pre-rendered "Changes under review" section anchoring the validator on the
   // context's diff. Inserted after the acceptance criteria. Omitted when scope
   // computation is disabled or fails to produce a section.
@@ -134,8 +139,11 @@ export function resolveValidatorAskUserQuestionsEnabled(
   );
 }
 
-function buildCharterSection(charter: WorkflowCharter): string {
-  return renderCharterPromptSection(charter);
+function buildCharterSection(
+  charter: WorkflowCharter,
+  amendments: readonly CharterAmendment[] = [],
+): string {
+  return renderCharterPromptSection(charter, [], amendments);
 }
 
 function formatTaskBlock(
@@ -163,7 +171,7 @@ export function buildContextValidationPrompt(
     .join("\n");
 
   const charterSection = input.charter
-    ? `${buildCharterSection(input.charter)}\n\n`
+    ? `${buildCharterSection(input.charter, input.charterAmendments ?? [])}\n\n`
     : "";
 
   // A validator resume opens with the answers so the re-run validator reads them
@@ -1356,6 +1364,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       taskStates: input.execution.taskStates,
       validator: input.validator,
       ...(input.context.charter ? { charter: input.context.charter } : {}),
+      charterAmendments: input.execution.charterAmendments,
       diffScopeSection: renderedDiffScope.section,
       askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
         input.validator,

@@ -4,7 +4,10 @@ import {
 } from "@/lib/workflow-graph/charter/render";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
-import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import type {
+  CharterAmendment,
+  WorkflowCharter,
+} from "@/lib/workflows/charter-schemas";
 import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowCollaborationContinuation } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
@@ -23,11 +26,18 @@ import type {
 const COMPLETE_TASK_COMMAND =
   'cctl workflow task complete <taskId> --summary "<what you changed and how you verified it>"';
 
-function buildCharterSection(charter: WorkflowCharter): string {
-  return renderCharterPromptSection(charter, [
-    "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `cctl workflow task complete` summary.",
-    "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
-  ]);
+function buildCharterSection(
+  charter: WorkflowCharter,
+  amendments: readonly CharterAmendment[] = [],
+): string {
+  return renderCharterPromptSection(
+    charter,
+    [
+      "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `cctl workflow task complete` summary.",
+      "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
+    ],
+    amendments,
+  );
 }
 
 /**
@@ -103,6 +113,8 @@ export interface BuildIterationPromptInput {
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
   charter?: WorkflowCharter;
+  /** Live amendment history (doc 07) — rendered into the charter digest. */
+  charterAmendments?: CharterAmendment[];
   /**
    * Answers delivered into a rotated resume: the asking conversation reached its
    * context-window limit, so this fresh (seed) conversation carries the block in
@@ -251,7 +263,9 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
 
   // Charter digest at the very top, before the context header (4.1, 4.3).
   if (input.charter) {
-    sections.push(buildCharterSection(input.charter));
+    sections.push(
+      buildCharterSection(input.charter, input.charterAmendments ?? []),
+    );
   }
 
   // Context header
@@ -413,6 +427,8 @@ export interface BuildFollowUpPromptInput {
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
   allowAgentCollaboration?: boolean;
   charter?: WorkflowCharter;
+  /** Live amendment history (doc 07) — surfaces "the rules changed" mid-run. */
+  charterAmendments?: CharterAmendment[];
   /**
    * Answers delivered into a pinned resume: the asking conversation is reused,
    * so the block rides its follow-up prompt (5.1).
@@ -434,8 +450,13 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
   // Compact charter reminder on every continuation turn (4.4). The full digest
   // is re-presented when a fresh session is re-seeded via buildIterationPrompt.
   if (input.charter) {
+    const amendmentCount = input.charterAmendments?.length ?? 0;
+    const amendedNote =
+      amendmentCount > 0
+        ? ` The charter has been amended ${amendmentCount} time(s) during this run — re-read the Amendment log there before relying on remembered rules.`
+        : "";
     sections.push(
-      `Reminder: the workflow charter still governs — a higher-ranked source prevails over a lower-ranked one on conflict. Full charter: \`${CHARTER_DOCUMENT_PATH}\`.`,
+      `Reminder: the workflow charter still governs — a higher-ranked source prevails over a lower-ranked one on conflict. Full charter: \`${CHARTER_DOCUMENT_PATH}\`.${amendedNote}`,
     );
   }
 

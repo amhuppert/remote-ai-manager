@@ -1526,6 +1526,57 @@ describe("ExecutionInspectorPanel — Config tab + overview header", () => {
       "workflow-1@12",
     );
   });
+
+  it("shows the charter amendment count and latest rationale in the overview", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({
+          charterAmendments: [
+            {
+              seq: 1,
+              amendedAt: "2026-07-29T10:00:00.000Z",
+              source: "cli",
+              rationale: "Invariant inv-2 was impossible",
+              fieldsChanged: ["invariants"],
+              charterHash: "hash-1",
+            },
+            {
+              seq: 2,
+              amendedAt: "2026-07-30T09:00:00.000Z",
+              source: "ui",
+              rationale: "Mission narrowed after descoping the importer",
+              fieldsChanged: ["mission"],
+              charterHash: "hash-2",
+            },
+          ],
+        })}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    const note = screen.getByTestId("overview-charter-amendments");
+    expect(note).toHaveTextContent("Charter amended ×2");
+    expect(note).toHaveTextContent(
+      "Mission narrowed after descoping the importer",
+    );
+  });
+
+  it("renders no charter amendment note when the charter was never amended", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("overview-charter-amendments"),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe("ExecutionInspectorPanel — Config tab editing wiring", () => {

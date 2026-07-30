@@ -9,6 +9,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
+import { workflowLiveEditOperationSchema } from "@/lib/workflows/edit-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 
@@ -38,6 +39,7 @@ function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
     createTaskId: () => `task-minted-${(counter += 1)}`,
     resolvedGlobalDefaults: () => RESOLVED_DEFAULTS,
     hasPreMergeCommand: () => true,
+    now: () => "2026-07-29T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -1121,3 +1123,265 @@ function quiescentStartedPlan(): GraphWorkflowExecution {
     },
   };
 }
+
+describe("applyLiveExecutionEdits — amend-charter", () => {
+  const NOW = "2026-07-29T10:00:00.000Z";
+
+  function amendDeps(): LiveEditDeps {
+    return makeDeps({ now: () => NOW });
+  }
+
+  function applyAmend(
+    execution: GraphWorkflowExecution,
+    operations: WorkflowLiveEditOperation[],
+  ) {
+    return applyLiveExecutionEdits(
+      execution,
+      { operations, source: "cli" },
+      amendDeps(),
+    );
+  }
+
+  /** Paused execution whose context-plan is frozen (completed). */
+  function pausedWithFrozenPlan(): GraphWorkflowExecution {
+    const base = createWorkflowExecution({ status: "paused" });
+    return {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+        },
+      },
+      taskStates: {
+        ...base.taskStates,
+        "task-plan-1": {
+          ...base.taskStates["task-plan-1"]!,
+          status: "completed",
+          completedAt: "2026-03-27T16:40:00.000Z",
+        },
+      },
+    };
+  }
+
+  it("requires a quiescent execution (requires_pause while running)", () => {
+    const running = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+    const result = applyAmend(running, [
+      {
+        type: "amend-charter",
+        rationale: "mission drifted",
+        mission: "Corrected mission",
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("requires_pause");
+  });
+
+  it("merges content, propagates to non-frozen contexts only, and appends the amendment log", () => {
+    const execution = pausedWithFrozenPlan();
+    const frozenCharterBefore = structuredClone(
+      execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      )?.charter,
+    );
+
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "Invariant inv-x was impossible against the shipped API",
+        mission: "Amended mission statement",
+        invariants: [{ id: "inv-new", statement: "One authority per decision" }],
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const next = result.execution;
+
+    expect(next.charter.mission).toBe("Amended mission statement");
+    expect(next.charter.invariants).toEqual([
+      { id: "inv-new", statement: "One authority per decision" },
+    ]);
+
+    const byId = new Map(
+      next.workingDefinition.executionContexts.map((entry) => [
+        entry.id,
+        entry,
+      ]),
+    );
+    // Frozen context keeps its as-run copy (may be undefined in this fixture).
+    expect(byId.get("context-plan")?.charter).toEqual(frozenCharterBefore);
+    // Non-frozen contexts carry the amended charter.
+    expect(byId.get("context-implement")?.charter).toEqual(next.charter);
+    expect(byId.get("context-verify")?.charter).toEqual(next.charter);
+
+    expect(next.charterAmendments).toHaveLength(1);
+    const amendment = next.charterAmendments[0]!;
+    expect(amendment.seq).toBe(1);
+    expect(amendment.amendedAt).toBe(NOW);
+    expect(amendment.source).toBe("cli");
+    expect(amendment.rationale).toBe(
+      "Invariant inv-x was impossible against the shipped API",
+    );
+    expect([...amendment.fieldsChanged].sort()).toEqual([
+      "invariants",
+      "mission",
+    ]);
+    expect(amendment.charterHash.length).toBeGreaterThan(0);
+
+    expect(result.affectedContextIds).toContain("context-implement");
+    expect(result.affectedContextIds).toContain("context-verify");
+    expect(result.affectedContextIds).not.toContain("context-plan");
+  });
+
+  it("rejects a merge that violates charter validity (duplicate invariant ids)", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "bad merge",
+        invariants: [
+          { id: "inv-dup", statement: "first" },
+          { id: "inv-dup", statement: "second" },
+        ],
+      },
+    ]);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues[0]?.operationIndex).toBe(0);
+  });
+
+  it("gives a later add-context the amended charter (sequential visibility)", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "clarify mission before fanning out",
+        mission: "Amended before expansion",
+      },
+      {
+        type: "add-context",
+        id: "context-added",
+        title: "Added later in the same batch",
+        acceptanceCriteria: "Carries the amended charter",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const added = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-added",
+    );
+    expect(added?.charter?.mission).toBe("Amended before expansion");
+  });
+
+  it("rejects the whole batch when a later op fails (no amendment persists in the result)", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "will be rolled back",
+        mission: "Should not survive",
+      },
+      { type: "remove-task", taskId: "task-does-not-exist" },
+    ]);
+    expect(result.ok).toBe(false);
+    expect(execution.charter.mission).not.toBe("Should not survive");
+    expect(execution.charterAmendments).toHaveLength(0);
+  });
+
+  it("bumps the charter shared-document entry's updatedAt", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      sharedDocuments: [
+        {
+          id: "doc-charter-1",
+          relativePath: ".cc/graph-workflow-docs/charter.md",
+          description: "The workflow charter",
+          readWhen: "Read before resolving any source conflict",
+          kind: "charter",
+          createdAt: "2026-03-27T12:00:00.000Z",
+          updatedAt: "2026-03-27T12:00:00.000Z",
+          lastUpdatedByConversationId: null,
+        },
+      ],
+    };
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "content changed; pointer copy is stale",
+        mission: "Amended mission",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.execution.sharedDocuments[0]?.updatedAt).toBe(NOW);
+  });
+
+  it("increments seq across amendments already on the execution", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      charterAmendments: [
+        {
+          seq: 1,
+          amendedAt: "2026-07-01T00:00:00.000Z",
+          source: "ui",
+          rationale: "earlier amendment",
+          fieldsChanged: ["mission"],
+          charterHash: "earlier-hash",
+        },
+      ],
+    };
+    const result = applyAmend(execution, [
+      {
+        type: "amend-charter",
+        rationale: "second amendment",
+        testStrategy: "Integration-first",
+      },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.execution.charterAmendments).toHaveLength(2);
+    expect(result.execution.charterAmendments[1]?.seq).toBe(2);
+  });
+});
+
+describe("workflowLiveEditOperationSchema — amend-charter shape", () => {
+  it("rejects an amendment with a rationale but no content field", () => {
+    const parsed = workflowLiveEditOperationSchema.safeParse({
+      type: "amend-charter",
+      rationale: "changed nothing",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects an amendment without a rationale", () => {
+    const parsed = workflowLiveEditOperationSchema.safeParse({
+      type: "amend-charter",
+      mission: "New mission",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts a rationale plus one content field and preserves null clears", () => {
+    const parsed = workflowLiveEditOperationSchema.safeParse({
+      type: "amend-charter",
+      rationale: "test strategy section retracted",
+      testStrategy: null,
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).toMatchObject({
+      type: "amend-charter",
+      testStrategy: null,
+    });
+  });
+});

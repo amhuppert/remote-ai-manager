@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import { createLogger, withTracing } from "@/lib/logging";
 import {
@@ -26,8 +28,13 @@ import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
+  type PublishCharterUpdatedInput,
   type PublishLiveEditAppliedInput,
 } from "./execution-events";
+import {
+  CHARTER_DOCUMENT_PATH,
+  renderCharterMarkdown,
+} from "./charter/render";
 import {
   createGraphWorkflowExecutionRepository,
   type MutateActiveResult,
@@ -105,6 +112,7 @@ async function defaultBuildLiveEditDeps(
     createTaskId: () => `task-${randomUUID()}`,
     resolvedGlobalDefaults: () => resolvedGlobalDefaults,
     hasPreMergeCommand: () => hasPreMergeCommand,
+    now: () => new Date().toISOString(),
     executionContract: createRegisteredGraphExecutionContract(),
   };
 }
@@ -130,6 +138,29 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
   ): GraphWorkflowEventDelivery;
+  publishCharterUpdated(
+    input: PublishCharterUpdatedInput,
+  ): GraphWorkflowEventDelivery;
+  /**
+   * Rewrite the session worktree's charter.md pointer copy after an accepted
+   * amendment. Lane worktrees re-materialize per iteration; the session
+   * worktree's copy is only written at seed time, so it goes stale without
+   * this. Best-effort: a failure is logged, never a request failure — the
+   * inline prompt digest is authoritative, the file is a pointer copy.
+   */
+  writeCharterDocument(input: {
+    worktreePath: string;
+    markdown: string;
+  }): Promise<void>;
+}
+
+async function defaultWriteCharterDocument(input: {
+  worktreePath: string;
+  markdown: string;
+}): Promise<void> {
+  const absolutePath = path.join(input.worktreePath, CHARTER_DOCUMENT_PATH);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, input.markdown);
 }
 
 const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
@@ -139,6 +170,8 @@ const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   mutateActive: executionRepository.mutateActive,
   buildLiveEditDeps: defaultBuildLiveEditDeps,
   publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
+  publishCharterUpdated: eventPublisher.publishCharterUpdated,
+  writeCharterDocument: defaultWriteCharterDocument,
 };
 
 // The doc-06 error contract (§"Error contract"): a code-bearing rejection is an
@@ -222,7 +255,7 @@ function evaluateLiveEditRequest(
 
   const applied = applyLiveExecutionEdits(
     execution,
-    { operations: request.operations },
+    { operations: request.operations, source: request.source },
     liveEditDeps,
   );
   if (!applied.ok) {
@@ -368,6 +401,10 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
     let applied = 0;
     let liveRevision = 0;
     let affectedContextIds: string[] = [];
+    const containsCharterAmendment = editRequest.operations.some(
+      (operation) => operation.type === "amend-charter",
+    );
+    let amendedExecution: GraphWorkflowExecution | null = null;
     try {
       await deps.mutateActive(projectPath, sessionName, (current) => {
         const gate = evaluateLiveEditRequest(
@@ -394,6 +431,23 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
           source: editRequest.source,
         });
 
+        // An amendment additionally emits the dedicated charter event (its own
+        // hash-bearing audit row + the UI's refresh signal for charter surfaces).
+        if (containsCharterAmendment) {
+          const latestAmendment = bumped.charterAmendments.at(-1);
+          const charterDelivery = deps.publishCharterUpdated({
+            projectPath,
+            sessionName,
+            definitionId: bumped.seedDefinitionId,
+            definitionRevision: bumped.seedDefinitionRevision,
+            charterHash: latestAmendment?.charterHash ?? "",
+            execution: bumped,
+          });
+          delivery.events.push(...charterDelivery.events);
+          delivery.pushes.push(...charterDelivery.pushes);
+          amendedExecution = bumped;
+        }
+
         applied = editRequest.operations.length;
         liveRevision = bumpedLiveRevision;
         affectedContextIds = gate.affectedContextIds;
@@ -411,6 +465,38 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
         return notFound(error.message);
       }
       throw error;
+    }
+
+    // Post-commit: refresh the session worktree's charter.md pointer copy.
+    // Best-effort — the amendment is already durable and broadcast; the inline
+    // prompt digest renders from the execution, not this file.
+    if (amendedExecution !== null) {
+      const committed: GraphWorkflowExecution = amendedExecution;
+      const latestAmendment = committed.charterAmendments.at(-1);
+      logger.info("live_edit.charter_amended", {
+        executionId: committed.id,
+        seq: latestAmendment?.seq,
+        source: editRequest.source,
+        fieldsChanged: latestAmendment?.fieldsChanged,
+        charterHash: latestAmendment?.charterHash,
+      });
+      try {
+        const session = await deps.getSession(projectPath, sessionName);
+        if (session?.worktreePath) {
+          await deps.writeCharterDocument({
+            worktreePath: session.worktreePath,
+            markdown: renderCharterMarkdown(
+              committed.charter,
+              committed.charterAmendments,
+            ),
+          });
+        }
+      } catch (error) {
+        logger.warn("live_edit.charter_document_write_failed", {
+          executionId: committed.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     return NextResponse.json({

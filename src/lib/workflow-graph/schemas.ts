@@ -16,7 +16,10 @@ import {
   laneMetricsSchema,
   laneTurnUsageSchema,
 } from "@/lib/workflows/primitives/lane-vocabulary";
-import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
+import {
+  charterAmendmentSchema,
+  workflowCharterSchema,
+} from "@/lib/workflows/charter-schemas";
 import { graphWorkflowCircuitBreakerConditionSchema } from "./config-schemas";
 import {
   graphWorkflowCollaborationContinuationSchema,
@@ -533,6 +536,12 @@ export const graphWorkflowExecutionSchema = z.object({
   // guards catch edit-vs-edit lost updates. Persisted in the runtime tier
   // (`RUNTIME_TIER_KEYS`); rows written before the field existed parse as `1`.
   liveRevision: z.number().int().min(1).default(1),
+  // Append-only metadata log of accepted live `amend-charter` operations
+  // (docs/design/cc-cli/07). The current charter content lives in
+  // `execution.charter`; this records seq/when/who/why/what-changed per
+  // amendment. Persisted in the runtime tier; rows written before the field
+  // existed parse as `[]`.
+  charterAmendments: z.array(charterAmendmentSchema).default([]),
   // Loop-generation fence token. Incremented ONLY by `resume()` — every resume
   // starts a new loop generation, and any execution loop still alive from a
   // prior generation (a "zombie" blocked in a long await across the

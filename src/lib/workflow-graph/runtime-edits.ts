@@ -38,6 +38,10 @@ import {
   regionLockedMessage,
   type DefinitionPath,
 } from "./locked-regions";
+import { applyCharterContentEdit } from "./definition-edits";
+import { computeCharterHash } from "./charter/render";
+import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
+import { CHARTER_CONTENT_EDIT_FIELDS } from "@/lib/workflows/edit-schemas";
 import type { GraphExecutionContract } from "./execution-contract-port";
 
 export interface AgentAddedTask {
@@ -311,6 +315,8 @@ export interface LiveEditDeps {
   createTaskId(): string;
   resolvedGlobalDefaults(): ResolvedContextConfig;
   hasPreMergeCommand(): boolean;
+  /** ISO timestamp source for `amend-charter` amendment-log entries. */
+  now(): string;
   executionContract?: GraphExecutionContract;
 }
 
@@ -365,6 +371,9 @@ function laneAgentLiveEditDeps(
     hasPreMergeCommand() {
       throw new Error("lane-agent add_task does not enable a script validator");
     },
+    now() {
+      throw new Error("lane-agent add_task does not amend the charter");
+    },
   };
 }
 
@@ -379,6 +388,12 @@ interface LiveEditOpContext {
   affectedContextIds: Set<string>;
   configTouchedContextIds: Set<string>;
   laneAgentContextId: string | undefined;
+  /**
+   * Audit attribution from the request (doc 06 D15), recorded on amendment-log
+   * entries. Absent only on the lane-agent `add_task` wrapper path, which never
+   * emits an `amend-charter` op.
+   */
+  source: WorkflowLiveEditRequest["source"] | undefined;
 }
 
 function presentLiveFieldPaths(
@@ -407,6 +422,10 @@ function liveEditTouchedPaths(
   const value = operation as unknown as Record<string, unknown>;
 
   switch (operation.type) {
+    case "amend-charter":
+      return presentLiveFieldPaths(["charter"], value, [
+        ...CHARTER_CONTENT_EDIT_FIELDS,
+      ]);
     case "update-context":
       return presentLiveFieldPaths(
         ["executionContexts", operation.contextId],
@@ -516,7 +535,8 @@ type LiveContextConfigOp =
  */
 export function applyLiveExecutionEdits(
   execution: GraphWorkflowExecution,
-  request: Pick<WorkflowLiveEditRequest, "operations">,
+  request: Pick<WorkflowLiveEditRequest, "operations"> &
+    Partial<Pick<WorkflowLiveEditRequest, "source">>,
   deps: LiveEditDeps,
   options: LiveEditOptions = {},
 ): ApplyLiveExecutionEditsResult {
@@ -534,6 +554,7 @@ export function applyLiveExecutionEdits(
     affectedContextIds,
     configTouchedContextIds,
     laneAgentContextId: options.laneAgentContextId,
+    source: request.source,
   };
 
   for (let index = 0; index < request.operations.length; index += 1) {
@@ -786,6 +807,8 @@ function applyLiveEditOperation(
   ctx: LiveEditOpContext,
 ): LiveEditRejection | null {
   switch (operation.type) {
+    case "amend-charter":
+      return applyAmendCharter(next, operation, index, ctx);
     case "update-context":
       return applyUpdateContext(next, operation, index, ctx);
     case "add-task":
@@ -812,6 +835,83 @@ function applyLiveEditOperation(
         `unhandled live edit operation: ${JSON.stringify(operation)}`,
       );
   }
+}
+
+/**
+ * Versioned charter amendment (docs/design/cc-cli/07). Partial-merges the op's
+ * content fields onto the execution's charter, propagates the amended charter
+ * to every NON-frozen context copy (frozen contexts deliberately keep the
+ * as-run version they executed under — organic history that also keeps the
+ * frontier invariant's frozen deep-compare intact), appends a metadata-only
+ * entry to the amendment log, and freshens the charter shared-document stamp so
+ * readers know the worktree pointer copy was re-rendered.
+ */
+function applyAmendCharter(
+  next: GraphWorkflowExecution,
+  op: Extract<WorkflowLiveEditOperation, { type: "amend-charter" }>,
+  index: number,
+  ctx: LiveEditOpContext,
+): LiveEditRejection | null {
+  const notQuiescent = requireQuiescent(ctx, index);
+  if (notQuiescent) return notQuiescent;
+
+  // Only the lane-agent wrapper omits `source`, and it never emits this op;
+  // reaching here means a new entry point skipped audit attribution.
+  if (ctx.source === undefined) {
+    return rejectLiveEdit(
+      "invalid_edit",
+      liveEditIssue(
+        "missing-edit-source",
+        "amend-charter requires an attributable request source",
+        index,
+      ),
+    );
+  }
+
+  const merged = structuredClone(next.charter);
+  applyCharterContentEdit(merged, op);
+  const parsed = workflowCharterSchema.safeParse(merged);
+  if (!parsed.success) {
+    return {
+      code: "invalid_edit",
+      issues: parsed.error.issues.map((issue) => ({
+        ...zodIssueToValidationError(issue),
+        operationIndex: index,
+      })),
+    };
+  }
+
+  next.charter = parsed.data;
+  for (const context of next.workingDefinition.executionContexts) {
+    if (classifyContextLifecycle(next, context.id) === "frozen") continue;
+    context.charter = structuredClone(parsed.data);
+    ctx.affectedContextIds.add(context.id);
+  }
+
+  const opValue = op as unknown as Record<string, unknown>;
+  const fieldsChanged = CHARTER_CONTENT_EDIT_FIELDS.filter(
+    (field) => opValue[field] !== undefined,
+  );
+  const amendedAt = ctx.deps.now();
+  next.charterAmendments = [
+    ...next.charterAmendments,
+    {
+      seq: (next.charterAmendments.at(-1)?.seq ?? 0) + 1,
+      amendedAt,
+      source: ctx.source,
+      rationale: op.rationale,
+      fieldsChanged,
+      charterHash: computeCharterHash(parsed.data),
+    },
+  ];
+
+  for (const document of next.sharedDocuments) {
+    if (document.kind === "charter") {
+      document.updatedAt = amendedAt;
+    }
+  }
+
+  return null;
 }
 
 function applyUpdateContext(

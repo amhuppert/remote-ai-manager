@@ -1046,11 +1046,18 @@ function remainingTasksHint(remaining: number): string {
  * The mutually-exclusive `workflow live get` section selectors, in help order.
  * `context`/`task`/`config` take a value (one item) and map to the endpoint's
  * `?context` / `?task` / `?config=<ctx>` (doc 06 §CLI surface: `--config <id>`
- * returns one context's FULL resolved config); `full` (boolean) maps to
- * `?full=true`. All four are mutually exclusive; the default (no selector) is the
- * compact text outline.
+ * returns one context's FULL resolved config); `full` and `charter` (booleans)
+ * map to `?full=true` / `?charter=true` (doc 07: the charter selector returns
+ * the rendered charter document + amendment log). All are mutually exclusive;
+ * the default (no selector) is the compact text outline.
  */
-const LIVE_GET_SELECTOR_FLAGS = ["full", "context", "task", "config"] as const;
+const LIVE_GET_SELECTOR_FLAGS = [
+  "full",
+  "context",
+  "task",
+  "config",
+  "charter",
+] as const;
 
 const liveEditResponseSchema = z.object({
   applied: z.number(),
@@ -1128,6 +1135,7 @@ async function runWorkflowLiveGet(
   // selector) fetches the compact outline.
   const params = new URLSearchParams();
   if (selector === "full") params.set("full", "true");
+  else if (selector === "charter") params.set("charter", "true");
   else if (selector === "context")
     params.set("context", values["context"] ?? "");
   else if (selector === "task") params.set("task", values["task"] ?? "");
@@ -1149,9 +1157,10 @@ async function runWorkflowLiveGet(
       ? { ...(body as Record<string, unknown>), ok: true }
       : { ok: true };
 
-  // Default (no selector) → the compact text outline; a section selector
-  // (--context/--task/--config/--full) → the full-prose/full-config slice as
-  // JSON (same discipline as `workflow get`, doc 05).
+  // Default (no selector) → the compact text outline; --charter → the rendered
+  // charter document itself (markdown is the readable form, not a JSON dump);
+  // any other section selector (--context/--task/--config/--full) → the
+  // full-prose/full-config slice as JSON (same discipline as `workflow get`).
   let humanText: string;
   if (selector === undefined) {
     const outline =
@@ -1162,6 +1171,18 @@ async function runWorkflowLiveGet(
     humanText = parsed.success
       ? `${renderLiveOutline(parsed.data)}\n`
       : `${JSON.stringify(body, null, 2)}\n`;
+  } else if (selector === "charter") {
+    const section = liveOutlineSectionValue(body);
+    const markdown =
+      section !== null &&
+      typeof section === "object" &&
+      typeof (section as { markdown?: unknown }).markdown === "string"
+        ? (section as { markdown: string }).markdown
+        : null;
+    humanText =
+      markdown !== null
+        ? `${markdown}\n`
+        : `${JSON.stringify(section, null, 2)}\n`;
   } else {
     humanText = `${JSON.stringify(liveOutlineSectionValue(body), null, 2)}\n`;
   }

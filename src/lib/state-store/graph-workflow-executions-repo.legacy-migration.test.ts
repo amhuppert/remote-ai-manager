@@ -112,6 +112,7 @@ function buildCleanExecution(): GraphWorkflowExecution {
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    charterAmendments: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",

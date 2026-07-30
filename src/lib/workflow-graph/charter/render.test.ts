@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  CharterAmendment,
   SourceOfTruth,
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
@@ -317,5 +318,65 @@ describe("renderCharterPromptSection", () => {
     const section = renderCharterPromptSection(makeCharter());
 
     expect(section.endsWith("on demand.")).toBe(true);
+  });
+});
+
+describe("amendment log rendering", () => {
+  const amendments: CharterAmendment[] = [
+    {
+      seq: 1,
+      amendedAt: "2026-07-29T10:00:00.000Z",
+      source: "cli",
+      rationale: "Invariant inv-2 was impossible against the shipped API",
+      fieldsChanged: ["invariants"],
+      charterHash: "hash-1",
+    },
+    {
+      seq: 2,
+      amendedAt: "2026-07-30T09:00:00.000Z",
+      source: "ui",
+      rationale: "Mission narrowed after descoping the importer",
+      fieldsChanged: ["mission", "nonGoals"],
+      charterHash: "hash-2",
+    },
+  ];
+
+  it("renders an amendment log section in the digest, oldest first", () => {
+    const digest = renderCharterDigest(makeCharter(), amendments);
+    expect(digest).toContain("## Amendment log");
+    expect(digest).toContain(
+      "Invariant inv-2 was impossible against the shipped API",
+    );
+    expect(digest).toContain("Mission narrowed after descoping the importer");
+    expect(digest.indexOf("inv-2 was impossible")).toBeLessThan(
+      digest.indexOf("Mission narrowed"),
+    );
+    expect(digest).toContain("invariants");
+  });
+
+  it("renders the amendment log in the full markdown document", () => {
+    const markdown = renderCharterMarkdown(makeCharter(), amendments);
+    expect(markdown).toContain("## Amendment log");
+    expect(markdown).toContain("2026-07-30");
+    expect(markdown).toContain("mission, nonGoals");
+  });
+
+  it("omits the amendment section entirely when there are no amendments", () => {
+    expect(renderCharterDigest(makeCharter())).not.toContain("Amendment log");
+    expect(renderCharterMarkdown(makeCharter())).not.toContain(
+      "Amendment log",
+    );
+  });
+
+  it("does not change the charter hash (content-only hashing)", () => {
+    expect(computeCharterHash(makeCharter())).toBe(
+      computeCharterHash(makeCharter()),
+    );
+  });
+
+  it("threads amendments through the prompt section", () => {
+    const section = renderCharterPromptSection(makeCharter(), [], amendments);
+    expect(section).toContain("## Amendment log");
+    expect(section).toContain("Full charter: read");
   });
 });

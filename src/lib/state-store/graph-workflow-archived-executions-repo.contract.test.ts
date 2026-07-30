@@ -233,6 +233,17 @@ function buildMaximalExecution(): unknown {
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
     liveRevision: 4,
+    charterAmendments: [
+      {
+        seq: 1,
+        amendedAt: "2026-01-02T03:00:00.000Z",
+        source: "cli",
+        rationale:
+          "Invariant inv-2 was impossible to satisfy against the shipped API",
+        fieldsChanged: ["invariants", "mission"],
+        charterHash: "hash-after-amendment-1",
+      },
+    ],
     loopEpoch: 2,
     boundInputs: {
       feature: "search box",

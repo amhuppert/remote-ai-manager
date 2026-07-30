@@ -47,6 +47,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
     },
   }),
   hasPreMergeCommand: () => true,
+  now: () => "2026-07-29T10:00:00.000Z",
 };
 
 function makeRequest(method: string, body?: unknown): NextRequest {
@@ -72,6 +73,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
   let broadcast: ReturnType<typeof vi.fn>;
   let handlers: ReturnType<typeof createGraphWorkflowRuntimeEditRouteHandlers>;
   let buildLiveEditDeps: ReturnType<typeof vi.fn>;
+  let writeCharterDocument: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     fixture = createPersistenceFixture();
@@ -94,6 +96,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     });
 
     buildLiveEditDeps = vi.fn(async () => TEST_LIVE_EDIT_DEPS);
+    writeCharterDocument = vi.fn(async () => {});
 
     const deps: GraphWorkflowRuntimeEditRouteDeps = {
       resolveProjectPath: async (name) =>
@@ -103,6 +106,8 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       mutateActive: repository.mutateActive,
       buildLiveEditDeps,
       publishLiveEditApplied: publisher.publishLiveEditApplied,
+      publishCharterUpdated: publisher.publishCharterUpdated,
+      writeCharterDocument,
     };
     handlers = createGraphWorkflowRuntimeEditRouteHandlers(deps);
   });
@@ -580,5 +585,103 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     expect(response.status).toBe(200);
     const rows = liveEditEventRows();
     expect(rows[0]?.event).toMatchObject({ source: "ui" });
+  });
+
+  function charterUpdatedEventRows() {
+    return fixture.graphWorkflowEvents
+      .findByExecution("execution-1")
+      .filter((row) => row.event.type === "graph-workflow-charter-updated");
+  }
+
+  function amendCharter(overrides: Record<string, unknown> = {}) {
+    return {
+      executionId: "execution-1",
+      baseLiveRevision: 1,
+      source: "cli" as const,
+      operations: [
+        {
+          type: "amend-charter",
+          rationale: "the mission drifted from what the run actually needs",
+          mission: "Amended mission statement",
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("applies amend-charter: persists the amendment, emits charter-updated, rewrites charter.md", async () => {
+    await seedExecution(createWorkflowExecution({ status: "paused" }));
+
+    const response = await handlers.POST(
+      makeRequest("POST", amendCharter()),
+      routeParams,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ applied: 1, liveRevision: 2, dryRun: false });
+
+    const reloaded = await reload();
+    expect(reloaded?.charter.mission).toBe("Amended mission statement");
+    expect(reloaded?.charterAmendments).toHaveLength(1);
+    expect(reloaded?.charterAmendments[0]).toMatchObject({
+      seq: 1,
+      source: "cli",
+      amendedAt: "2026-07-29T10:00:00.000Z",
+      fieldsChanged: ["mission"],
+    });
+
+    const charterRows = charterUpdatedEventRows();
+    expect(charterRows).toHaveLength(1);
+    expect(charterRows[0]?.event).toMatchObject({
+      type: "graph-workflow-charter-updated",
+      executionId: "execution-1",
+      charterHash: reloaded?.charterAmendments[0]?.charterHash,
+    });
+    expect(liveEditEventRows()).toHaveLength(1);
+
+    const broadcastTypes = broadcast.mock.calls.map(([event]) => event.type);
+    expect(broadcastTypes).toContain("graph-workflow-live-edit-applied");
+    expect(broadcastTypes).toContain("graph-workflow-charter-updated");
+
+    const session = await fixture.store.getSession(PROJECT_PATH, SESSION_NAME);
+    expect(writeCharterDocument).toHaveBeenCalledTimes(1);
+    const writeInput = writeCharterDocument.mock.calls[0]?.[0] as {
+      worktreePath: string;
+      markdown: string;
+    };
+    expect(writeInput.worktreePath).toBe(session?.worktreePath);
+    expect(writeInput.markdown).toContain("Amended mission statement");
+  });
+
+  it("dry-run amend-charter leaves the charter, log, events, and document untouched", async () => {
+    const seeded = createWorkflowExecution({ status: "paused" });
+    await seedExecution(seeded);
+
+    const response = await handlers.POST(
+      makeRequest("POST", amendCharter({ dryRun: true })),
+      routeParams,
+    );
+
+    expect(response.status).toBe(200);
+    const reloaded = await reload();
+    expect(reloaded?.charter.mission).toBe(seeded.charter.mission);
+    expect(reloaded?.charterAmendments).toHaveLength(0);
+    expect(reloaded?.liveRevision).toBe(1);
+    expect(charterUpdatedEventRows()).toHaveLength(0);
+    expect(writeCharterDocument).not.toHaveBeenCalled();
+  });
+
+  it("a batch without amend-charter emits no charter-updated and writes no document", async () => {
+    await seedExecution(createWorkflowExecution({ status: "paused" }));
+
+    const response = await handlers.POST(
+      makeRequest("POST", updateContext()),
+      routeParams,
+    );
+
+    expect(response.status).toBe(200);
+    expect(charterUpdatedEventRows()).toHaveLength(0);
+    expect(writeCharterDocument).not.toHaveBeenCalled();
   });
 });

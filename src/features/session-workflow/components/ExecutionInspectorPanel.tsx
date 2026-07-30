@@ -731,6 +731,23 @@ function OverviewView({
           />
         )}
 
+        {execution.charterAmendments.length > 0 && (
+          <div
+            data-testid="overview-charter-amendments"
+            className="text-[0.72rem] leading-snug text-text-secondary"
+          >
+            <span className="font-medium text-text-primary">
+              Charter amended ×{execution.charterAmendments.length}
+            </span>{" "}
+            — latest:{" "}
+            {
+              execution.charterAmendments[
+                execution.charterAmendments.length - 1
+              ]?.rationale
+            }
+          </div>
+        )}
+
         <div className={wbOverviewStatGrid}>
           <div className={wbOverviewStat}>
             <div className={wbOverviewStatValue}>

@@ -381,6 +381,72 @@ describe("cctl workflow live get", () => {
     expect(host.requests).toHaveLength(0);
   });
 
+  it("passes --charter through as ?charter=true and renders the charter markdown", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ok: true,
+        section: "charter",
+        charter: {
+          markdown:
+            "# Workflow Charter\n\n## Mission\nAmended mission\n\n## Amendment log\n1. 2026-07-29 — changed mission: the mission drifted",
+          amendments: [
+            {
+              seq: 1,
+              amendedAt: "2026-07-29T10:00:00.000Z",
+              source: "cli",
+              rationale: "the mission drifted",
+              fieldsChanged: ["mission"],
+              charterHash: "hash-1",
+            },
+          ],
+          charterHash: "hash-1",
+        },
+      }),
+    );
+    const result = await runCli(
+      ["workflow", "live", "get", "--charter"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(
+      new URL(host.requests[0]?.url ?? "").searchParams.get("charter"),
+    ).toBe("true");
+    // The charter renders as its markdown document, not a JSON dump.
+    expect(result.stdout).toContain("# Workflow Charter");
+    expect(result.stdout).toContain("## Amendment log");
+    expect(result.stdout).not.toContain('"markdown"');
+  });
+
+  it("exits 2 without a request when --charter is combined with another selector", async () => {
+    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+    const result = await runCli(
+      ["workflow", "live", "get", "--charter", "--task", "impl-api"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("renders the header's amendment count when the charter has been amended", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ...OUTLINE_BODY,
+        outline: {
+          ...OUTLINE_BODY.outline,
+          header: {
+            ...OUTLINE_BODY.outline.header,
+            charterAmendmentCount: 2,
+          },
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("charter amended ×2");
+  });
+
   it("maps a 404 (no active execution) to exit 2", async () => {
     const host = makeHost(() =>
       jsonResponse(

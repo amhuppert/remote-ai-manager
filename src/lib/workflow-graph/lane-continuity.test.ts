@@ -77,6 +77,7 @@ function makeExecution(
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    charterAmendments: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",

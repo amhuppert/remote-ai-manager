@@ -510,3 +510,49 @@ describe("projectLiveOutline — section selectors", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe("projectLiveOutline — charter selector (doc 07)", () => {
+  const amendments = [
+    {
+      seq: 1,
+      amendedAt: "2026-07-29T10:00:00.000Z",
+      source: "cli" as const,
+      rationale: "Invariant inv-2 was impossible against the shipped API",
+      fieldsChanged: ["invariants"],
+      charterHash: "hash-after-1",
+    },
+  ];
+
+  it("returns the rendered charter markdown with the amendment log and structured entries", () => {
+    const execution: GraphWorkflowExecution = {
+      ...buildExecution({ status: "paused" }),
+      charterAmendments: amendments,
+    };
+    const result = projectLiveOutline(execution, { kind: "charter" });
+
+    expect(result.ok && result.section === "charter").toBe(true);
+    if (!result.ok || result.section !== "charter") return;
+    expect(result.charter.markdown).toContain("# Workflow Charter");
+    expect(result.charter.markdown).toContain("## Amendment log");
+    expect(result.charter.markdown).toContain(
+      "Invariant inv-2 was impossible against the shipped API",
+    );
+    expect(result.charter.amendments).toEqual(amendments);
+    expect(result.charter.charterHash.length).toBeGreaterThan(0);
+  });
+
+  it("counts amendments in the outline header", () => {
+    const pristine = projectLiveOutline(buildExecution(), { kind: "outline" });
+    expect(pristine.ok).toBe(true);
+    if (!pristine.ok || pristine.section !== "outline") return;
+    expect(pristine.outline.header.charterAmendmentCount).toBe(0);
+
+    const amended = projectLiveOutline(
+      { ...buildExecution(), charterAmendments: amendments },
+      { kind: "outline" },
+    );
+    expect(amended.ok).toBe(true);
+    if (!amended.ok || amended.section !== "outline") return;
+    expect(amended.outline.header.charterAmendmentCount).toBe(1);
+  });
+});

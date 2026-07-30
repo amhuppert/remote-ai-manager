@@ -304,7 +304,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl workflow collab` — request a second opinion from another agent
   - `cctl workflow collab request --brief "<question with context>"`
 - `cctl workflow live get` — print the live outline of the active execution
-  - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --full] [--json]`
+  - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --full] [--json]`
 - `cctl workflow live edit` — apply live edits to the running execution's working copy
   - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
 - `cctl workflow live pause` — pause the active execution to unlock started contexts
@@ -905,7 +905,7 @@ working copy, not the definition it launched from. `workflow execution …` and
 lookup. Session-scoped (reads your `CC_SESSION`); no execution running exits `2`.
 
 ```
-cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --full] [--json]
+cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --full] [--json]
 cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]
 cctl workflow live pause [--json]
 cctl workflow live resume [--json]
@@ -922,7 +922,15 @@ cctl workflow live resume [--json]
   (full prose + resolved config for one context), `--task <task>` (full
   instructions), `--config <ctx>` (one context's **full resolved config** —
   implementer, validator, gates, iteration policy, circuit breaker, mutability,
-  collaboration), `--full` (every context expanded).
+  collaboration), `--charter` (the current charter document with its live
+  amendment log), `--full` (every context expanded). An amended charter also
+  shows in the outline header as `charter amended ×N`.
+- The `amend-charter` op (in `live edit`'s `operations[]`) partial-merges
+  charter content (mission, conventions, non-goals, vocabulary, test strategy,
+  known ambiguities, invariants, sources of truth) with a **required
+  `rationale`** recorded in the amendment log; completed contexts keep the
+  charter version they ran under. Quiescence-gated like structural ops —
+  pause (or a resumable halt) first.
 - `edit` — apply an ordered, **atomic** batch of live edits to the working copy,
   addressed by **stable ids**. `--file` (or `-` for stdin) is a JSON object
   `{ "executionId", "baseLiveRevision", "source": "cli", "operations": [ … ] }`

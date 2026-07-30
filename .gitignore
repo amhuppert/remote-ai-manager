@@ -55,6 +55,9 @@ next-env.d.ts
 .playwright-mcp
 .playwright-cli
 ROADMAP.md
+# ROADMAP.md above targets root-level agent scratch; on the case-insensitive
+# macOS FS it also swallows docs/roadmap.md, which is a real tracked artifact.
+!docs/roadmap.md
 
 # screenshots / image artifacts at repo root (Playwright, ad-hoc captures).
 # Legitimate images live under public/ or feature folders.

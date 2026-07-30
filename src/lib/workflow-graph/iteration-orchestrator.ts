@@ -2227,6 +2227,7 @@ export function createGraphWorkflowIterationOrchestrator(
               collaborationContinuations,
               allowAgentCollaboration,
               charter: context.charter,
+              charterAmendments: seededExecution.charterAmendments,
               resumeUserInput: resumeUserInputPrompt,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
             })
@@ -2237,6 +2238,7 @@ export function createGraphWorkflowIterationOrchestrator(
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
               charter: context.charter,
+              charterAmendments: seededExecution.charterAmendments,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
               allowAgentCollaboration,
               contextValidationAcceptanceCriteria:
@@ -2524,6 +2526,7 @@ export function createGraphWorkflowIterationOrchestrator(
           collaborationContinuations: [],
           allowAgentCollaboration,
           charter: context.charter,
+          charterAmendments: midExecution.charterAmendments,
           askUserQuestionsEnabled: context.askUserQuestions.enabled,
         });
         execLogger?.writePrompt(

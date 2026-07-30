@@ -56,9 +56,10 @@ async function resolveSession(
 
 /**
  * Parse the mutually-exclusive section selectors (`?context` / `?task` /
- * `?config` / `?full`) into a {@link LiveOutlineSelector}. Combining more than
- * one is a malformed request (the CLI guards this too, but the endpoint is the
- * authority). `?full=false` is treated as absent.
+ * `?config` / `?full` / `?charter`) into a {@link LiveOutlineSelector}.
+ * Combining more than one is a malformed request (the CLI guards this too, but
+ * the endpoint is the authority). `?full=false` / `?charter=false` are treated
+ * as absent.
  */
 function parseSelector(
   url: URL,
@@ -68,17 +69,20 @@ function parseSelector(
   const config = url.searchParams.get("config");
   const fullRaw = url.searchParams.get("full");
   const full = fullRaw !== null && fullRaw !== "false";
+  const charterRaw = url.searchParams.get("charter");
+  const charter = charterRaw !== null && charterRaw !== "false";
 
   const present = [
     context !== null,
     task !== null,
     config !== null,
     full,
+    charter,
   ].filter(Boolean).length;
   if (present > 1) {
     return {
       ok: false,
-      error: "choose at most one of context, task, config, or full",
+      error: "choose at most one of context, task, config, charter, or full",
     };
   }
 
@@ -88,6 +92,7 @@ function parseSelector(
     return { ok: true, selector: { kind: "task", taskId: task } };
   if (config !== null)
     return { ok: true, selector: { kind: "config", contextId: config } };
+  if (charter) return { ok: true, selector: { kind: "charter" } };
   if (full) return { ok: true, selector: { kind: "full" } };
   return { ok: true, selector: { kind: "outline" } };
 }

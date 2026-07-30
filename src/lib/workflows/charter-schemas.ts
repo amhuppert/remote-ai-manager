@@ -51,6 +51,25 @@ export const charterInvariantSchema = z.object({
 });
 export type CharterInvariant = z.infer<typeof charterInvariantSchema>;
 
+// One accepted live `amend-charter` operation (docs/design/cc-cli/07). A
+// metadata-only record: the amended content lives in the execution's current
+// charter; frozen contexts keep the as-run copy they executed under, so the
+// log never embeds full charter snapshots (F2). Rendered into prompts and
+// charter.md as the "Amendment log" so agents see that the rules changed and why.
+export const charterAmendmentSchema = z.object({
+  // 1-based, append-only position in the execution's amendment history.
+  seq: z.number().int().min(1),
+  amendedAt: z.string(),
+  // Trusted client self-identification, same model as live edits (doc 06 D15).
+  source: z.enum(["cli", "ui"]),
+  rationale: z.string().min(1),
+  // Top-level charter fields the operation touched, e.g. ["invariants"].
+  fieldsChanged: z.array(z.string().min(1)).min(1),
+  // Content hash AFTER this amendment (computeCharterHash).
+  charterHash: z.string().min(1),
+});
+export type CharterAmendment = z.infer<typeof charterAmendmentSchema>;
+
 export const workflowCharterSchema = z
   .object({
     mission: z.string().min(1),

@@ -83,7 +83,7 @@ export function createWorkflowDocumentMaterializer(
         await writeInto(
           worktreePath,
           entry.relativePath,
-          renderCharterMarkdown(execution.charter),
+          renderCharterMarkdown(execution.charter, execution.charterAmendments),
         );
         charterWritten = true;
         continue;

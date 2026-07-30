@@ -62,6 +62,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
     },
   }),
   hasPreMergeCommand: () => true,
+  now: () => "2026-07-29T10:00:00.000Z",
 };
 
 /**

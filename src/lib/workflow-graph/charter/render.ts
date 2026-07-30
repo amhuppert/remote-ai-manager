@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { truncate } from "@/lib/shared/truncate";
 import type {
+  CharterAmendment,
   SourceOfTruth,
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
@@ -43,7 +44,32 @@ function renderDigestSourceLine(source: SourceOfTruth): string {
   return parts.join("\n");
 }
 
-export function renderCharterDigest(charter: WorkflowCharter): string {
+/**
+ * The live-amendment history section (docs/design/cc-cli/07), oldest first so
+ * the narrative reads forward. Rendered into BOTH the prompt digest and the
+ * full charter.md: an agent resumed after an amendment must see that the rules
+ * changed and why, not just the current text. Returns null when the run has no
+ * amendments so pre-amendment output stays byte-identical.
+ */
+function renderAmendmentLog(
+  amendments: readonly CharterAmendment[],
+): string | null {
+  if (amendments.length === 0) {
+    return null;
+  }
+  return [
+    "## Amendment log",
+    ...amendments.map(
+      (amendment) =>
+        `${amendment.seq}. ${amendment.amendedAt.slice(0, 10)} — changed ${amendment.fieldsChanged.join(", ")}: ${amendment.rationale}`,
+    ),
+  ].join("\n");
+}
+
+export function renderCharterDigest(
+  charter: WorkflowCharter,
+  amendments: readonly CharterAmendment[] = [],
+): string {
   const sections: string[] = [
     "# Workflow Charter",
     `## Mission\n${charter.mission}`,
@@ -77,6 +103,11 @@ export function renderCharterDigest(charter: WorkflowCharter): string {
     );
   }
 
+  const amendmentLog = renderAmendmentLog(amendments);
+  if (amendmentLog !== null) {
+    sections.push(amendmentLog);
+  }
+
   sections.push(APPLICATION_RULE);
 
   return sections.join("\n\n");
@@ -93,9 +124,10 @@ export const CHARTER_DOCUMENT_PATH = ".cc/graph-workflow-docs/charter.md";
 export function renderCharterPromptSection(
   charter: WorkflowCharter,
   extraInstructions: string[] = [],
+  amendments: readonly CharterAmendment[] = [],
 ): string {
   return [
-    renderCharterDigest(charter),
+    renderCharterDigest(charter, amendments),
     [
       `Full charter: read \`${CHARTER_DOCUMENT_PATH}\` on demand.`,
       ...extraInstructions,
@@ -138,7 +170,10 @@ function renderProseSection(
   return `## ${heading}\n${body}`;
 }
 
-export function renderCharterMarkdown(charter: WorkflowCharter): string {
+export function renderCharterMarkdown(
+  charter: WorkflowCharter,
+  amendments: readonly CharterAmendment[] = [],
+): string {
   const sections: Array<string | null> = [
     "# Workflow Charter",
     `## Mission\n${charter.mission}`,
@@ -157,6 +192,7 @@ export function renderCharterMarkdown(charter: WorkflowCharter): string {
       "## Source-of-truth hierarchy (highest authority first)",
       ...rankedSources(charter).map(renderMarkdownSourceEntry),
     ].join("\n\n"),
+    renderAmendmentLog(amendments),
   ];
 
   return sections.filter((section) => section !== null).join("\n\n");

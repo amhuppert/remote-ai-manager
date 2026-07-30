@@ -45,6 +45,8 @@ const headerSchema = z
     seedDefinitionRevision: z.number(),
     editable: z.boolean(),
     notEditableReason: z.string().optional(),
+    // Absent on outlines from pre-doc-07 servers; render as "never amended".
+    charterAmendmentCount: z.number().default(0),
   })
   .loose();
 
@@ -100,7 +102,11 @@ function widestOf(values: string[]): number {
 }
 
 function headerLine(header: LiveOutlineData["header"]): string {
-  const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${header.seedDefinitionId}@${header.seedDefinitionRevision}`;
+  const amended =
+    header.charterAmendmentCount > 0
+      ? `  charter amended ×${header.charterAmendmentCount}`
+      : "";
+  const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${header.seedDefinitionId}@${header.seedDefinitionRevision}${amended}`;
   if (header.editable) return base;
   const reason = header.notEditableReason ?? "not editable";
   return `${base}  read-only (${reason})`;

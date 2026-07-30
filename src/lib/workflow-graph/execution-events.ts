@@ -150,7 +150,7 @@ interface PublishCharterRegisteredInput {
   charterHash: string;
 }
 
-interface PublishCharterUpdatedInput {
+export interface PublishCharterUpdatedInput {
   projectPath: string;
   sessionName: string;
   definitionId: string;
