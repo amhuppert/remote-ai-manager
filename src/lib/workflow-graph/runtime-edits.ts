@@ -40,7 +40,10 @@ import {
 } from "./locked-regions";
 import { applyCharterContentEdit } from "./definition-edits";
 import { computeCharterHash } from "./charter/render";
-import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
+import {
+  workflowCharterSchema,
+  type CharterAmendment,
+} from "@/lib/workflows/charter-schemas";
 import { CHARTER_CONTENT_EDIT_FIELDS } from "@/lib/workflows/edit-schemas";
 import type { GraphExecutionContract } from "./execution-contract-port";
 
@@ -394,8 +397,13 @@ interface LiveEditOpContext {
    * entries. Absent only on the lane-agent `add_task` wrapper path, which never
    * emits an `amend-charter` op.
    */
-  source: WorkflowLiveEditRequest["source"] | undefined;
+  source: LiveEditSource | undefined;
 }
+
+// The internal source union is WIDER than the HTTP schema's: `plan-repair` is
+// server-derived by the D1 repair supervisor (docs/design/cc-cli/08), never
+// accepted from a client — same trust model as the lane-agent wrapper.
+export type LiveEditSource = CharterAmendment["source"];
 
 function presentLiveFieldPaths(
   prefix: DefinitionPath,
@@ -537,8 +545,9 @@ type LiveContextConfigOp =
  */
 export function applyLiveExecutionEdits(
   execution: GraphWorkflowExecution,
-  request: Pick<WorkflowLiveEditRequest, "operations"> &
-    Partial<Pick<WorkflowLiveEditRequest, "source">>,
+  request: Pick<WorkflowLiveEditRequest, "operations"> & {
+    source?: LiveEditSource;
+  },
   deps: LiveEditDeps,
   options: LiveEditOptions = {},
 ): ApplyLiveExecutionEditsResult {

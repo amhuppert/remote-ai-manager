@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { createLogger, withTracing } from "@/lib/logging";
+import { withTracing } from "@/lib/logging";
 import {
   notFound,
   resolveProjectSessionOr404,
@@ -19,11 +19,7 @@ import {
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type {
-  GraphWorkflowExecutionContextDefinition,
-  WorkflowGraphValidationError,
-} from "@/lib/workflow-graph/definition-schemas";
-import type { WorkflowLiveEditRequest } from "@/lib/workflows/edit-schemas";
+import type { GraphWorkflowExecutionContextDefinition } from "@/lib/workflow-graph/definition-schemas";
 import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
@@ -31,27 +27,23 @@ import {
   type PublishCharterUpdatedInput,
   type PublishLiveEditAppliedInput,
 } from "./execution-events";
-import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
+import { CHARTER_DOCUMENT_PATH } from "./charter/render";
 import {
   createGraphWorkflowExecutionRepository,
   type MutateActiveResult,
 } from "./execution-repository";
 import { formatDefinitionEditIssue } from "./definition-edits";
-import { classifyExecutionEditability } from "./lifecycle-classifier";
+import {
+  applyLiveEditsToActiveExecution,
+  type LiveEditFailure,
+} from "./live-edit-apply";
 import {
   coerceGlobalDefaults,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
 } from "./resolve-config";
-import {
-  applyLiveExecutionEdits,
-  type LiveEditDeps,
-  type LiveEditRejectionCode,
-  type ResolvedContextConfig,
-} from "./runtime-edits";
+import type { LiveEditDeps, ResolvedContextConfig } from "./runtime-edits";
 import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
-
-const logger = createLogger("workflow.live-edit");
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -172,124 +164,8 @@ const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   writeCharterDocument: defaultWriteCharterDocument,
 };
 
-// The doc-06 error contract (§"Error contract"): a code-bearing rejection is an
-// operation failure (CLI exit 1); a codeless 400/404 is malformed input (exit 2).
-type LiveEditFailureCode =
-  | "execution_mismatch"
-  | "revision_conflict"
-  | "not_editable"
-  | LiveEditRejectionCode;
-
-interface LiveEditFailure {
-  status: 400 | 409;
-  code: LiveEditFailureCode;
-  error: string;
-  issues?: WorkflowGraphValidationError[];
-  currentLiveRevision?: number;
-  instruction?: string;
-}
-
-type LiveEditGateResult =
-  | {
-      ok: true;
-      execution: GraphWorkflowExecution;
-      affectedContextIds: string[];
-    }
-  | { ok: false; failure: LiveEditFailure };
-
-/** Thrown inside the serialized mutation so a rejection persists nothing. */
-class LiveEditRejectionSignal extends Error {
-  constructor(readonly failure: LiveEditFailure) {
-    super(failure.error);
-    this.name = "LiveEditRejectionSignal";
-  }
-}
-
-/**
- * The shared gate pipeline run against a single execution snapshot (doc 06 route
- * pipeline gates a–d). Both the dry-run path (against the read accessor's
- * snapshot) and the apply path (against the write-queue-held current state, for
- * apply-time re-classification, D7) run these against their own snapshot.
- */
-function evaluateLiveEditRequest(
-  execution: GraphWorkflowExecution,
-  request: WorkflowLiveEditRequest,
-  liveEditDeps: LiveEditDeps,
-): LiveEditGateResult {
-  if (request.executionId !== execution.id) {
-    return {
-      ok: false,
-      failure: {
-        status: 409,
-        code: "execution_mismatch",
-        error: `executionId "${request.executionId}" does not match the active execution "${execution.id}"`,
-      },
-    };
-  }
-
-  if (request.baseLiveRevision !== execution.liveRevision) {
-    return {
-      ok: false,
-      failure: {
-        status: 409,
-        code: "revision_conflict",
-        error: `execution changed since liveRevision ${request.baseLiveRevision} (current ${execution.liveRevision}) — re-read the live outline`,
-        currentLiveRevision: execution.liveRevision,
-      },
-    };
-  }
-
-  const editability = classifyExecutionEditability(execution);
-  if (editability.kind === "not-editable") {
-    return {
-      ok: false,
-      failure: {
-        status: 409,
-        code: "not_editable",
-        error: `execution is not editable (${editability.reason})`,
-      },
-    };
-  }
-
-  const applied = applyLiveExecutionEdits(
-    execution,
-    { operations: request.operations, source: request.source },
-    liveEditDeps,
-  );
-  if (!applied.ok) {
-    return {
-      ok: false,
-      failure: {
-        status:
-          applied.code === "region_locked" ||
-          applied.code === "spec_grouping_frozen"
-            ? 409
-            : 400,
-        code: applied.code,
-        error: "live edit was rejected",
-        issues: applied.issues,
-        ...(applied.instruction ? { instruction: applied.instruction } : {}),
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    execution: applied.execution,
-    affectedContextIds: applied.affectedContextIds,
-  };
-}
-
+/** Map a service-layer rejection onto the doc-06 HTTP error contract. */
 function respondLiveEditFailure(failure: LiveEditFailure): Response {
-  const operationIndex = failure.issues?.find(
-    (issue) => issue.operationIndex !== undefined,
-  )?.operationIndex;
-  logger.warn("live_edit.rejected", {
-    code: failure.code,
-    ...(operationIndex !== undefined ? { operationIndex } : {}),
-    issueCount: failure.issues?.length ?? 0,
-  });
-
   const body: Record<string, unknown> = {
     error: failure.error,
     code: failure.code,
@@ -363,145 +239,25 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
     }
     const { projectPath, sessionName } = resolved;
 
-    const liveEditDeps = await deps.buildLiveEditDeps(projectPath);
+    const outcome = await applyLiveEditsToActiveExecution(
+      { projectPath, sessionName, request: editRequest },
+      deps,
+    );
 
-    // Dry-run — outside the write queue (D14). The state-store mutation primitive
-    // always persists; a dry-run reads the snapshot via the accessor, runs the
-    // same gates, and reports the would-be result with no persist, no bump, and
-    // no events. The verdict is advisory; the apply path re-runs the gates.
-    if (editRequest.dryRun === true) {
-      const execution = await deps.getActiveExecution(projectPath, sessionName);
-      if (!execution) {
+    if (!outcome.ok) {
+      if (outcome.kind === "no_active_execution") {
         return notFound(
           "Session does not have an active graph workflow execution",
         );
       }
-      const gate = evaluateLiveEditRequest(
-        execution,
-        editRequest,
-        liveEditDeps,
-      );
-      if (!gate.ok) {
-        return respondLiveEditFailure(gate.failure);
-      }
-      return NextResponse.json({
-        applied: editRequest.operations.length,
-        liveRevision: execution.liveRevision,
-        affectedContextIds: gate.affectedContextIds,
-        dryRun: true,
-      });
-    }
-
-    // Apply — inside the serialized mutation (atomic). Gates re-run against the
-    // write-queue-held current state (apply-time re-classification, D7); a
-    // rejection throws so nothing persists. On success bump `liveRevision` by
-    // exactly one (D4) and emit the mandatory live-edit event (D12/D16).
-    let applied = 0;
-    let liveRevision = 0;
-    let affectedContextIds: string[] = [];
-    const containsCharterAmendment = editRequest.operations.some(
-      (operation) => operation.type === "amend-charter",
-    );
-    let amendedExecution: GraphWorkflowExecution | null = null;
-    try {
-      await deps.mutateActive(projectPath, sessionName, (current) => {
-        const gate = evaluateLiveEditRequest(
-          current,
-          editRequest,
-          liveEditDeps,
-        );
-        if (!gate.ok) {
-          throw new LiveEditRejectionSignal(gate.failure);
-        }
-
-        const bumpedLiveRevision = gate.execution.liveRevision + 1;
-        const bumped: GraphWorkflowExecution = {
-          ...gate.execution,
-          liveRevision: bumpedLiveRevision,
-        };
-        const delivery = deps.publishLiveEditApplied({
-          projectPath,
-          sessionName,
-          executionId: bumped.id,
-          liveRevision: bumpedLiveRevision,
-          operationCount: editRequest.operations.length,
-          affectedContextIds: gate.affectedContextIds,
-          source: editRequest.source,
-        });
-
-        // An amendment additionally emits the dedicated charter event (its own
-        // hash-bearing audit row + the UI's refresh signal for charter surfaces).
-        if (containsCharterAmendment) {
-          const latestAmendment = bumped.charterAmendments.at(-1);
-          const charterDelivery = deps.publishCharterUpdated({
-            projectPath,
-            sessionName,
-            definitionId: bumped.seedDefinitionId,
-            definitionRevision: bumped.seedDefinitionRevision,
-            charterHash: latestAmendment?.charterHash ?? "",
-            execution: bumped,
-          });
-          delivery.events.push(...charterDelivery.events);
-          delivery.pushes.push(...charterDelivery.pushes);
-          amendedExecution = bumped;
-        }
-
-        applied = editRequest.operations.length;
-        liveRevision = bumpedLiveRevision;
-        affectedContextIds = gate.affectedContextIds;
-        return { execution: bumped, ...delivery };
-      });
-    } catch (error) {
-      if (error instanceof LiveEditRejectionSignal) {
-        return respondLiveEditFailure(error.failure);
-      }
-      if (
-        error instanceof Error &&
-        error.message ===
-          "Session does not have an active graph workflow execution"
-      ) {
-        return notFound(error.message);
-      }
-      throw error;
-    }
-
-    // Post-commit: refresh the session worktree's charter.md pointer copy.
-    // Best-effort — the amendment is already durable and broadcast; the inline
-    // prompt digest renders from the execution, not this file.
-    if (amendedExecution !== null) {
-      const committed: GraphWorkflowExecution = amendedExecution;
-      const latestAmendment = committed.charterAmendments.at(-1);
-      logger.info("live_edit.charter_amended", {
-        executionId: committed.id,
-        seq: latestAmendment?.seq,
-        source: editRequest.source,
-        fieldsChanged: latestAmendment?.fieldsChanged,
-        charterHash: latestAmendment?.charterHash,
-      });
-      try {
-        const session = await deps.getSession(projectPath, sessionName);
-        if (session?.worktreePath) {
-          await deps.writeCharterDocument({
-            worktreePath: session.worktreePath,
-            markdown: renderCharterMarkdown(
-              committed.charter,
-              committed.charterAmendments,
-            ),
-          });
-        }
-      } catch (error) {
-        logger.warn("live_edit.charter_document_write_failed", {
-          executionId: committed.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      return respondLiveEditFailure(outcome.failure);
     }
 
     return NextResponse.json({
-      applied,
-      liveRevision,
-      affectedContextIds,
-      dryRun: false,
+      applied: outcome.applied,
+      liveRevision: outcome.liveRevision,
+      affectedContextIds: outcome.affectedContextIds,
+      dryRun: outcome.dryRun,
     });
   }
 
