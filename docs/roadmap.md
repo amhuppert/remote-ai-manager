@@ -30,14 +30,18 @@ edits have ever been applied to a real execution — the canonical pause → edi
 resume loop, structural ops, dry-run, and revision-conflict recovery have no live
 evidence. Closeout plan: [docs/plans/phase-0-closeout.md](./plans/phase-0-closeout.md).
 
-### D1 — Circuit-breaker plan-repair agent
+### D1 — Circuit-breaker plan-repair agent (implemented; live proof pending)
 
-On a circuit-breaker trip (and optionally every validation failure), an agent reviews
-the failure transcript and, if the root cause is a planning defect, patches the
-charter/AC/plan artifacts via the D0 edit surface and resumes. A deliberately scoped
-first slice of the "owning agent": it needs only D0, not the rest of the orchestration
-vision, and it attacks the single biggest observed failure mode — impossible-to-satisfy
-acceptance criteria burning iterations (see the native-SDD workflow audits).
+On a retry-exhaustion halt (`circuit_breaker` or `max_iterations` — fork locked
+2026-07-29), an agent reviews the failure evidence and, if the root cause is a planning
+defect, patches the charter/AC/plan artifacts via the D0 edit surface and resumes —
+fully autonomously, bounded by per-context and per-execution attempt caps, restricted
+to plan artifacts by a fail-closed op allowlist, and default-ON via the `planRepair`
+config block. A deliberately scoped first slice of the "owning agent": it needs only
+D0, and it attacks the single biggest observed failure mode — impossible-to-satisfy
+acceptance criteria burning iterations (see the native-SDD workflow audits). Design and
+status: `docs/design/cc-cli/08-workflow-plan-repair-agent.md` (slices 1–6 landed on the
+session branch; the F6 live proof doubles as doc 07's first live exercise).
 
 ### D2 — Structured output for execution contexts
 

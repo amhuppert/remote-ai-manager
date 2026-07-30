@@ -1,8 +1,9 @@
 # 08 — Plan-Repair Agent for Retry-Exhaustion Halts (roadmap D1)
 
-Status: **designed** (2026-07-29, session `csm/plan-workflow-changes-b4e0f6`). All six
-product forks locked by Alex the same day (see Decisions). Designed against the session
-branch containing doc 07 (`284dc20c`), whose amendment seam this deliverable consumes.
+Status: **implemented, slices 1–6** (2026-07-30, session `csm/plan-workflow-changes-b4e0f6`,
+commits `4b259115`…`10356613`); slice 7 (the F6 live proof) pending. All six product forks
+locked by Alex 2026-07-29 (see Decisions). Designed against the session branch containing
+doc 07 (`284dc20c`), whose amendment seam this deliverable consumes and live-proves.
 
 ## Problem
 
