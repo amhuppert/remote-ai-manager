@@ -21,8 +21,8 @@ const LABEL = "Alignment";
 const base =
   "inline-flex shrink-0 items-center justify-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-semibold whitespace-nowrap";
 
-// cyan = active charter; amber = attention (pending update behind the gate);
-// amber = stale (this conversation has not seen the active version yet).
+// cyan = active charter; amber = attention (approval or incorporation pending)
+// and stale (this conversation has not seen the active version yet).
 const stateAppearance: Record<Exclude<AlignmentChipState, "none">, string> = {
   active: "bg-cyan-glow text-cyan",
   pending: "bg-amber-glow text-amber",

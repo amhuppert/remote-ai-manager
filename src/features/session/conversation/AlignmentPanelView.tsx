@@ -104,7 +104,11 @@ function DraftSection({
     <section data-testid="alignment-draft">
       <SectionHeader>
         <SectionLabel>Current draft</SectionLabel>
-        <SectionCount>pending approval</SectionCount>
+        <SectionCount>
+          {draft.autoActivate
+            ? "incorporating approved decisions"
+            : "pending approval"}
+        </SectionCount>
       </SectionHeader>
       <CharterMarkdown content={draft.content} />
     </section>

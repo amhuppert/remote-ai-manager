@@ -11,8 +11,8 @@
  * Surface (all SESSION-scoped):
  *
  *  - GET  /alignment                  — aggregate state (active/draft/history/decisions/pendingProposals/preview)
- *  - POST /alignment/charter/approve  — approve a draft (the Approve-Charter gate)
- *  - POST /alignment/charter/reject   — discard a draft, leaving the active charter unchanged
+ *  - POST /alignment/charter/approve  — approve a filled non-auto `/align` draft
+ *  - POST /alignment/charter/reject   — discard that draft, leaving the active charter unchanged
  *  - POST /alignment/decisions/resolve— resolve a pending proposal batch
  *  - GET  /alignment/diff?from&to     — per-version content diff
  *  - POST /alignment/rollback         — roll back to a prior version
@@ -39,6 +39,7 @@ import {
 import { createSessionAlignmentServiceForProduction } from "./service-factory";
 import {
   AlignmentDraftNotFoundError,
+  AlignmentDraftResolutionError,
   AlignmentNotSupportedError,
   AlignmentProposalBatchNotFoundError,
   AlignmentVersionNotFoundError,
@@ -100,15 +101,18 @@ function buildValidationErrorResponse(error: z.ZodError): Response {
 
 /**
  * Map a service-thrown domain error to its HTTP response. `AlignmentNotSupported`
- * (optimistic/unavailable session) and a stale/already-resolved proposal batch
- * are 409 conflicts; an unknown draft or version is a 404; anything else is a
- * 500 carrying the error message.
+ * (optimistic/unavailable session), a stale/already-resolved proposal batch,
+ * and a forbidden manual draft resolution are 409 conflicts; an unknown draft
+ * or version is a 404; anything else is a 500 carrying the error message.
  */
 function mapDomainError(err: unknown): Response {
   if (err instanceof AlignmentNotSupportedError) {
     return jsonError(err.message, 409);
   }
   if (err instanceof AlignmentProposalBatchNotFoundError) {
+    return jsonError(err.message, 409);
+  }
+  if (err instanceof AlignmentDraftResolutionError) {
     return jsonError(err.message, 409);
   }
   if (err instanceof AlignmentDraftNotFoundError) {

@@ -2,17 +2,17 @@
  * Agent-facing alignment submission endpoints (docs/design/cc-cli/02 §3.2).
  *
  * The browser UI surface lives in `route-handlers.ts` (read / approve / reject /
- * resolve, no token). These two endpoints are the agent's write path — the
- * transport replacement for the `write_session_charter` / `propose_decisions`
- * MCP tools:
+ * resolve, no token). These two endpoints are the authenticated write path used
+ * by the agent-facing `cctl charter write` and `cctl decisions propose`
+ * commands:
  *
- *  - POST /alignment/charter   — body mirrors `write_session_charter` + conversationId
- *  - POST /alignment/decisions — body mirrors `propose_decisions` + conversationId
+ *  - POST /alignment/charter   — charter content + conversationId
+ *  - POST /alignment/decisions — decision batch + conversationId
  *
  * They call the SAME service methods (`beginDraft` / `fillDraft` /
- * `proposeDecisions`) through the shared `authoring.ts` wrapper, so the resulting
- * draft-pending-approval / pending-proposal state and its `session-alignment-updated`
- * SSE are byte-equivalent to today's MCP path. Token-gated (doc 01 §4).
+ * `proposeDecisions`) through the shared `authoring.ts` wrapper. Charter writes
+ * return the state-driven `draft_ready` or `activated` result; decision
+ * proposals persist pending review. Token-gated (doc 01 §4).
  */
 import { NextResponse } from "next/server";
 import {
@@ -39,7 +39,10 @@ import {
   submitDecisionsRequestSchema,
 } from "./schemas";
 import { createSessionAlignmentServiceForProduction } from "./service-factory";
-import { AlignmentNotSupportedError } from "./service";
+import {
+  AlignmentDraftContentError,
+  AlignmentNotSupportedError,
+} from "./service";
 
 const logger = createLogger("session-alignment.agent-route");
 
@@ -95,6 +98,9 @@ function attendedRefusalResponse(
 
 /** Optimistic/unknown sessions surface as 409; anything else is a 500. */
 function mapDomainError(err: unknown): Response {
+  if (err instanceof AlignmentDraftContentError) {
+    return jsonError(err.message, 400);
+  }
   if (err instanceof AlignmentNotSupportedError) {
     return jsonError(err.message, 409);
   }

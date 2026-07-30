@@ -26,7 +26,7 @@ This feature replaces Command Center's **focus mode** with a presence-based sess
 - The consolidated creation-mode contract (`normal`, `optimistic`) and the idempotent `creation_mode` data migration.
 - The new `src/lib/session-alignment/` domain: charter version history, the single active version, the single pending draft, the append-only approved-decision log, transient decision proposals, and per-conversation seen-version tracking. **App state is authoritative.**
 - The `SessionAlignmentService` governing semantics: draft creation, human/auto activation, decision approval → log → incorporation → auto-activate, free-text injection rendering (inline vs digest), per-version diff/rollback, and worktree-mirror materialization.
-- The `/align` command behavior; the two agent-facing tools (`write_session_charter`, `propose_decisions`); the Alignment REST API; the Alignment UI surfaces (chip, panel, Approve-Charter banner, decision-approval panel, live preview).
+- The `/align` command behavior; the agent-facing `cctl charter write` and `cctl decisions propose` commands and HTTP endpoints; the Alignment REST API; the Alignment UI surfaces (chip, panel, Approve-Charter banner, decision-approval panel, live preview).
 - The injection contract change in the per-turn prompt-composition seam and the version-gated runtime-recreation change (replacing `<objective>` injection).
 - Removal of the `objective` field from the domain schema, repo serialization, creation paths, chat-spawning, and prompt injection.
 
@@ -39,7 +39,7 @@ This feature replaces Command Center's **focus mode** with a presence-based sess
 ### Allowed Dependencies
 - Per-turn prompt-composition seam (`actor-implementations.ts`) and the runtime-recreation seam — consumed via **dependency injection** only (new `deps` methods), never imported upward.
 - Conversation-command machinery (`src/lib/conversation-commands/*`), the prompt queue (`src/lib/prompt/queue.ts`), AskUserQuestion UI primitives, `DocsPanel`/`RightPane`/`SessionInfoStrip`, the reference-documents registry (mirror registration), the state-store schema floor + Umzug migrations, and the SSE broadcaster.
-- Internal dependency direction (strict, left-imports-only): **`schemas.ts` → `render.ts` → `repo.ts` → `service.ts` → {`route-handlers.ts`, `tools.ts`, `mutations.ts`/`queries.ts`} → UI**. `actor-implementations.ts` depends on the service **only via injected deps**.
+- Internal dependency direction (strict, left-imports-only): **`schemas.ts` → `render.ts` → `repo.ts` → `service.ts` → {`authoring.ts`, `agent-route-handlers.ts`, `route-handlers.ts`, `mutations.ts`/`queries.ts`} → CLI/UI**. `actor-implementations.ts` depends on the service **only via injected deps**.
 
 ### Revalidation Triggers
 - Any change to the `sessionInstructions` assembly contract or its ordering.
@@ -56,18 +56,18 @@ This feature replaces Command Center's **focus mode** with a presence-based sess
 - **Per-turn composition is not actually per-turn for session-wide context.** `sessionInstructions` (including `<objective>` and the reference-docs list) are assembled inside `createManagedBackendRuntime()` and **baked into the runtime once** (`actor-implementations.ts:1491-1505`). Claude bakes them into the query session's `systemPrompt.append`; Codex injects them only on its **first turn**; the per-turn dispatch path passes `sessionInstructions: []`. `shouldRecreateRuntime` (`:592-613`) only recreates on model/effort/outputFormat change. **A mid-session charter change cannot reach a live runtime today** — this is the load-bearing constraint for R7.
 - **Reference documents are pointers, not content** (`reference_documents`: `id, project_path, session_name, file_path, description, created_at`, `UNIQUE(project,session,file_path)`, `ON DELETE CASCADE`). They cannot be the source of truth (R8.2).
 - **Graph charter code is structured-schema-bound.** `renderCharterMarkdown`/`renderCharterPromptSection`/`computeCharterHash` operate on `WorkflowCharter` (required `mission`, `sourcesOfTruth`, etc.). Session alignment is free-text, so the *patterns* are reused via thin free-text functions; the structured code and the immutable `execution.charter` snapshot are not.
-- **Reusable platform machinery exists**: conversation-command parse/dispatch/queue (one-command-at-a-time at the queue head), the prompt queue for auto-sent messages, the AskUserQuestion question/option/note schema + panel, `FocusConfirmationBar`/`ApprovalGatePanel` banner patterns, the state-store schema floor + additive columns + Umzug migrations, and the SSE broadcaster + `ScopedStatusEvent` union.
+- **Reusable platform machinery exists**: conversation-command parse/dispatch/queue (one-command-at-a-time at the queue head), the prompt queue for routed next-turn messages, the AskUserQuestion question/option/note schema + panel, `FocusConfirmationBar`/`ApprovalGatePanel` banner patterns, the state-store schema floor + additive columns + Umzug migrations, and the SSE broadcaster + `ScopedStatusEvent` union.
 
 ### Architecture Pattern & Boundary Map
 
-Selected pattern: **dedicated authoritative domain + reused edges** (research Option C). A single deep `SessionAlignmentService` owns governing semantics over dedicated tables; everything else (command entry, agent tools, approval UI, discovery, injection) hooks existing seams.
+Selected pattern: **dedicated authoritative domain + reused edges** (research Option C). A single deep `SessionAlignmentService` owns governing semantics over dedicated tables; everything else (command entry, agent CLI, approval UI, discovery, injection) hooks existing seams.
 
 ```mermaid
 graph TB
   subgraph Conversation
     AlignCmd[align command]
-    WriteTool[write_session_charter tool]
-    ProposeTool[propose_decisions tool]
+    CharterCLI[cctl charter write]
+    DecisionsCLI[cctl decisions propose]
     Banner[Approve Charter banner]
     DecPanel[Decision approval panel]
   end
@@ -88,8 +88,8 @@ graph TB
   end
 
   AlignCmd --> Cmd --> Service
-  WriteTool --> Service
-  ProposeTool --> Service
+  CharterCLI --> Service
+  DecisionsCLI --> Service
   Banner --> Service
   DecPanel --> Service
   Service --> Repo --> DB
@@ -105,14 +105,14 @@ graph TB
 - **Storage: dedicated tables, app state authoritative.** Version history, an append-only decision log, and transient proposals do not belong as JSON blobs on the session row, and reference docs cannot enforce source-of-truth. "No parallel registry" governs *discoverability* (we still reuse DocsPanel + reference-docs for the mirror), not the authority layer, which the requirements explicitly assign to `SessionAlignmentService`.
 - **Propagation: version-gated runtime recreation**, not a per-turn preamble. Recreation reuses a proven seam, requires **no** backend-abstraction change, and is the **only** mechanism that propagates uniformly to Codex (whose first-turn-only injection ignores a post-turn-1 preamble). Charter changes are rare, so recreation cost is acceptable. (R7; verified by the regression test below.)
 - **Free-text reuse, not structured reuse.** Adopt the digest+pointer framing and sha256 content hash as thin free-text helpers; do not force free-text through `WorkflowCharter`.
-- **Unified draft row carries intent.** `/align` and decision-approval each create an empty `draft` version row; the agent's `write_session_charter` fills it. A draft's `auto_activate` flag (+ linked decision ids) decides whether filling it activates immediately (decision path) or waits for the human banner (`/align` path) — keeping gating in CC, not the agent (agent-offloading principle).
+- **Unified draft row carries intent.** `/align` and decision approval each create an empty `draft` version row; `cctl charter write` fills it with non-whitespace content. A draft's `auto_activate` flag (+ linked decision ids) decides whether filling it activates immediately (decision path) or waits for the human banner (`/align` path) — keeping gating in CC, not the agent (agent-offloading principle).
 
 ### Technology Stack
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
 | Frontend / UI | React 19, Tailwind v4, `@tanstack/react-query` | Alignment chip/panel, Approve-Charter banner, decision-approval panel, live preview | Reuse AskUserQuestion option/note primitives + `DocsPanel`/`RightPane`/`SessionInfoStrip` |
-| Backend / Services | TypeScript (strict), Zod v4 | `SessionAlignmentService`, `/align` handler, agent tools, REST handlers | DI per project rules (no `vi.mock` of internal modules) |
+| Backend / Services | TypeScript (strict), Zod v4 | `SessionAlignmentService`, `/align` handler, agent CLI endpoints, REST handlers | DI per project rules (no `vi.mock` of internal modules) |
 | Data / Storage | better-sqlite3 (`command-center.db`, WAL) | 3 new tables + 1 additive conversations column | Schema floor for structural DDL; Umzug migration for `fast`→`normal` |
 | Messaging / Events | SSE broadcaster | `SessionAlignmentUpdatedEvent`; React Query invalidation | New event type in the SSE union |
 | Runtime | `@anthropic-ai/claude-agent-sdk`, Codex backend | Version-gated recreation carries the charter to live runtimes | Adds `alignmentVersion` to runtime tracked metadata |
@@ -127,7 +127,8 @@ src/lib/session-alignment/                # NEW domain (authoritative)
 ├── repo.ts               # Repository over the 3 tables + seen-version accessor; round-trip serialization
 ├── service.ts            # SessionAlignmentService: draft/activate, decisions, injection, diff/rollback, mirror
 ├── mirror.ts             # Worktree mirror writer (.cc/session-alignment/charter.md) + reference-doc registration
-├── tools.ts              # Agent-facing MCP tools: write_session_charter, propose_decisions
+├── authoring.ts          # Shared attended-runtime and defensive draft-fill logic
+├── agent-route-handlers.ts # Token-gated HTTP endpoints used by cctl
 ├── route-handlers.ts     # REST: GET state, charter approve/reject, decisions resolve, diff, rollback, preview
 ├── queries.ts            # React Query query factory
 ├── mutations.ts          # React Query mutation factory
@@ -145,8 +146,10 @@ src/features/session/conversation/        # UI surfaces (reuse existing feature)
 
 src/app/api/projects/[name]/sessions/[session]/alignment/   # Router shells (thin re-exports)
 ├── route.ts                          # GET state
+├── charter/route.ts                  # POST agent-authored charter content
 ├── charter/approve/route.ts          # POST approve draft
 ├── charter/reject/route.ts           # POST reject draft
+├── decisions/route.ts                # POST agent-proposed decision batch
 ├── decisions/resolve/route.ts        # POST resolve proposal batch
 ├── diff/route.ts                     # GET per-version diff
 └── rollback/route.ts                 # POST rollback to version
@@ -181,7 +184,7 @@ sequenceDiagram
   participant Svc as SessionAlignmentService
   participant Q as prompt queue
   participant Agent as Conversation agent
-  participant Tool as write_session_charter
+  participant CLI as cctl charter write
   U->>Cmd: /align
   Cmd->>Svc: beginDraft(session, conversation)
   Svc->>Svc: has active charter
@@ -191,8 +194,8 @@ sequenceDiagram
     Svc->>Q: enqueue authoring turn with existing charter
   end
   Note over Svc: create draft row status=draft auto_activate=false
-  Agent->>Tool: write_session_charter(content)
-  Tool->>Svc: fillDraft(content)
+  Agent->>CLI: charter write(content)
+  CLI->>Svc: fillDraft(content)
   Svc->>Svc: auto_activate is false
   Svc-->>U: Approve Charter banner
   U->>Svc: approve
@@ -203,20 +206,22 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
   participant Agent
-  participant PT as propose_decisions
+  participant DC as cctl decisions propose
   participant Svc as SessionAlignmentService
   participant U as User
   participant Q as prompt queue
-  participant WT as write_session_charter
-  Agent->>PT: propose_decisions(bulk)
-  PT->>Svc: persist pending proposal batch (durable, NOT logged)
-  PT-->>Agent: proposed, awaiting review
+  participant CC as cctl charter write
+  Agent->>DC: decisions propose(bulk)
+  DC->>Svc: persist pending proposal batch (durable, NOT logged)
+  DC-->>Agent: batch registered; brief handoff, end turn
+  Note over Agent: proposing turn ends
   U->>Svc: resolve batch (per-decision approve / reject+note)
   Svc->>Svc: append approved to decision log; discard rejected
   Svc->>Svc: create draft row auto_activate=true linked decisionIds
-  Svc->>Q: auto-send incorporation message (approved) / feedback (rejected)
-  Agent->>WT: write_session_charter(content)
-  WT->>Svc: fillDraft(content)
+  Svc->>Q: enqueue one complete result with deliveryPolicy=next_turn
+  Q-->>Agent: atomic review result as next user message
+  Agent->>CC: charter write(content)
+  CC->>Svc: fillDraft(content)
   Svc->>Svc: auto_activate=true -> activate, set decisions.produced_version, mirror, SSE
 ```
 
@@ -242,15 +247,15 @@ Recreation fires **before** a turn, never mid-generation, so "every subsequent t
 |-------------|---------|------------|--------------------|
 | 1.1–1.7 | Two creation modes; `fast`→`normal`; reject `focus` | `sessions/schemas`, `sessions/service`, `sessions/route-handlers`, `chat-spawning`, `CreateSessionModal`/`ModeDot`/`SessionRow`, migration `0004` | `createSessionRequestSchema`; Migration Strategy |
 | 2.1–2.6 | Presence-based lifecycle; `/align` suggestion; "Alignment" label | `SessionAlignmentService`, `AlignmentChip`, `ALIGN_SUGGESTION_INSTRUCTIONS` | `getAlignmentState`; injection seam |
-| 3.1–3.6 | `/align` drafts/redrafts; scaffold; no manual editor | `conversation-commands` (`align`), `service.beginDraft`, `tools.write_session_charter`, `render.SCAFFOLD_TEMPLATE` | `/align` flow |
+| 3.1–3.6 | `/align` drafts/redrafts; scaffold; no manual editor | `conversation-commands` (`align`), `service.beginDraft`, `cctl charter write`, `render.SCAFFOLD_TEMPLATE` | `/align` flow |
 | 4.1–4.5 | Approve-Charter gate; draft not injected; active unchanged | `ApproveCharterBanner`, `service.approveDraft`/`rejectDraft` | `POST charter/approve|reject`; `/align` flow |
-| 5.1–5.7 | Bulk decision proposal/approval; auto-fold; no manual capture | `tools.propose_decisions`, `DecisionApprovalPanel`, `service.proposeDecisions`/`resolveProposals` | `POST decisions/resolve`; decision flow |
+| 5.1–5.8 | Bulk decision proposal/approval; atomic next-turn review result; auto-fold; no manual capture | `cctl decisions propose`, `DecisionApprovalPanel`, `service.proposeDecisions`/`resolveProposals` | `POST decisions/resolve`; decision flow |
 | 6.1–6.4 | Append-only approved decision log; not injected; reverse-chron UI | `session_alignment_decisions`, `AlignmentPanel` (log tab) | `getAlignmentState`; State Management |
 | 7.1–7.5 | Inject every turn as governing context; guaranteed live propagation | `actor-implementations` (injection + recreate), runtime metadata, `render.renderAlignmentPromptSection` | Propagation flow; R7 regression test |
 | 8.1–8.5 | Versioned history; app-state authority; mirror; seen-audit; diff/rollback | `session_alignment_versions`, `mirror.ts`, `service.diff`/`rollback`, conversation `lastSeenAlignmentVersion` | `GET diff`, `POST rollback` |
 | 9.1–9.5 | Chip states; DocsPanel integration; panel; live preview; SSE | `AlignmentChip`, `AlignmentPanel`, `SessionAlignmentUpdatedEvent` | `GET state`/preview; SSE invalidation |
 | 10.1–10.3 | Remove `objective` + injection; optimistic kickoff prompt | `sessions/schemas`/`service`, `actor-implementations` | Migration Strategy |
-| 11.1–11.3 | Exactly two gate types; decision auto-activation still human-gated | `service` (only `approveDraft` + `resolveProposals` activate) | both flows |
+| 11.1–11.4 | Exactly two gate types; decision auto-activation still human-gated | `service` (`approveDraft` activates filled `/align` drafts; `resolveProposals` authorizes a linked draft that `fillDraft` auto-activates) | both flows |
 | 12.1–12.3 | No graph-workflow/optimistic alignment; attended-only | tool/instruction gating in `actor-implementations`/`tools` | Boundary Commitments |
 
 ## Components and Interfaces
@@ -260,7 +265,7 @@ Recreation fires **before** a turn, never mid-generation, so "every subsequent t
 | SessionAlignmentService | Service | Governing semantics: draft/activate, decisions, injection, diff/rollback, mirror | 2,3,4,5,6,7,8,10,11,12 | Repo (P0), render (P0), prompt queue (P0), SSE (P1), mirror (P1) | Service, State, Event |
 | Alignment repo | Data | Durable CRUD over 3 tables + seen-version | 6,8 | state-store (P0) | State |
 | Alignment render | Pure | Inline-vs-digest injection text; sha256 hash; scaffold | 3,7 | none | Service |
-| Agent tools | Tooling | `write_session_charter`, `propose_decisions` | 3,5 | Service (P0), MCP composition (P0) | Service |
+| Agent CLI | Tooling | `cctl charter write`, `cctl decisions propose` | 3,5 | Service (P0), agent HTTP routes (P0) | Service |
 | Alignment route-handlers | API | REST for state/approve/reject/resolve/diff/rollback/preview | 4,5,6,8,9 | Service (P0) | API |
 | `/align` command branch | Platform | Route `/align` to `beginDraft` | 3 | conversation-commands (P0), Service (P0) | Service |
 | Injection + recreation hook | Platform | Replace `<objective>`; version-gated recreate; seen-update | 7,10 | Service via DI (P0), `shouldRecreateRuntime` (P0), backend runtime (P0) | Service, State |
@@ -277,14 +282,14 @@ Recreation fires **before** a turn, never mid-generation, so "every subsequent t
 
 **Responsibilities & Constraints**
 - Owns the invariant **≤1 `active` and ≤1 `draft` version per session**; activation is transactional (supersede prior active, assign next `version`, set decision `produced_version`, materialize mirror, broadcast SSE).
-- Only two methods activate a charter: `approveDraft` (human banner) and `resolveProposals` with ≥1 approval (human decision) → both human-gated (R11). No other path mutates the active charter.
+- In the authoring/evolution flows, `approveDraft` activates a filled non-auto `/align` draft, while `resolveProposals` records the human decision approval and opens a linked auto draft that only `fillDraft` activates. The latter never adds a second human gate (R11).
 - Never stores unapproved decisions in the log; pending proposals live in the separate transient table and are deleted on resolution (R5.3, R6.1).
 - Renders the injected section but does **not** inject the decision log (R6.3) and does **not** elevate reference docs (R7.5).
 - Refuses all operations for `optimistic` sessions and project conversations (R12.2).
 
 **Dependencies**
-- Outbound: Alignment repo — persistence (P0); render — injection text + hash (P0); prompt queue — auto-sent incorporation/feedback messages (P0); mirror writer — `.cc` copy + ref-doc registration (P1); SSE broadcaster — `alignment-updated` (P1).
-- Inbound: `/align` command branch, agent tools, route-handlers, injection deps (all P0/P1).
+- Outbound: Alignment repo — persistence (P0); render — injection text + hash (P0); prompt queue — atomic next-turn review-result messages (P0); mirror writer — `.cc` copy + ref-doc registration (P1); SSE broadcaster — `alignment-updated` (P1).
+- Inbound: `/align` command branch, agent CLI routes, route-handlers, injection deps (all P0/P1).
 
 **Contracts**: Service [x] / API [ ] / Event [x] / Batch [ ] / State [x]
 
@@ -358,15 +363,15 @@ interface SessionAlignmentService {
 - Concurrency: v1 has **no draft concurrency guard** (explicitly out of scope). If `/align` runs while a decision draft is open (or vice-versa), the newer `beginDraft` replaces the open draft (documented last-writer-wins); the lost draft’s linked decisions remain in the log unresolved-by-version and re-incorporate on the next activation.
 
 **Implementation Notes**
-- Integration: `actor-implementations` consumes `getActiveVersion`/`getActiveInjection` via injected deps (method-syntax `Deps` interface, bivariant). The `/align` branch and tools call the service directly server-side.
-- Validation: all tool inputs and REST bodies `safeParse` against `schemas.ts`; trusted internal reads `parse`.
-- Risks: the auto-activate marker on the draft row can be lost on a mid-flight server restart → degrades to a manual Approve-Charter banner (safe). Documented, not guarded.
+- Integration: `actor-implementations` consumes `getActiveVersion`/`getActiveInjection` via injected deps (method-syntax `Deps` interface, bivariant). The `/align` branch and token-gated agent routes call the service server-side; `cctl` owns the load-bearing end-turn instruction.
+- Validation: all CLI HTTP and browser REST bodies `safeParse` against `schemas.ts`; trusted internal reads `parse`. Charter content must contain non-whitespace text, but accepted markdown is stored byte-for-byte.
+- While an auto-activating decision draft remains open, its intent is persisted on the row. Both the service and conversation gate reject manual resolution of that draft, so it cannot surface a second Approve-Charter gate.
 
 ### Tooling layer
 
-#### Agent-facing tools (`tools.ts`)
-- `write_session_charter({ content: string })` — fills the session's open draft (`service.fillDraft`); if none open, creates a gated draft (defensive). Registered only for `normal` session conversations (not project, not autonomous). Maps to R3.6/R5.5.
-- `propose_decisions({ decisions: Array<{ statement: string; rationale?: string; context?: string }> })` — **non-blocking** (returns immediately; does **not** reuse the AskUserQuestion blocking resolver), persists a durable pending batch, ends the turn. Maps to R5.1–R5.2. Gating identical to above (R12).
+#### Agent-facing CLI and HTTP routes
+- `cctl charter write --file <charter.json>` posts the full charter to the token-gated agent route, which fills the session's open draft (`service.fillDraft`); if none is open, `authoring.fillOpenDraft` creates a gated draft defensively. It is available only to attended turns in `normal` sessions. Maps to R3.6/R5.5.
+- `cctl decisions propose --file <decisions.json>` posts a structured batch to the token-gated agent route. The service persists the pending batch; the CLI returns the load-bearing instruction to write a brief handoff and end the proposing turn. Resolution enqueues exactly one complete result covering all approvals, rejections, and optional feedback for the next user message. Maps to R5.1–R5.8 and shares AskUserQuestion's end-turn/next-message contract without its resolver.
 
 ### Platform integration
 
@@ -381,8 +386,8 @@ interface SessionAlignmentService {
 ### UI layer (summary-only; reuse existing primitives)
 - `AlignmentChip` — header indicator with four states (none `+ Alignment`, `Alignment vN active`, draft/update pending, stale). Slots into `SessionInfoStrip`.
 - `AlignmentPanel` — active charter, current draft, version history, last-updated metadata, decision-log tab (reverse-chron), and the live preview of the exact injected section. Mounted as a `RightPane`/`DocsPanel` tab. *Implementation note:* preview calls `GET …/alignment` (`preview` field) so it renders byte-identical to what the runtime receives.
-- `ApproveCharterBanner` — `FocusConfirmationBar`/`ApprovalGatePanel` pattern; approve/reject a draft.
-- `DecisionApprovalPanel` — AskUserQuestion option/note UI shape (bulk; per-decision approve / reject-with-note) backed by durable proposal state, not a blocking resolver.
+- `ApproveCharterBanner` — `FocusConfirmationBar`/`ApprovalGatePanel` pattern; approve/reject only a filled `autoActivate=false` `/align` draft.
+- `DecisionApprovalPanel` — AskUserQuestion option/note UI shape with one explicit, mutually exclusive Approve/Reject selection per decision whose selected state is visually and semantically exposed, plus an optional rejection note; backed by durable proposal state, not a blocking resolver.
 
 ## Data Models
 
@@ -458,30 +463,30 @@ Indexes: `(project_path, session_name, status)` on versions for active/draft loo
 ## Error Handling
 
 ### Error Strategy
-- **User errors (4xx)**: unsupported creation mode → 400 (R1.7); `/align` or alignment ops on an `optimistic` session → 409 with guidance (R12.2); approve/reject a non-existent draft → 404; resolve a stale proposal batch → 409 (already resolved).
+- **User errors (4xx)**: unsupported creation mode → 400 (R1.7); `/align` or alignment ops on an `optimistic` session → 409 with guidance (R12.2); non-whitespace charter validation failure → 400; approve/reject a non-existent draft → 404; manually resolve an auto-activating draft or approve an empty draft → 409; resolve a stale proposal batch → 409 (already resolved).
 - **System errors (5xx)**: mirror write failure does **not** fail activation — app state stays authoritative; the failure is logged and the mirror is repaired on next read (R8.3). SSE broadcast failures are swallowed and logged.
-- **Business-logic errors (422)**: tool `write_session_charter` with empty content → reject and re-prompt; `propose_decisions` with an empty array → reject.
+- **Business-logic errors (422)**: decision proposal with an empty array → reject.
 
 ### Monitoring
-- Structured logging via `createLogger` for: `align.begin_draft`, `align.fill_draft`, `align.activate`, `align.decision_propose`, `align.decision_resolve`, `align.rollback`, `prompt.runtime_recreate{reason:"alignment_changed"}`. Each carries `projectPath`, `sessionName`, `version`, `conversationId`.
+- Structured logging via `createLogger` for: `align.begin_draft`, `align.fill_draft`, `align.fill_draft_rejected`, `align.activate`, `align.draft_resolution_rejected`, `align.decision_propose`, `align.decision_resolve`, `align.rollback`, `queue.delivery_deferred`, `prompt.runtime_recreate{reason:"alignment_changed"}`. Each carries its available project, session-scope, version, conversation, and outcome fields.
 
 ## Testing Strategy
 
 ### Unit Tests
 - `render.test.ts`: inline below threshold vs digest+pointer above; governing-context preamble present; `computeAlignmentHash` stable across whitespace-normalization; scaffold contains the six soft-scaffold sections (3.2, 7.2).
-- `service.test.ts` (DI, real-store persistence fixture): activation invariant (≤1 active/draft); decision approval appends to log + creates auto-activate draft + sets `produced_version`; reject-with-feedback discards + enqueues feedback, no charter change (5.3–5.6); rollback creates a new active version from old content (8.5).
+- `service.test.ts` (DI, real-store persistence fixture): activation invariant (≤1 active/draft); decision approval appends to the log and creates an auto draft; the later fill/activation sets `produced_version`; mixed and all-rejected batches produce one complete next-turn result; whitespace content cannot fill or auto-activate; auto and empty drafts reject manual resolution; rollback creates a new active version from old content (5.3–5.8, 8.5, 11.4).
 - `shouldRecreateRuntime`: returns true on `alignmentVersion` mismatch, false when equal (7.3).
 
 ### Integration Tests
 - **R7 propagation regression (load-bearing)**: with an alive runtime at `alignmentVersion=null`, activate version 1, send the next turn, assert the runtime was recreated and the rebuilt `sessionInstructions` contain the alignment section — run for **both** the Claude and Codex runtime types (Codex’s recreated first-turn injection must carry the charter). This is the test the requirements mandate before relying on the mechanism.
 - `/align` first-run vs rerun: scaffold vs existing-charter authoring prompt; result is a draft; active charter unchanged until approval; conversation not archived (3.2–3.5, 4.3).
-- Decision flow end-to-end through the real store + prompt queue: propose → resolve(approve) → incorporation message enqueued → fill → auto-activate → SSE emitted (5.x, 9.5).
+- Decision flow end-to-end through the real store + prompt queue: propose → end proposing turn → resolve → one complete review result retained for the next turn → fill approved decisions → auto-activate with no manual banner → SSE emitted (5.x, 9.5).
 - Migration `0004`: idempotent re-run maps `fast`/`focus`→`normal`, touches nothing else (1.4, 1.5).
 
 ### E2E / UI Tests
 - Create-session modal shows exactly `normal`/`optimistic`, no `focus` (1.1, 1.2).
 - Approve-Charter banner approve → chip shows `vN active`; reject leaves prior state (4.1–4.5, 9.1).
-- Decision approval panel bulk approve/reject-with-note (5.2, 9.x).
+- Decision approval panel exposes an explicit mutually-exclusive Approve/Reject state, keyboard selection, and rejection note (5.2, 9.x).
 
 ## Migration Strategy
 

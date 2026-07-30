@@ -40,11 +40,11 @@ decoupled from how the session was created:
    system-prompt instruction tells the agent to *suggest* running `/align` when a shared charter
    would help (no separate proposal card/tool).
 5. **Evolution via agent-proposed decisions.** The agent proposes decisions (in **bulk**) through a
-   dedicated tool modeled on the custom AskUserQuestion tool, surfaced in an AskUserQuestion-style
+   dedicated `cctl` command modeled on the custom AskUserQuestion flow, surfaced in an AskUserQuestion-style
    approval UI. The user approves or rejects-with-feedback immediately; only **approved** decisions
    are stored. On approval, each decision is appended to a session-scoped **decision log** and CC
-   auto-sends a message into the same conversation instructing the agent to fold it into the
-   charter; the agent rewrites the charter and it **auto-activates** with **no separate charter
+   queues the resolution as the next user message after the proposing turn ends, instructing the
+   agent to fold it into the charter; the agent rewrites the charter and it **auto-activates** with **no separate charter
    approval** (the decision approval is the gate). Reject-with-feedback routes back to the agent.
 6. **Injection.** The active charter is **governing context** injected into every conversation each
    turn (full-inline when small, digest + pointer when larger) — stronger than passive reference
@@ -200,13 +200,14 @@ are deliberately deferred to the design phase.
 **Objective:** As a user, I want the agent to propose decisions in bulk and have approved ones folded into the charter automatically, so that the charter evolves through reviewed decisions without re-approving the whole charter each time.
 
 #### Acceptance Criteria
-1. Command Center shall provide an agent-facing tool that proposes one or more decisions at once for the user to review.
-2. When the agent proposes decisions, Command Center shall present them in a bulk approval UI where the user can, per decision, approve or reject-with-feedback (a selection plus an optional note).
+1. Command Center shall provide an agent-facing command that proposes one or more decisions at once for the user to review.
+2. When the agent proposes decisions, Command Center shall present them in a bulk approval UI with one explicit, mutually exclusive Approve/Reject selection per decision whose selected state is visually and semantically exposed, plus an optional rejection note.
 3. Command Center shall persist only approved decisions; proposed decisions that are not approved shall not be stored.
 4. When the user approves a decision, Command Center shall append it to the session's decision log.
 5. When the user approves a decision, Command Center shall instruct the agent in the same conversation to incorporate the decision into the charter, and the resulting charter shall auto-activate without a separate charter-approval gate.
 6. When the user rejects a decision with feedback, Command Center shall route that feedback back to the agent for revision or re-proposal and shall not change the charter.
 7. Command Center shall not provide a manual decision-capture path in v1; decision-log entries shall originate only from agent-proposed, user-approved decisions.
+8. After successfully registering a proposal batch, Command Center shall instruct the proposing agent to end its turn and shall deliver one complete review result covering every approved or rejected decision and any rejection feedback as the next user message, never into the in-progress proposing turn.
 
 ### Requirement 6: Decision log
 
@@ -245,7 +246,7 @@ are deliberately deferred to the design phase.
 **Objective:** As a user, I want clear in-app surfaces for the charter's state, history, and exact injected content, so that alignment is discoverable and transparent.
 
 #### Acceptance Criteria
-1. Command Center shall display an Alignment indicator in the session header that shows: no alignment (an affordance to add one), an active charter with its version, a pending draft or update behind the approval gate, and a stale state when a conversation has not yet seen the active version.
+1. Command Center shall display an Alignment indicator in the session header that shows: no alignment (an affordance to add one), an active charter with its version, a completed `/align` draft awaiting approval or approved-decision incorporation in progress, and a stale state when a conversation has not yet seen the active version.
 2. Command Center shall surface the Alignment charter within the existing documents panel alongside reference documents, and shall not introduce a parallel alignment registry or subsystem.
 3. The Alignment panel shall present the active charter, the current draft, the version history, last-updated metadata, and the decision log.
 4. Command Center shall provide a live preview of exactly what agents receive for the active charter.
@@ -265,9 +266,10 @@ are deliberately deferred to the design phase.
 **Objective:** As a user, I want exactly two kinds of human approval governing alignment changes, so that the approval model stays predictable and never activates a charter unattended.
 
 #### Acceptance Criteria
-1. Command Center shall apply exactly two human approval gate types to alignment: the "Approve Charter" gate on every `/align` draft (initial and reruns), and decision approval.
+1. Command Center shall apply exactly two human approval gate types to alignment: the "Approve Charter" gate on every completed `/align` draft (initial and reruns), and decision approval.
 2. Command Center shall not gate or trigger a charter change through any mechanism other than these two gates.
 3. The decision-driven auto-activation shall remain gated by a human approving the decision and shall not constitute an autonomous (unattended) activation path.
+4. Command Center shall never offer an auto-activating decision-incorporation draft through the "Approve Charter" gate; the preceding decision approval is sufficient.
 
 ### Requirement 12: Scope boundaries — graph workflows and optimistic sessions
 

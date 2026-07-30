@@ -336,6 +336,33 @@ describe("session-alignment agent route handlers", () => {
       expect(body.issues.map((i) => i.path)).toContain("content");
     });
 
+    it("returns 400 for whitespace-only charter content without filling the draft", async () => {
+      const { service, repo } = makeRealService(fixture);
+      const begun = await service.beginDraft({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      });
+      const handlers = createSessionAlignmentAgentRouteHandlers(
+        makeAgentDeps(service, createRuntimeState()),
+      );
+
+      const response = await handlers.writeCharter(
+        makeRequest({
+          conversationId: CONVERSATION_ID,
+          content: " \n\t",
+        }),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      expect(repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toMatchObject({
+        id: begun.draftId,
+        content: "",
+      });
+      expect(repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+    });
+
     it("refuses an autonomous turn with 403 and does no work", async () => {
       const { service, repo } = makeRealService(fixture);
       const handlers = createSessionAlignmentAgentRouteHandlers(

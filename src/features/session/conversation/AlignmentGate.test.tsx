@@ -30,7 +30,9 @@ function renderSeeded(
 const PROJECT = "proj";
 const SESSION = "sess";
 
-function makeDraft(): AlignmentVersion {
+function makeDraft(
+  overrides: Partial<AlignmentVersion> = {},
+): AlignmentVersion {
   return {
     id: "draft-1",
     version: null,
@@ -44,6 +46,7 @@ function makeDraft(): AlignmentVersion {
     createdAt: "2026-06-26T00:00:00.000Z",
     activatedAt: null,
     approver: null,
+    ...overrides,
   };
 }
 
@@ -112,6 +115,39 @@ describe("AlignmentGate", () => {
     );
     expect(screen.getByText("Approve Charter")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  it("does not surface manual approval for a decision draft", () => {
+    const { container } = renderSeeded(
+      <AlignmentGate projectName={PROJECT} sessionName={SESSION} />,
+      seed(
+        makeState({
+          draft: makeDraft({
+            source: "decision",
+            autoActivate: true,
+            content: "",
+            contentHash: "",
+            linkedDecisionIds: ["decision-1"],
+          }),
+        }),
+      ),
+    );
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Approve Charter")).not.toBeInTheDocument();
+  });
+
+  it("does not surface approval until an align draft has content", () => {
+    const { container } = renderSeeded(
+      <AlignmentGate projectName={PROJECT} sessionName={SESSION} />,
+      seed(
+        makeState({
+          draft: makeDraft({ content: "", contentHash: "" }),
+        }),
+      ),
+    );
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("surfaces the decision-approval panel when a proposal batch is pending", () => {

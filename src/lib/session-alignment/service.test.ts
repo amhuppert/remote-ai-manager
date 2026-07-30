@@ -50,6 +50,7 @@ interface EnqueuedMessage {
   sessionName: string;
   conversationId: string;
   message: string;
+  deliveryPolicy?: "next_turn";
 }
 
 interface Harness {
@@ -361,6 +362,31 @@ describe("fillDraft", () => {
     });
   });
 
+  it("rejects whitespace-only content without filling a normal draft", async () => {
+    const { draftId } = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    await expect(
+      h.service.fillDraft({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        content: " \n\t",
+      }),
+    ).rejects.toThrow(/non-whitespace/i);
+
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toMatchObject({
+      id: draftId,
+      content: "",
+      autoActivate: false,
+    });
+    expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+    expect(h.broadcasts).toHaveLength(0);
+  });
+
   it("broadcasts the governing active version alongside a ready redraft", async () => {
     const first = await h.service.beginDraft({
       projectPath: PROJECT_PATH,
@@ -514,6 +540,27 @@ describe("approveDraft", () => {
         draftId: "missing",
       }),
     ).rejects.toThrow();
+  });
+
+  it("rejects approving an unfilled align draft", async () => {
+    const begin = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    await expect(
+      h.service.approveDraft({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        draftId: begin.draftId,
+      }),
+    ).rejects.toThrow(/content/i);
+
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)?.id).toBe(
+      begin.draftId,
+    );
+    expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
   });
 
   it("does not fail activation when the mirror write fails (best-effort)", async () => {
@@ -879,6 +926,60 @@ describe("resolveProposals", () => {
     expect(h.broadcasts).toHaveLength(0);
   });
 
+  it("rejects manual approval of an auto-activating decision draft", async () => {
+    const { batchId, proposalIds } = await propose(["approved"]);
+    await h.service.resolveProposals({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      batchId,
+      resolutions: [{ proposalId: proposalIds[0]!, approve: true }],
+    });
+    const draft = h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME);
+
+    await expect(
+      h.service.approveDraft({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        draftId: draft!.id,
+      }),
+    ).rejects.toThrow(/automatically/i);
+
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)?.id).toBe(
+      draft?.id,
+    );
+    expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+    expect(
+      h.repo.findDecisionsReverseChron(PROJECT_PATH, SESSION_NAME)[0]
+        ?.producedVersion,
+    ).toBeNull();
+  });
+
+  it("rejects manual rejection of an auto-activating decision draft", async () => {
+    const { batchId, proposalIds } = await propose(["approved"]);
+    await h.service.resolveProposals({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      batchId,
+      resolutions: [{ proposalId: proposalIds[0]!, approve: true }],
+    });
+    const draft = h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME);
+
+    await expect(
+      h.service.rejectDraft({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        draftId: draft!.id,
+      }),
+    ).rejects.toThrow(/automatically/i);
+
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)?.id).toBe(
+      draft?.id,
+    );
+    expect(
+      h.repo.findDecisionsReverseChron(PROJECT_PATH, SESSION_NAME),
+    ).toHaveLength(1);
+  });
+
   it("routes an incorporation message carrying the approved statements to the originating conversation", async () => {
     const { batchId, proposalIds } = await propose([
       "Adopt feature flags",
@@ -902,6 +1003,84 @@ describe("resolveProposals", () => {
     expect(incorporation?.conversationId).toBe(CONVERSATION_ID);
     expect(incorporation?.message).toContain("Write ADRs");
     expect(incorporation?.message).toContain("cctl charter write --file");
+    expect(incorporation?.deliveryPolicy).toBe("next_turn");
+  });
+
+  it("routes mixed approval and rejection feedback in one next-turn review message", async () => {
+    const { batchId, proposalIds } = await propose(["keep", "drop"]);
+
+    await h.service.resolveProposals({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      batchId,
+      resolutions: [
+        { proposalId: proposalIds[0]!, approve: true },
+        {
+          proposalId: proposalIds[1]!,
+          approve: false,
+          feedback: "too broad",
+        },
+      ],
+    });
+
+    expect(h.enqueued).toHaveLength(1);
+    expect(h.enqueued[0]).toMatchObject({
+      conversationId: CONVERSATION_ID,
+      deliveryPolicy: "next_turn",
+    });
+    expect(h.enqueued[0]?.message).toContain("keep");
+    expect(h.enqueued[0]?.message).toContain("drop");
+    expect(h.enqueued[0]?.message).toContain("too broad");
+  });
+
+  it("routes an all-rejected review even when the user leaves no feedback note", async () => {
+    const { batchId, proposalIds } = await propose(["not now"]);
+
+    await h.service.resolveProposals({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      batchId,
+      resolutions: [{ proposalId: proposalIds[0]!, approve: false }],
+    });
+
+    expect(h.enqueued).toHaveLength(1);
+    expect(h.enqueued[0]).toMatchObject({
+      conversationId: CONVERSATION_ID,
+      deliveryPolicy: "next_turn",
+    });
+    expect(h.enqueued[0]?.message).toContain("not now");
+    expect(h.enqueued[0]?.message).toContain("No feedback was provided");
+  });
+
+  it("rejects whitespace-only content without activating an approved-decision draft", async () => {
+    const { batchId, proposalIds } = await propose(["approved"]);
+    await h.service.resolveProposals({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      batchId,
+      resolutions: [{ proposalId: proposalIds[0]!, approve: true }],
+    });
+    const draft = h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME);
+
+    await expect(
+      h.service.fillDraft({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+        content: " \n\t",
+      }),
+    ).rejects.toThrow(/non-whitespace/i);
+
+    expect(h.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)).toMatchObject({
+      id: draft?.id,
+      content: "",
+      autoActivate: true,
+    });
+    expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+    expect(
+      h.repo.findDecisionsReverseChron(PROJECT_PATH, SESSION_NAME)[0]
+        ?.producedVersion,
+    ).toBeNull();
   });
 
   it("on reject-with-feedback, changes no charter, logs nothing, and routes the feedback back", async () => {
@@ -934,6 +1113,7 @@ describe("resolveProposals", () => {
     const feedback = h.enqueued.find((m) => m.message.includes("too broad"));
     expect(feedback).toBeDefined();
     expect(feedback?.conversationId).toBe(CONVERSATION_ID);
+    expect(feedback?.deliveryPolicy).toBe("next_turn");
   });
 
   it("auto-activates on fill, stamping each approved decision with the produced version and broadcasting once", async () => {

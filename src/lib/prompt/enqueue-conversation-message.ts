@@ -8,6 +8,8 @@ export interface EnqueueConversationMessageInput {
   sessionName: string;
   conversationId: string;
   message: string;
+  /** Prevent this generated message from steering an in-progress agent turn. */
+  deliveryPolicy?: "next_turn";
 }
 
 export interface EnqueueConversationMessageDeps {
@@ -63,7 +65,8 @@ export async function enqueueConversationMessage(
   depsOverride?: Partial<EnqueueConversationMessageDeps>,
 ): Promise<void> {
   const deps = { ...defaultDeps, ...depsOverride };
-  const { projectPath, sessionName, conversationId, message } = input;
+  const { projectPath, sessionName, conversationId, message, deliveryPolicy } =
+    input;
   const conversation = await deps.getConversation(
     projectPath,
     sessionName,
@@ -77,6 +80,7 @@ export async function enqueueConversationMessage(
     conversationId,
     text: message,
     backend,
+    ...(deliveryPolicy ? { deliveryPolicy } : {}),
   });
 
   // Enqueue alone leaves the row pending: in-turn delivery has no live runtime

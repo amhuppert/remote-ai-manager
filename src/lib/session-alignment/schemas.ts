@@ -144,26 +144,33 @@ export const beginDraftRequestSchema = z.object({
 });
 export type BeginDraftRequest = z.infer<typeof beginDraftRequestSchema>;
 
-/** Fill the open draft with agent-authored content. Empty content is rejected. */
+const charterContentSchema = z
+  .string()
+  .min(1)
+  .refine((content) => content.trim().length > 0, {
+    message: "Charter content must contain non-whitespace text",
+  });
+
+/** Fill the open draft with agent-authored, non-whitespace content. */
 export const fillDraftRequestSchema = z.object({
-  content: z.string().min(1),
+  content: charterContentSchema,
 });
 export type FillDraftRequest = z.infer<typeof fillDraftRequestSchema>;
 
-/** Approve a draft (the "Approve Charter" human gate). */
+/** Approve a filled non-auto `/align` draft through the human charter gate. */
 export const approveDraftRequestSchema = z.object({
   draftId: z.string().min(1),
   approver: z.string().min(1).optional(),
 });
 export type ApproveDraftRequest = z.infer<typeof approveDraftRequestSchema>;
 
-/** Reject (discard) a draft, leaving the active charter unchanged. */
+/** Reject a filled non-auto `/align` draft, leaving the active charter unchanged. */
 export const rejectDraftRequestSchema = z.object({
   draftId: z.string().min(1),
 });
 export type RejectDraftRequest = z.infer<typeof rejectDraftRequestSchema>;
 
-/** A single proposed decision in a bulk `propose_decisions` payload. */
+/** A single proposed decision in a bulk `cctl decisions propose` payload. */
 export const proposedDecisionSchema = z.object({
   statement: z.string().min(1),
   rationale: z.string().optional(),
@@ -171,7 +178,7 @@ export const proposedDecisionSchema = z.object({
 });
 export type ProposedDecision = z.infer<typeof proposedDecisionSchema>;
 
-/** Propose a non-blocking bulk batch of decisions. At least one is required. */
+/** Propose an asynchronous bulk batch of decisions. At least one is required. */
 export const proposeDecisionsRequestSchema = z.object({
   decisions: z.array(proposedDecisionSchema).min(1),
 });
@@ -181,19 +188,18 @@ export type ProposeDecisionsRequest = z.infer<
 
 /**
  * Agent-facing charter submission body (`cctl charter write`). The URL carries
- * project + session; `conversationId` identifies the authoring conversation
- * (the MCP tool got it from its closure context). `content` mirrors
- * `write_session_charter`'s input.
+ * project + session; `conversationId` identifies the authoring conversation.
+ * `content` is the full charter submitted by `cctl charter write`.
  */
 export const submitCharterRequestSchema = z.object({
   conversationId: z.string().min(1),
-  content: z.string().min(1),
+  content: charterContentSchema,
 });
 export type SubmitCharterRequest = z.infer<typeof submitCharterRequestSchema>;
 
 /**
- * Agent-facing decisions submission body (`cctl decisions propose`). Mirrors
- * `propose_decisions`' input plus the authoring `conversationId`.
+ * Agent-facing decisions submission body (`cctl decisions propose`) plus the
+ * authoring `conversationId`.
  */
 export const submitDecisionsRequestSchema = z.object({
   conversationId: z.string().min(1),

@@ -19,17 +19,20 @@ import {
 } from "../shared";
 
 /**
- * `cctl decisions propose --file decisions.json` — propose a non-blocking bulk
- * batch of decisions for the user's review (docs/design/cc-cli/02 §3.2). Payload
- * is structured (statement + optional rationale/context per decision), so it is
- * file-input only. The batch lands in the existing decision-review UI; approval
- * stays human-driven — terminal for the agent, so NO hint.
+ * `cctl decisions propose --file decisions.json` — propose an asynchronous bulk
+ * batch of decisions for the user's review (docs/design/cc-cli/02 §3.2).
+ * Payload is structured (statement + optional rationale/context per decision),
+ * so it is file-input only. The batch lands in the existing decision-review UI;
+ * the proposing turn ends while approval stays human-driven.
  */
 
 const decisionsResponseSchema = z.object({
   batchId: z.string(),
   count: z.number(),
 });
+
+const DECISION_REVIEW_INSTRUCTION =
+  "Decision review is pending. Write a brief handoff note, then end your turn now; do not start new work. The complete decision review result will arrive as the next user message.";
 
 export async function runDecisions(
   rest: string[],
@@ -93,16 +96,18 @@ async function runDecisionsPropose(
 
   const parsed = decisionsResponseSchema.safeParse(result.body);
   const count = parsed.success ? parsed.data.count : null;
-  const humanLine =
+  const proposedLine =
     count !== null
-      ? `proposed ${count} decision${count === 1 ? "" : "s"} for the user's review\n`
-      : "decisions proposed for the user's review\n";
+      ? `proposed ${count} decision${count === 1 ? "" : "s"} for the user's review`
+      : "decisions proposed for the user's review";
+  const humanLine = `${proposedLine}\n${DECISION_REVIEW_INSTRUCTION}\n`;
 
   return {
     exitCode: EXIT_OK,
     stdout: render(json, humanLine, {
       ok: true,
       ...(parsed.success ? { batchId: parsed.data.batchId, count } : {}),
+      instruction: DECISION_REVIEW_INSTRUCTION,
     }),
     stderr: "",
   };

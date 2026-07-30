@@ -7,7 +7,10 @@ import {
   type MultilineInputActionHandle,
 } from "@/components/MultilineInput";
 import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/ui/cn";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
 import { useResolveDecisionsMutation } from "@/lib/session-alignment/mutations";
 import type {
   DecisionProposalBatch,
@@ -17,26 +20,6 @@ import type {
 interface ProposalResolution {
   approve: boolean;
   feedback: string;
-}
-
-const choiceBase =
-  "inline-flex cursor-pointer items-center gap-xs rounded-md border border-solid px-[12px] py-[6px] font-mono text-[0.72rem] transition-all duration-150 ease-[ease] disabled:cursor-not-allowed disabled:opacity-[0.45]";
-
-function choiceClass(kind: "approve" | "reject", selected: boolean): string {
-  if (kind === "approve") {
-    return cn(
-      choiceBase,
-      selected
-        ? "border-cyan bg-cyan font-semibold text-text-inverse"
-        : "border-border-default bg-transparent text-text-secondary hover:border-cyan hover:text-cyan",
-    );
-  }
-  return cn(
-    choiceBase,
-    selected
-      ? "border-[var(--cc-red-border)] bg-transparent font-semibold text-red"
-      : "border-border-default bg-transparent text-text-secondary hover:border-red-dim hover:text-red",
-  );
 }
 
 const feedbackClass =
@@ -50,9 +33,9 @@ export interface DecisionApprovalPanelViewProps {
 
 /**
  * Bulk decision-approval surface (R5.2) reusing the AskUserQuestion option/note
- * shape: each proposed decision defaults to approve and can be flipped to
- * reject-with-feedback. A single submit resolves the whole batch — only approved
- * decisions are folded into the charter; rejections route feedback to the agent.
+ * shape: each proposed decision defaults to an explicit Approve selection and
+ * exposes one controlled, exclusive Approve/Reject choice plus optional rejection
+ * feedback. A single submit resolves the whole batch.
  */
 export function DecisionApprovalPanelView({
   batch,
@@ -119,6 +102,7 @@ export function DecisionApprovalPanelView({
       <ul className="flex list-none flex-col gap-sm p-0">
         {batch.proposals.map((p) => {
           const r = resolutions[p.id] ?? { approve: true, feedback: "" };
+          const resolutionLabelId = `decision-resolution-${p.id}`;
           return (
             <li
               key={p.id}
@@ -139,24 +123,27 @@ export function DecisionApprovalPanelView({
                 </p>
               )}
               <div className="flex items-center gap-sm">
-                <button
-                  type="button"
-                  aria-pressed={r.approve}
-                  onClick={() => setApprove(p.id, true)}
-                  disabled={isSubmitting}
-                  className={choiceClass("approve", r.approve)}
+                <span
+                  id={resolutionLabelId}
+                  className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-secondary uppercase"
                 >
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={!r.approve}
-                  onClick={() => setApprove(p.id, false)}
+                  Resolution
+                </span>
+                <SegmentedControl
+                  aria-labelledby={resolutionLabelId}
+                  value={r.approve ? "approve" : "reject"}
+                  onValueChange={(value) =>
+                    setApprove(p.id, value === "approve")
+                  }
                   disabled={isSubmitting}
-                  className={choiceClass("reject", !r.approve)}
                 >
-                  Reject
-                </button>
+                  <SegmentedControlItem value="approve">
+                    Approve
+                  </SegmentedControlItem>
+                  <SegmentedControlItem value="reject">
+                    Reject
+                  </SegmentedControlItem>
+                </SegmentedControl>
               </div>
               {!r.approve && (
                 <MultilineInput

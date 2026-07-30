@@ -12,6 +12,7 @@ import {
   approveDraftRequestSchema,
   rejectDraftRequestSchema,
   proposeDecisionsRequestSchema,
+  submitCharterRequestSchema,
   resolveProposalsRequestSchema,
   rollbackRequestSchema,
   diffRequestSchema,
@@ -209,13 +210,22 @@ describe("alignmentStateSchema", () => {
 });
 
 describe("REST request payloads", () => {
-  it("fillDraft requires non-empty content", () => {
+  it("charter submissions require non-whitespace content", () => {
     expect(fillDraftRequestSchema.safeParse({ content: "" }).success).toBe(
+      false,
+    );
+    expect(fillDraftRequestSchema.safeParse({ content: " \n\t" }).success).toBe(
       false,
     );
     expect(
       fillDraftRequestSchema.safeParse({ content: "real charter" }).success,
     ).toBe(true);
+    expect(
+      submitCharterRequestSchema.safeParse({
+        conversationId: "conv-1",
+        content: " \n\t",
+      }).success,
+    ).toBe(false);
   });
 
   it("beginDraft accepts an optional conversation id", () => {

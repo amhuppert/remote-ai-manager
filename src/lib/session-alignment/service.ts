@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createLogger } from "@/lib/logging";
+import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import {
   publishEventBestEffort,
   type PublishFn,
@@ -145,7 +146,7 @@ export type FillDraftResult =
   | { status: "activated"; version: number };
 
 export interface SessionAlignmentService {
-  /** The charter draft lifecycle: begin a draft, fill it, and approve or reject it. */
+  /** Begin/fill a draft; manually resolve only filled non-auto `/align` drafts. */
   beginDraft(
     input: BeginDraftInput,
   ): Promise<{ authoringPrompt: string; draftId: string }>;
@@ -153,12 +154,12 @@ export interface SessionAlignmentService {
   approveDraft(input: ApproveDraftInput): Promise<AlignmentVersion>;
   rejectDraft(input: RejectDraftInput): Promise<void>;
 
-  /** Persist a durable, non-blocking bulk proposal batch (never logged here). */
+  /** Persist a durable asynchronous proposal batch (never logged here). */
   proposeDecisions(input: ProposeDecisionsInput): Promise<{ batchId: string }>;
   /**
    * Resolve a pending batch per-decision: log the approved, discard the rest,
    * and (if any approved) open an auto-activating draft linked to them and route
-   * an incorporation turn; route a feedback turn for any reject-with-feedback.
+   * one complete next-turn review result for every approved or rejected item.
    */
   resolveProposals(
     input: ResolveProposalsInput,
@@ -256,8 +257,8 @@ export interface SessionAlignmentSessionInfo {
 }
 
 /**
- * Prompt-queue seam for routing incorporation/feedback messages and authoring
- * turns back into the originating conversation. Not used by the draft lifecycle.
+ * Prompt-queue seam for routing review-result messages and authoring turns back
+ * into the originating conversation. Not used by the draft lifecycle.
  */
 export interface SessionAlignmentPromptQueueDeps {
   enqueue(input: {
@@ -265,6 +266,7 @@ export interface SessionAlignmentPromptQueueDeps {
     sessionName: string;
     conversationId: string;
     message: string;
+    deliveryPolicy?: "next_turn";
   }): Promise<void>;
 }
 
@@ -301,6 +303,20 @@ export class AlignmentDraftNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AlignmentDraftNotFoundError";
+  }
+}
+
+export class AlignmentDraftContentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AlignmentDraftContentError";
+  }
+}
+
+export class AlignmentDraftResolutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AlignmentDraftResolutionError";
   }
 }
 
@@ -364,6 +380,41 @@ export function createSessionAlignmentService(
     return found;
   }
 
+  function assertManualDraftResolutionAllowed(
+    projectPath: string,
+    sessionName: string,
+    draft: AlignmentVersion,
+    action: "approve" | "reject",
+  ): void {
+    if (draft.autoActivate) {
+      logger.warn("align.draft_resolution_rejected", {
+        projectPath,
+        ...scopeRefFromStoreSessionName(sessionName),
+        conversationId: draft.authorConversationId,
+        draftId: draft.id,
+        action,
+        reason: "auto_activate",
+      });
+      throw new AlignmentDraftResolutionError(
+        `manual ${action} is unavailable for auto-activating draft ${draft.id}; it activates automatically when its charter content is filled`,
+      );
+    }
+
+    if (action === "approve" && draft.content.trim().length === 0) {
+      logger.warn("align.draft_resolution_rejected", {
+        projectPath,
+        ...scopeRefFromStoreSessionName(sessionName),
+        conversationId: draft.authorConversationId,
+        draftId: draft.id,
+        action,
+        reason: "empty_content",
+      });
+      throw new AlignmentDraftResolutionError(
+        `draft ${draft.id} has no charter content to approve`,
+      );
+    }
+  }
+
   function broadcast(
     event: SessionAlignmentUpdatedEvent,
     context: Record<string, unknown>,
@@ -424,10 +475,9 @@ export function createSessionAlignmentService(
   }
 
   /**
-   * Broadcast a draft-lifecycle transition (draft ready for review, or draft
-   * discarded) so every open conversation shows/drops the Approve-Charter
-   * banner without a refetch. The active version is untouched by these
-   * transitions and is reported as-is.
+   * Broadcast a manual `/align` draft transition (filled and ready for review,
+   * or discarded) so every open conversation shows/drops the Approve-Charter
+   * banner without a refetch. The active version remains untouched.
    */
   function broadcastDraftState(
     projectPath: string,
@@ -578,6 +628,17 @@ export function createSessionAlignmentService(
     async fillDraft(input) {
       const { projectPath, sessionName, conversationId, content } = input;
       const session = await requireNormalSession(projectPath, sessionName);
+      if (content.trim().length === 0) {
+        logger.warn("align.fill_draft_rejected", {
+          projectPath,
+          ...scopeRefFromStoreSessionName(sessionName),
+          conversationId,
+          reason: "blank_content",
+        });
+        throw new AlignmentDraftContentError(
+          "alignment charter content must contain non-whitespace text",
+        );
+      }
 
       const draft = deps.repo.findDraftVersion(projectPath, sessionName);
       if (!draft) {
@@ -632,6 +693,12 @@ export function createSessionAlignmentService(
           `no open draft ${draftId} to approve for ${projectPath}::${sessionName}`,
         );
       }
+      assertManualDraftResolutionAllowed(
+        projectPath,
+        sessionName,
+        draft,
+        "approve",
+      );
 
       return activate(
         projectPath,
@@ -652,6 +719,12 @@ export function createSessionAlignmentService(
           `no open draft ${draftId} to reject for ${projectPath}::${sessionName}`,
         );
       }
+      assertManualDraftResolutionAllowed(
+        projectPath,
+        sessionName,
+        draft,
+        "reject",
+      );
 
       // Discard only; the active charter is untouched.
       deps.repo.deleteVersionById(projectPath, sessionName, draftId);
@@ -728,11 +801,14 @@ export function createSessionAlignmentService(
       }
 
       // All proposals in a batch share the conversation that proposed them; the
-      // incorporation/feedback turn routes back there (R5.5, R5.6).
+      // complete review-result turn routes back there (R5.5, R5.6).
       const originConversationId = proposals[0]!.conversationId;
 
       const approvedDecisions: AlignmentDecision[] = [];
-      const feedbackNotes: { statement: string; feedback: string }[] = [];
+      const rejectedReviews: {
+        statement: string;
+        feedback: string | null;
+      }[] = [];
       for (const proposal of proposals) {
         const resolution = resolutionByProposalId.get(proposal.id);
         if (resolution?.approve) {
@@ -749,10 +825,10 @@ export function createSessionAlignmentService(
               createdAt: now(),
             }),
           );
-        } else if (resolution && resolution.feedback) {
-          feedbackNotes.push({
+        } else {
+          rejectedReviews.push({
             statement: proposal.statement,
-            feedback: resolution.feedback,
+            feedback: resolution?.feedback?.trim() ? resolution.feedback : null,
           });
         }
       }
@@ -795,26 +871,20 @@ export function createSessionAlignmentService(
       });
 
       // Route turns back into the originating conversation after the commit.
-      if (approvedCount > 0) {
-        const active = deps.repo.findActiveVersion(projectPath, sessionName);
-        await deps.promptQueue.enqueue({
-          projectPath,
-          sessionName,
-          conversationId: originConversationId,
-          message: composeIncorporationMessage(
-            approvedDecisions,
-            active?.content ?? null,
-          ),
-        });
-      }
-      if (feedbackNotes.length > 0) {
-        await deps.promptQueue.enqueue({
-          projectPath,
-          sessionName,
-          conversationId: originConversationId,
-          message: composeFeedbackMessage(feedbackNotes),
-        });
-      }
+      // These are responses to the human review, never steering input for the
+      // turn that proposed the decisions.
+      const active = deps.repo.findActiveVersion(projectPath, sessionName);
+      await deps.promptQueue.enqueue({
+        projectPath,
+        sessionName,
+        conversationId: originConversationId,
+        message: composeDecisionReviewMessage(
+          approvedDecisions,
+          rejectedReviews,
+          active?.content ?? null,
+        ),
+        deliveryPolicy: "next_turn",
+      });
 
       logger.info("align.decision_resolve", {
         projectPath,
@@ -1182,21 +1252,38 @@ function composeIncorporationMessage(
   return lines.join("\n");
 }
 
-/**
- * Compose the feedback turn for decisions the user rejected with a note (R5.6).
- * The charter is unchanged; the agent revises or re-proposes.
- */
-function composeFeedbackMessage(
-  notes: { statement: string; feedback: string }[],
+/** Compose one complete, atomic review-result turn for the resolved batch. */
+function composeDecisionReviewMessage(
+  approvedDecisions: AlignmentDecision[],
+  rejectedReviews: { statement: string; feedback: string | null }[],
+  activeContent: string | null,
 ): string {
-  const list = notes
+  const sections: string[] = [];
+  if (approvedDecisions.length > 0) {
+    sections.push(
+      composeIncorporationMessage(approvedDecisions, activeContent),
+    );
+  }
+
+  if (rejectedReviews.length === 0) {
+    return sections.join("\n");
+  }
+
+  const list = rejectedReviews
     .map(
-      (note, index) => `${index + 1}. "${note.statement}" — ${note.feedback}`,
+      (review, index) =>
+        `${index + 1}. "${review.statement}" — ${
+          review.feedback ?? "No feedback was provided."
+        }`,
     )
     .join("\n");
-  return [
-    "The user reviewed your proposed decisions and rejected the following with feedback. Revise or re-propose as appropriate; the active charter is unchanged:",
-    "",
-    list,
-  ].join("\n");
+  sections.push(
+    [
+      "The user rejected the following proposed decisions. Do not fold them into the charter. Where feedback is present, revise or re-propose as appropriate:",
+      "",
+      list,
+    ].join("\n"),
+  );
+
+  return sections.join("\n\n");
 }

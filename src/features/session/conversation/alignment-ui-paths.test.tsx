@@ -179,7 +179,7 @@ describe("decision-approval bulk round-trip", () => {
     // Default is approve for all; flip the middle decision to reject + note.
     const rows = screen.getAllByTestId("decision-proposal");
     await userEvent.click(
-      within(rows[1]!).getByRole("button", { name: /reject/i }),
+      within(rows[1]!).getByRole("radio", { name: /reject/i }),
     );
     await userEvent.type(
       within(rows[1]!).getByRole("textbox"),

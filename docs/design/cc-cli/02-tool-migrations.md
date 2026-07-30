@@ -108,7 +108,8 @@ The alignment domain has read/approve/reject/resolve routes but no agent-side su
 tools (`src/lib/session-alignment/tools.ts`).
 
 - `POST /api/projects/[name]/sessions/[session]/alignment/charter` — body mirrors
-  `write_session_charter` input; produces the same draft-pending-approval state + SSE.
+  `write_session_charter` input; returns `draft_ready` for a normal `/align`
+  draft or `activated` for an approved-decision incorporation draft.
 - `POST /api/projects/[name]/sessions/[session]/alignment/decisions` — mirrors `propose_decisions`.
 - CLI: both take `--file` (payloads are structured and multi-paragraph; inline flags don't fit).
 

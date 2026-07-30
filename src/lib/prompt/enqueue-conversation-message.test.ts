@@ -42,6 +42,7 @@ function makePendingEntry(): PendingQueuedMessage {
 interface Recorder {
   calls: string[];
   queuedBackend: AgentBackendId | null;
+  queuedDeliveryPolicy: "next_turn" | null;
   ensuredWith: {
     projectPath: string;
     sessionName: string;
@@ -64,6 +65,7 @@ function makeDeps(
     async queueMessage(params) {
       recorder.calls.push("queueMessage");
       recorder.queuedBackend = params.backend;
+      recorder.queuedDeliveryPolicy = params.deliveryPolicy ?? null;
       return { entry: makePendingEntry(), deliveryTiming };
     },
     async ensureConversationActorAndDrain(
@@ -88,6 +90,7 @@ describe("enqueueConversationMessage", () => {
       const recorder: Recorder = {
         calls: [],
         queuedBackend: null,
+        queuedDeliveryPolicy: null,
         ensuredWith: null,
       };
       const deps = makeDeps(
@@ -125,10 +128,42 @@ describe("enqueueConversationMessage", () => {
     },
   );
 
+  it("forwards an explicit next-turn delivery policy", async () => {
+    const recorder: Recorder = {
+      calls: [],
+      queuedBackend: null,
+      queuedDeliveryPolicy: null,
+      ensuredWith: null,
+    };
+    const deps = makeDeps(
+      recorder,
+      { getConversation: async () => makeConversation("claude") },
+      "next_turn",
+    );
+
+    await enqueueConversationMessage(
+      {
+        projectPath: "/proj",
+        sessionName: "sess",
+        conversationId: "conv-1",
+        message: "The user approved the decisions.",
+        deliveryPolicy: "next_turn",
+      },
+      deps,
+    );
+
+    expect(recorder.queuedDeliveryPolicy).toBe("next_turn");
+    expect(recorder.calls).toEqual([
+      "queueMessage",
+      "ensureConversationActorAndDrain",
+    ]);
+  });
+
   it("falls back to the configured default backend when the conversation is absent", async () => {
     const recorder: Recorder = {
       calls: [],
       queuedBackend: null,
+      queuedDeliveryPolicy: null,
       ensuredWith: null,
     };
     const deps = makeDeps(

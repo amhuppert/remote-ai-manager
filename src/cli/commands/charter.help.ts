@@ -10,7 +10,7 @@ export const charterHelpEntries: CommandHelpEntry[] = [
     path: ["charter"],
     summary: "submit the session's Alignment charter",
     description:
-      "Submit the session's Alignment charter — the free-text markdown document that governs the whole session — as a draft pending the user's approval.",
+      "Submit the session's Alignment charter — the free-text markdown document that governs the whole session. A normal /align draft waits for approval; a draft that incorporates already-approved decisions activates immediately.",
     usage: ["cctl charter write --file .cc/temp/charter.json"],
     flags: [],
     examples: [],
@@ -23,9 +23,9 @@ export const charterHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["charter", "write"],
-    summary: "submit the Alignment charter draft for approval",
+    summary: "submit the Alignment charter draft",
     description:
-      'Submit the charter as a draft into the existing Approve-Charter panel. File-only: author .cc/temp/charter.json (git-ignored scratch) as a JSON object { "content": "<full markdown>" } with the Write tool. Approval stays human-driven and the active charter is unchanged until the user approves — terminal for the agent, no hint. Attended-only: exits 1 on an autonomous turn or with no live conversation.',
+      'Fill the session\'s open charter draft. File-only: author .cc/temp/charter.json (git-ignored scratch) as a JSON object { "content": "<full markdown>" } with the Write tool. A /align draft enters the Approve-Charter panel and leaves the active charter unchanged; a draft opened by decision approval activates immediately because the decision review was its human gate. The command reports which outcome occurred. Attended-only: exits 1 on an autonomous turn or with no live conversation.',
     usage: ["cctl charter write --file .cc/temp/charter.json"],
     flags: [
       {
@@ -40,7 +40,7 @@ export const charterHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl charter write --file .cc/temp/charter.json",
         explanation:
-          'the payload is { "content": "<full markdown>" }; lands as a draft the user approves — no charter is activated by this call',
+          'the payload is { "content": "<full markdown>" }; reports either a draft pending approval or the activated decision-incorporation version',
       },
     ],
     related: [

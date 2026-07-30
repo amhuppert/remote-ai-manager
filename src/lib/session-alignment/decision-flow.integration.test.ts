@@ -38,13 +38,12 @@ import {
 import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
 
 // End-to-end verification of the decision evolution flow through the REAL store
-// and the REAL prompt queue: the alignment service's incorporation and
-// feedback turns are routed through `messageQueueService`, so they durably land
-// in the conversation's `pendingQueue` in SQLite (not merely captured). The flow
-// proves propose → resolve(approve) → incorporation turn → auto-activation with
-// decision linkage and an emitted alignment-updated event, plus the
-// reject-with-feedback branch leaving the charter unchanged with nothing logged
-// (R5.3, R5.4, R5.5, R5.6, R6.1, R6.2, R9.5).
+// and the REAL prompt queue: the alignment service's complete review-result
+// turns are routed through `messageQueueService`, so they durably land in the
+// conversation's `pendingQueue` in SQLite (not merely captured). The flow proves
+// propose → resolve → one review result → auto-activation with decision linkage
+// and an emitted alignment-updated event, plus rejection leaving the charter
+// unchanged with nothing logged (R5.3–R5.8, R6.1, R6.2, R9.5).
 
 const PROJECT = "/p-decisions";
 const SESSION = "decisions-session";
@@ -123,8 +122,8 @@ async function setup(): Promise<Harness> {
       if (event.type === "session-alignment-updated") broadcasts.push(event);
       return { delivered: true };
     },
-    // The REAL prompt-queue persistence: incorporation/feedback turns route
-    // through messageQueueService and land in the conversation's pendingQueue.
+    // The REAL prompt-queue persistence: review-result turns route through
+    // messageQueueService and land in the conversation's pendingQueue.
     promptQueue: {
       async enqueue({ projectPath, sessionName, conversationId, message }) {
         await messageQueue.enqueue({
@@ -293,5 +292,39 @@ describe("decision evolution flow (end-to-end through the real store and prompt 
     expect(
       texts.some((t) => t.includes("Out of scope for this session.")),
     ).toBe(true);
+  });
+
+  it("queues one complete result for a mixed approval and silent rejection", async () => {
+    const { batchId } = await h.service.proposeDecisions({
+      projectPath: PROJECT,
+      sessionName: SESSION,
+      conversationId: CONVERSATION,
+      decisions: [
+        { statement: "Keep this decision." },
+        { statement: "Reject this decision." },
+      ],
+    });
+    const ids = proposalIds(batchId);
+
+    await h.service.resolveProposals({
+      projectPath: PROJECT,
+      sessionName: SESSION,
+      batchId,
+      resolutions: [
+        { proposalId: ids[0]!, approve: true },
+        { proposalId: ids[1]!, approve: false },
+      ],
+    });
+
+    const texts = await h.pendingTexts();
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).toContain("Keep this decision.");
+    expect(texts[0]).toContain("Reject this decision.");
+    expect(texts[0]).toContain("No feedback was provided");
+    expect(
+      h.repo
+        .findDecisionsReverseChron(PROJECT, SESSION)
+        .map((decision) => decision.statement),
+    ).toEqual(["Keep this decision."]);
   });
 });

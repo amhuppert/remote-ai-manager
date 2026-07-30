@@ -82,6 +82,37 @@ describe("DecisionApprovalPanelView", () => {
     expect(screen.getByText("Ship behind a flag.")).toBeInTheDocument();
   });
 
+  it("presents each resolution as one explicit, exclusive choice", async () => {
+    const batch = makeBatch([makeProposal({ id: "p1" })]);
+    render(
+      <DecisionApprovalPanelView
+        batch={batch}
+        isSubmitting={false}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByTestId("decision-proposal");
+    const resolution = within(row).getByRole("radiogroup", {
+      name: "Resolution",
+    });
+    const approve = within(resolution).getByRole("radio", { name: "Approve" });
+    const reject = within(resolution).getByRole("radio", { name: "Reject" });
+
+    expect(approve).toBeChecked();
+    expect(reject).not.toBeChecked();
+
+    await userEvent.click(reject);
+    expect(approve).not.toBeChecked();
+    expect(reject).toBeChecked();
+    expect(within(row).getByRole("textbox")).toBeInTheDocument();
+
+    await userEvent.click(approve);
+    expect(approve).toBeChecked();
+    expect(reject).not.toBeChecked();
+    expect(within(row).queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
   it("submits all decisions as approvals by default (bulk approve)", async () => {
     const onSubmit = vi.fn();
     const batch = makeBatch([
@@ -118,7 +149,7 @@ describe("DecisionApprovalPanelView", () => {
     const rows = screen.getAllByTestId("decision-proposal");
     // Flip the second decision to reject and add feedback.
     await userEvent.click(
-      within(rows[1]!).getByRole("button", { name: /reject/i }),
+      within(rows[1]!).getByRole("radio", { name: /reject/i }),
     );
     await userEvent.type(within(rows[1]!).getByRole("textbox"), "needs scope");
     await userEvent.click(screen.getByRole("button", { name: /submit/i }));
@@ -139,7 +170,7 @@ describe("DecisionApprovalPanelView", () => {
     );
     const row = screen.getByTestId("decision-proposal");
     expect(within(row).queryByRole("textbox")).not.toBeInTheDocument();
-    await userEvent.click(within(row).getByRole("button", { name: /reject/i }));
+    await userEvent.click(within(row).getByRole("radio", { name: /reject/i }));
     expect(within(row).getByRole("textbox")).toBeInTheDocument();
   });
 
@@ -196,7 +227,7 @@ describe("DecisionApprovalPanel (container)", () => {
     );
     const rows = screen.getAllByTestId("decision-proposal");
     await userEvent.click(
-      within(rows[1]!).getByRole("button", { name: /reject/i }),
+      within(rows[1]!).getByRole("radio", { name: /reject/i }),
     );
     await userEvent.type(within(rows[1]!).getByRole("textbox"), "no");
     await userEvent.click(screen.getByRole("button", { name: /submit/i }));

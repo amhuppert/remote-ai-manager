@@ -56,7 +56,7 @@ const decisionsFile = (
 ) => JSON.stringify({ decisions });
 
 describe("cctl decisions propose", () => {
-  it("POSTs the decisions + conversationId and exits 0 with no hint", async () => {
+  it("POSTs the batch and instructs the agent to end the proposing turn", async () => {
     const host = makeHost(
       () => jsonResponse({ ok: true, batchId: "batch-1", count: 2 }),
       { [DECISIONS_FILE]: decisionsFile() },
@@ -86,6 +86,9 @@ describe("cctl decisions propose", () => {
     expect(result.stdout).toContain(
       "proposed 2 decisions for the user's review",
     );
+    expect(result.stdout).toMatch(/brief handoff note/i);
+    expect(result.stdout).toMatch(/end your turn now/i);
+    expect(result.stdout).toMatch(/next user message/i);
     expect(result.stdout).not.toContain("hint:");
   });
 
@@ -105,7 +108,7 @@ describe("cctl decisions propose", () => {
     );
   });
 
-  it("carries batchId + count in the --json envelope", async () => {
+  it("carries the batch metadata and end-turn instruction in JSON", async () => {
     const host = makeHost(
       () => jsonResponse({ ok: true, batchId: "batch-42", count: 2 }),
       { [DECISIONS_FILE]: decisionsFile() },
@@ -119,6 +122,9 @@ describe("cctl decisions propose", () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.batchId).toBe("batch-42");
     expect(envelope.count).toBe(2);
+    expect(envelope.instruction).toMatch(/brief handoff note/i);
+    expect(envelope.instruction).toMatch(/end your turn now/i);
+    expect(envelope.instruction).toMatch(/next user message/i);
   });
 
   it("exits 2 when --file is missing", async () => {

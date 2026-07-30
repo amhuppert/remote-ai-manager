@@ -1,13 +1,9 @@
 /**
- * Transport-agnostic alignment authoring logic shared by the (soon-retired) MCP
- * tools (`tools.ts`) and the agent-facing HTTP endpoints (`agent-route-handlers.ts`).
- *
- * Keeping the attended-runtime gate and the defensive open-draft fill here — not
- * in either transport — is what makes the CLI path produce byte-equivalent
- * draft-pending-approval / pending-proposal state to the MCP path: both call the
- * same service methods through the same wrapper. Each transport only formats the
- * gate decision into its own response shape (an MCP `isError` result vs. an HTTP
- * status code).
+ * Transport-agnostic authoring logic behind the agent-facing HTTP endpoints
+ * used by `cctl`. Keeping the attended-runtime gate and defensive open-draft
+ * fill here gives both commands one lifecycle: charter fill returns
+ * `draft_ready` for `/align` or `activated` for approved-decision
+ * incorporation, while proposals persist for review.
  */
 import {
   conversationRuntimeKey,
@@ -22,8 +18,8 @@ import {
   type ProposeDecisionsInput,
 } from "./service";
 
-// Alignment authoring is attended-only: it gates the active charter behind a
-// human Approve-Charter step, so it has no meaning on an autonomous turn (R12.3).
+// Alignment authoring is attended-only because every activation is authorized
+// by either charter approval or decision approval (R12.3).
 export const ALIGNMENT_AUTONOMOUS_DENIAL_MESSAGE =
   "Autonomous optimistic mode — alignment tools are unavailable; make your best judgment and proceed.";
 
@@ -76,7 +72,7 @@ export function resolveAttendedRuntime(
 /**
  * Fill the session's open draft. If none is open (e.g. the agent wrote a charter
  * without running `/align` first), defensively begin a gated draft and fill it —
- * the same recovery both transports rely on to land a draft-pending-approval.
+ * the same recovery both transports rely on to return `draft_ready`.
  */
 export async function fillOpenDraft(
   deps: Pick<AlignmentAuthoringDeps, "beginDraft" | "fillDraft">,

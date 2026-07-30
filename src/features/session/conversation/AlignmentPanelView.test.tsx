@@ -210,6 +210,36 @@ describe("AlignmentPanelView", () => {
     });
   });
 
+  it("labels a decision draft as automatic incorporation, not pending approval", () => {
+    const active = makeVersion({ version: 1 });
+    const draft = makeVersion({
+      id: "draft-decision",
+      version: null,
+      status: "draft",
+      source: "decision",
+      content: "",
+      contentHash: "",
+      autoActivate: true,
+      linkedDecisionIds: ["decision-1"],
+    });
+    render(
+      <AlignmentPanelView
+        state={makeState({ active, draft, history: [active] })}
+        isLoading={false}
+        onSelectDiff={noop}
+        onRollback={noop}
+      />,
+    );
+
+    const draftSection = screen.getByTestId("alignment-draft");
+    expect(
+      within(draftSection).getByText("incorporating approved decisions"),
+    ).toBeInTheDocument();
+    expect(
+      within(draftSection).queryByText("pending approval"),
+    ).not.toBeInTheDocument();
+  });
+
   it("lists version history newest-first", () => {
     const v1 = makeVersion({
       id: "v1",

@@ -11,7 +11,7 @@ export const decisionsHelpEntries: CommandHelpEntry[] = [
     path: ["decisions"],
     summary: "propose decisions for the user's review",
     description:
-      "Propose one or more decisions for the user to review. Non-blocking: approved decisions fold into the Alignment charter; your turn continues.",
+      "Propose one or more decisions for the user to review. The review is asynchronous: end the proposing turn, then the complete decision review result returns as the next user message.",
     usage: ["cctl decisions propose --file .cc/temp/decisions.json"],
     flags: [],
     examples: [],
@@ -27,7 +27,7 @@ export const decisionsHelpEntries: CommandHelpEntry[] = [
     path: ["decisions", "propose"],
     summary: "propose a decision batch for review",
     description:
-      "Persist a batch of decisions for the user's review — non-blocking, so do NOT wait for a response. File-only: author .cc/temp/decisions.json (git-ignored scratch) as a JSON object with a non-empty `decisions` array. Approve/reject stays human-driven (approved → folded into the charter, rejected → returned with feedback). Terminal: no hint. Attended-only: exits 1 on an autonomous turn.",
+      "Persist a batch of decisions for the user's review, write a brief handoff note, and end the turn. File-only: author .cc/temp/decisions.json (git-ignored scratch) as a JSON object with a non-empty `decisions` array. Approve/reject stays human-driven; one complete result covering every decision and any rejection feedback arrives as the next user message. Attended-only: exits 1 on an autonomous turn.",
     usage: ["cctl decisions propose --file .cc/temp/decisions.json"],
     flags: [
       {

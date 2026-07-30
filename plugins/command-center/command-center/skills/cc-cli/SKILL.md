@@ -101,10 +101,10 @@ collapse them — the whole point is that each means something different:
   after the primary body and before the `hint:` line; in `--json` they are the
   `reminders[]` array. A reminder is not a step to perform — it is something to
   keep true as you continue.
-- **Instructions** are load-bearing do-now text: `ask`'s end-turn `instruction`
-  and a lane `task complete`'s `stopInstruction` (a mid-turn context rotation).
-  They arrive as primary output and/or a dedicated field — obey them before the
-  hint or your own next step.
+- **Instructions** are load-bearing do-now text: `ask` and `decisions propose`
+  emit end-turn `instruction`s, while a lane `task complete` may emit a
+  `stopInstruction` for mid-turn context rotation. They arrive as primary output
+  and/or a dedicated field — obey them before the hint or your own next step.
 
 Text rendering order on any command: primary body → detail/`issues` lines →
 `reminder:` lines → `hint:` line.
@@ -322,7 +322,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 
 - `cctl charter` — submit the session's Alignment charter
   - `cctl charter write --file .cc/temp/charter.json`
-- `cctl charter write` — submit the Alignment charter draft for approval
+- `cctl charter write` — submit the Alignment charter draft
   - `cctl charter write --file .cc/temp/charter.json`
 
 - `cctl decisions` — propose decisions for the user's review
@@ -1037,13 +1037,13 @@ cctl charter write --file .cc/temp/charter.json
   author `.cc/temp/charter.json` as a JSON object `{ "content": "<full markdown>" }`
   with the Write tool, then submit. There is no inline text flag.
 - The submission fills the session's open Alignment draft (the one `/align`
-  creates); if none is open it defensively opens a gated one. The result is a
-  **draft pending the user's approval** — the active charter is unchanged until
-  they approve it.
-- Approval stays **human-driven**: your submission lands in the existing
-  Approve-Charter panel exactly as the MCP tool's did — approve/reject is the
-  user's call, with no UI change. So `charter write` is terminal for you —
-  **no hint**; exit `0` on submission.
+  creates); if none is open it defensively opens a gated one. A normal `/align`
+  draft remains pending in the **Approve Charter** panel and leaves the active
+  charter unchanged. A draft opened after the user approves decisions activates
+  immediately on submission; the decision review is already its human gate.
+- The command reports the actual result: either `charter draft submitted;
+  pending the user's approval` or `charter activated as version <n>`. Never ask
+  for a second approval after decision incorporation.
 - Attended-only: on an autonomous/optimistic turn, or with no live conversation
   turn to author against, the server refuses and the command exits `1`.
 
@@ -1054,8 +1054,8 @@ cctl charter write --file .cc/temp/charter.json
 
 ## cctl decisions
 
-Propose one or more **decisions** for the user to review. Non-blocking:
-approved decisions fold into the Alignment charter. Replaces the
+Propose one or more **decisions** for the user to review. Review is
+asynchronous; approved decisions fold into the Alignment charter. Replaces the
 `propose_decisions` MCP tool.
 
 ```
@@ -1065,16 +1065,21 @@ cctl decisions propose --file .cc/temp/decisions.json
 - **File-only**: author `.cc/temp/decisions.json` as a JSON object with a
   non-empty `decisions` array — each `{ "statement": "...", "rationale"?: "...",
   "context"?: "..." }` — with the Write tool.
-- Non-blocking: the batch is persisted for review and your turn continues — do
-  **not** wait for a response. The batch lands in the existing decision-review
-  UI; **approve/reject stays human-driven** (approved → folded into the charter,
-  rejected → returned to you with feedback), with no UI change.
-- Terminal for you — **no hint**; exit `0` on submission. Attended-only, with
-  the same refusals (exit `1`) as `charter`.
+- The batch is persisted for human review. Write a brief handoff note, then end
+  your turn immediately; do not begin more work. One complete result covering
+  every approved or rejected decision and any rejection feedback arrives as the
+  next user message, never in the proposing turn.
+- The UI presents Approve/Reject as one explicit selection per decision, plus
+  optional rejection feedback. `cctl` returns a load-bearing `instruction`
+  field in JSON and the same instruction in text output. Attended-only, with the
+  same refusals (exit `1`) as `charter`.
 
 ```
 cctl decisions propose --file .cc/temp/decisions.json
 # → proposed 2 decisions for the user's review
+#   Decision review is pending. Write a brief handoff note, then end your turn now;
+#   do not start new work. The complete decision review result will arrive as the
+#   next user message.
 ```
 
 ## cctl agent

@@ -12,10 +12,10 @@ interface AlignmentGateProps {
 }
 
 /**
- * The conversation-level alignment gate (R4.1, R5.2). Surfaces the Approve-Charter
- * banner while a `/align` draft is pending and the decision-approval panel while a
- * proposal batch is pending — both sourced from the live alignment state, so any
- * conversation in the session can resolve them.
+ * The conversation-level alignment gate (R4.1, R5.2). Surfaces the
+ * Approve-Charter banner for a filled non-auto `/align` draft and the
+ * decision-approval panel while a proposal batch is pending. Both come from
+ * live session state, so any conversation in the session can resolve them.
  */
 export default function AlignmentGate({
   projectName,
@@ -27,15 +27,21 @@ export default function AlignmentGate({
   if (disabled || !state) return null;
 
   const batch = state.pendingProposals[0];
-  if (!state.draft && !batch) return null;
+  const approvableDraft =
+    state.draft &&
+    !state.draft.autoActivate &&
+    state.draft.content.trim().length > 0
+      ? state.draft
+      : null;
+  if (!approvableDraft && !batch) return null;
 
   return (
     <>
-      {state.draft && (
+      {approvableDraft && (
         <ApproveCharterBanner
           projectName={projectName}
           sessionName={sessionName}
-          draft={state.draft}
+          draft={approvableDraft}
         />
       )}
       {batch && (

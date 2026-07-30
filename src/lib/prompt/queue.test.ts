@@ -256,6 +256,24 @@ describe("queueMessage in_turn", () => {
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
   });
 
+  it("keeps a caller-deferred message pending for the next turn", async () => {
+    const queueUserInputMock = vi.fn();
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "The user approved the decisions.",
+      backend: "claude",
+      deliveryPolicy: "next_turn",
+      deps,
+    });
+
+    expect(result.deliveryTiming).toBe("next_turn");
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(queueUserInputMock).not.toHaveBeenCalled();
+    expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
+  });
+
   it("confirms delivery: claim -> queueUserInput -> append (once) -> markDelivered", async () => {
     const order: string[] = [];
     const queueUserInputMock = vi.fn().mockImplementation(async () => {

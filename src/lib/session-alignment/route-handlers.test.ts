@@ -320,6 +320,41 @@ describe("approveCharterDraft", () => {
     );
     expect(response.status).toBe(400);
   });
+
+  it("returns 409 and preserves an auto-activating decision draft", async () => {
+    const { batchId } = await real.service.proposeDecisions({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      decisions: [{ statement: "Use SQLite." }],
+    });
+    const proposalId = real.repo.findProposalsByBatch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      batchId,
+    )[0]!.id;
+    await real.service.resolveProposals({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      batchId,
+      resolutions: [{ proposalId, approve: true }],
+    });
+    const draft = real.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)!;
+
+    const response = await real.handlers.approveCharterDraft(
+      makeRequest(
+        `http://t/api/projects/${PROJECT_NAME}/sessions/${SESSION_NAME}/alignment/charter/approve`,
+        { draftId: draft.id },
+      ),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(409);
+    expect(real.repo.findDraftVersion(PROJECT_PATH, SESSION_NAME)?.id).toBe(
+      draft.id,
+    );
+    expect(real.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+  });
 });
 
 describe("rejectCharterDraft", () => {

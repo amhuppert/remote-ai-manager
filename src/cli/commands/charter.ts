@@ -22,8 +22,8 @@ import {
  * `cctl charter write --file charter.json` — submit the session's Alignment
  * charter (docs/design/cc-cli/02 §3.2). The charter is structured,
  * multi-paragraph markdown, so it is file-input only (no inline flags). The
- * submission lands as a draft in the existing Approve-Charter UI; approval stays
- * human-driven, so there is deliberately NO hint — this is terminal for the agent.
+ * server-reported result reflects the open draft's intent: `/align` drafts wait
+ * in the Approve-Charter UI, while approved-decision drafts activate on fill.
  */
 
 const charterResponseSchema = z.object({

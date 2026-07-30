@@ -150,6 +150,11 @@ export interface QueueMessageParams {
   consumePendingQuestionId?: string;
   /** Optional dependency overrides for testing. */
   deps?: Partial<QueueMessageDeps>;
+  /**
+   * Keep this row pending until the actor can claim a new turn, even when the
+   * backend accepts user input during an in-progress turn.
+   */
+  deliveryPolicy?: "next_turn";
 }
 
 export interface QueueMessageResult {
@@ -228,6 +233,7 @@ export async function queueMessage(
     backend,
     metadata,
     consumePendingQuestionId,
+    deliveryPolicy,
     deps: depsOverride,
   } = params;
 
@@ -268,6 +274,18 @@ export async function queueMessage(
   });
   if (!entry) {
     return null;
+  }
+
+  if (deliveryPolicy === "next_turn") {
+    logger.info("queue.delivery_deferred", {
+      projectName: deps.getProjectDisplayName(projectPath),
+      ...scopeRef,
+      conversationId,
+      messageIds: [entry.id],
+      status: "pending",
+      reason: "caller_policy",
+    });
+    return { entry, deliveryTiming: "next_turn" };
   }
 
   // Question answers arrive as the NEXT user message (docs/design/cc-cli/03
