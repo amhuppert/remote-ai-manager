@@ -14,7 +14,10 @@
 
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import type { GraphWorkflowAgentConfig } from "../config-schemas";
+import {
+  PLAN_REPAIR_DEFAULT_AGENT,
+  type GraphWorkflowAgentConfig,
+} from "../config-schemas";
 import type {
   GraphWorkflowExecution,
   PlanRepairRound,
@@ -42,13 +45,6 @@ const logger = createLogger("workflow.plan-repair");
 
 /** Bounded turn for the one-shot repair agent. */
 export const PLAN_REPAIR_TURN_TIMEOUT_MS = 15 * 60_000;
-
-/** Rare, high-stakes invocations — default to the strongest configuration. */
-export const PLAN_REPAIR_DEFAULT_AGENT: GraphWorkflowAgentConfig = {
-  backend: "claude",
-  model: "opus",
-  reasoningEffort: "high",
-};
 
 export interface PlanRepairAgentInvocation {
   projectPath: string;

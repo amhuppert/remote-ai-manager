@@ -67,6 +67,26 @@ export type GraphWorkflowPlanRepairPolicy = z.infer<
   typeof graphWorkflowPlanRepairPolicySchema
 >;
 
+/**
+ * The one canonical plan-repair default, derived from the schema's own field
+ * defaults. Every surface that needs a concrete policy (cascade fallback,
+ * resolved-context floor, UI seeds) references this object — never a
+ * re-written literal.
+ */
+export const DEFAULT_PLAN_REPAIR_POLICY: GraphWorkflowPlanRepairPolicy =
+  graphWorkflowPlanRepairPolicySchema.parse({});
+
+/**
+ * The repair agent the supervisor falls back to when `planRepair.agent` is
+ * unset anywhere in the cascade. Rare, high-stakes invocations — default to
+ * the strongest configuration.
+ */
+export const PLAN_REPAIR_DEFAULT_AGENT: GraphWorkflowAgentConfig = {
+  backend: "claude",
+  model: "opus",
+  reasoningEffort: "high",
+};
+
 export const graphWorkflowLaneContinuityPolicySchema = z.object({
   enabled: z.boolean().default(true),
   contextLimitTokens: z.number().int().positive().optional(),

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import {
+  DEFAULT_PLAN_REPAIR_POLICY,
   contextValidatorOverrideSchema,
   graphWorkflowAgentConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
@@ -297,11 +298,11 @@ export const graphWorkflowResolvedContextSchema = z.object({
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
   // Plan-repair policy (docs/design/cc-cli/08). Defaulted so executions seeded
-  // before D1 parse WITH repair — the block ships default-ON (F4).
-  planRepair: graphWorkflowPlanRepairPolicySchema.default({
-    enabled: true,
-    maxAttemptsPerContext: 2,
-  }),
+  // before D1 parse WITH repair — the block ships default-ON (F4). Lazy so
+  // every legacy row gets its own object, never a shared mutable instance.
+  planRepair: graphWorkflowPlanRepairPolicySchema.default(() => ({
+    ...DEFAULT_PLAN_REPAIR_POLICY,
+  })),
   // Resolved collaboration config (with per-field provenance) snapshotted at
   // seed time so a later saved-definition edit cannot leak into a running
   // execution (doc 06, D11). `.optional()` because executions seeded before the

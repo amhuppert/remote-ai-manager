@@ -29,6 +29,7 @@ import {
 } from "@/lib/workflow-graph/builder-draft";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   ContextValidatorOverride,
@@ -125,57 +126,6 @@ interface WorkflowInspectorPanelProps {
 }
 
 export type InspectorTab = "workflow" | "context";
-
-const SEEDED_DEFAULTS: WorkflowDefaults = {
-  implementer: {
-    backend: "claude",
-    model: "opus",
-    reasoningEffort: "medium",
-  },
-  contextValidator: {
-    type: "claude",
-    enabled: true,
-    continuity: { enabled: true },
-    agent: {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
-    },
-  },
-  scriptValidator: {
-    enabled: false,
-  },
-  humanApprovalGate: {
-    enabled: false,
-  },
-  askUserQuestions: {
-    enabled: false,
-  },
-  iterationPolicy: {
-    maxIterations: 20,
-    continuity: { enabled: true },
-  },
-  circuitBreaker: {
-    consecutiveFailureThreshold: 3,
-  },
-  mutability: {
-    allowAgentTaskAdd: false,
-  },
-  planRepair: {
-    enabled: true,
-    maxAttemptsPerContext: 2,
-  },
-  collaboration: {
-    enabled: false,
-    secondAgent: {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
-    },
-    negotiationRounds: 3,
-    autonomousResolutionThreshold: "minor",
-  },
-};
 
 function sortTasks(
   tasks: GraphWorkflowTaskDefinition[],
@@ -591,7 +541,7 @@ export default function WorkflowInspectorPanel({
   onTabChange,
   voiceProjectName,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
-  const defaults = globalDefaults ?? SEEDED_DEFAULTS;
+  const defaults = globalDefaults ?? SEEDED_WORKFLOW_DEFAULTS;
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (state) => state.draftDefinition,
   );

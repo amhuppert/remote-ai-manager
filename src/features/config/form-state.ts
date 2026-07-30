@@ -4,56 +4,10 @@ export type FieldPath = string;
 
 export type WorkflowDefaultsBlock = keyof WorkflowDefaults;
 
-export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
-  implementer: {
-    backend: "claude",
-    model: "opus",
-    reasoningEffort: "medium",
-  },
-  contextValidator: {
-    type: "claude",
-    enabled: true,
-    continuity: { enabled: true },
-    agent: {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
-    },
-  },
-  scriptValidator: {
-    enabled: false,
-  },
-  humanApprovalGate: {
-    enabled: false,
-  },
-  askUserQuestions: {
-    enabled: false,
-  },
-  iterationPolicy: {
-    maxIterations: 20,
-    continuity: { enabled: true },
-  },
-  circuitBreaker: {
-    consecutiveFailureThreshold: 3,
-  },
-  mutability: {
-    allowAgentTaskAdd: false,
-  },
-  planRepair: {
-    enabled: true,
-    maxAttemptsPerContext: 2,
-  },
-  collaboration: {
-    enabled: false,
-    secondAgent: {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
-    },
-    negotiationRounds: 3,
-    autonomousResolutionThreshold: "minor",
-  },
-};
+// Re-exported from the cascade resolver — the form renders against the SAME
+// object the server treats as "no config anywhere", so the settings page can
+// never drift from what absent config actually means.
+export { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 export function deepGet(obj: unknown, path: FieldPath): unknown {
   const keys = path.split(".");
@@ -153,6 +107,7 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "pushNotification.triggers.specApprovalRequested",
   "pushNotification.triggers.specApprovalGranted",
   "pushNotification.triggers.specPolicyAdmitted",
+  "pushNotification.triggers.planRepair",
   "compaction.backend",
   "compaction.conversationModel",
   "compaction.messageModel",

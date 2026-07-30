@@ -6,7 +6,10 @@ import type {
   WorkflowCollaborationConfig,
   WorkflowCollaborationConfigOverride,
 } from "@/lib/workflow-graph/collaboration-schemas";
-import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import {
+  DEFAULT_PLAN_REPAIR_POLICY,
+  type GraphWorkflowAgentValidatorConfig,
+} from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowResolvedContext,
@@ -16,7 +19,14 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 export type ResolvedWorkflowConfig = WorkflowDefaults;
 
-const SEEDED_DEFAULTS: WorkflowDefaults = {
+/**
+ * The canonical "no config anywhere" workflow defaults — the cascade
+ * resolver's global-layer fallback. UI surfaces that need a pre-load or
+ * loading-state fallback import THIS object (see form-state,
+ * use-global-defaults, the builder inspector); duplicating the literal lets a
+ * surface silently drift from what absent config actually means.
+ */
+export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   implementer: {
     backend: "claude",
     model: "opus",
@@ -45,10 +55,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
-  planRepair: {
-    enabled: true,
-    maxAttemptsPerContext: 2,
-  },
+  planRepair: DEFAULT_PLAN_REPAIR_POLICY,
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -64,25 +71,25 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
 export function coerceGlobalDefaults(
   globalDefaults: WorkflowDefaults | undefined,
 ): WorkflowDefaults {
-  if (!globalDefaults) return SEEDED_DEFAULTS;
+  if (!globalDefaults) return SEEDED_WORKFLOW_DEFAULTS;
   return {
-    implementer: globalDefaults.implementer ?? SEEDED_DEFAULTS.implementer,
+    implementer: globalDefaults.implementer ?? SEEDED_WORKFLOW_DEFAULTS.implementer,
     contextValidator:
-      globalDefaults.contextValidator ?? SEEDED_DEFAULTS.contextValidator,
+      globalDefaults.contextValidator ?? SEEDED_WORKFLOW_DEFAULTS.contextValidator,
     scriptValidator:
-      globalDefaults.scriptValidator ?? SEEDED_DEFAULTS.scriptValidator,
+      globalDefaults.scriptValidator ?? SEEDED_WORKFLOW_DEFAULTS.scriptValidator,
     humanApprovalGate:
-      globalDefaults.humanApprovalGate ?? SEEDED_DEFAULTS.humanApprovalGate,
+      globalDefaults.humanApprovalGate ?? SEEDED_WORKFLOW_DEFAULTS.humanApprovalGate,
     askUserQuestions:
-      globalDefaults.askUserQuestions ?? SEEDED_DEFAULTS.askUserQuestions,
+      globalDefaults.askUserQuestions ?? SEEDED_WORKFLOW_DEFAULTS.askUserQuestions,
     iterationPolicy:
-      globalDefaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
+      globalDefaults.iterationPolicy ?? SEEDED_WORKFLOW_DEFAULTS.iterationPolicy,
     circuitBreaker:
-      globalDefaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,
-    mutability: globalDefaults.mutability ?? SEEDED_DEFAULTS.mutability,
-    planRepair: globalDefaults.planRepair ?? SEEDED_DEFAULTS.planRepair,
+      globalDefaults.circuitBreaker ?? SEEDED_WORKFLOW_DEFAULTS.circuitBreaker,
+    mutability: globalDefaults.mutability ?? SEEDED_WORKFLOW_DEFAULTS.mutability,
+    planRepair: globalDefaults.planRepair ?? SEEDED_WORKFLOW_DEFAULTS.planRepair,
     collaboration:
-      globalDefaults.collaboration ?? SEEDED_DEFAULTS.collaboration,
+      globalDefaults.collaboration ?? SEEDED_WORKFLOW_DEFAULTS.collaboration,
   };
 }
 

@@ -1,12 +1,40 @@
 import { describe, it, expect } from "vitest";
 import { pushNotificationConfigSchema } from "@/lib/notifications/schemas";
 import {
+  DEFAULT_PLAN_REPAIR_POLICY,
+  graphWorkflowPlanRepairPolicySchema,
+} from "@/lib/workflow-graph/config-schemas";
+import { SEEDED_WORKFLOW_DEFAULTS as canonicalSeededDefaults } from "@/lib/workflow-graph/resolve-config";
+import {
   ALL_FIELD_PATHS,
+  SEEDED_WORKFLOW_DEFAULTS,
   deepGet,
   deepSet,
   deepEqual,
   stripUndefinedDeep,
 } from "./form-state";
+
+// The seeded defaults exist so UI surfaces can render before global config
+// loads. Each surface must share THE SAME OBJECT as the cascade resolver's
+// fallback — a diverging copy silently substitutes stale defaults for real
+// cascade values (identity, not equality, so a re-copied literal fails).
+describe("seeded workflow defaults single source", () => {
+  it("form-state re-exports the canonical resolver defaults", () => {
+    expect(SEEDED_WORKFLOW_DEFAULTS).toBe(canonicalSeededDefaults);
+  });
+
+  it("the planRepair seeded default is the schema-derived policy object", () => {
+    expect(SEEDED_WORKFLOW_DEFAULTS.planRepair).toBe(
+      DEFAULT_PLAN_REPAIR_POLICY,
+    );
+  });
+
+  it("DEFAULT_PLAN_REPAIR_POLICY matches what the schema defaults produce", () => {
+    expect(graphWorkflowPlanRepairPolicySchema.parse({})).toEqual(
+      DEFAULT_PLAN_REPAIR_POLICY,
+    );
+  });
+});
 
 describe("deepGet", () => {
   it("returns nested value by dot path", () => {
