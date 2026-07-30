@@ -8,6 +8,7 @@ import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
+  GraphWorkflowPlanRepairPolicy,
 } from "@/lib/workflow-graph/config-schemas";
 import {
   CircuitBreakerEditor,
@@ -15,6 +16,7 @@ import {
   ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
+  PlanRepairEditor,
 } from "./FieldEditors";
 
 const IMPLEMENTER: GraphWorkflowAgentConfig = {
@@ -37,6 +39,11 @@ const ITERATION: GraphWorkflowIterationPolicy = {
 
 const CIRCUIT_BREAKER: GraphWorkflowCircuitBreakerPolicy = {
   consecutiveFailureThreshold: 3,
+};
+
+const PLAN_REPAIR: GraphWorkflowPlanRepairPolicy = {
+  enabled: true,
+  maxAttemptsPerContext: 2,
 };
 
 const COLLABORATION: WorkflowCollaborationConfig = {
@@ -74,6 +81,8 @@ function AllEditors({ readOnly }: { readOnly?: boolean }) {
     useState<GraphWorkflowCircuitBreakerPolicy>(CIRCUIT_BREAKER);
   const [collaboration, setCollaboration] =
     useState<WorkflowCollaborationConfig>(COLLABORATION);
+  const [planRepair, setPlanRepair] =
+    useState<GraphWorkflowPlanRepairPolicy>(PLAN_REPAIR);
 
   return (
     <Panel>
@@ -95,6 +104,11 @@ function AllEditors({ readOnly }: { readOnly?: boolean }) {
       <CircuitBreakerEditor
         value={circuitBreaker}
         onChange={setCircuitBreaker}
+        readOnly={readOnly}
+      />
+      <PlanRepairEditor
+        value={planRepair}
+        onChange={setPlanRepair}
         readOnly={readOnly}
       />
       <CollaborationEditor

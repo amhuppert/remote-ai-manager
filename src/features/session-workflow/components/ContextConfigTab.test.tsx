@@ -174,6 +174,14 @@ describe("ContextConfigTab — display", () => {
     expect(screen.getByLabelText("Max iterations")).toHaveValue(20);
     expect(screen.getByLabelText("Failure threshold")).toHaveValue(3);
 
+    const repair = screen.getByTestId("config-block-plan-repair");
+    expect(within(repair).getByLabelText("Plan repair enabled")).toBeChecked();
+    expect(within(repair).getByLabelText("Max repair attempts")).toHaveValue(2);
+    // No explicit agent resolved → the supervisor's fallback, shown as such.
+    expect(
+      within(repair).getByLabelText("Custom repair agent"),
+    ).not.toBeChecked();
+
     const collab = screen.getByTestId("config-block-collaboration");
     expect(
       within(collab).getByLabelText("Collaboration enabled"),
@@ -532,6 +540,60 @@ describe("ContextConfigTab — edit payload shape", () => {
         type: "update-context",
         contextId: "context-impl",
         iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
+      },
+    ]);
+  });
+
+  it("composes an update-context op carrying only the changed planRepair policy", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Max repair attempts"), {
+      target: { value: "4" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        planRepair: { enabled: true, maxAttemptsPerContext: 4 },
+      },
+    ]);
+  });
+
+  it("enabling a custom repair agent seeds the supervisor's fallback agent", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Custom repair agent"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        planRepair: {
+          enabled: true,
+          maxAttemptsPerContext: 2,
+          agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+        },
       },
     ]);
   });

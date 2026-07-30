@@ -18,11 +18,13 @@ import type {
   CollaborationAutonomousResolutionThreshold,
   WorkflowCollaborationConfig,
 } from "@/lib/workflow-graph/collaboration-schemas";
-import type {
-  GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
-  GraphWorkflowCircuitBreakerPolicy,
-  GraphWorkflowIterationPolicy,
+import {
+  PLAN_REPAIR_DEFAULT_AGENT,
+  type GraphWorkflowAgentConfig,
+  type GraphWorkflowAgentValidatorConfig,
+  type GraphWorkflowCircuitBreakerPolicy,
+  type GraphWorkflowIterationPolicy,
+  type GraphWorkflowPlanRepairPolicy,
 } from "@/lib/workflow-graph/config-schemas";
 
 // Reusable, feature-agnostic config field editors (docs/design/cc-cli/06 "UI
@@ -495,6 +497,72 @@ export function CircuitBreakerEditor({
           ariaLabel="Failure threshold"
         />
       </FieldRow>
+    </div>
+  );
+}
+
+export function PlanRepairEditor({
+  value,
+  onChange,
+  readOnly,
+}: EditorBaseProps<GraphWorkflowPlanRepairPolicy>): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-sm">
+      <FieldRow
+        label="Enabled"
+        hint="Diagnose retry-exhaustion halts and repair the plan autonomously"
+      >
+        <ToggleControl
+          value={value.enabled}
+          onChange={(next) => onChange({ ...value, enabled: next })}
+          disabled={readOnly}
+          ariaLabel="Plan repair enabled"
+        />
+      </FieldRow>
+      <FieldRow
+        label="Max attempts"
+        hint="Repair rounds per context before the halt sticks"
+      >
+        <NumericInput
+          value={value.maxAttemptsPerContext}
+          min={1}
+          onChange={(next) => {
+            if (next === undefined || next <= 0) return;
+            onChange({ ...value, maxAttemptsPerContext: next });
+          }}
+          disabled={readOnly}
+          ariaLabel="Max repair attempts"
+        />
+      </FieldRow>
+      <FieldRow
+        label="Custom agent"
+        hint={
+          value.agent
+            ? undefined
+            : `Off — uses the default repair agent (${PLAN_REPAIR_DEFAULT_AGENT.model}, ${PLAN_REPAIR_DEFAULT_AGENT.reasoningEffort} reasoning)`
+        }
+      >
+        <ToggleControl
+          value={value.agent !== undefined}
+          onChange={(next) => {
+            if (next) {
+              onChange({ ...value, agent: { ...PLAN_REPAIR_DEFAULT_AGENT } });
+            } else {
+              const { agent: _agent, ...rest } = value;
+              onChange(rest);
+            }
+          }}
+          disabled={readOnly}
+          ariaLabel="Custom repair agent"
+        />
+      </FieldRow>
+      {value.agent ? (
+        <ImplementerEditor
+          value={value.agent}
+          onChange={(agent) => onChange({ ...value, agent })}
+          readOnly={readOnly}
+        />
+      ) : null}
     </div>
   );
 }

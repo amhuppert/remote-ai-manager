@@ -12,6 +12,7 @@ import {
   ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
+  PlanRepairEditor,
   ToggleControl,
 } from "@/components/workflow-config/FieldEditors";
 import { cn } from "@/lib/ui/cn";
@@ -30,6 +31,7 @@ import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
+  GraphWorkflowPlanRepairPolicy,
 } from "@/lib/workflow-graph/config-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 
@@ -108,6 +110,7 @@ interface ConfigDraft {
   mutability: boolean;
   iterationPolicy: GraphWorkflowIterationPolicy;
   circuitBreaker: GraphWorkflowCircuitBreakerPolicy;
+  planRepair: GraphWorkflowPlanRepairPolicy;
   collaboration: WorkflowCollaborationConfig | null;
 }
 
@@ -127,6 +130,7 @@ function toDraft(context: ResolvedContext): ConfigDraft {
     mutability: context.mutability.allowAgentTaskAdd,
     iterationPolicy: context.iterationPolicy,
     circuitBreaker: context.circuitBreaker,
+    planRepair: context.planRepair,
     collaboration: context.collaboration
       ? toFlatCollaboration(context.collaboration)
       : null,
@@ -178,6 +182,9 @@ function diffToUpdateContextOp(
   }
   if (!deepEqualJson(draft.circuitBreaker, base.circuitBreaker)) {
     changes.circuitBreaker = draft.circuitBreaker;
+  }
+  if (!deepEqualJson(draft.planRepair, base.planRepair)) {
+    changes.planRepair = draft.planRepair;
   }
   if (
     draft.collaboration &&
@@ -258,6 +265,11 @@ function rebaseDraft(
       draft.circuitBreaker,
       seedBase.circuitBreaker,
       freshBase.circuitBreaker,
+    ),
+    planRepair: threeWay(
+      draft.planRepair,
+      seedBase.planRepair,
+      freshBase.planRepair,
     ),
     collaboration: threeWay(
       draft.collaboration,
@@ -764,6 +776,14 @@ export default function ContextConfigTab({
             <CircuitBreakerEditor
               value={draft.circuitBreaker}
               onChange={(next) => patch({ circuitBreaker: next })}
+              readOnly={readOnly}
+            />
+          </ConfigBlock>
+
+          <ConfigBlock testId="config-block-plan-repair" label="Plan repair">
+            <PlanRepairEditor
+              value={draft.planRepair}
+              onChange={(next) => patch({ planRepair: next })}
               readOnly={readOnly}
             />
           </ConfigBlock>
