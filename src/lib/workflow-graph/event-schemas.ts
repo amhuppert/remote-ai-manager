@@ -497,6 +497,35 @@ export type GraphWorkflowLiveEditAppliedEvent = z.infer<
   typeof graphWorkflowLiveEditAppliedEventSchema
 >;
 
+// One plan-repair round conclusion (docs/design/cc-cli/08) — emitted when a
+// round settles (or repair is exhausted for the halt, outcome `exhausted`,
+// which is event-only and never a round-log outcome). The audit trail for the
+// inspector Events panel; pushes derive from it in the dispatcher.
+export const graphWorkflowPlanRepairEventSchema = z.object({
+  type: z.literal("graph-workflow-plan-repair"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  haltType: z.enum(["circuit_breaker", "max_iterations"]),
+  attempt: z.number().int().min(0),
+  outcome: z.enum([
+    "repaired",
+    "declined",
+    "failed",
+    "superseded",
+    "exhausted",
+  ]),
+  planningDefect: z.boolean().nullable().default(null),
+  diagnosis: z.string().nullable().default(null),
+  operationCount: z.number().int().min(0).default(0),
+  resumed: z.boolean().default(false),
+  conversationId: z.string().nullable().default(null),
+});
+export type GraphWorkflowPlanRepairEvent = z.infer<
+  typeof graphWorkflowPlanRepairEventSchema
+>;
+
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
@@ -517,6 +546,7 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowLiveEditAppliedEventSchema,
+  graphWorkflowPlanRepairEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 

@@ -42,6 +42,7 @@ function makeConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
         specApprovalRequested: true,
         specApprovalGranted: true,
         specPolicyAdmitted: true,
+        planRepair: true,
       },
     },
     ...overrides,

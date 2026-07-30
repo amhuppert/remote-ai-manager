@@ -3,10 +3,10 @@ import { createWorkflowExecution } from "../test-fixtures";
 import type { GraphWorkflowExecution } from "../schemas";
 import type { MutateActiveResult } from "../execution-repository";
 import type { LiveEditApplyOutcome } from "../live-edit-apply";
+import type { PublishPlanRepairInput } from "../execution-events";
 import {
   createPlanRepairSupervisor,
   type PlanRepairAgentResult,
-  type PlanRepairNotification,
   type PlanRepairSupervisorDeps,
 } from "./supervisor";
 
@@ -42,7 +42,7 @@ function makeHarness(options: HarnessOptions) {
     source: string;
     operationCount: number;
   }[] = [];
-  const notifications: PlanRepairNotification[] = [];
+  const published: PublishPlanRepairInput[] = [];
   const agentCalls: { prompt: string; roundsAtCall: number }[] = [];
   let resumeCalls = 0;
   let pendingAgent: ((result: PlanRepairAgentResult) => void) | null = null;
@@ -103,8 +103,9 @@ function makeHarness(options: HarnessOptions) {
         },
       ]),
     getSessionWorktreePath: () => Promise.resolve("/wt/session"),
-    notify: (notification) => {
-      notifications.push(notification);
+    publishPlanRepairRound: (input) => {
+      published.push(input);
+      return { events: [], pushes: [] };
     },
     now: () => "2026-07-29T01:00:00.000Z",
   };
@@ -113,7 +114,7 @@ function makeHarness(options: HarnessOptions) {
     deps,
     current: () => execution,
     applyRequests,
-    notifications,
+    published,
     agentCalls,
     resumeCalls: () => resumeCalls,
     settlePendingAgent: (result: PlanRepairAgentResult) => {
@@ -191,8 +192,13 @@ describe("plan-repair supervisor", () => {
       conversationId: "conv-repair-1",
     });
     expect(round?.settledAt).not.toBeNull();
-    expect(harness.notifications).toEqual([
-      expect.objectContaining({ kind: "repaired", attempt: 1 }),
+    expect(harness.published).toEqual([
+      expect.objectContaining({
+        outcome: "repaired",
+        attempt: 1,
+        resumed: true,
+        operationCount: 1,
+      }),
     ]);
   });
 
@@ -230,8 +236,8 @@ describe("plan-repair supervisor", () => {
       planningDefect: false,
       resumed: false,
     });
-    expect(harness.notifications).toEqual([
-      expect.objectContaining({ kind: "declined" }),
+    expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "declined", planningDefect: false }),
     ]);
   });
 
@@ -267,8 +273,8 @@ describe("plan-repair supervisor", () => {
     expect(harness.current()?.planRepairRounds.at(-1)).toMatchObject({
       outcome: "failed",
     });
-    expect(harness.notifications).toEqual([
-      expect.objectContaining({ kind: "failed" }),
+    expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "failed" }),
     ]);
   });
 
@@ -368,8 +374,11 @@ describe("plan-repair supervisor", () => {
     expect(harness.current()?.planRepairRounds.at(-1)).toMatchObject({
       outcome: "superseded",
     });
-    // Silent withdrawal: the user is already acting on the execution.
-    expect(harness.notifications).toHaveLength(0);
+    // Audit-only conclusion — the event records it; the publisher owns push
+    // suppression for superseded rounds.
+    expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "superseded" }),
+    ]);
   });
 
   it("populates the halt summary and notifies when attempts are exhausted, without running the agent", async () => {
@@ -420,8 +429,8 @@ describe("plan-repair supervisor", () => {
         ? current.haltReason.summary
         : null,
     ).toContain("exhausted");
-    expect(harness.notifications).toEqual([
-      expect.objectContaining({ kind: "exhausted" }),
+    expect(harness.published).toEqual([
+      expect.objectContaining({ outcome: "exhausted", attempt: 2 }),
     ]);
   });
 
@@ -435,7 +444,7 @@ describe("plan-repair supervisor", () => {
       reason: "not_halted",
     });
     expect(running.agentCalls).toHaveLength(0);
-    expect(running.notifications).toHaveLength(0);
+    expect(running.published).toHaveLength(0);
 
     const none = makeHarness({ initial: null });
     const supervisor2 = createPlanRepairSupervisor(none.deps);

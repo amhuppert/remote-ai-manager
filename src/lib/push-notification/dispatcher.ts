@@ -271,6 +271,20 @@ type GraphWorkflowPushInfo =
       projectName: string;
       sessionName: string;
       contextTitle: string;
+    }
+  | {
+      kind: "plan-repair";
+      projectName: string;
+      sessionName: string;
+      contextTitle?: string;
+      planRepairOutcome?:
+        | "repaired"
+        | "declined"
+        | "failed"
+        | "superseded"
+        | "exhausted";
+      planRepairAttempt?: number;
+      planRepairDiagnosis?: string | null;
     };
 
 export async function pushForGraphWorkflowEvent(
@@ -325,6 +339,42 @@ export async function pushForGraphWorkflowEvent(
         sessionName: info.sessionName,
       });
       return;
+    case "plan-repair": {
+      const attempt =
+        info.planRepairAttempt !== undefined
+          ? ` (attempt ${info.planRepairAttempt})`
+          : "";
+      const diagnosis = info.planRepairDiagnosis?.split("\n")[0] ?? "";
+      switch (info.planRepairOutcome) {
+        case "repaired":
+          await sendPushNotification(config, {
+            trigger: "plan-repaired",
+            title: "Plan repair applied — resumed",
+            message: `Context "${info.contextTitle}"${attempt}: ${diagnosis}`,
+            projectName: info.projectName,
+            sessionName: info.sessionName,
+          });
+          return;
+        case "declined":
+        case "failed":
+        case "exhausted":
+          await sendPushNotification(config, {
+            trigger: "plan-repair-declined",
+            title:
+              info.planRepairOutcome === "exhausted"
+                ? "Plan repair exhausted — human review needed"
+                : "Plan repair declined — still halted",
+            message: `Context "${info.contextTitle}"${attempt}${diagnosis ? `: ${diagnosis}` : ""}`,
+            projectName: info.projectName,
+            sessionName: info.sessionName,
+          });
+          return;
+        default:
+          // Superseded rounds are audit-only and never reach the dispatcher;
+          // an unknown outcome is not worth a push.
+          return;
+      }
+    }
     default:
       assertNever(info);
   }

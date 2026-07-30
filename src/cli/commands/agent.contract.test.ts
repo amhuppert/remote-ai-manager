@@ -67,6 +67,7 @@ function makeConfig(): GlobalConfig {
         specApprovalRequested: true,
         specApprovalGranted: true,
         specPolicyAdmitted: true,
+        planRepair: true,
       },
     },
   };

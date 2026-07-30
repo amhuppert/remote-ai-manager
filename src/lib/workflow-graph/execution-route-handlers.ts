@@ -497,18 +497,7 @@ const planRepairSupervisor = createPlanRepairSupervisor({
   },
   getSessionWorktreePath: async (projectPath, sessionName) =>
     (await defaultGetSession(projectPath, sessionName))?.worktreePath ?? null,
-  // Push wiring lands with the plan-repair event slice; outcomes are already
-  // durable (round log + halt summary) and logged.
-  notify: (notification) => {
-    logger.info("graph-workflow.plan_repair.outcome", {
-      kind: notification.kind,
-      executionId: notification.executionId,
-      contextId: notification.contextId,
-      haltType: notification.haltType,
-      attempt: notification.attempt,
-      operationCount: notification.operationCount,
-    });
-  },
+  publishPlanRepairRound: eventPublisher.publishPlanRepairRound,
   now: () => new Date().toISOString(),
 });
 

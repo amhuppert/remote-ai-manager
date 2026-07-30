@@ -1856,6 +1856,71 @@ describe("graph workflow execution event publisher", () => {
     expect(rows[0]?.occurredAt).toBe("2026-04-02T09:00:00.000Z");
     expect(rows[0]?.event.type).toBe("graph-workflow-live-edit-applied");
   });
+
+  it("derives a plan-repair round event with an outcome push", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-07-30T09:00:00.000Z",
+    });
+
+    const delivery = publisher.publishPlanRepairRound({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      executionId: "execution-7",
+      contextId: "implement",
+      haltType: "circuit_breaker",
+      attempt: 1,
+      outcome: "repaired",
+      planningDefect: true,
+      diagnosis: "AC referenced a removed endpoint",
+      operationCount: 2,
+      resumed: true,
+      conversationId: "conv-repair-1",
+    });
+
+    expect(delivery.events).toHaveLength(1);
+    expect(delivery.events[0]?.event).toMatchObject({
+      type: "graph-workflow-plan-repair",
+      projectName: "repo",
+      executionId: "execution-7",
+      contextId: "implement",
+      outcome: "repaired",
+      attempt: 1,
+      operationCount: 2,
+      resumed: true,
+    });
+    expect(delivery.pushes).toEqual([
+      expect.objectContaining({
+        kind: "plan-repair",
+        planRepairOutcome: "repaired",
+        planRepairAttempt: 1,
+      }),
+    ]);
+  });
+
+  it("suppresses the push for a superseded plan-repair round (audit-only)", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-07-30T09:00:00.000Z",
+    });
+
+    const delivery = publisher.publishPlanRepairRound({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      executionId: "execution-7",
+      contextId: "implement",
+      haltType: "max_iterations",
+      attempt: 1,
+      outcome: "superseded",
+      planningDefect: true,
+      diagnosis: "user resumed underneath the repair",
+      operationCount: 0,
+      resumed: false,
+      conversationId: null,
+    });
+
+    expect(delivery.events).toHaveLength(1);
+    expect(delivery.events[0]?.event.type).toBe("graph-workflow-plan-repair");
+    expect(delivery.pushes).toEqual([]);
+  });
 });
 
 describe("event derivation is pure — delivery is deferred to deliver()", () => {

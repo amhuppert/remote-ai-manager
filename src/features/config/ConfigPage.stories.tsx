@@ -56,6 +56,7 @@ const notificationConfig = {
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
+    planRepair: true,
   },
 };
 

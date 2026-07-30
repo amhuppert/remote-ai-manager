@@ -292,6 +292,31 @@ function normalizeEvent(
       };
     }
 
+    case "graph-workflow-plan-repair": {
+      const title = contextLookup.get(event.contextId) ?? event.contextId;
+      const dot: EventDotKind =
+        event.outcome === "repaired"
+          ? "pass"
+          : event.outcome === "superseded"
+            ? "retry"
+            : "fail";
+      const suffix =
+        event.outcome === "repaired"
+          ? `${event.operationCount} op(s)${event.resumed ? ", resumed" : ""}`
+          : event.outcome;
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot,
+        title: `Plan repair · ${title} (attempt ${event.attempt}, ${suffix})`,
+        detail: event.diagnosis ? (
+          <pre className={eventPreClass}>{event.diagnosis}</pre>
+        ) : null,
+        expandable: null,
+      };
+    }
+
     case "graph-workflow-status": {
       const dot: EventDotKind = (() => {
         switch (event.workflowStatus) {

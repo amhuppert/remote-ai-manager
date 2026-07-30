@@ -19,6 +19,7 @@ import type {
   GraphWorkflowLaneCommitEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowLiveEditAppliedEvent,
+  GraphWorkflowPlanRepairEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSSEEvent,
@@ -175,12 +176,32 @@ export interface GraphWorkflowPushInfo {
     | "workflow-halted"
     | "circuit-breaker"
     | "context-completed"
-    | "approval-pending";
+    | "approval-pending"
+    | "plan-repair";
   projectName: string;
   sessionName: string;
   contextTitle?: string;
   completedContexts?: number;
   totalContexts?: number;
+  /** Plan-repair pushes only (docs/design/cc-cli/08). */
+  planRepairOutcome?: GraphWorkflowPlanRepairEvent["outcome"];
+  planRepairAttempt?: number;
+  planRepairDiagnosis?: string | null;
+}
+
+export interface PublishPlanRepairInput {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+  contextId: string;
+  haltType: GraphWorkflowPlanRepairEvent["haltType"];
+  attempt: number;
+  outcome: GraphWorkflowPlanRepairEvent["outcome"];
+  planningDefect: boolean | null;
+  diagnosis: string | null;
+  operationCount: number;
+  resumed: boolean;
+  conversationId: string | null;
 }
 
 export interface GraphWorkflowExecutionEventPublisherDeps {
@@ -1084,6 +1105,51 @@ export function createGraphWorkflowExecutionEventPublisher(
   }
 
   /**
+   * One plan-repair round conclusion (docs/design/cc-cli/08). Superseded
+   * rounds are audit-only (the user is already acting on the execution), so
+   * they append the event but never push.
+   */
+  function publishPlanRepairRound(
+    input: PublishPlanRepairInput,
+  ): GraphWorkflowEventDelivery {
+    const event: GraphWorkflowPlanRepairEvent = {
+      type: "graph-workflow-plan-repair",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.executionId,
+      contextId: input.contextId,
+      haltType: input.haltType,
+      attempt: input.attempt,
+      outcome: input.outcome,
+      planningDefect: input.planningDefect,
+      diagnosis: input.diagnosis,
+      operationCount: input.operationCount,
+      resumed: input.resumed,
+      conversationId: input.conversationId,
+    };
+
+    const pushes: GraphWorkflowPushInfo[] =
+      input.outcome === "superseded"
+        ? []
+        : [
+            {
+              kind: "plan-repair",
+              projectName: event.projectName,
+              sessionName: input.sessionName,
+              contextTitle: input.contextId,
+              planRepairOutcome: input.outcome,
+              planRepairAttempt: input.attempt,
+              planRepairDiagnosis: input.diagnosis,
+            },
+          ];
+
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes,
+    };
+  }
+
+  /**
    * Perform a derived delivery's external side effects (SSE broadcast + push
    * dispatch) using this publisher's deps. The mutation seam calls this only
    * after the mutation's transaction has committed; the rare standalone caller
@@ -1103,6 +1169,7 @@ export function createGraphWorkflowExecutionEventPublisher(
     publishCharterRegistered,
     publishCharterUpdated,
     publishLiveEditApplied,
+    publishPlanRepairRound,
     deliver,
   };
 }

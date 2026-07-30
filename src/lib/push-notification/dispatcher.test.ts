@@ -34,6 +34,7 @@ const pushConfig: PushNotificationConfig = {
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
+    planRepair: true,
   },
 };
 
@@ -476,6 +477,49 @@ describe("pushForGraphWorkflowEvent", () => {
     });
 
     expect(sendPushNotification).not.toHaveBeenCalled();
+  });
+
+  it("sends a plan-repaired push for a repaired round", async () => {
+    await pushForGraphWorkflowEvent(pushConfig, {
+      kind: "plan-repair",
+      projectName: "proj",
+      sessionName: "sess",
+      contextTitle: "implement",
+      planRepairOutcome: "repaired",
+      planRepairAttempt: 1,
+      planRepairDiagnosis: "AC referenced a removed endpoint\nmore detail",
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "plan-repaired",
+      title: "Plan repair applied — resumed",
+      message:
+        'Context "implement" (attempt 1): AC referenced a removed endpoint',
+      projectName: "proj",
+      sessionName: "sess",
+    });
+  });
+
+  it("sends a plan-repair-declined push for declined and exhausted outcomes", async () => {
+    await pushForGraphWorkflowEvent(pushConfig, {
+      kind: "plan-repair",
+      projectName: "proj",
+      sessionName: "sess",
+      contextTitle: "implement",
+      planRepairOutcome: "exhausted",
+      planRepairAttempt: 2,
+      planRepairDiagnosis: null,
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "plan-repair-declined",
+      title: "Plan repair exhausted — human review needed",
+      message: 'Context "implement" (attempt 2)',
+      projectName: "proj",
+      sessionName: "sess",
+    });
   });
 });
 

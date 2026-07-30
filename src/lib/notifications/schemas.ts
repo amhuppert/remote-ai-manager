@@ -16,6 +16,7 @@ const pushTriggerSchema = z.object({
   specApprovalRequested: z.boolean().default(true),
   specApprovalGranted: z.boolean().default(true),
   specPolicyAdmitted: z.boolean().default(true),
+  planRepair: z.boolean().default(true),
 });
 
 export const pushNotificationConfigSchema = z.object({
@@ -32,6 +33,7 @@ export const pushNotificationConfigSchema = z.object({
     specApprovalRequested: true,
     specApprovalGranted: true,
     specPolicyAdmitted: true,
+    planRepair: true,
   }),
 });
 export type PushNotificationConfig = z.infer<
@@ -47,6 +49,7 @@ const rawPushTriggerSchema = z.object({
   specApprovalRequested: z.boolean().optional(),
   specApprovalGranted: z.boolean().optional(),
   specPolicyAdmitted: z.boolean().optional(),
+  planRepair: z.boolean().optional(),
 });
 
 export const rawPushNotificationConfigSchema = z.object({

@@ -19,6 +19,10 @@ import type {
   GraphWorkflowExecution,
   PlanRepairRound,
 } from "../schemas";
+import type {
+  GraphWorkflowEventDelivery,
+  PublishPlanRepairInput,
+} from "../execution-events";
 import type { MutateActiveResult } from "../execution-repository";
 import type {
   LiveEditApplyOutcome,
@@ -32,10 +36,7 @@ import {
   validatePlanRepairOperations,
   type PlanRepairVerdict,
 } from "./schemas";
-import {
-  evaluatePlanRepairTrigger,
-  type PlanRepairHaltType,
-} from "./trigger";
+import { evaluatePlanRepairTrigger } from "./trigger";
 
 const logger = createLogger("workflow.plan-repair");
 
@@ -69,17 +70,11 @@ export type PlanRepairAgentResult =
     }
   | { kind: "error"; message: string; conversationId: string };
 
-export interface PlanRepairNotification {
-  kind: "repaired" | "declined" | "failed" | "exhausted";
-  projectPath: string;
-  sessionName: string;
-  executionId: string;
-  contextId: string;
-  haltType: PlanRepairHaltType;
-  attempt: number;
-  diagnosis: string | null;
-  operationCount: number;
-}
+/** Round-conclusion payload emitted as a `graph-workflow-plan-repair` event. */
+export type PlanRepairRoundConclusion = Omit<
+  PublishPlanRepairInput,
+  "projectPath" | "sessionName" | "executionId"
+>;
 
 export interface PlanRepairSupervisorDeps {
   getActiveExecution(
@@ -116,8 +111,14 @@ export interface PlanRepairSupervisorDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<string | null>;
-  /** Outcome push notification; best-effort (failures are logged, not thrown). */
-  notify(notification: PlanRepairNotification): void | Promise<void>;
+  /**
+   * Derive the round-conclusion event (+ its push descriptors). Appended and
+   * broadcast through the serialized mutation, like every other graph
+   * workflow event; the dispatcher derives the outcome pushes from it.
+   */
+  publishPlanRepairRound(
+    input: PublishPlanRepairInput,
+  ): GraphWorkflowEventDelivery;
   now(): string;
 }
 
@@ -260,16 +261,16 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         contextId,
         "Plan repair failed: no session worktree available for the repair agent.",
       );
-      await notifySafely({
-        kind: "failed",
-        projectPath,
-        sessionName,
-        executionId,
+      await emitRound(input, executionId, {
         contextId,
         haltType,
         attempt,
-        diagnosis: "no session worktree",
+        outcome: "failed",
+        planningDefect: null,
+        diagnosis: "plan repair could not resolve the session worktree",
         operationCount: 0,
+        resumed: false,
+        conversationId: null,
       });
       return { ran: true, outcome: "failed", seq: round.seq };
     }
@@ -321,16 +322,16 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         contextId,
         `Plan repair attempt ${attempt} failed: ${agentResult.message}`,
       );
-      await notifySafely({
-        kind: "failed",
-        projectPath,
-        sessionName,
-        executionId,
+      await emitRound(input, executionId, {
         contextId,
         haltType,
         attempt,
+        outcome: "failed",
+        planningDefect: null,
         diagnosis: agentResult.message,
         operationCount: 0,
+        resumed: false,
+        conversationId: agentResult.conversationId,
       });
       return { ran: true, outcome: "failed", seq: round.seq };
     }
@@ -356,16 +357,16 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         contextId,
         `Plan repair declined (attempt ${attempt}): ${verdict.diagnosis}`,
       );
-      await notifySafely({
-        kind: "declined",
-        projectPath,
-        sessionName,
-        executionId,
+      await emitRound(input, executionId, {
         contextId,
         haltType,
         attempt,
+        outcome: "declined",
+        planningDefect: verdict.planningDefect,
         diagnosis: verdict.diagnosis,
         operationCount: 0,
+        resumed: false,
+        conversationId: agentResult.conversationId,
       });
       return { ran: true, outcome: "declined", seq: round.seq };
     }
@@ -392,16 +393,16 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         contextId,
         `Plan repair attempt ${attempt} produced disallowed operations: ${issueSummary}`,
       );
-      await notifySafely({
-        kind: "failed",
-        projectPath,
-        sessionName,
-        executionId,
+      await emitRound(input, executionId, {
         contextId,
         haltType,
         attempt,
+        outcome: "failed",
+        planningDefect: true,
         diagnosis: verdict.diagnosis,
         operationCount: verdict.operations.length,
+        resumed: false,
+        conversationId: agentResult.conversationId,
       });
       return { ran: true, outcome: "failed", seq: round.seq };
     }
@@ -455,6 +456,18 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         diagnosis: verdict.diagnosis,
         conversationId: agentResult.conversationId,
       });
+      // Audit-only conclusion — the publisher suppresses the push.
+      await emitRound(input, executionId, {
+        contextId,
+        haltType,
+        attempt,
+        outcome: "superseded",
+        planningDefect: true,
+        diagnosis: verdict.diagnosis,
+        operationCount: 0,
+        resumed: false,
+        conversationId: agentResult.conversationId,
+      });
       return { ran: true, outcome: "superseded", seq: round.seq };
     }
 
@@ -480,16 +493,16 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         contextId,
         `Plan repair attempt ${attempt} was rejected by the live-edit gates: ${failure}`,
       );
-      await notifySafely({
-        kind: "failed",
-        projectPath,
-        sessionName,
-        executionId,
+      await emitRound(input, executionId, {
         contextId,
         haltType,
         attempt,
+        outcome: "failed",
+        planningDefect: true,
         diagnosis: verdict.diagnosis,
         operationCount: validated.operations.length,
+        resumed: false,
+        conversationId: agentResult.conversationId,
       });
       return { ran: true, outcome: "failed", seq: round.seq };
     }
@@ -529,16 +542,16 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       logger.info("plan_repair.resumed", { executionId, contextId, attempt });
     }
 
-    await notifySafely({
-      kind: "repaired",
-      projectPath,
-      sessionName,
-      executionId,
+    await emitRound(input, executionId, {
       contextId,
       haltType,
       attempt,
+      outcome: "repaired",
+      planningDefect: true,
       diagnosis: verdict.diagnosis,
       operationCount: validated.operations.length,
+      resumed,
+      conversationId: agentResult.conversationId,
     });
     return { ran: true, outcome: "repaired", seq: round.seq };
   }
@@ -628,28 +641,50 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       contextId,
       `Plan repair attempts exhausted (${attempts} round(s) for this context). Human review required — see the plan-repair rounds for the diagnoses.`,
     );
-    await notifySafely({
-      kind: "exhausted",
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      executionId: execution.id,
+    // Event-only outcome (`exhausted` never appears in the round log): the
+    // audit row + warning push for "repair has given up on this halt".
+    await emitRound(input, execution.id, {
       contextId,
       haltType: haltReason.type,
       attempt: attempts,
+      outcome: "exhausted",
+      planningDefect: null,
       diagnosis: null,
       operationCount: 0,
+      resumed: false,
+      conversationId: null,
     });
   }
 
-  async function notifySafely(
-    notification: PlanRepairNotification,
+  /**
+   * Append + broadcast the round-conclusion event through the serialized
+   * mutation (the repository persists delivery events atomically with the
+   * execution write and dispatches pushes post-commit). Best-effort: the round
+   * log is the durable record; a failed emit never fails the run.
+   */
+  async function emitRound(
+    input: MaybeRunPlanRepairInput,
+    executionId: string,
+    conclusion: PlanRepairRoundConclusion,
   ): Promise<void> {
     try {
-      await deps.notify(notification);
+      await deps.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (current) => ({
+          execution: current,
+          ...deps.publishPlanRepairRound({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            executionId,
+            ...conclusion,
+          }),
+        }),
+      );
     } catch (error) {
-      logger.warn("plan_repair.notify_failed", {
-        executionId: notification.executionId,
-        kind: notification.kind,
+      logger.warn("plan_repair.event_emit_failed", {
+        executionId,
+        outcome: conclusion.outcome,
         error: getErrorMessage(error),
       });
     }

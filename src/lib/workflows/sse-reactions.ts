@@ -33,6 +33,7 @@ import {
   graphWorkflowLiveEditAppliedEventSchema,
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
+  graphWorkflowPlanRepairEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
   graphWorkflowTaskStatusEventSchema,
@@ -171,6 +172,14 @@ export function registerWorkflowSseReactions(
     queryClient,
     "graph-workflow-live-edit-applied",
     graphWorkflowLiveEditAppliedEventSchema,
+  );
+  // A plan-repair round conclusion changes the round log, the halt summary,
+  // and (for repairs) the working definition — refetch detail + event log.
+  registerDetailAndEventsInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-plan-repair",
+    graphWorkflowPlanRepairEventSchema,
   );
 
   registerDetailInvalidation(
