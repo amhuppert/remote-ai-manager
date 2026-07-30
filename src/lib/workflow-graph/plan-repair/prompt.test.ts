@@ -81,9 +81,11 @@ describe("buildPlanRepairPrompt", () => {
     // Decision framework + guardrail
     expect(prompt).toContain("Do not weaken acceptance criteria");
     expect(prompt).toContain("planningDefect");
-    // Op vocabulary
-    expect(prompt).toContain("amend-charter");
-    expect(prompt).toContain("update-context");
+    // Op vocabulary with EXACT JSON shapes (live-proof regression: the agent
+    // emitted typeless operations when only prose named the vocabulary).
+    expect(prompt).toContain('"type": "amend-charter"');
+    expect(prompt).toContain('"type": "update-context"');
+    expect(prompt).toContain('"type": "update-task"');
   });
 
   it("caps the validation history at the five most recent verdicts", () => {

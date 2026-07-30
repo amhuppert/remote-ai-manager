@@ -1,9 +1,27 @@
 # 08 — Plan-Repair Agent for Retry-Exhaustion Halts (roadmap D1)
 
-Status: **implemented, slices 1–6** (2026-07-30, session `csm/plan-workflow-changes-b4e0f6`,
-commits `4b259115`…`10356613`); slice 7 (the F6 live proof) pending. All six product forks
-locked by Alex 2026-07-29 (see Decisions). Designed against the session branch containing
-doc 07 (`284dc20c`), whose amendment seam this deliverable consumes and live-proves.
+Status: **implemented and live-proven** (2026-07-30, session `csm/plan-workflow-changes-b4e0f6`).
+All six product forks locked by Alex 2026-07-29 (see Decisions). Designed against the session
+branch containing doc 07 (`284dc20c`), whose amendment seam this deliverable consumes.
+
+**F6 live proof (2026-07-30, dev instance, scratch project `plc-test-lab`):** a deterministic
+trap (premerge gate rejecting the exact marker filename the AC demanded, breaker threshold 1)
+produced the full autonomous loop live — breaker trip → supervisor trigger → repair agent
+(sonnet/high, ephemeral session-worktree conversation) → root-cause diagnosis (it read the
+premerge script, the execution worktree, and git history, and correctly classified
+"contradictory acceptance criterion, not a failed implementation") → 2 allowlisted ops applied
+through the shared core (`source: "plan-repair"`, liveRevision 1→2) → autonomous resume →
+implementer executed the amended plan → execution completed. Round log, halt summary,
+`graph-workflow-plan-repair` events, and the live-edit event all verified in the dev DB.
+The proof also caught and fixed one real defect: a fully loose verdict schema let the model
+emit typeless operations — `operations[].type` is now schema-required (backend-enforced) and
+the prompt carries exact op JSON shapes. The doc 07 `amend-charter` branch (not chosen by the
+repair agent, whose fix correctly targeted AC/tasks) was closed with a direct live exercise on
+a paused execution: amendment applied, log rendered in `live get --charter`, session
+`charter.md` pointer copy rewritten. Earlier probe runs are themselves evidence for D1's
+premise: LLM implementers and validators repeatedly rationalized around purely LLM-judged
+contradictions (charitable validator passes, self-serving marker renames) — only the
+deterministic gate held the line, which is exactly the failure mode plan repair exists for.
 
 ## Problem
 

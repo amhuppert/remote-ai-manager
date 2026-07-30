@@ -18,9 +18,12 @@ import {
 export const planRepairVerdictSchema = z.object({
   planningDefect: z.boolean(),
   diagnosis: z.string().min(1),
-  // Loose at this layer: each entry is re-parsed by
-  // `validatePlanRepairOperations` against the real op union.
-  operations: z.array(z.record(z.string(), z.unknown())).default([]),
+  // `type` is required HERE (not just at the allowlist) so the backend's
+  // native structured output forces well-shaped ops out of the model —
+  // the first live proof produced typeless operations under a fully loose
+  // schema. Each entry is still re-parsed by `validatePlanRepairOperations`
+  // against the real op union.
+  operations: z.array(z.looseObject({ type: z.string().min(1) })).default([]),
 });
 export type PlanRepairVerdict = z.infer<typeof planRepairVerdictSchema>;
 

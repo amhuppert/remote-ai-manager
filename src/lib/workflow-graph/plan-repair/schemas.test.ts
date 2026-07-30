@@ -25,6 +25,30 @@ describe("planRepairVerdictSchema", () => {
     ).toBe(false);
   });
 
+  it("rejects an operation entry without a type field at the verdict layer", () => {
+    // The backend's native structured output enforces the generated JSON
+    // schema, so requiring `type` here makes the model produce well-shaped
+    // ops instead of failing later at the allowlist (live-proof regression).
+    expect(
+      planRepairVerdictSchema.safeParse({
+        planningDefect: true,
+        diagnosis: "fix",
+        operations: [{ contextId: "ctx-1", acceptanceCriteria: "x" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("generates a JSON schema whose operation items require type", () => {
+    const schema = PLAN_REPAIR_VERDICT_JSON_SCHEMA as {
+      properties?: {
+        operations?: {
+          items?: { required?: string[] };
+        };
+      };
+    };
+    expect(schema.properties?.operations?.items?.required).toContain("type");
+  });
+
   it("exports a generated JSON schema for the structured-output gate", () => {
     const schema = PLAN_REPAIR_VERDICT_JSON_SCHEMA as {
       properties?: Record<string, unknown>;
