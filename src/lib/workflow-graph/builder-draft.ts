@@ -19,6 +19,7 @@ export type ContextOverrideBlock =
   | "mutability"
   | "circuitBreaker"
   | "iterationPolicy"
+  | "planRepair"
   | "collaboration";
 
 export type WorkflowConfigBlock =

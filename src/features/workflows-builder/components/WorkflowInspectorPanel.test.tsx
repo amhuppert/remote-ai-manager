@@ -151,13 +151,13 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly nine InspectorConfigBlocks and no AC, tasks, or delete", () => {
+  it("renders exactly ten InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(9);
+    expect(blocks).toHaveLength(10);
     const labels = Array.from(
       container.querySelectorAll("[data-section-label]"),
     ).map((el) => el.textContent);
@@ -170,6 +170,7 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
       "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
+      "Plan repair",
       "Agent task add",
     ]);
 
@@ -390,7 +391,7 @@ describe("WorkflowInspectorPanel — launch parameters editor", () => {
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC read view, nine blocks, tasks editor, and delete button", () => {
+  it("renders AC read view, ten blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
@@ -399,7 +400,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       screen.getByRole("button", { name: "Edit acceptance criteria" }),
     ).toBeInTheDocument();
     const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(9);
+    expect(blocks).toHaveLength(10);
 
     expect(container.querySelector('[data-section="tasks"]')).not.toBeNull();
     expect(
@@ -528,6 +529,35 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx2?.iterationPolicy).toBeUndefined();
+  });
+
+  it("override/reset on context plan repair writes and clears context.planRepair", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = expandBlock(findBlockByLabel(container, "Plan repair")!);
+    expect(block.getAttribute("data-source")).toBe("global");
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Override")!,
+    );
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    // The override snapshots the effective (inherited) policy.
+    expect(ctx?.planRepair).toEqual({ enabled: true, maxAttemptsPerContext: 2 });
+
+    const blockAfter = findBlockByLabel(container, "Plan repair")!;
+    fireEvent.click(
+      footButtons(blockAfter).find(
+        (b) => b.textContent === "Reset to inherit",
+      )!,
+    );
+    const ctx2 = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx2?.planRepair).toBeUndefined();
   });
 
   it("creates each context gate override", () => {

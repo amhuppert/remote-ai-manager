@@ -147,6 +147,29 @@ describe("workflow builder draft helpers", () => {
     });
   });
 
+  it("round-trips a planRepair context override through set/clear", () => {
+    const overridden = setContextBlockOverride(
+      createWorkflowDefinition(),
+      "context-plan",
+      "planRepair",
+      { enabled: false, maxAttemptsPerContext: 1 },
+    );
+    expect(
+      overridden.executionContexts.find((c) => c.id === "context-plan")
+        ?.planRepair,
+    ).toEqual({ enabled: false, maxAttemptsPerContext: 1 });
+
+    const cleared = clearContextBlockOverride(
+      overridden,
+      "context-plan",
+      "planRepair",
+    );
+    expect(
+      cleared.executionContexts.find((c) => c.id === "context-plan")
+        ?.planRepair,
+    ).toBeUndefined();
+  });
+
   it("clearContextBlockOverride deletes the named block so it inherits", () => {
     const overridden = setContextBlockOverride(
       createWorkflowDefinition(),

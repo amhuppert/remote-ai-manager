@@ -40,6 +40,7 @@ import type {
   GraphWorkflowHumanApprovalGateConfig,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
+  GraphWorkflowPlanRepairPolicy,
   GraphWorkflowScriptValidatorConfig,
 } from "@/lib/workflow-graph/config-schemas";
 import type {
@@ -64,6 +65,7 @@ import {
   ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
+  PlanRepairEditor,
 } from "@/components/workflow-config/FieldEditors";
 import InspectorFocusSheet from "./InspectorFocusSheet";
 import {
@@ -273,6 +275,14 @@ function summarizeCollaboration(config: WorkflowCollaborationConfig): string {
   return config.enabled ? "on" : "off";
 }
 
+function summarizePlanRepair(policy: GraphWorkflowPlanRepairPolicy): string {
+  if (!policy.enabled) return "off";
+  const agent = policy.agent
+    ? `${policy.agent.model} agent`
+    : "default agent";
+  return `on · ${policy.maxAttemptsPerContext}/context · ${agent}`;
+}
+
 type ResolvedContextCascade = {
   implementer: {
     value: GraphWorkflowAgentConfig;
@@ -308,6 +318,10 @@ type ResolvedContextCascade = {
     value: GraphWorkflowMutabilityPolicy;
     source: InspectorConfigBlockSource;
   };
+  planRepair: {
+    value: GraphWorkflowPlanRepairPolicy;
+    source: InspectorConfigBlockSource;
+  };
   collaboration: {
     value: WorkflowCollaborationConfig;
     source: InspectorConfigBlockSource;
@@ -327,7 +341,8 @@ function computeContextCascade(
       | "askUserQuestions"
       | "iterationPolicy"
       | "circuitBreaker"
-      | "mutability",
+      | "mutability"
+      | "planRepair",
   >(key: K): ResolvedContextCascade[K] {
     const contextOverride = context[key];
     if (contextOverride !== undefined) {
@@ -378,6 +393,7 @@ function computeContextCascade(
     iterationPolicy: resolvePlain("iterationPolicy"),
     circuitBreaker: resolvePlain("circuitBreaker"),
     mutability: resolvePlain("mutability"),
+    planRepair: resolvePlain("planRepair"),
     collaboration: resolveContextCollaboration(
       context.collaboration,
       workflowConfig.collaboration,
@@ -398,6 +414,7 @@ function contextOverrideCount(cascade: ResolvedContextCascade): number {
     cascade.iterationPolicy.source,
     cascade.circuitBreaker.source,
     cascade.mutability.source,
+    cascade.planRepair.source,
     cascade.collaboration.source,
   ];
   return sources.filter(
@@ -486,6 +503,10 @@ type WorkflowCascade = {
     value: GraphWorkflowMutabilityPolicy;
     source: "global" | "context-override";
   };
+  planRepair: {
+    value: GraphWorkflowPlanRepairPolicy;
+    source: "global" | "context-override";
+  };
   collaboration: {
     value: WorkflowCollaborationConfig;
     source: "global" | "context-override";
@@ -521,6 +542,7 @@ function computeWorkflowCascade(
     iterationPolicy: resolve("iterationPolicy"),
     circuitBreaker: resolve("circuitBreaker"),
     mutability: resolve("mutability"),
+    planRepair: resolve("planRepair"),
     collaboration: resolveWorkflowCollaboration(
       workflowConfig.collaboration,
       globalDefaults.collaboration,
@@ -1021,6 +1043,22 @@ function WorkflowTabBody({
             />
           </InspectorConfigBlock>
 
+          <InspectorConfigBlock
+            label="Plan repair"
+            summary={summarizePlanRepair(cascade.planRepair.value)}
+            source={cascade.planRepair.source}
+            onOverride={() =>
+              onSetOverride("planRepair", deepClone(cascade.planRepair.value))
+            }
+            onReset={() => onClearOverride("planRepair")}
+          >
+            <PlanRepairEditor
+              value={cascade.planRepair.value}
+              onChange={(next) => onSetOverride("planRepair", next)}
+              readOnly={!isWorkflowOverride(cascade.planRepair.source)}
+            />
+          </InspectorConfigBlock>
+
           <AgentTaskAddBlock
             ariaLabel="Allow agent task add"
             cascade={cascade.mutability}
@@ -1042,6 +1080,7 @@ type ContextBlock =
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability"
+  | "planRepair"
   | "collaboration";
 
 function ContextTabBody({
@@ -1330,6 +1369,25 @@ function ContextTabBody({
               value={cascade.circuitBreaker.value}
               onChange={(next) => onSetContextOverride("circuitBreaker", next)}
               readOnly={cascade.circuitBreaker.source !== "context-override"}
+            />
+          </InspectorConfigBlock>
+
+          <InspectorConfigBlock
+            label="Plan repair"
+            summary={summarizePlanRepair(cascade.planRepair.value)}
+            source={cascade.planRepair.source}
+            onOverride={() =>
+              onSetContextOverride(
+                "planRepair",
+                deepClone(cascade.planRepair.value),
+              )
+            }
+            onReset={() => onClearContextOverride("planRepair")}
+          >
+            <PlanRepairEditor
+              value={cascade.planRepair.value}
+              onChange={(next) => onSetContextOverride("planRepair", next)}
+              readOnly={cascade.planRepair.source !== "context-override"}
             />
           </InspectorConfigBlock>
 
