@@ -46,6 +46,7 @@ export const RUNTIME_TIER_KEYS = [
   "definitionApproval",
   "liveRevision",
   "charterAmendments",
+  "planRepairRounds",
   "loopEpoch",
   "activeContextIds",
   "contextStates",

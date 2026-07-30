@@ -47,6 +47,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     collaboration: {
       enabled: { value: true, source: "global" },
       secondAgent: {

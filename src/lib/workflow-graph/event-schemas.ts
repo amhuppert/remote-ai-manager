@@ -480,7 +480,9 @@ export type GraphWorkflowCharterUpdatedEvent = z.infer<
 // so produce no status/diff event — this carries the `liveRevision` bump and
 // the affected contexts so the UI invalidates and refetches. `source` records
 // which entry point applied the batch; `lane-agent` is server-derived on the
-// lane route only (never accepted on the runtime-edits endpoint, D15).
+// lane route only (never accepted on the runtime-edits endpoint, D15), and
+// `plan-repair` is server-derived by the D1 repair supervisor
+// (docs/design/cc-cli/08) — neither is client-claimable.
 export const graphWorkflowLiveEditAppliedEventSchema = z.object({
   type: z.literal("graph-workflow-live-edit-applied"),
   projectName: z.string(),
@@ -489,7 +491,7 @@ export const graphWorkflowLiveEditAppliedEventSchema = z.object({
   liveRevision: z.number().int().min(1),
   operationCount: z.number().int().min(1),
   affectedContextIds: z.array(z.string()),
-  source: z.enum(["cli", "ui", "lane-agent"]),
+  source: z.enum(["cli", "ui", "lane-agent", "plan-repair"]),
 });
 export type GraphWorkflowLiveEditAppliedEvent = z.infer<
   typeof graphWorkflowLiveEditAppliedEventSchema

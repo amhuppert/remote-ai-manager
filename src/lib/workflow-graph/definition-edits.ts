@@ -198,6 +198,7 @@ function definitionEditTouchedPaths(
         "iterationPolicy",
         "circuitBreaker",
         "mutability",
+        "planRepair",
         "collaboration",
         "humanApprovalGate",
         "askUserQuestions",
@@ -218,6 +219,7 @@ function definitionEditTouchedPaths(
           "mutability",
           "circuitBreaker",
           "iterationPolicy",
+          "planRepair",
           "collaboration",
           "humanApprovalGate",
           "askUserQuestions",
@@ -363,6 +365,7 @@ function applyOperation(
       applyOptionalBlock(config, "iterationPolicy", operation.iterationPolicy);
       applyOptionalBlock(config, "circuitBreaker", operation.circuitBreaker);
       applyOptionalBlock(config, "mutability", operation.mutability);
+      applyOptionalBlock(config, "planRepair", operation.planRepair);
       applyOptionalBlock(config, "collaboration", operation.collaboration);
       applyOptionalBlock(
         config,
@@ -410,6 +413,9 @@ function applyOperation(
         ...(operation.iterationPolicy !== undefined
           ? { iterationPolicy: operation.iterationPolicy }
           : {}),
+        ...(operation.planRepair !== undefined
+          ? { planRepair: operation.planRepair }
+          : {}),
         ...(operation.collaboration !== undefined
           ? { collaboration: operation.collaboration }
           : {}),
@@ -448,6 +454,7 @@ function applyOperation(
       applyOptionalBlock(context, "mutability", operation.mutability);
       applyOptionalBlock(context, "circuitBreaker", operation.circuitBreaker);
       applyOptionalBlock(context, "iterationPolicy", operation.iterationPolicy);
+      applyOptionalBlock(context, "planRepair", operation.planRepair);
       applyOptionalBlock(context, "collaboration", operation.collaboration);
       applyOptionalBlock(
         context,

@@ -27,6 +27,29 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         fieldsChanged: ["invariants", "mission"],
         charterHash: "hash-after-amendment-1",
       },
+      {
+        seq: 2,
+        amendedAt: "2026-01-02T03:30:00.000Z",
+        source: "plan-repair",
+        rationale: "Repair round 1 corrected the false endpoint assumption",
+        fieldsChanged: ["mission"],
+        charterHash: "hash-after-amendment-2",
+      },
+    ],
+    planRepairRounds: [
+      {
+        seq: 1,
+        contextId: "ctx-1",
+        haltType: "circuit_breaker",
+        startedAt: "2026-01-02T03:10:00.000Z",
+        settledAt: "2026-01-02T03:20:00.000Z",
+        outcome: "repaired",
+        planningDefect: true,
+        diagnosis: "AC referenced an endpoint removed in revision 2",
+        operationCount: 3,
+        resumed: true,
+        conversationId: "conv-plan-repair-1",
+      },
     ],
     loopEpoch: 2,
     boundInputs: {
@@ -85,6 +108,15 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           iterationPolicy: {
             maxIterations: 7,
             continuity: { enabled: false, contextLimitTokens: 90_000 },
+          },
+          planRepair: {
+            enabled: false,
+            maxAttemptsPerContext: 3,
+            agent: {
+              backend: "codex",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
+            },
           },
           collaboration: {
             enabled: { value: true, source: "per-node" },
@@ -312,6 +344,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
       type: "max_iterations",
       contextId: "ctx-1",
       iterationCount: 7,
+      summary: "plan repair declined: failures are implementation-side",
     },
     pendingHaltReason: {
       type: "recovery_error",

@@ -9,6 +9,7 @@ import {
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
+  graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import {
@@ -55,6 +56,7 @@ const definitionEditAddContextConfigShape = {
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
@@ -71,6 +73,7 @@ const definitionEditUpdateContextConfigShape = {
   mutability: graphWorkflowMutabilityPolicySchema.nullable().optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.nullable().optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.nullable().optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.nullable().optional(),
   collaboration: workflowCollaborationConfigOverrideSchema
     .nullable()
     .optional(),
@@ -96,6 +99,7 @@ const definitionEditWorkflowConfigShape = {
   iterationPolicy: graphWorkflowIterationPolicySchema.nullable().optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.nullable().optional(),
   mutability: graphWorkflowMutabilityPolicySchema.nullable().optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.nullable().optional(),
   collaboration: workflowCollaborationConfigOverrideSchema
     .nullable()
     .optional(),
@@ -276,6 +280,7 @@ const liveEditContextConfigShape = {
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: resolvedCollaborationConfigSchema.optional(),
 };
 

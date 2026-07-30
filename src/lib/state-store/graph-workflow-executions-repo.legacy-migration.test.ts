@@ -113,6 +113,7 @@ function buildCleanExecution(): GraphWorkflowExecution {
     seedDefinitionRevision: 1,
     liveRevision: 1,
     charterAmendments: [],
+    planRepairRounds: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",

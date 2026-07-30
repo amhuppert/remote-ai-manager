@@ -21,6 +21,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },
+  planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -52,6 +53,7 @@ function resolvedContext(
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     ...overrides,
   };
 }

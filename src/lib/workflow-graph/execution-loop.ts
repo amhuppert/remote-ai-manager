@@ -1683,6 +1683,7 @@ export function createGraphWorkflowExecutionLoop(
               type: "max_iterations",
               contextId,
               iterationCount: contextState.iterationCount,
+              summary: null,
             });
             return;
           }

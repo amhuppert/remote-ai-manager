@@ -50,6 +50,7 @@ const maxIterations: GraphWorkflowHaltReason = {
   type: "max_iterations",
   contextId: "context-plan",
   iterationCount: 5,
+  summary: null,
 };
 
 const recoveryError: GraphWorkflowHaltReason = {

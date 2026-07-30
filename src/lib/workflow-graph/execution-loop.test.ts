@@ -106,6 +106,7 @@ function createRunningExecution(
     seedDefinitionRevision: 1,
     liveRevision: 1,
     charterAmendments: [],
+    planRepairRounds: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -742,6 +743,7 @@ describe("execution loop", () => {
       type: "max_iterations",
       contextId: "ctx-1",
       iterationCount: 2,
+      summary: null,
     });
     expect(harness.recordPendingHaltReasonSpy).toHaveBeenCalledWith({
       projectPath: "/repo",
@@ -750,6 +752,7 @@ describe("execution loop", () => {
         type: "max_iterations",
         contextId: "ctx-1",
         iterationCount: 2,
+        summary: null,
       },
     });
     expect(harness.drainAndHaltSpy).toHaveBeenCalled();
@@ -5335,6 +5338,7 @@ describe("execution loop", () => {
         type: "max_iterations",
         contextId: "ctx-1",
         iterationCount: 2,
+        summary: null,
       });
       // The second park is never resolved: the iteration limit halts the
       // context before the gate wait re-enters.

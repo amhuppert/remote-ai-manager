@@ -254,6 +254,7 @@ describe("projectLiveOutline — header", () => {
           type: "max_iterations",
           contextId: "impl",
           iterationCount: 20,
+          summary: null,
         },
       }),
       { kind: "outline" },

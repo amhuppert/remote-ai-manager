@@ -83,6 +83,15 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
       },
       circuitBreaker: { consecutiveFailureThreshold: 4 },
       mutability: { allowAgentTaskAdd: true },
+      planRepair: {
+        enabled: false,
+        maxAttemptsPerContext: 3,
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      },
       collaboration: {
         enabled: true,
         secondAgent: {
@@ -164,6 +173,15 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         iterationPolicy: {
           maxIterations: 7,
           continuity: { enabled: false, contextLimitTokens: 90_000 },
+        },
+        planRepair: {
+          enabled: false,
+          maxAttemptsPerContext: 4,
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "low",
+          },
         },
         collaboration: {
           enabled: true,

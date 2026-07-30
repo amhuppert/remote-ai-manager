@@ -102,6 +102,7 @@ async function defaultBuildLiveEditDeps(
     mutability: resolved.mutability,
     circuitBreaker: resolved.circuitBreaker,
     iterationPolicy: resolved.iterationPolicy,
+    planRepair: resolved.planRepair,
     collaboration,
   };
 

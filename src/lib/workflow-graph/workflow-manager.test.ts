@@ -893,6 +893,7 @@ describe("graph workflow manager", () => {
           type: "max_iterations" as const,
           contextId: "context-a",
           iterationCount: 1,
+          summary: null,
         },
       },
     ]) {
@@ -1118,6 +1119,7 @@ describe("graph workflow manager", () => {
           type: "max_iterations" as const,
           contextId: "context-implement",
           iterationCount: 1,
+          summary: null,
         },
       },
     ]) {
@@ -1240,6 +1242,7 @@ describe("graph workflow manager", () => {
           type: "max_iterations",
           contextId: "context-plan",
           iterationCount: 1,
+          summary: null,
         },
       });
       expect(stopExecutionLaneDevServers).toHaveBeenCalledWith(
@@ -1421,6 +1424,7 @@ describe("graph workflow manager", () => {
         type: "max_iterations",
         contextId: "context-plan",
         iterationCount: 2,
+        summary: null,
       },
     });
 
@@ -3374,6 +3378,7 @@ describe("graph workflow manager", () => {
           type: "max_iterations",
           contextId: "context-implement",
           iterationCount: 3,
+          summary: null,
         },
       });
       const repository = createRepository(haltedExecution);
@@ -3409,6 +3414,7 @@ describe("graph workflow manager", () => {
             type: "max_iterations",
             contextId: "context-implement",
             iterationCount: 3,
+            summary: null,
           },
         }),
       );
@@ -4897,6 +4903,7 @@ describe("graph workflow manager", () => {
               maxIterations: 4,
               continuity: { enabled: true },
             },
+            planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           },
           {
             id: "..escape",
@@ -4917,6 +4924,7 @@ describe("graph workflow manager", () => {
               maxIterations: 4,
               continuity: { enabled: true },
             },
+            planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           },
           {
             id: "context-other",
@@ -4937,6 +4945,7 @@ describe("graph workflow manager", () => {
               maxIterations: 4,
               continuity: { enabled: true },
             },
+            planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           },
         ],
         tasks: [
@@ -6616,6 +6625,7 @@ describe("graph workflow manager", () => {
           type: "max_iterations",
           contextId: "context-implement",
           iterationCount: 5,
+          summary: null,
         },
       });
 

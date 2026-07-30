@@ -2827,6 +2827,7 @@ describe("codex implementer continuity", () => {
             maxIterations: 5,
             continuity: { enabled: true },
           },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
       ],
       tasks: [

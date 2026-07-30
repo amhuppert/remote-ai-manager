@@ -301,6 +301,7 @@ export type ResolvedContextConfig = Pick<
   | "mutability"
   | "circuitBreaker"
   | "iterationPolicy"
+  | "planRepair"
 > & {
   collaboration: NonNullable<GraphWorkflowResolvedContext["collaboration"]>;
 };
@@ -442,6 +443,7 @@ function liveEditTouchedPaths(
           "iterationPolicy",
           "circuitBreaker",
           "mutability",
+          "planRepair",
           "collaboration",
         ],
       );
@@ -753,6 +755,7 @@ function applyLiveConfigBlocks(
     context.circuitBreaker = op.circuitBreaker;
   }
   if (op.mutability !== undefined) context.mutability = op.mutability;
+  if (op.planRepair !== undefined) context.planRepair = op.planRepair;
   if (op.collaboration !== undefined) context.collaboration = op.collaboration;
 }
 
@@ -1312,6 +1315,7 @@ function resolvedConfigFromContext(
     mutability: source.mutability,
     circuitBreaker: source.circuitBreaker,
     iterationPolicy: source.iterationPolicy,
+    planRepair: source.planRepair,
     collaboration:
       source.collaboration ?? deps.resolvedGlobalDefaults().collaboration,
   };
@@ -1377,6 +1381,7 @@ function applyAddContext(
     mutability: op.mutability ?? base.mutability,
     circuitBreaker: op.circuitBreaker ?? base.circuitBreaker,
     iterationPolicy: op.iterationPolicy ?? base.iterationPolicy,
+    planRepair: op.planRepair ?? base.planRepair,
     collaboration: op.collaboration ?? base.collaboration,
     charter: next.charter,
   };

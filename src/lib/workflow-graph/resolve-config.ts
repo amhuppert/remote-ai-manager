@@ -45,6 +45,10 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  planRepair: {
+    enabled: true,
+    maxAttemptsPerContext: 2,
+  },
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -76,6 +80,7 @@ export function coerceGlobalDefaults(
     circuitBreaker:
       globalDefaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,
     mutability: globalDefaults.mutability ?? SEEDED_DEFAULTS.mutability,
+    planRepair: globalDefaults.planRepair ?? SEEDED_DEFAULTS.planRepair,
     collaboration:
       globalDefaults.collaboration ?? SEEDED_DEFAULTS.collaboration,
   };
@@ -96,6 +101,7 @@ export function resolveWorkflowConfig(
     iterationPolicy: override.iterationPolicy ?? defaults.iterationPolicy,
     circuitBreaker: override.circuitBreaker ?? defaults.circuitBreaker,
     mutability: override.mutability ?? defaults.mutability,
+    planRepair: override.planRepair ?? defaults.planRepair,
     collaboration: mergeCollaborationOverWithDefaults(
       override.collaboration,
       defaults.collaboration,
@@ -136,6 +142,9 @@ export function resolveContext(
     context.circuitBreaker ??
     workflow.circuitBreaker ??
     defaults.circuitBreaker;
+
+  const planRepair =
+    context.planRepair ?? workflow.planRepair ?? defaults.planRepair;
 
   const iterationPolicy =
     context.iterationPolicy ??
@@ -185,6 +194,7 @@ export function resolveContext(
     mutability,
     circuitBreaker,
     iterationPolicy,
+    planRepair,
     collaboration,
   };
 }

@@ -2437,6 +2437,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+        planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       },
     ],
     tasks: [

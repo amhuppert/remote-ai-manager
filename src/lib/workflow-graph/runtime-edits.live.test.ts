@@ -22,6 +22,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: { value: true, source: "global" },
     secondAgent: {
@@ -145,6 +146,27 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     );
     expect(context?.iterationPolicy.maxIterations).toBe(9);
     expect(context?.acceptanceCriteria).toBe("Feature implemented");
+  });
+
+  it("sets a concrete planRepair block via live update-context (no silent no-op)", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        planRepair: { enabled: false, maxAttemptsPerContext: 1 },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    expect(context?.planRepair).toEqual({
+      enabled: false,
+      maxAttemptsPerContext: 1,
+    });
   });
 
   it("updates a context's prose and concrete config on an unstarted context", () => {

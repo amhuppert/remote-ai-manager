@@ -660,6 +660,72 @@ describe("applyDefinitionEdits", () => {
     }
   });
 
+  it("sets and clears the planRepair block at both tiers (no silent no-op)", () => {
+    const record = createWorkflowDefinitionRecord();
+
+    const setWorkflow = applyDefinitionEdits(
+      record,
+      ops({
+        type: "update-workflow-config",
+        planRepair: { enabled: false, maxAttemptsPerContext: 1 },
+      }),
+    );
+    expect(setWorkflow.ok).toBe(true);
+    if (setWorkflow.ok) {
+      expect(setWorkflow.record.definition.workflowConfig.planRepair).toEqual({
+        enabled: false,
+        maxAttemptsPerContext: 1,
+      });
+
+      const clearedWorkflow = applyDefinitionEdits(
+        setWorkflow.record,
+        ops({ type: "update-workflow-config", planRepair: null }),
+      );
+      expect(clearedWorkflow.ok).toBe(true);
+      if (clearedWorkflow.ok) {
+        expect(
+          clearedWorkflow.record.definition.workflowConfig.planRepair,
+        ).toBeUndefined();
+      }
+    }
+
+    const setContext = applyDefinitionEdits(
+      record,
+      ops({
+        type: "update-context",
+        contextId: "context-plan",
+        planRepair: { enabled: true, maxAttemptsPerContext: 3 },
+      }),
+    );
+    expect(setContext.ok).toBe(true);
+    if (setContext.ok) {
+      const ctx = setContext.record.definition.executionContexts.find(
+        (c) => c.id === "context-plan",
+      );
+      expect(ctx?.planRepair).toEqual({
+        enabled: true,
+        maxAttemptsPerContext: 3,
+      });
+
+      const clearedContext = applyDefinitionEdits(
+        setContext.record,
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          planRepair: null,
+        }),
+      );
+      expect(clearedContext.ok).toBe(true);
+      if (clearedContext.ok) {
+        const clearedCtx =
+          clearedContext.record.definition.executionContexts.find(
+            (c) => c.id === "context-plan",
+          );
+        expect(clearedCtx?.planRepair).toBeUndefined();
+      }
+    }
+  });
+
   it("adds a parameter and rejects removing one still referenced by a token", () => {
     const declaration: ParameterDeclaration = {
       type: "string",

@@ -178,6 +178,7 @@ function makeExecution(
     seedDefinitionRevision: 1,
     liveRevision: 1,
     charterAmendments: [],
+    planRepairRounds: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -208,6 +209,7 @@ function makeExecution(
             maxIterations: 5,
             continuity: { enabled: true },
           },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: {
             type: "claude",
             enabled: true,
@@ -239,6 +241,7 @@ function makeExecution(
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
         {
           id: "ctx-3",
@@ -256,6 +259,7 @@ function makeExecution(
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
       ],
       tasks: [

@@ -25,6 +25,7 @@ import {
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
+  graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import { devServerConfigSchema } from "@/lib/dev-server/schemas";
@@ -42,6 +43,7 @@ export const workflowDefaultsSchema = z.object({
   iterationPolicy: graphWorkflowIterationPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   mutability: graphWorkflowMutabilityPolicySchema,
+  planRepair: graphWorkflowPlanRepairPolicySchema,
   collaboration: workflowCollaborationConfigSchema,
 });
 export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
@@ -55,6 +57,7 @@ const rawWorkflowDefaultsSchema = z.object({
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: workflowCollaborationConfigSchema.optional(),
 });
 

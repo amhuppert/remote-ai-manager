@@ -19,6 +19,7 @@ function makeExecution(
     seedDefinitionRevision: 1,
     liveRevision: 1,
     charterAmendments: [],
+    planRepairRounds: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -38,6 +39,7 @@ function makeExecution(
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: null,
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
@@ -55,6 +57,7 @@ function makeExecution(
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: {
             type: "claude",
             enabled: true,

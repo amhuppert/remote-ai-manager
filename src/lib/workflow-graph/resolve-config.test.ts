@@ -11,6 +11,7 @@ import type {
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
+  GraphWorkflowPlanRepairPolicy,
   GraphWorkflowScriptValidatorConfig,
 } from "@/lib/workflow-graph/config-schemas";
 import type {
@@ -65,6 +66,11 @@ const GLOBAL_ASK_USER_QUESTIONS: GraphWorkflowAskUserQuestionsConfig = {
   enabled: false,
 };
 
+const GLOBAL_PLAN_REPAIR: GraphWorkflowPlanRepairPolicy = {
+  enabled: true,
+  maxAttemptsPerContext: 2,
+};
+
 const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: GLOBAL_IMPLEMENTER,
   contextValidator: GLOBAL_VALIDATOR,
@@ -74,6 +80,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   iterationPolicy: GLOBAL_ITERATION,
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
+  planRepair: GLOBAL_PLAN_REPAIR,
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -468,6 +475,7 @@ describe("resolveWorkflowConfig", () => {
       iterationPolicy: undefined as unknown as GraphWorkflowIterationPolicy,
       circuitBreaker: undefined as unknown as GraphWorkflowCircuitBreakerPolicy,
       mutability: undefined as unknown as GraphWorkflowMutabilityPolicy,
+      planRepair: undefined as unknown as GraphWorkflowPlanRepairPolicy,
       collaboration: undefined as unknown as WorkflowDefaults["collaboration"],
     };
     const global = makeGlobalConfig({ workflowDefaults: partialGlobal });
@@ -482,6 +490,60 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.iterationPolicy.maxIterations).toBeGreaterThan(0);
     expect(resolved.circuitBreaker.consecutiveFailureThreshold).toBe(3);
     expect(resolved.mutability.allowAgentTaskAdd).toBe(false);
+    expect(resolved.planRepair).toEqual({
+      enabled: true,
+      maxAttemptsPerContext: 2,
+    });
+  });
+});
+
+describe("planRepair cascade (D1)", () => {
+  it("resolves the global default when no tier overrides it", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect(resolved.planRepair).toEqual(GLOBAL_PLAN_REPAIR);
+  });
+
+  it("uses the workflow-level block over the global default", () => {
+    const workflowBlock: GraphWorkflowPlanRepairPolicy = {
+      enabled: false,
+      maxAttemptsPerContext: 1,
+    };
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { planRepair: workflowBlock },
+      makeContext(),
+    );
+
+    expect(resolved.planRepair).toEqual(workflowBlock);
+  });
+
+  it("uses the per-context block over workflow and global tiers", () => {
+    const contextBlock: GraphWorkflowPlanRepairPolicy = {
+      enabled: true,
+      maxAttemptsPerContext: 3,
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "high" },
+    };
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { planRepair: { enabled: false, maxAttemptsPerContext: 1 } },
+      makeContext({ planRepair: contextBlock }),
+    );
+
+    expect(resolved.planRepair).toEqual(contextBlock);
+  });
+
+  it("snapshots the resolved planRepair block into the working definition at seed time", () => {
+    const definition = makeDefinition({
+      workflowConfig: { planRepair: { enabled: false, maxAttemptsPerContext: 1 } },
+    });
+
+    const resolved = resolveWorkflowDefinition(makeGlobalConfig(), definition);
+
+    expect(resolved.executionContexts[0]?.planRepair).toEqual({
+      enabled: false,
+      maxAttemptsPerContext: 1,
+    });
   });
 });
 

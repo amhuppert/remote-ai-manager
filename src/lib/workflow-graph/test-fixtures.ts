@@ -178,6 +178,10 @@ export function createResolvedWorkflowDefinition(
         maxIterations: 10,
         continuity: { enabled: true },
       },
+      planRepair: ctx.planRepair ?? {
+        enabled: true,
+        maxAttemptsPerContext: 2,
+      },
     })),
     tasks: source.tasks,
     edges: source.edges,
@@ -197,6 +201,7 @@ export function createWorkflowExecution(
     seedDefinitionRevision: 1,
     liveRevision: 1,
     charterAmendments: [],
+    planRepairRounds: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",

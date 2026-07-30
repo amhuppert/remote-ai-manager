@@ -28,6 +28,7 @@ export type WorkflowConfigBlock =
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability"
+  | "planRepair"
   | "collaboration"
   | "humanApprovalGate"
   | "askUserQuestions";

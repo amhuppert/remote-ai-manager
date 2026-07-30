@@ -73,6 +73,7 @@ function makeGraphWorkflowExecution(
     seedDefinitionRevision: 3,
     liveRevision: 1,
     charterAmendments: [],
+    planRepairRounds: [],
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -97,6 +98,7 @@ function makeGraphWorkflowExecution(
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
         {
           id: "ctx-2",
@@ -114,6 +116,7 @@ function makeGraphWorkflowExecution(
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+          planRepair: { enabled: true, maxAttemptsPerContext: 2 },
         },
       ],
       tasks: [

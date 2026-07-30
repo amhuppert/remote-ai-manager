@@ -10,6 +10,7 @@ import {
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
+  graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
 } from "./config-schemas";
 import {
@@ -24,6 +25,7 @@ export const workflowConfigOverrideSchema = z.object({
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
@@ -66,6 +68,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
@@ -293,6 +296,12 @@ export const graphWorkflowResolvedContextSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
+  // Plan-repair policy (docs/design/cc-cli/08). Defaulted so executions seeded
+  // before D1 parse WITH repair — the block ships default-ON (F4).
+  planRepair: graphWorkflowPlanRepairPolicySchema.default({
+    enabled: true,
+    maxAttemptsPerContext: 2,
+  }),
   // Resolved collaboration config (with per-field provenance) snapshotted at
   // seed time so a later saved-definition edit cannot leak into a running
   // execution (doc 06, D11). `.optional()` because executions seeded before the

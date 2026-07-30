@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  charterAmendmentSchema,
   sourceOfTruthSchema,
   workflowCharterSchema,
   type CharterInvariant,
@@ -277,5 +278,34 @@ describe("workflowCharterSchema", () => {
       ],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("charterAmendmentSchema — source attribution", () => {
+  it.each(["cli", "ui", "plan-repair"] as const)(
+    "accepts amendment source %s",
+    (source) => {
+      const parsed = charterAmendmentSchema.parse({
+        seq: 1,
+        amendedAt: "2026-07-29T00:00:00.000Z",
+        source,
+        rationale: "AC referenced a removed endpoint",
+        fieldsChanged: ["mission"],
+        charterHash: "hash-1",
+      });
+      expect(parsed.source).toBe(source);
+    },
+  );
+
+  it("rejects an unknown amendment source", () => {
+    const result = charterAmendmentSchema.safeParse({
+      seq: 1,
+      amendedAt: "2026-07-29T00:00:00.000Z",
+      source: "lane-agent",
+      rationale: "x",
+      fieldsChanged: ["mission"],
+      charterHash: "hash-1",
+    });
+    expect(result.success).toBe(false);
   });
 });

@@ -25,6 +25,7 @@ function createContext(id: string, title = id): GraphWorkflowResolvedContext {
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   };
 }
 

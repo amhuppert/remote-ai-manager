@@ -73,6 +73,7 @@ const workflowDefaults: WorkflowDefaults = {
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },
+  planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: false,
     secondAgent: {

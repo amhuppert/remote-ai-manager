@@ -61,7 +61,9 @@ export const charterAmendmentSchema = z.object({
   seq: z.number().int().min(1),
   amendedAt: z.string(),
   // Trusted client self-identification, same model as live edits (doc 06 D15).
-  source: z.enum(["cli", "ui"]),
+  // `plan-repair` is server-derived only (the D1 repair supervisor); the HTTP
+  // live-edit schema still accepts just cli|ui — same trust model as lane-agent.
+  source: z.enum(["cli", "ui", "plan-repair"]),
   rationale: z.string().min(1),
   // Top-level charter fields the operation touched, e.g. ["invariants"].
   fieldsChanged: z.array(z.string().min(1)).min(1),

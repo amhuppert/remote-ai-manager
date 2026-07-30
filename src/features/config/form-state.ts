@@ -39,6 +39,10 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  planRepair: {
+    enabled: true,
+    maxAttemptsPerContext: 2,
+  },
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -162,4 +166,5 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "workflowDefaults.iterationPolicy",
   "workflowDefaults.circuitBreaker",
   "workflowDefaults.mutability",
+  "workflowDefaults.planRepair",
 ];

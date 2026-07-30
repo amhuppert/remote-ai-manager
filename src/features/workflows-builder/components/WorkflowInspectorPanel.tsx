@@ -161,6 +161,10 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  planRepair: {
+    enabled: true,
+    maxAttemptsPerContext: 2,
+  },
   collaboration: {
     enabled: false,
     secondAgent: {

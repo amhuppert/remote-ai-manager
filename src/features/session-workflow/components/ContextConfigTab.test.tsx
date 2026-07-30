@@ -53,6 +53,7 @@ function fullContext(): GraphWorkflowResolvedContext {
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     collaboration: {
       enabled: { value: true, source: "per-node" },
       secondAgent: {

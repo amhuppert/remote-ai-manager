@@ -59,6 +59,7 @@ function makeContext(
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
+    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     ...overrides,
   };
 }

@@ -248,6 +248,7 @@ describe("classifyExecutionEditability", () => {
           type: "max_iterations",
           contextId: "ctx-1",
           iterationCount: 5,
+          summary: null,
         },
       }),
       expected: { kind: "editable", quiescent: true },
@@ -311,6 +312,7 @@ describe("isResumableHalt", () => {
       type: "max_iterations",
       contextId: "ctx-1",
       iterationCount: 5,
+      summary: null,
     },
     merge_failure: {
       type: "merge_failure",

@@ -245,6 +245,7 @@ describe("resetExecutionContext", () => {
         type: "max_iterations",
         contextId: "context-implement",
         iterationCount: 3,
+        summary: null,
       },
       completedAt: now,
       machineSnapshot: { stale: true },

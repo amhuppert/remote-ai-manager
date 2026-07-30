@@ -59,6 +59,7 @@ const secondaryFailures: GraphWorkflowHaltReason[] = [
     type: "max_iterations",
     contextId: "context-validate",
     iterationCount: 5,
+    summary: null,
   },
 ];
 

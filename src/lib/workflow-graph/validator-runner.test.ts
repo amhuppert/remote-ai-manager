@@ -124,6 +124,7 @@ const context: GraphWorkflowResolvedContext = {
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: {},
   iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+  planRepair: { enabled: true, maxAttemptsPerContext: 2 },
 };
 
 const charter: WorkflowCharter = {

@@ -38,6 +38,10 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  planRepair: {
+    enabled: true,
+    maxAttemptsPerContext: 2,
+  },
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -76,6 +80,7 @@ export function useGlobalDefaults(): UseGlobalDefaultsResult {
         defaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
       circuitBreaker: defaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,
       mutability: defaults.mutability ?? SEEDED_DEFAULTS.mutability,
+      planRepair: defaults.planRepair ?? SEEDED_DEFAULTS.planRepair,
       collaboration: defaults.collaboration ?? SEEDED_DEFAULTS.collaboration,
     };
   }, [query.data]);

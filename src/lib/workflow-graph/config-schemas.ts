@@ -53,6 +53,20 @@ export type GraphWorkflowCircuitBreakerPolicy = z.infer<
   typeof graphWorkflowCircuitBreakerPolicySchema
 >;
 
+// Plan-repair agent policy (docs/design/cc-cli/08, roadmap D1): on a
+// retry-exhaustion halt (circuit breaker / max iterations) an agent reviews the
+// failure and, for planning defects, patches the plan artifacts and resumes.
+// Default ON (F4); `agent` overrides the repair agent's model — the resolver
+// falls back to claude/opus/high when absent.
+export const graphWorkflowPlanRepairPolicySchema = z.object({
+  enabled: z.boolean().default(true),
+  maxAttemptsPerContext: z.number().int().min(1).default(2),
+  agent: graphWorkflowAgentConfigSchema.optional(),
+});
+export type GraphWorkflowPlanRepairPolicy = z.infer<
+  typeof graphWorkflowPlanRepairPolicySchema
+>;
+
 export const graphWorkflowLaneContinuityPolicySchema = z.object({
   enabled: z.boolean().default(true),
   contextLimitTokens: z.number().int().positive().optional(),

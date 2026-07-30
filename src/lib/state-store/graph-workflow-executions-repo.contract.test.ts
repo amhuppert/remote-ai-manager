@@ -364,9 +364,9 @@ describe("graph-workflow-executions-repo behavior", () => {
     const runtime = JSON.parse(row.runtime_json) as Record<string, unknown>;
     expect(
       Array.isArray(runtime.charterAmendments) &&
-        runtime.charterAmendments.length,
+        runtime.charterAmendments.length > 0,
       "fixture must persist a non-default charterAmendments log",
-    ).toBe(1);
+    ).toBe(true);
     delete runtime.charterAmendments;
     db.prepare(
       `UPDATE graph_workflow_executions SET runtime_json = ?
@@ -379,6 +379,37 @@ describe("graph-workflow-executions-repo behavior", () => {
     const loaded = freshRepo.getActive(PROJECT_PATH, SESSION_NAME);
     expect(loaded).not.toBeNull();
     expect(loaded?.charterAmendments).toEqual([]);
+  });
+
+  it("admits a pre-D1 row with no planRepairRounds via the additive default of []", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const row = db
+      .prepare(
+        `SELECT runtime_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { runtime_json: string };
+    const runtime = JSON.parse(row.runtime_json) as Record<string, unknown>;
+    expect(
+      Array.isArray(runtime.planRepairRounds) &&
+        runtime.planRepairRounds.length > 0,
+      "fixture must persist a non-default planRepairRounds log",
+    ).toBe(true);
+    delete runtime.planRepairRounds;
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(runtime), PROJECT_PATH, SESSION_NAME);
+
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    const loaded = freshRepo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.planRepairRounds).toEqual([]);
   });
 
   it("recreates the row via a full upsert when the runtime-only UPDATE matches zero rows", () => {

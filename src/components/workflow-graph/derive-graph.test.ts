@@ -575,6 +575,7 @@ describe("getDisplayValidators", () => {
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       ...overrides,
     };
   }
@@ -776,6 +777,7 @@ describe("getDisplayApprovalGate", () => {
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      planRepair: { enabled: true, maxAttemptsPerContext: 2 },
       ...overrides,
     };
   }

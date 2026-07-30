@@ -50,6 +50,11 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     type: z.literal("max_iterations"),
     contextId: z.string().trim().min(1),
     iterationCount: z.number().int().min(0),
+    // Populated by the plan-repair supervisor (docs/design/cc-cli/08) when a
+    // repair round declines, fails, or exhausts its attempts — mirrors the
+    // `circuit_breaker` variant so the halt UI explains itself for both
+    // retry-exhaustion kinds. Additive; pre-D1 rows parse as null.
+    summary: z.string().nullable().default(null),
   }),
   z.object({
     type: z.literal("recovery_error"),
@@ -517,6 +522,31 @@ export type GraphWorkflowAgentSessionState = z.infer<
 
 // Advisory lane plan computed at execution seed time. Persists the
 // deterministic continuation choice the scheduler should make at each
+// One plan-repair attempt (docs/design/cc-cli/08). Appended BEFORE the repair
+// agent runs so a crashed round still counts toward the attempt caps; settled
+// via a second mutation. The append-only log is the single source of attempt
+// accounting — per-context counts are derived, and resume never resets them
+// (unlike consecutiveFailureCount).
+export const planRepairRoundSchema = z.object({
+  seq: z.number().int().min(1),
+  contextId: z.string().trim().min(1),
+  haltType: z.enum(["circuit_breaker", "max_iterations"]),
+  startedAt: z.string(),
+  settledAt: z.string().nullable().default(null),
+  // `superseded` = the halt state changed under the agent (user resumed,
+  // aborted, or edited) and the round withdrew without applying anything.
+  outcome: z
+    .enum(["repaired", "declined", "failed", "superseded"])
+    .nullable()
+    .default(null),
+  planningDefect: z.boolean().nullable().default(null),
+  diagnosis: z.string().nullable().default(null),
+  operationCount: z.number().int().min(0).default(0),
+  resumed: z.boolean().default(false),
+  conversationId: z.string().nullable().default(null),
+});
+export type PlanRepairRound = z.infer<typeof planRepairRoundSchema>;
+
 // fan-out point so restarts make the same call. See
 // `src/lib/workflow-graph/lane-plan.ts`.
 const graphWorkflowLanePlanSchema = z.object({
@@ -542,6 +572,10 @@ export const graphWorkflowExecutionSchema = z.object({
   // amendment. Persisted in the runtime tier; rows written before the field
   // existed parse as `[]`.
   charterAmendments: z.array(charterAmendmentSchema).default([]),
+  // Append-only plan-repair attempt log (docs/design/cc-cli/08, roadmap D1).
+  // Persisted in the runtime tier; rows written before the field existed parse
+  // as `[]`.
+  planRepairRounds: z.array(planRepairRoundSchema).default([]),
   // Loop-generation fence token. Incremented ONLY by `resume()` — every resume
   // starts a new loop generation, and any execution loop still alive from a
   // prior generation (a "zombie" blocked in a long await across the

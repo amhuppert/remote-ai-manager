@@ -344,6 +344,7 @@ describe("cctl workflow against the real workflow route handlers", () => {
         type: "max_iterations",
         contextId: "context-plan",
         iterationCount: 7,
+        summary: null,
       },
     });
     const result = await runCli(

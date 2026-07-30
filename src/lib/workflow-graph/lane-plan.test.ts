@@ -45,6 +45,7 @@ function makeDefinition(
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
       iterationPolicy: { maxIterations: 1, continuity: { enabled: true } },
+      planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     })),
     tasks,
     edges: baseEdges,
