@@ -47,6 +47,8 @@ const headerSchema = z
     notEditableReason: z.string().optional(),
     // Absent on outlines from pre-doc-07 servers; render as "never amended".
     charterAmendmentCount: z.number().default(0),
+    // Absent on outlines from pre-D1 servers; render as "no repair rounds".
+    planRepairRoundCount: z.number().default(0),
   })
   .loose();
 
@@ -106,7 +108,11 @@ function headerLine(header: LiveOutlineData["header"]): string {
     header.charterAmendmentCount > 0
       ? `  charter amended ×${header.charterAmendmentCount}`
       : "";
-  const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${header.seedDefinitionId}@${header.seedDefinitionRevision}${amended}`;
+  const repaired =
+    header.planRepairRoundCount > 0
+      ? `  plan-repair ×${header.planRepairRoundCount}`
+      : "";
+  const base = `execution ${header.executionId}  status=${header.status}  liveRev=${header.liveRevision}  seed=${header.seedDefinitionId}@${header.seedDefinitionRevision}${amended}${repaired}`;
   if (header.editable) return base;
   const reason = header.notEditableReason ?? "not editable";
   return `${base}  read-only (${reason})`;

@@ -124,6 +124,8 @@ One row per shared concept: where the canonical implementation lives, who actual
 | Script-validation gate | `primitives/script-validation-gate.ts` (single `ScriptValidationOutcome` union) | graph script-validator remediation (`workflow-graph/iteration-orchestrator.ts`, `script-validator-runner.ts`); merge validation (`workflows/validation-fix/actors.ts`) | supported | — | — |
 | User-input gate (parked questions) | `workflow-graph/user-input-gate.ts` | graph loop, `validator-runner.ts`, conversations ask/answer routes | supported | — | — |
 | Config cascade | `workflow-graph/resolve-config.ts` | Every graph execution (see the cascade section below) | supported | — | — |
+| Live-edit apply core | `workflow-graph/live-edit-apply.ts` (`applyLiveEditsToActiveExecution`: gates → atomic mutation → one `liveRevision` bump → mandatory events) | runtime-edits HTTP route; plan-repair supervisor | supported | — | Never add a second mutation path for a launched execution's working definition |
+| Plan-repair supervisor (D1) | `workflow-graph/plan-repair/{trigger,schemas,prompt,agent-runner,supervisor}.ts`, composed at the `kickOffExecutionLoop` seam | every loop settlement (`execution-route-handlers.ts` `runExecutionLoopWithPlanRepair`) | supported | — | — |
 
 ## Testing
 
@@ -198,6 +200,7 @@ Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); the resolv
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
     "mutability":       { "allowAgentTaskAdd": false },
+    "planRepair":       { "enabled": true, "maxAttemptsPerContext": 2 },
     "askUserQuestions": { "enabled": false },
     "collaboration":    { "enabled": false, "secondAgent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "negotiationRounds": 3, "autonomousResolutionThreshold": "minor" }
   }
@@ -227,7 +230,7 @@ for non-default implementer or validator settings.
 
 ## `workflowDefaults` blocks
 
-Eight blocks, all individually overridable per tier:
+Nine blocks, all individually overridable per tier:
 
 | Block | Purpose |
 |---|---|
@@ -238,7 +241,28 @@ Eight blocks, all individually overridable per tier:
 | `circuitBreaker` | `consecutiveFailureThreshold` |
 | `mutability` | E.g. `allowAgentTaskAdd` |
 | `askUserQuestions` | Whether lane agents may ask the operator questions mid-task via `cctl ask`. `{ enabled: boolean }`, default disabled; one value covers both the implementer and context-validator roles |
+| `planRepair` | Plan-repair agent on retry-exhaustion halts (docs/design/cc-cli/08). `{ enabled, maxAttemptsPerContext, agent? }`; **default enabled**, 2 attempts per context, repair agent defaults to claude/opus/high |
 | `collaboration` | Whether implementer agents may request a second opinion, plus the collaborator agent and negotiation policy. `enabled` defaults to `false`; when disabled, collaboration instructions and continuation results are omitted from agent prompts and the collaboration command is unavailable |
+
+## Plan repair (retry-exhaustion halts)
+
+After any execution-loop settlement, the plan-repair supervisor
+(`workflow-graph/plan-repair/`) re-reads the ACTIVE execution and, when it is
+halted on `circuit_breaker` or `max_iterations` with `planRepair` enabled for
+the tripped context and attempts remaining, runs one bounded repair round: a
+one-shot repair agent (validator-style ephemeral conversation in the session
+worktree) diagnoses the failure and either declines (diagnosis persisted in
+`haltReason.summary`, run stays halted) or emits repair operations that are
+re-validated fail-closed against the **plan/controls split** — `amend-charter`,
+`update-context` prose/AC/`iterationPolicy`/`circuitBreaker`, and task ops
+only; never structural graph ops, validators, gates, `mutability`,
+`collaboration`, or `planRepair` itself. Accepted repairs apply through the
+shared live-edit core with server-derived `source: "plan-repair"` and resume
+through the normalize → resume → kick trio. Attempt accounting is the
+append-only `execution.planRepairRounds` log (appended before the agent runs;
+never reset by resume) with a hard per-execution backstop of 5 rounds. Every
+round conclusion emits a `graph-workflow-plan-repair` event (+ outcome push via
+the `planRepair` trigger).
 
 ## Ask-user-questions gate (`awaiting_user_input`)
 

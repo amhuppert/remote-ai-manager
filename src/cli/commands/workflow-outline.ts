@@ -12,7 +12,7 @@ import { z } from "zod";
  * `--context` / `--config` slices.
  */
 
-/** The nine cascade override blocks, in the order the outline reports them. */
+/** The ten cascade override blocks, in the order the outline reports them. */
 const CONFIG_BLOCK_KEYS = [
   "implementer",
   "contextValidator",
@@ -20,6 +20,7 @@ const CONFIG_BLOCK_KEYS = [
   "iterationPolicy",
   "circuitBreaker",
   "mutability",
+  "planRepair",
   "collaboration",
   "humanApprovalGate",
   "askUserQuestions",

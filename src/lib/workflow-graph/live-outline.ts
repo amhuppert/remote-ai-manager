@@ -51,6 +51,8 @@ export interface LiveOutlineHeader {
   notEditableReason?: "completed" | "aborted" | "halt-not-resumable";
   /** Accepted live charter amendments so far (doc 07); 0 for pre-field rows. */
   charterAmendmentCount: number;
+  /** Plan-repair rounds run so far (docs/design/cc-cli/08); 0 for pre-D1 rows. */
+  planRepairRoundCount: number;
 }
 
 export interface LiveOutlineAgentSummary {
@@ -103,6 +105,7 @@ export type LiveOutlineResolvedConfig = Pick<
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability"
+  | "planRepair"
 > & {
   contextId: string;
   /** `null` when no resolved collaboration snapshot exists (legacy executions). */
@@ -209,6 +212,7 @@ function buildHeader(execution: GraphWorkflowExecution): LiveOutlineHeader {
     editable,
     ...(editable ? {} : { notEditableReason: editability.reason }),
     charterAmendmentCount: execution.charterAmendments.length,
+    planRepairRoundCount: execution.planRepairRounds.length,
   };
 }
 
@@ -315,6 +319,7 @@ function resolveFullConfig(
     iterationPolicy: context.iterationPolicy,
     circuitBreaker: context.circuitBreaker,
     mutability: context.mutability,
+    planRepair: context.planRepair,
     collaboration: context.collaboration ?? null,
   };
 }
