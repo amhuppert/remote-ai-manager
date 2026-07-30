@@ -49,7 +49,7 @@ Check for:
 - `turbo.json` (Turborepo)
 - `nx.json` (Nx)
 
-If monorepo detected, list the candidate app directories (e.g., `apps/web`, `apps/admin`) by reading their `package.json` files. Use `AskUserQuestion` to confirm which subdirectory(ies) should get dev server entries — each entry will need a `cwd` field.
+If monorepo detected, list the candidate app directories (e.g., `apps/web`, `apps/admin`) by reading their `package.json` files. Ask the user (inside CC, via `cctl ask`) to confirm which subdirectory(ies) should get dev server entries — each entry will need a `cwd` field.
 
 ### 1.4 Existing Configuration
 
@@ -97,7 +97,7 @@ If the project already has a `devServers` array, show:
 
 ## Step 4: Get Approval
 
-Use `AskUserQuestion` to confirm. Offer:
+Ask the user to confirm (inside CC, via `cctl ask`). Offer:
 - **Approve all** — write the merged `CommandCenter.json`.
 - **Approve with changes** — user adjusts names, ports, ranges, commands, or `cwd` before writing.
 
@@ -107,7 +107,7 @@ After approval:
 
 1. If `CommandCenter.json` does not exist, create it with just `{ "devServers": [...] }` plus any preserved fields.
 2. If it exists, merge the new `devServers` entries into the existing object, preserving every other field.
-3. Write the file using the Write tool.
+3. Write the file.
 
 No shell scripts are written — CC-assigned ports do not need any helper files.
 

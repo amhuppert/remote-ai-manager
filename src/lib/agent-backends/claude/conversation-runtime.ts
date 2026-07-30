@@ -33,6 +33,7 @@ import {
   type ClaudeRuntimeCapabilityConfig,
 } from "./runtime-config/translator";
 import { readClaudePluginNativeRecords } from "./runtime-config/plugin-native-records";
+import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
 import {
   createQuerySession,
   type BackgroundWaitOutcome,
@@ -779,17 +780,39 @@ const claudeConversationBackendFactory = {
       inner: innerCanUseTool,
     });
 
+    // Managed skill bundle attachment (host environment, outside the user
+    // capability cascade): the published CC plugin loads as an SDK-local
+    // plugin, and a non-equivalent user-installed copy is suppressed for the
+    // session via the flag layer so the same plugin never loads twice.
+    const managedSkills = await resolveClaudeManagedSkillsForLaunch();
+
     // Build initial SDK Settings from the translated capability config so the
     // SDK applies plugin/skill overrides natively at session start. Without
     // this, capability seeding for a brand-new runtime would be a no-op.
     const initialSettings: Settings | undefined = (() => {
       const cfg = capabilityConfig;
-      if (!cfg) return undefined;
       const settings: Settings = {};
-      if (Object.keys(cfg.enabledPlugins).length > 0) {
-        settings.enabledPlugins = cfg.enabledPlugins;
+      const enabledPlugins: Record<string, boolean> = {
+        ...(cfg?.enabledPlugins ?? {}),
+      };
+      for (const [pluginId, enabled] of Object.entries(
+        managedSkills.enabledPluginsOverride,
+      )) {
+        if (
+          pluginId in enabledPlugins &&
+          enabledPlugins[pluginId] !== enabled
+        ) {
+          logger.warn("claude-factory.managed_skills_override_conflict", {
+            conversationId: input.conversationId,
+            pluginId,
+          });
+        }
+        enabledPlugins[pluginId] = enabled;
       }
-      if (Object.keys(cfg.skillOverrides).length > 0) {
+      if (Object.keys(enabledPlugins).length > 0) {
+        settings.enabledPlugins = enabledPlugins;
+      }
+      if (cfg && Object.keys(cfg.skillOverrides).length > 0) {
         settings.skillOverrides = cfg.skillOverrides;
       }
       return Object.keys(settings).length > 0 ? settings : undefined;
@@ -857,7 +880,7 @@ const claudeConversationBackendFactory = {
           : {}),
       }) as Record<string, string>,
       maxTurns: undefined,
-      plugins: [],
+      plugins: managedSkills.plugins,
       settingSources: ["user", "project", "local"],
       disallowedTools: ["AskUserQuestion"],
       externalTurnHandler,

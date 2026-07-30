@@ -4,6 +4,8 @@ Load this reference when Vitest is detected (`vitest` in `dependencies` or `devD
 
 Vitest config covers two concerns: AI-optimal output and bounded parallelism. The pre-merge script then scopes each run to the files touched by the branch.
 
+AI detection uses the `CLAUDECODE` env var: Claude Code sets it automatically in its sessions, and the pre-merge script exports it explicitly. Other agents (e.g. Codex) do not set it — when running tests from such a session, export `CLAUDECODE=1` first to get the same low-noise output.
+
 ## Why bound parallelism
 
 Vitest's default `forks` pool spawns one worker per CPU core with no heap cap. On a high-core / low-RAM machine that fans out to N heavyweight Node processes at once (each loads the full app module graph + jsdom), exhausts memory + swap during a full-suite run, and can freeze the machine. Bound `maxForks` to a RAM budget and cap each worker's heap so a runaway file OOM-kills its own fork instead of growing unbounded.

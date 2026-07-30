@@ -11,9 +11,9 @@ description: >-
 
 # Command Center Agent Context
 
-You are running inside **Command Center (CC)** — a web-based control plane for managing remote Claude Code sessions. CC created this session, its git worktree, and is managing your conversation lifecycle.
+You are running inside **Command Center (CC)** — a web-based control plane for managing remote coding-agent sessions (Claude Code, Codex, and future backends). CC created this session, its git worktree, and is managing your conversation lifecycle.
 
-Most of the time you can work exactly as you would in a normal Claude Code session. This document covers the areas where CC adds capabilities or changes behavior.
+Most of the time you can work exactly as you would in a session outside CC. This document covers the areas where CC adds capabilities or changes behavior.
 
 ## Your Environment
 
@@ -36,7 +36,7 @@ The worktree is a full copy of the repository. You have complete read/write acce
 
 ### Permissions
 
-CC runs with `permissionMode: "bypassPermissions"`. You have full tool access without permission prompts. Use this responsibly — there is no safety net for destructive operations.
+CC runs agents with permission prompts bypassed. You have full tool access without approval prompts. Use this responsibly — there is no safety net for destructive operations.
 
 ### Session Objective
 
@@ -56,7 +56,7 @@ Use these before driving any browser, Playwright, visual, or Next.js MCP tooling
 | `cctl dev ensure [<serverName>]` | Make sure a dev server is running for THIS session. Starts a stopped/errored server or waits for a starting one, blocks until liveness (or a bounded timeout), and prints the `localUrl`/`remoteUrl` to use. Omit `<serverName>` when exactly one server is configured. |
 | `cctl dev stop <serverName>` | Stop a named dev server. CC verifies worktree ownership before signalling so externally owned listeners are never killed. |
 
-**Diagnosing dev-server problems:** each running server has a log file on disk (interleaved stdout/stderr, line-prefixed `[OUT]`/`[ERR]`); `cctl dev list --json` reports its path. When a server fails to start or misbehaves, read that file with the `Read` tool for the full, authoritative output.
+**Diagnosing dev-server problems:** each running server has a log file on disk (interleaved stdout/stderr, line-prefixed `[OUT]`/`[ERR]`); `cctl dev list --json` reports its path. When a server fails to start or misbehaves, read that file for the full, authoritative output.
 
 **How to use them:**
 
@@ -86,7 +86,7 @@ Runs after CC creates your worktree. Typically installs dependencies. If the ini
 
 Runs before CC squash-merges your branch into `main`. This is CC's merge workflow — you don't invoke it directly. The script typically runs formatters, linters, type checks, and tests.
 
-If validation fails, CC may use auto-fix: it sends the error output to Claude to fix issues, then re-runs validation. The script may run multiple times.
+If validation fails, CC may use auto-fix: it sends the error output to an agent to fix the issues, then re-runs validation. The script may run multiple times.
 
 ### Dev Servers (`devServers`)
 
@@ -121,7 +121,7 @@ These happen automatically — no action needed from you:
 |---|---|---|
 | Working directory | User's chosen directory | Isolated git worktree |
 | Permissions | User-configured | `bypassPermissions` (full access) |
-| Session persistence | Local `~/.claude/` | CC manages its own transcripts |
+| Session persistence | Backend-local (e.g. `~/.claude/`, `~/.codex/`) | CC manages its own transcripts |
 | Dev servers | User starts manually | CC manages lifecycle and port allocation; agents run `cctl dev ensure` |
 | Merge to main | User runs git commands | CC's merge workflow with validation |
 

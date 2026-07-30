@@ -1,0 +1,186 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import type { ManagedSkillBundle } from "@/lib/managed-skills/schemas";
+
+import { ensureCodexManagedSkillsBridge } from "./managed-skills-bridge";
+
+const execFileAsync = promisify(execFile);
+
+async function git(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd });
+  return stdout;
+}
+
+async function initGitRepo(dir: string): Promise<void> {
+  await git(dir, ["init"]);
+  await git(dir, ["config", "user.email", "test@test.local"]);
+  await git(dir, ["config", "user.name", "Test"]);
+}
+
+async function writeBundleOnDisk(
+  bundlesArea: string,
+  digest: string,
+): Promise<ManagedSkillBundle> {
+  const root = path.join(
+    bundlesArea,
+    "agent-bundles",
+    "command-center",
+    digest,
+  );
+  const skillsRoot = path.join(root, "skills");
+  for (const skill of ["agent-context", "cc-cli"]) {
+    await mkdir(path.join(skillsRoot, skill), { recursive: true });
+    await writeFile(
+      path.join(skillsRoot, skill, "SKILL.md"),
+      `---\ndescription: ${skill}\n---\n\nBody (${digest}).`,
+    );
+  }
+  return {
+    id: "command-center",
+    version: "2.22.0",
+    digest,
+    root,
+    skillsRoot,
+    skillNames: ["agent-context", "cc-cli"],
+  };
+}
+
+describe("ensureCodexManagedSkillsBridge", () => {
+  let tempDir: string;
+  let checkout: string;
+  let bundle: ManagedSkillBundle;
+
+  const linkPath = () =>
+    path.join(checkout, ".agents", "skills", "command-center");
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "cc-skills-bridge-"));
+    checkout = path.join(tempDir, "checkout");
+    await mkdir(checkout, { recursive: true });
+    await initGitRepo(checkout);
+    bundle = await writeBundleOnDisk(
+      path.join(tempDir, "config"),
+      "aaaa000000000001",
+    );
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("creates the namespaced link and keeps git status clean", async () => {
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle,
+    });
+
+    expect(result.status).toBe("linked");
+    expect(await readlink(linkPath())).toBe(bundle.skillsRoot);
+    // The skill content resolves through the link.
+    expect(existsSync(path.join(linkPath(), "cc-cli", "SKILL.md"))).toBe(true);
+    // Exclusion holds: nothing shows in status and add -A stages nothing.
+    expect((await git(checkout, ["status", "--porcelain"])).trim()).toBe("");
+    await git(checkout, ["add", "-A"]);
+    expect(
+      (await git(checkout, ["diff", "--cached", "--name-only"])).trim(),
+    ).toBe("");
+  });
+
+  it("is idempotent when the expected link already exists", async () => {
+    await ensureCodexManagedSkillsBridge({ checkoutPath: checkout, bundle });
+    const second = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle,
+    });
+
+    expect(second.status).toBe("already_linked");
+    expect(await readlink(linkPath())).toBe(bundle.skillsRoot);
+  });
+
+  it("re-points a CC-owned link left by an older bundle digest", async () => {
+    const oldBundle = await writeBundleOnDisk(
+      path.join(tempDir, "config"),
+      "bbbb000000000002",
+    );
+    await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle: oldBundle,
+    });
+
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle,
+    });
+
+    expect(result.status).toBe("linked");
+    expect(await readlink(linkPath())).toBe(bundle.skillsRoot);
+  });
+
+  it("never overwrites project-owned content at the reserved path", async () => {
+    await mkdir(linkPath(), { recursive: true });
+    await writeFile(path.join(linkPath(), "SKILL.md"), "project-owned");
+
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle,
+    });
+
+    expect(result.status).toBe("conflict");
+    expect((await lstat(linkPath())).isDirectory()).toBe(true);
+    expect(existsSync(path.join(linkPath(), "SKILL.md"))).toBe(true);
+  });
+
+  it("treats a foreign symlink at the reserved path as a conflict", async () => {
+    const foreignTarget = path.join(tempDir, "somewhere-else");
+    await mkdir(foreignTarget, { recursive: true });
+    await mkdir(path.dirname(linkPath()), { recursive: true });
+    await symlink(foreignTarget, linkPath());
+
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle,
+    });
+
+    expect(result.status).toBe("conflict");
+    expect(await readlink(linkPath())).toBe(foreignTarget);
+  });
+
+  it("skips without touching the filesystem when the checkout is not a git repo", async () => {
+    const bareDir = path.join(tempDir, "not-a-repo");
+    await mkdir(bareDir, { recursive: true });
+
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: bareDir,
+      bundle,
+    });
+
+    expect(result.status).toBe("skipped");
+    if (result.status !== "skipped") return;
+    expect(result.reason).toBe("exclude_unavailable");
+    expect(existsSync(path.join(bareDir, ".agents"))).toBe(false);
+  });
+
+  it("skips when no bundle is published", async () => {
+    const result = await ensureCodexManagedSkillsBridge({
+      checkoutPath: checkout,
+      bundle: null,
+    });
+
+    expect(result).toEqual({ status: "skipped", reason: "no_bundle" });
+    expect(existsSync(path.join(checkout, ".agents"))).toBe(false);
+  });
+});

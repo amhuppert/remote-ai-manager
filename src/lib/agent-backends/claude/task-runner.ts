@@ -40,6 +40,7 @@ import "@/lib/shared/sdk-env";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createClaudeFailureClassifier } from "./failure-classifier";
 import { createStallWatchdog } from "../stall-watchdog";
+import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
 import { mapErrorSubtype } from "./process-message";
 
 const logger = createLogger("claude:task-runner");
@@ -330,6 +331,12 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
     let usageResult: AgentTaskResult["usage"] = null;
     let error: string | null = null;
 
+    // Managed skill bundle: standard task runs get the same attachment as
+    // conversations; the isolated one-shot profile is hermetic by contract.
+    const managedSkills = isolatedOneShot
+      ? { plugins: [], enabledPluginsOverride: {} }
+      : await resolveClaudeManagedSkillsForLaunch();
+
     try {
       const stream = this.deps.runQuery({
         prompt,
@@ -343,6 +350,16 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
           settingSources: isolatedOneShot ? [] : ["user", "project", "local"],
+          ...(managedSkills.plugins.length > 0
+            ? { plugins: managedSkills.plugins }
+            : {}),
+          ...(Object.keys(managedSkills.enabledPluginsOverride).length > 0
+            ? {
+                settings: {
+                  enabledPlugins: managedSkills.enabledPluginsOverride,
+                },
+              }
+            : {}),
           ...(isolatedOneShot
             ? { maxTurns: 1, tools: [], strictMcpConfig: true }
             : {}),

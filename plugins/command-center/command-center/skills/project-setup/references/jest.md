@@ -4,6 +4,8 @@ Load this reference when Jest is detected (`jest` in `dependencies` or `devDepen
 
 Jest config covers AI-optimal output and bounded parallelism. The pre-merge script then scopes each run to the files touched by the branch.
 
+AI detection uses the `CLAUDECODE` env var: Claude Code sets it automatically in its sessions, and the pre-merge script exports it explicitly. Other agents (e.g. Codex) do not set it — when running tests from such a session, export `CLAUDECODE=1` first to get the same low-noise output.
+
 ## Why bound parallelism
 
 Jest defaults to `--maxWorkers=<numCpus - 1>`, with each worker loading the full module graph and (for jsdom projects) a DOM. On a high-core / low-RAM box this can exhaust memory + swap during a full-suite run. Cap workers to a fraction of CPUs and set a per-worker memory ceiling so runaway tests trigger a worker restart instead of unbounded growth.

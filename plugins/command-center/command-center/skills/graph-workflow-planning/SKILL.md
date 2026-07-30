@@ -188,7 +188,7 @@ The final verification context is **defense in depth** for reachability, not the
 
 ## Authoring and Submitting the Plan
 
-Author the workflow as a `.cc/temp/plan.json` file with the Write tool — keep it under `.cc/temp/`, which CC git-ignores, so the throwaway plan is never committed — then submit it with the `cctl` CLI. Never paste a whole workflow graph as inline tool arguments — a file you can iterate on is the interface.
+Author the workflow as a `.cc/temp/plan.json` file — keep it under `.cc/temp/`, which CC git-ignores, so the throwaway plan is never committed — then submit it with the `cctl` CLI. Never paste a whole workflow graph as inline tool arguments — a file you can iterate on is the interface.
 
 ### plan.json shape
 

@@ -61,6 +61,7 @@ describe("capabilityViewFromDescriptor", () => {
           projectAssistantMetadata: () => null,
         },
       },
+      managedSkills: { conversations: "hermetic", tasks: "hermetic" },
       mcp: claudeMcpCapabilities,
       errors: createStubFailureClassifier(),
     };

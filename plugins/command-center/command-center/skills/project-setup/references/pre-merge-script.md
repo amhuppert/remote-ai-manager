@@ -14,7 +14,7 @@ The smart merge workflow is a multi-phase process:
 
 1. **Phase 1 — Forward merge:** CC merges the target branch into the session branch to catch conflicts.
 2. **Phase 2 — Validation:** **The pre-merge script executes** (worktree now has target merged in).
-3. **Phase 3 — Auto-fix (if validation failed):** If enabled, CC sends validation output to Claude to fix issues, then re-runs validation.
+3. **Phase 3 — Auto-fix (if validation failed):** If enabled, CC sends validation output to an agent to fix the issues, then re-runs validation.
 4. **Phase 4 — Squash merge:** If validation passes, the session branch is squash-merged into the target.
 
 The script may run **multiple times** if auto-fix retries are enabled.
@@ -129,6 +129,6 @@ When the project has none of the detected tools, do not generate a pre-merge scr
 
 - `set -euo pipefail` — fail at the first error. CC needs the non-zero exit code to detect failure.
 - Stdout and stderr are captured and shown in the error notification when validation fails.
-- The output should be clear and actionable — when auto-fix is enabled, Claude reads it to understand what to fix.
-- `export CLAUDECODE=1` — enables AI-optimal output mode for tools that detect it in their config.
+- The output should be clear and actionable — when auto-fix is enabled, the auto-fix agent reads it to understand what to fix.
+- `export CLAUDECODE=1` — enables AI-optimal output mode for tools that detect it in their config. (The variable name comes from Claude Code, which sets it in its own sessions; the script exports it explicitly so the detection fires no matter which agent or workflow runs the validation.)
 - Never scope `tsc` to changed files. The other tools must scope.

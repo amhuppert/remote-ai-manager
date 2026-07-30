@@ -42,6 +42,8 @@ function makeStaleResumeDeps(): CodexConversationRuntimeDeps {
     getServerUrl: () => null,
     getApiToken: () => null,
     getConfigDir: () => "/cfg",
+    ensureManagedSkillsBridge: async () =>
+      ({ status: "skipped", reason: "no_bundle" }) as const,
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
     listNativeCodexMcpServers: async () => [],
     getCodexPricingOverrides: async () => null,

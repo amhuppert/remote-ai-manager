@@ -115,6 +115,7 @@ export function createClaudeBackendDescriptor(
       structuredOutput: "post_validation",
       transcript: claudeTaskTranscriptProjection,
     },
+    managedSkills: { conversations: "bundled", tasks: "bundled" },
     mcp: deps.mcp,
     errors: deps.failureClassifier,
   };

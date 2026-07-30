@@ -65,6 +65,10 @@ import {
   type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
 import { withCodexFastMode } from "./fast-mode-config";
+import {
+  ensureCodexManagedSkillsBridgeForLaunch,
+  type CodexManagedSkillsBridgeResult,
+} from "./managed-skills-bridge";
 
 const logger = createLogger("codex:conversation-runtime");
 
@@ -106,6 +110,10 @@ export interface CodexConversationRuntimeDeps {
   }): Promise<NativeCodexMcpServer[]>;
   /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
+  /** Reconciles the managed skill bundle link in the launch checkout. */
+  ensureManagedSkillsBridge(
+    checkoutPath: string,
+  ): Promise<CodexManagedSkillsBridgeResult>;
   now(): number;
 }
 
@@ -120,6 +128,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   listNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
     resolveConfiguredCodexPricingOverrides(await readConfig()),
+  ensureManagedSkillsBridge: ensureCodexManagedSkillsBridgeForLaunch,
   now: () => Date.now(),
 };
 
@@ -222,6 +231,21 @@ export class CodexConversationRuntime
 
     try {
       const promptInput = this.buildPromptInput(input);
+
+      // Reconcile the managed skill bundle link before the turn so codex
+      // discovers `command-center:*` skills. Launch-time (not provisioning-
+      // time) so resumed sessions, lane worktrees, and project-scoped
+      // conversations all self-heal; a conflict degrades to skill-less and
+      // never blocks the turn.
+      const bridgeResult = await this.deps.ensureManagedSkillsBridge(
+        this.worktreePath,
+      );
+      if (bridgeResult.status === "conflict") {
+        logger.warn("codex-runtime.managed_skills_degraded", {
+          conversationId: this.conversationId,
+          detail: bridgeResult.detail,
+        });
+      }
 
       // Build per-turn Codex client options
       const codexFastMode = input.codexFastMode ?? false;

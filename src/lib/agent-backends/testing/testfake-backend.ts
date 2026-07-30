@@ -551,6 +551,7 @@ export function createTestFakeBackend(
       structuredOutput: "post_validation",
       transcript: taskTranscriptProjection,
     },
+    managedSkills: { conversations: "hermetic", tasks: "hermetic" },
     mcp: testfakeMcpCapabilities,
     errors,
   };

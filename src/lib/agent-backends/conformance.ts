@@ -28,6 +28,7 @@ import {
   capabilityKindSchema,
   continuationStrengthSchema,
   forkSupportSchema,
+  managedSkillsDeliverySchema,
   queueDeliveryTimingSchema,
   skillTriggerPrefixSchema,
   structuredOutputSupportSchema,
@@ -566,6 +567,26 @@ export function describeBackendConformance(
         expect(
           capabilityApplyTimingSchema.safeParse(support.applyTiming).success,
         ).toBe(true);
+      }
+    });
+
+    it("declares managed-skills delivery for every execution facet it exposes", () => {
+      expect(
+        managedSkillsDeliverySchema.safeParse(
+          descriptor.managedSkills.conversations,
+        ).success,
+      ).toBe(true);
+      expect(
+        managedSkillsDeliverySchema.safeParse(descriptor.managedSkills.tasks)
+          .success,
+      ).toBe(true);
+      // A backend without a facet must not claim to bundle skills for it —
+      // that declaration could never be exercised and would mask a wiring gap.
+      if (!descriptor.conversation) {
+        expect(descriptor.managedSkills.conversations).toBe("hermetic");
+      }
+      if (!descriptor.tasks) {
+        expect(descriptor.managedSkills.tasks).toBe("hermetic");
       }
     });
 

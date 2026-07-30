@@ -151,7 +151,7 @@ Show each file that will be created, with full content in fenced code blocks. Th
 
 ## Step 4: Get Approval
 
-Use `AskUserQuestion` to ask the user to approve the proposed configuration. Offer:
+Ask the user to approve the proposed configuration (inside CC, via `cctl ask`). Offer:
 - **Approve all** — write everything as proposed
 - **Approve with changes** — user specifies modifications before writing
 
@@ -162,9 +162,9 @@ If the user wants changes, incorporate them and show the updated proposal before
 After approval:
 
 1. Create directories: `mkdir -p scripts`.
-2. Write each approved file using the Write tool.
+2. Write each approved file.
 3. Set executable permissions on shell scripts: `chmod +x scripts/*.sh`.
-4. For test runner config modifications: use the Edit tool to merge the AI detection + parallelism cap blocks into the existing config file.
+4. For test runner config modifications: edit the existing config file to merge in the AI detection + parallelism cap blocks.
 
 ## Step 6: Verify
 

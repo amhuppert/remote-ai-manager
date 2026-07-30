@@ -47,6 +47,10 @@ import { createStallWatchdog } from "../stall-watchdog";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createCodexFailureClassifier } from "./failure-classifier";
 import { withCodexFastMode } from "./fast-mode-config";
+import {
+  ensureCodexManagedSkillsBridgeForLaunch,
+  type CodexManagedSkillsBridgeResult,
+} from "./managed-skills-bridge";
 
 const logger = createLogger("codex:task-runner");
 const codexFailureClassifier = createCodexFailureClassifier();
@@ -160,6 +164,10 @@ export interface CodexTaskRunnerDeps {
   getServerUrl(): string | null;
   getApiToken(): string | null;
   getConfigDir(): string;
+  /** Reconciles the managed skill bundle link in the launch checkout. */
+  ensureManagedSkillsBridge(
+    checkoutPath: string,
+  ): Promise<CodexManagedSkillsBridgeResult>;
 }
 
 const defaultDeps: CodexTaskRunnerDeps = {
@@ -172,6 +180,7 @@ const defaultDeps: CodexTaskRunnerDeps = {
   getServerUrl: getServerBaseUrl,
   getApiToken: getCachedInstanceToken,
   getConfigDir: getConfigDirPath,
+  ensureManagedSkillsBridge: ensureCodexManagedSkillsBridgeForLaunch,
 };
 
 function buildPrompt(input: AgentTaskRequest): CodexTaskInput {
@@ -496,6 +505,22 @@ export class CodexTaskRunner implements AgentTaskRunner {
       : mcpServersConfig !== undefined
         ? { mcp_servers: mcpServersConfig }
         : undefined;
+    // Managed skill bundle bridge: standard task runs reconcile the same
+    // namespaced link as conversations; the isolated one-shot profile is
+    // hermetic by contract. A conflict degrades to skill-less, never a
+    // failed run.
+    if (!isolatedOneShot) {
+      const bridgeResult = await this.deps.ensureManagedSkillsBridge(
+        input.workingDirectory,
+      );
+      if (bridgeResult.status === "conflict") {
+        logger.warn("codex-task-runner.managed_skills_degraded", {
+          workingDirectory: input.workingDirectory,
+          detail: bridgeResult.detail,
+        });
+      }
+    }
+
     const codexOptions: CodexOptions = {
       env,
       config: withCodexFastMode(

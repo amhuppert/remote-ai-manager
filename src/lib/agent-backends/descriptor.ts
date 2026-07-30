@@ -41,6 +41,27 @@ export interface BackendCapabilityKindSupport {
   applyTiming: CapabilityApplyTiming;
 }
 
+export const managedSkillsDeliverySchema = z.enum(["bundled", "hermetic"]);
+export type ManagedSkillsDelivery = z.infer<typeof managedSkillsDeliverySchema>;
+
+/**
+ * How the backend delivers Command Center's managed skill bundle (the CC
+ * plugin's skills, published at startup — see `src/lib/managed-skills/`).
+ * Required on every descriptor so a new backend cannot register without
+ * deciding: "bundled" means the adapter attaches the published bundle to
+ * every normal launch; "hermetic" is an explicit declaration that the
+ * execution profile deliberately receives no managed skills. Managed skills
+ * are host environment, independent of the user capability cascade.
+ */
+export interface AgentBackendManagedSkills {
+  conversations: ManagedSkillsDelivery;
+  /**
+   * Standard task runs. Isolated one-shot task profiles are hermetic by
+   * contract regardless of this value.
+   */
+  tasks: ManagedSkillsDelivery;
+}
+
 export const continuationStrengthSchema = z.enum([
   "precise_session",
   "synthetic_thread",
@@ -160,6 +181,7 @@ export interface AgentBackendDescriptor {
   metadata: AgentBackendMetadata;
   conversation?: AgentBackendConversationFacet;
   tasks?: AgentBackendTaskFacet;
+  managedSkills: AgentBackendManagedSkills;
   mcp: McpBackendCapabilities;
   errors: AgentFailureClassifier;
 }

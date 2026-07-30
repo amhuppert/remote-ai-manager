@@ -11,6 +11,8 @@ import {
   installCctl,
   type InstallCctlResult,
 } from "./lib/agent-gateway/install-cli";
+import { publishManagedSkillBundleAtStartup } from "./lib/managed-skills/service";
+import type { ManagedSkillBundle } from "./lib/managed-skills/schemas";
 import {
   recordServerBaseUrl,
   verifyRecordedServerBaseUrl,
@@ -41,6 +43,8 @@ export interface StartupDeps {
   recoverActiveWorkflowEnvelopes: typeof recoverActiveWorkflowEnvelopes;
   ensureAgentToken(): Promise<string>;
   installCli(): Promise<InstallCctlResult>;
+  /** Publishes the CC managed skill bundle and records it for launch paths. */
+  publishManagedSkills(): Promise<ManagedSkillBundle | null>;
   recordServerBaseUrl(): string;
   /** Marks orphaned pending compaction rows failed; returns the swept count. */
   sweepInterruptedCompactions(): number;
@@ -68,6 +72,7 @@ const defaultStartupDeps: StartupDeps = {
       configDir: getConfigDirPath(),
       expectedBuildInfo: BUILD_INFO,
     }),
+  publishManagedSkills: publishManagedSkillBundleAtStartup,
   recordServerBaseUrl: () => recordServerBaseUrl(),
   sweepInterruptedCompactions: () =>
     createContextArtifactsRepo(getStateDb()).failPendingRuns(
@@ -192,6 +197,18 @@ export function createStartupRegistrar(
       await deps.installCli();
     } catch (err) {
       logger.error("startup.cli_install_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // Publish the managed skill bundle (same server-owns-the-asset rule) so
+    // Claude plugin attachment and the Codex skills bridge can resolve it at
+    // launch. A failed publish means sessions run without managed skills —
+    // never a failed startup.
+    try {
+      await deps.publishManagedSkills();
+    } catch (err) {
+      logger.error("startup.managed_skills_publish_failed", {
         error: getErrorMessage(err),
       });
     }

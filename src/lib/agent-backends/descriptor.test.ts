@@ -112,6 +112,7 @@ function makeDescriptor(
         projectAssistantMetadata: () => undefined,
       },
     },
+    managedSkills: { conversations: "bundled", tasks: "bundled" },
     mcp: fakeMcp(backend),
     errors: createStubFailureClassifier(),
     ...overrides,

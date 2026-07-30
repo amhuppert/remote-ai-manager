@@ -251,7 +251,7 @@ export interface QuerySessionOptions {
   canUseTool: CanUseTool;
   env: Record<string, string | undefined>;
   maxTurns: number | undefined;
-  plugins: Array<{ type: "local"; path: string }>;
+  plugins: Array<{ type: "local"; path: string; skipMcpDiscovery?: boolean }>;
   settingSources: Array<"user" | "project" | "local">;
   disallowedTools: string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */

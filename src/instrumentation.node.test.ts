@@ -22,6 +22,7 @@ describe("createStartupRegistrar", () => {
       ensureAgentToken: async () => "test-token",
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
       recordServerBaseUrl: () => {
         calls.push("record-url");
         return "http://127.0.0.1:3000";
@@ -71,6 +72,7 @@ describe("createStartupRegistrar", () => {
       ensureAgentToken: async () => "test-token",
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
       verifyServerBaseUrl: () => {
         // A production verification is a fire-and-forget promise that may
@@ -123,6 +125,7 @@ describe("createStartupRegistrar", () => {
       ensureAgentToken: async () => "test-token",
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
       verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => {
@@ -189,6 +192,7 @@ describe("createStartupRegistrar", () => {
       ensureAgentToken: async () => "test-token",
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
       verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => {
@@ -236,6 +240,7 @@ describe("createStartupRegistrar", () => {
       ensureAgentToken: async () => "test-token",
       installCli: async () =>
         ({ installed: false, reason: "bundle_missing" }) as const,
+      publishManagedSkills: async () => null,
       recordServerBaseUrl: () => "http://127.0.0.1:3000",
       verifyServerBaseUrl: () => {},
       recoverActiveWorkflowEnvelopes: async () => {
@@ -290,6 +295,7 @@ describe("createStartupRegistrar", () => {
         calls.push("token");
         return "test-token";
       },
+      publishManagedSkills: async () => null,
       installCli: async () => {
         calls.push("install");
         return { installed: false, reason: "bundle_missing" } as const;
@@ -349,6 +355,7 @@ describe("createStartupRegistrar", () => {
         calls.push("token");
         return "test-token";
       },
+      publishManagedSkills: async () => null,
       installCli: async () => {
         calls.push("install");
         return { installed: false, reason: "bundle_missing" } as const;
@@ -396,6 +403,7 @@ describe("createStartupRegistrar", () => {
       ensureAgentToken: async () => {
         throw new Error("disk full");
       },
+      publishManagedSkills: async () => null,
       installCli: async () => {
         throw new Error("install exploded");
       },

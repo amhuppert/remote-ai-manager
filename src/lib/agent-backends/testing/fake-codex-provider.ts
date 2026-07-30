@@ -145,6 +145,8 @@ export function createFakeCodexProvider(
     getServerUrl: () => null,
     getApiToken: () => null,
     getConfigDir: () => "/conformance/config",
+    ensureManagedSkillsBridge: async () =>
+      ({ status: "skipped", reason: "no_bundle" }) as const,
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
     listNativeCodexMcpServers: async () => [],
     getCodexPricingOverrides: async () => null,
@@ -229,6 +231,8 @@ export function createFakeCodexTaskPort(
     getServerUrl: () => null,
     getApiToken: () => null,
     getConfigDir: () => "/conformance/config",
+    ensureManagedSkillsBridge: async () =>
+      ({ status: "skipped", reason: "no_bundle" }) as const,
   };
 
   return {
@@ -290,6 +294,8 @@ export function createEnvCapturingCodexTaskRunner(config: {
     getServerUrl: () => config.serverUrl ?? null,
     getApiToken: () => config.apiToken ?? null,
     getConfigDir: () => config.configDir ?? "/conformance/config",
+    ensureManagedSkillsBridge: async () =>
+      ({ status: "skipped", reason: "no_bundle" }) as const,
   });
 
   return { runner, capturedEnvs };

@@ -110,7 +110,7 @@ Text rendering order on any command: primary body → detail/`issues` lines →
 `reminder:` lines → `hint:` line.
 
 Structured input beyond a couple of scalars goes through `--file <path>`
-(JSON; `-` for stdin): author the payload with the Write tool **under
+(JSON; `-` for stdin): write the payload to a file **under
 `.cc/temp/`** — CC git-ignores that namespace, so a graph-workflow lane's
 land-time `git add -A` never sweeps the throwaway payload into the branch (a
 payload left at the worktree root derails the context validator). Then run the
@@ -476,7 +476,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 ## cctl notify
 
 Send a push notification to the user (e.g. a long task finished, or you need
-attention). Replaces the `send_notification` MCP tool.
+attention).
 
 ```
 cctl notify "<message>" [--title "<title>"]
@@ -498,8 +498,7 @@ cctl notify "Build finished — 0 failures" --title "CI"
 ## cctl docs
 
 Manage this session's **reference documents** — files other conversations see
-in their system prompt, with a note on when to read them. Replaces the
-`register_document`, `list_documents`, and `delete_document` MCP tools.
+in their system prompt, with a note on when to read them.
 
 ```
 cctl docs register <path> --description "<why it matters>"
@@ -702,8 +701,7 @@ cctl conversation compaction get 0197a3c2-... --format markdown
 ## cctl dev
 
 Manage this session's **dev servers** — the app processes CC spawns per worktree
-(ports, local/remote URLs, liveness). Replaces the `get_dev_servers`,
-`ensure_dev_server`, and `stop_dev_server` MCP tools.
+(ports, local/remote URLs, liveness).
 
 ```
 cctl dev list [--json]
@@ -785,10 +783,7 @@ cctl fixture session delete scratch-project fx-...
 ## cctl workflow
 
 Author, read, launch, and inspect **graph workflows** — the saved multi-context
-task graphs and their live executions. Replaces the `list_graph_workflows`,
-`get_graph_workflow`, `get_graph_workflow_status`, `delete_graph_workflow`,
-`start_graph_workflow`, `list_templates`, `create_graph_workflow`, and
-`replace_graph_workflow` MCP tools.
+task graphs and their live executions.
 
 ```
 cctl workflow validate --file .cc/temp/plan.json [--json]
@@ -803,9 +798,9 @@ cctl workflow delete <id>
 cctl workflow templates [--tier global|project] [--json]
 ```
 
-**Authoring** replaces the worst old MCP interaction — emitting a whole workflow
-graph as inline tool arguments. Instead, author a `plan.json` with the Write
-tool per the `graph-workflow-planning` skill (that skill owns the file shape and
+**Authoring** is file-based — never emit a whole workflow
+graph as inline tool arguments. Author a `plan.json` file
+per the `graph-workflow-planning` skill (that skill owns the file shape and
 the planning method), then walk the canonical chain: validate → create → start.
 
 - `validate` — check a `plan.json` against the **exact** create-path rules (the
@@ -967,8 +962,7 @@ cctl workflow live resume
 These are a **separate** family from the authoring/lifecycle verbs above. They
 are for the **implementer agent running one lane of a live execution** — the
 context whose tasks you are working through — not for authoring or launching
-workflows. They replace the `cc-graph-workflow` MCP tools (`complete_task`,
-`add_task`, `upsert_shared_document`, `request_collaboration`).
+workflows.
 
 They resolve the lane's execution + context from the env CC injects at spawn —
 `CC_WORKFLOW_EXECUTION_ID` and `CC_WORKFLOW_CONTEXT_ID`. You never pass those;
@@ -1006,8 +1000,8 @@ cctl workflow collab request --brief "<the question/decision, with context>"
 - `shared-doc upsert` — register (or update) a shared document other lanes will
   read. `<relativePath>` is the doc's path in the worktree (e.g.
   `.cc/graph-workflow-docs/api-contract.md`); `--file .cc/temp/doc.json` is a JSON object
-  `{ "description": "…", "readWhen": "…" }` (author it under `.cc/temp/` with the
-  Write tool — both fields are prose). No hint.
+  `{ "description": "…", "readWhen": "…" }` (author it under `.cc/temp/` —
+  both fields are prose). No hint.
 - `collab request` — request a structured second opinion from another agent on a
   genuinely ambiguous, high-impact decision. `--brief` states the problem and the
   context (do **not** include your preferred solution). The collaboration runs in
@@ -1027,15 +1021,15 @@ cctl workflow collab request --brief "Store sessions in SQLite or Redis? Constra
 ## cctl charter
 
 Submit the session's **Alignment charter** — the free-text markdown document
-that governs the whole session. Replaces the `write_session_charter` MCP tool.
+that governs the whole session.
 
 ```
 cctl charter write --file .cc/temp/charter.json
 ```
 
 - The charter is structured, multi-paragraph markdown, so it is **file-only**:
-  author `.cc/temp/charter.json` as a JSON object `{ "content": "<full markdown>" }`
-  with the Write tool, then submit. There is no inline text flag.
+  author `.cc/temp/charter.json` as a JSON object `{ "content": "<full markdown>" }`,
+  then submit. There is no inline text flag.
 - The submission fills the session's open Alignment draft (the one `/align`
   creates); if none is open it defensively opens a gated one. A normal `/align`
   draft remains pending in the **Approve Charter** panel and leaves the active
@@ -1043,7 +1037,8 @@ cctl charter write --file .cc/temp/charter.json
   immediately on submission; the decision review is already its human gate.
 - The command reports the actual result: either `charter draft submitted;
   pending the user's approval` or `charter activated as version <n>`. Never ask
-  for a second approval after decision incorporation.
+  for a second approval after decision incorporation. Either way `charter write`
+  is terminal for you — **no hint**; exit `0` on submission.
 - Attended-only: on an autonomous/optimistic turn, or with no live conversation
   turn to author against, the server refuses and the command exits `1`.
 
@@ -1055,8 +1050,7 @@ cctl charter write --file .cc/temp/charter.json
 ## cctl decisions
 
 Propose one or more **decisions** for the user to review. Review is
-asynchronous; approved decisions fold into the Alignment charter. Replaces the
-`propose_decisions` MCP tool.
+asynchronous; approved decisions fold into the Alignment charter.
 
 ```
 cctl decisions propose --file .cc/temp/decisions.json
@@ -1064,7 +1058,7 @@ cctl decisions propose --file .cc/temp/decisions.json
 
 - **File-only**: author `.cc/temp/decisions.json` as a JSON object with a
   non-empty `decisions` array — each `{ "statement": "...", "rationale"?: "...",
-  "context"?: "..." }` — with the Write tool.
+  "context"?: "..." }`.
 - The batch is persisted for human review. Write a brief handoff note, then end
   your turn immediately; do not begin more work. One complete result covering
   every approved or rejected decision and any rejection feedback arrives as the
@@ -1096,8 +1090,8 @@ cctl agent cancel <runId>
 ```
 
 - `run` — start an agent run. **File-only input**: author `.cc/temp/prompt.json`
-  as a JSON object `{ "backend": "codex", "prompt": "<task>" }` with the Write
-  tool. `backend` is required (`codex` or `claude`); optional fields are `model`
+  as a JSON object `{ "backend": "codex", "prompt": "<task>" }`.
+  `backend` is required (`codex` or `claude`); optional fields are `model`
   and `reasoning_effort` (`minimal|low|medium|high|xhigh`) plus the job extras
   `timeoutMs` (server-side execution cap) and `workingDirectory` (defaults to
   the session worktree; must resolve **inside** it). The agent is instructed to
@@ -1141,8 +1135,8 @@ cctl agent status run-4f1d2797
 
 ## cctl ask
 
-Ask the user one or more multiple-choice questions. Replaces the
-`AskUserQuestion` MCP tool — and changes the interaction model: the question is
+Ask the user one or more multiple-choice questions. Unlike a built-in
+question tool, the question is
 **registered, not awaited**. You end your turn after asking; the answer arrives
 as your **next user message**, delivered through the normal prompt queue.
 

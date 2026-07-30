@@ -363,6 +363,9 @@ describe("CodexConversationRuntime", () => {
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
       listNativeCodexMcpServers: vi.fn().mockResolvedValue([]),
       getCodexPricingOverrides: vi.fn().mockResolvedValue(null),
+      ensureManagedSkillsBridge: vi
+        .fn()
+        .mockResolvedValue({ status: "skipped", reason: "no_bundle" }),
       now: vi.fn().mockReturnValue(1000),
     };
   });

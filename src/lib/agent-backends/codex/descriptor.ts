@@ -143,6 +143,7 @@ export function createCodexBackendDescriptor(
       structuredOutput: "backend_native",
       transcript: codexTaskTranscriptProjection,
     },
+    managedSkills: { conversations: "bundled", tasks: "bundled" },
     mcp: deps.mcp,
     errors: deps.failureClassifier,
   };

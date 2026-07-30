@@ -60,15 +60,18 @@ export async function readWorktreeDirtyPaths(
 }
 
 /**
- * Ensure {@link CC_ARTIFACTS_IGNORE_PATTERN} is git-ignored for the repo
- * owning `worktreePath` by appending it to the repo's local `info/exclude`. We
- * use `info/exclude` rather than a tracked `.gitignore` so the rule never
- * itself appears as an uncommitted change, and because it lives in the shared
- * common git dir it covers the session worktree and every forked lane worktree
- * at once. Idempotent.
+ * Ensure `pattern` is git-ignored for the repo owning `worktreePath` by
+ * appending it to the repo's local `info/exclude`. We use `info/exclude`
+ * rather than a tracked `.gitignore` so the rule never itself appears as an
+ * uncommitted change, and because it lives in the shared common git dir it
+ * covers the session worktree and every forked lane worktree at once.
+ * Idempotent. Throws when `worktreePath` is not inside a git repository —
+ * callers that create excluded files must establish the rule FIRST and treat
+ * a failure here as "do not create the file".
  */
-export async function ensureCcArtifactsExcluded(
+export async function ensureExcludePattern(
   worktreePath: string,
+  pattern: string,
   client: GitClient = defaultGitClient,
 ): Promise<void> {
   const { stdout } = await client.git(
@@ -90,7 +93,7 @@ export async function ensureCcArtifactsExcluded(
 
   const alreadyExcluded = current
     .split("\n")
-    .some((line) => line.trim() === CC_ARTIFACTS_IGNORE_PATTERN);
+    .some((line) => line.trim() === pattern);
   if (alreadyExcluded) {
     return;
   }
@@ -99,8 +102,19 @@ export async function ensureCcArtifactsExcluded(
   await mkdir(path.dirname(excludePath), { recursive: true });
   await appendFile(
     excludePath,
-    `${needsLeadingNewline ? "\n" : ""}${CC_ARTIFACTS_IGNORE_PATTERN}\n`,
+    `${needsLeadingNewline ? "\n" : ""}${pattern}\n`,
   );
+}
+
+/**
+ * Ensure {@link CC_ARTIFACTS_IGNORE_PATTERN} is git-ignored for the repo
+ * owning `worktreePath`. See {@link ensureExcludePattern}.
+ */
+export async function ensureCcArtifactsExcluded(
+  worktreePath: string,
+  client: GitClient = defaultGitClient,
+): Promise<void> {
+  await ensureExcludePattern(worktreePath, CC_ARTIFACTS_IGNORE_PATTERN, client);
 }
 
 export type MergeMainResult =

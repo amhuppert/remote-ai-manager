@@ -393,7 +393,10 @@ describe("ClaudeTaskRunner", () => {
 
     const runPromise = runner.run(makeRequest({ timeoutMs: 5_000 }));
 
-    vi.advanceTimersByTime(5_000);
+    // Async advance: the runner awaits managed-skills resolution before
+    // dispatching, so the mock stream subscribes to the abort signal only
+    // after a microtask — the async form yields to it before firing timers.
+    await vi.advanceTimersByTimeAsync(5_000);
 
     const result = await runPromise;
 

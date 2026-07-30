@@ -69,6 +69,8 @@ describe("CodexTaskRunner", () => {
       getServerUrl: () => null,
       getApiToken: () => null,
       getConfigDir: () => "/test/config",
+      ensureManagedSkillsBridge: async () =>
+        ({ status: "skipped", reason: "no_bundle" }) as const,
     });
 
     // Model the real SDK: a fresh thread has `id: null` until the
@@ -126,6 +128,8 @@ describe("CodexTaskRunner", () => {
       getServerUrl: () => null,
       getApiToken: () => null,
       getConfigDir: () => "/test/config",
+      ensureManagedSkillsBridge: async () =>
+        ({ status: "skipped", reason: "no_bundle" }) as const,
     });
 
     await contaminatedRunner.run(makeRequest());
@@ -179,6 +183,8 @@ describe("CodexTaskRunner", () => {
           getServerUrl: () => RESOLVED_SERVER_URL,
           getApiToken: () => RESOLVED_TOKEN,
           getConfigDir: () => "/cc/config",
+          ensureManagedSkillsBridge: async () =>
+            ({ status: "skipped", reason: "no_bundle" }) as const,
         }),
         readEnv: () =>
           (
@@ -993,6 +999,8 @@ describe("CodexTaskRunner", () => {
         getServerUrl: () => null,
         getApiToken: () => null,
         getConfigDir: () => "/test/config",
+        ensureManagedSkillsBridge: async () =>
+          ({ status: "skipped", reason: "no_bundle" }) as const,
       });
 
       const result = await overriddenRunner.run(
