@@ -1283,24 +1283,30 @@ function ReviewChangeCard({
               >
                 Unapprove item
               </Button>
+            ) : approvalTarget === null ? (
+              // Sections, tasks, and orphaned criteria have no per-item
+              // approval subject (Requirement 10.1) — a dead approve button
+              // here reads as broken, so state the coverage instead.
+              change.change !== "removed" && (
+                <StatusChip
+                  tone="neutral"
+                  title="This element has no independent approval gate — revision sign-off approves it"
+                >
+                  Covered by sign-off
+                </StatusChip>
+              )
             ) : (
-              <Button
-                size="sm"
-                touch
-                variant="success"
-                disabled={
-                  approvalTarget === null || change.change === "removed"
-                }
-                loading={approve.isPending}
-                onClick={approveItem}
-                title={
-                  approvalTarget === null
-                    ? "This element has no independent approval gate"
-                    : undefined
-                }
-              >
-                Approve item
-              </Button>
+              change.change !== "removed" && (
+                <Button
+                  size="sm"
+                  touch
+                  variant="success"
+                  loading={approve.isPending}
+                  onClick={approveItem}
+                >
+                  Approve item
+                </Button>
+              )
             )}
           </div>
         </div>

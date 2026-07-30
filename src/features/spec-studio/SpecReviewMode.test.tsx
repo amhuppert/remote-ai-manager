@@ -457,6 +457,87 @@ describe("SpecReviewMode", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows a sign-off coverage note instead of an approve action for elements without an approval gate", () => {
+    const detail = reviewDetailFixture();
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    current.elements.push({
+      element: {
+        id: "section-1",
+        specId: detail.spec.id,
+        kind: "section",
+        number: 1,
+        parentElementId: null,
+        createdAt: NOW,
+      },
+      version: {
+        revisionId: current.revision.id,
+        elementId: "section-1",
+        position: 0,
+        payload: {
+          kind: "section",
+          role: "intent_problem",
+          title: "Problem",
+          body: "Execution scope drifts between runs.",
+        },
+        payloadHash: "section-hash",
+        elementVersion: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    });
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const section = screen.getByTestId("review-change-section-1");
+    expect(
+      within(section).queryByRole("button", { name: "Approve item" }),
+    ).not.toBeInTheDocument();
+    expect(within(section).getByText("Covered by sign-off")).toHaveAttribute(
+      "title",
+      "This element has no independent approval gate — revision sign-off approves it",
+    );
+
+    const task = screen.getByTestId("review-change-task-1");
+    expect(
+      within(task).queryByRole("button", { name: "Approve item" }),
+    ).not.toBeInTheDocument();
+    expect(within(task).getByText("Covered by sign-off")).toBeInTheDocument();
+  });
+
+  it("offers no approve action on a removed element", () => {
+    const detail = reviewDetailFixture();
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    current.elements = current.elements.filter(
+      (entry) =>
+        entry.element.id !== "requirement-1" &&
+        entry.element.id !== "criterion-1",
+    );
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    expect(
+      within(requirement).queryByRole("button", { name: "Approve item" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(requirement).queryByText("Covered by sign-off"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders element content as formatted markdown", async () => {
     const detail = reviewDetailFixture();
     const current = detail.currentRevision;
