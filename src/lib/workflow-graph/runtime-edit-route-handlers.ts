@@ -1,14 +1,9 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
 import { withTracing } from "@/lib/logging";
 import {
   notFound,
   resolveProjectSessionOr404,
 } from "@/lib/shared/route-resolution";
-import { readConfig } from "@/lib/config/loader";
-import { readRepoConfig } from "@/lib/projects/repo-config";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
@@ -19,7 +14,6 @@ import {
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowExecutionContextDefinition } from "@/lib/workflow-graph/definition-schemas";
 import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
@@ -27,7 +21,6 @@ import {
   type PublishCharterUpdatedInput,
   type PublishLiveEditAppliedInput,
 } from "./execution-events";
-import { CHARTER_DOCUMENT_PATH } from "./charter/render";
 import {
   createGraphWorkflowExecutionRepository,
   type MutateActiveResult,
@@ -35,15 +28,11 @@ import {
 import { formatDefinitionEditIssue } from "./definition-edits";
 import {
   applyLiveEditsToActiveExecution,
+  buildDefaultLiveEditDeps,
+  defaultWriteCharterDocument,
   type LiveEditFailure,
 } from "./live-edit-apply";
-import {
-  coerceGlobalDefaults,
-  resolveCollaborationConfigWithProvenance,
-  resolveContext,
-} from "./resolve-config";
-import type { LiveEditDeps, ResolvedContextConfig } from "./runtime-edits";
-import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
+import type { LiveEditDeps } from "./runtime-edits";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -58,54 +47,6 @@ const executionRepository = createGraphWorkflowExecutionRepository({
   markGraphWorkflowContextEventsPreReset,
   eventPublisher,
 });
-
-/**
- * Resolve the concrete config a new `add-context` op seeds from when no
- * `configFromContextId` is given and the deferred script-validator prerequisite,
- * both computed once per request (the pure core's deps are sync). Resolves the
- * global defaults through the same cascade a launch uses, against a synthetic
- * no-override context, so a live-added context matches what a seeded one carries.
- */
-async function defaultBuildLiveEditDeps(
-  projectPath: string,
-): Promise<LiveEditDeps> {
-  const repoConfig = await readRepoConfig(projectPath);
-  const hasPreMergeCommand = Boolean(repoConfig?.preMergeCommand);
-
-  const global = await readConfig();
-  const defaults = coerceGlobalDefaults(global.workflowDefaults);
-  const syntheticContext: GraphWorkflowExecutionContextDefinition = {
-    id: "__live_edit_global_defaults__",
-    title: "Live edit defaults",
-    acceptanceCriteria: "Live edit defaults",
-  };
-  const resolved = resolveContext(defaults, {}, syntheticContext);
-  const collaboration = resolveCollaborationConfigWithProvenance(
-    defaults,
-    {},
-    syntheticContext,
-  );
-  const resolvedGlobalDefaults: ResolvedContextConfig = {
-    implementer: resolved.implementer,
-    contextValidator: resolved.contextValidator,
-    scriptValidator: resolved.scriptValidator,
-    humanApprovalGate: resolved.humanApprovalGate,
-    askUserQuestions: resolved.askUserQuestions,
-    mutability: resolved.mutability,
-    circuitBreaker: resolved.circuitBreaker,
-    iterationPolicy: resolved.iterationPolicy,
-    planRepair: resolved.planRepair,
-    collaboration,
-  };
-
-  return {
-    createTaskId: () => `task-${randomUUID()}`,
-    resolvedGlobalDefaults: () => resolvedGlobalDefaults,
-    hasPreMergeCommand: () => hasPreMergeCommand,
-    now: () => new Date().toISOString(),
-    executionContract: createRegisteredGraphExecutionContract(),
-  };
-}
 
 export interface GraphWorkflowRuntimeEditRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
@@ -144,21 +85,12 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
   }): Promise<void>;
 }
 
-async function defaultWriteCharterDocument(input: {
-  worktreePath: string;
-  markdown: string;
-}): Promise<void> {
-  const absolutePath = path.join(input.worktreePath, CHARTER_DOCUMENT_PATH);
-  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.writeFile(absolutePath, input.markdown);
-}
-
 const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   getActiveExecution: getActiveGraphWorkflowExecution,
   mutateActive: executionRepository.mutateActive,
-  buildLiveEditDeps: defaultBuildLiveEditDeps,
+  buildLiveEditDeps: buildDefaultLiveEditDeps,
   publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
   publishCharterUpdated: eventPublisher.publishCharterUpdated,
   writeCharterDocument: defaultWriteCharterDocument,

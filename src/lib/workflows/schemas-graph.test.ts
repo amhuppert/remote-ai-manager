@@ -1079,6 +1079,7 @@ function createWorkflowDefaults() {
     },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     mutability: { allowAgentTaskAdd: false },
+    planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     collaboration: {
       secondAgent: {
         backend: "claude",

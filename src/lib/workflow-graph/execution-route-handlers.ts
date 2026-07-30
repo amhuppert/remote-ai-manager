@@ -55,6 +55,13 @@ import {
   type OptionalTokenValidation,
 } from "@/lib/agent-gateway/token";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import {
+  applyLiveEditsToActiveExecution,
+  buildDefaultLiveEditDeps,
+  defaultWriteCharterDocument,
+} from "./live-edit-apply";
+import { createPlanRepairAgentRunner } from "./plan-repair/agent-runner";
+import { createPlanRepairSupervisor } from "./plan-repair/supervisor";
 import { loadRotationHandoffNote } from "./rotation-handoff";
 import { readConversationTelemetry } from "./conversation-telemetry";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
@@ -420,6 +427,111 @@ const executionLoop = createGraphWorkflowExecutionLoop({
   getSession: defaultGetSession,
 });
 
+// ============================================================
+// Plan-repair supervisor composition (docs/design/cc-cli/08)
+// ============================================================
+// Every loop start flows through `kickOffExecutionLoop` below, so its
+// settlement is the single trigger seam: after the loop returns, the
+// supervisor re-reads the ACTIVE execution (never the loop's possibly-fenced
+// snapshot) and runs one bounded repair round when a retry-exhaustion halt is
+// eligible. Repairs ride the shared live-edit apply core (source
+// `plan-repair`), and a successful repair resumes through the same
+// normalize → resume → kick trio the RESUME route uses.
+
+const planRepairSupervisor = createPlanRepairSupervisor({
+  getActiveExecution: (projectPath, sessionName) =>
+    workflowManager.getActive(projectPath, sessionName),
+  mutateActive: executionRepository.mutateActive,
+  applyLiveEdits: (input) =>
+    applyLiveEditsToActiveExecution(input, {
+      getActiveExecution: getActiveGraphWorkflowExecution,
+      mutateActive: executionRepository.mutateActive,
+      buildLiveEditDeps: buildDefaultLiveEditDeps,
+      publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
+      publishCharterUpdated: eventPublisher.publishCharterUpdated,
+      getSession: defaultGetSession,
+      writeCharterDocument: defaultWriteCharterDocument,
+    }),
+  runRepairAgent: createPlanRepairAgentRunner(),
+  resumeExecution: async ({ projectPath, sessionName, projectName }) => {
+    await workflowManager.normalizeAfterRestart(projectPath, sessionName);
+    const execution = await workflowManager.resume(projectPath, sessionName);
+    // Fire-and-forget like the RESUME route's kick: the loop owns its own
+    // failure handling (recovery_error halts), so a rejection here is only
+    // logged.
+    void runExecutionLoopWithPlanRepair({
+      projectPath,
+      projectName,
+      sessionName,
+      execution,
+    }).catch((error) => {
+      logger.warn("graph-workflow.plan_repair.resume_kick_failed", {
+        projectPath,
+        sessionName,
+        error: getErrorMessage(error),
+      });
+    });
+  },
+  getValidationHistory: async (executionId, contextId) => {
+    const rows = await getGraphWorkflowEventsTail(
+      executionId,
+      GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT,
+    );
+    return rows
+      .map((row) => row.event)
+      .filter(
+        (
+          event,
+        ): event is Extract<
+          typeof event,
+          { type: "graph-workflow-validation-result" }
+        > =>
+          event.type === "graph-workflow-validation-result" &&
+          event.contextId === contextId,
+      )
+      .map((event) => ({
+        pass: event.pass,
+        summary: event.summary,
+        issues: event.issues,
+      }));
+  },
+  getSessionWorktreePath: async (projectPath, sessionName) =>
+    (await defaultGetSession(projectPath, sessionName))?.worktreePath ?? null,
+  // Push wiring lands with the plan-repair event slice; outcomes are already
+  // durable (round log + halt summary) and logged.
+  notify: (notification) => {
+    logger.info("graph-workflow.plan_repair.outcome", {
+      kind: notification.kind,
+      executionId: notification.executionId,
+      contextId: notification.contextId,
+      haltType: notification.haltType,
+      attempt: notification.attempt,
+      operationCount: notification.operationCount,
+    });
+  },
+  now: () => new Date().toISOString(),
+});
+
+/**
+ * Run the execution loop, then give the plan-repair supervisor its shot at
+ * the settlement state. The supervisor never throws and self-guards against
+ * concurrent runs; a resume it performs re-enters this wrapper, bounded by
+ * the round caps.
+ */
+async function runExecutionLoopWithPlanRepair(input: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+}): Promise<void> {
+  await executionLoop.run(input);
+  await planRepairSupervisor.maybeRunPlanRepair({
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    projectName: input.projectName,
+  });
+}
+
 interface GraphWorkflowExecutionContextMergeProgress {
   contextId: string;
   branchName: string | null;
@@ -622,7 +734,7 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   archiveExecution: (projectPath, sessionName) =>
     executionRepository.archiveActive(projectPath, sessionName),
   async kickOffExecutionLoop(input) {
-    await executionLoop.run(input);
+    await runExecutionLoopWithPlanRepair(input);
   },
   getActiveExecution: (projectPath, sessionName) =>
     workflowManager.getActive(projectPath, sessionName),

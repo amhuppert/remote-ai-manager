@@ -9,10 +9,16 @@
  * definition.
  */
 
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { createLogger } from "@/lib/logging";
+import { readConfig } from "@/lib/config/loader";
+import { readRepoConfig } from "@/lib/projects/repo-config";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
+  GraphWorkflowExecutionContextDefinition,
   WorkflowGraphValidationError,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
@@ -21,17 +27,81 @@ import type {
   PublishCharterUpdatedInput,
   PublishLiveEditAppliedInput,
 } from "./execution-events";
-import { renderCharterMarkdown } from "./charter/render";
+import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
+import { createRegisteredGraphExecutionContract } from "./execution-contract-port";
 import type { MutateActiveResult } from "./execution-repository";
 import { classifyExecutionEditability } from "./lifecycle-classifier";
+import {
+  coerceGlobalDefaults,
+  resolveCollaborationConfigWithProvenance,
+  resolveContext,
+} from "./resolve-config";
 import {
   applyLiveExecutionEdits,
   type LiveEditDeps,
   type LiveEditRejectionCode,
   type LiveEditSource,
+  type ResolvedContextConfig,
 } from "./runtime-edits";
 
 const logger = createLogger("workflow.live-edit");
+
+/**
+ * Resolve the concrete config a new `add-context` op seeds from when no
+ * `configFromContextId` is given and the deferred script-validator prerequisite,
+ * both computed once per request (the pure core's deps are sync). Resolves the
+ * global defaults through the same cascade a launch uses, against a synthetic
+ * no-override context, so a live-added context matches what a seeded one carries.
+ */
+export async function buildDefaultLiveEditDeps(
+  projectPath: string,
+): Promise<LiveEditDeps> {
+  const repoConfig = await readRepoConfig(projectPath);
+  const hasPreMergeCommand = Boolean(repoConfig?.preMergeCommand);
+
+  const global = await readConfig();
+  const defaults = coerceGlobalDefaults(global.workflowDefaults);
+  const syntheticContext: GraphWorkflowExecutionContextDefinition = {
+    id: "__live_edit_global_defaults__",
+    title: "Live edit defaults",
+    acceptanceCriteria: "Live edit defaults",
+  };
+  const resolved = resolveContext(defaults, {}, syntheticContext);
+  const collaboration = resolveCollaborationConfigWithProvenance(
+    defaults,
+    {},
+    syntheticContext,
+  );
+  const resolvedGlobalDefaults: ResolvedContextConfig = {
+    implementer: resolved.implementer,
+    contextValidator: resolved.contextValidator,
+    scriptValidator: resolved.scriptValidator,
+    humanApprovalGate: resolved.humanApprovalGate,
+    askUserQuestions: resolved.askUserQuestions,
+    mutability: resolved.mutability,
+    circuitBreaker: resolved.circuitBreaker,
+    iterationPolicy: resolved.iterationPolicy,
+    planRepair: resolved.planRepair,
+    collaboration,
+  };
+
+  return {
+    createTaskId: () => `task-${randomUUID()}`,
+    resolvedGlobalDefaults: () => resolvedGlobalDefaults,
+    hasPreMergeCommand: () => hasPreMergeCommand,
+    now: () => new Date().toISOString(),
+    executionContract: createRegisteredGraphExecutionContract(),
+  };
+}
+
+export async function defaultWriteCharterDocument(input: {
+  worktreePath: string;
+  markdown: string;
+}): Promise<void> {
+  const absolutePath = path.join(input.worktreePath, CHARTER_DOCUMENT_PATH);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, input.markdown);
+}
 
 // The doc-06 error contract (§"Error contract"): a code-bearing rejection is an
 // operation failure (CLI exit 1); a codeless 400/404 is malformed input (exit 2).
