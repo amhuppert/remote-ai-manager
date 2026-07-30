@@ -108,6 +108,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "tracked: grows one metadata-only entry (seq/timestamp/source/rationale/fieldsChanged/hash) per accepted amend-charter live edit, no eviction — full charter snapshots are deliberately NOT stored (doc 07 F2 keeps growth to audit metadata). In graph_workflow_executions.runtime_json.",
       "charterAmendments[].fieldsChanged":
         "bounded: subset of the eight top-level charter content field names (CHARTER_CONTENT_EDIT_FIELDS). In graph_workflow_executions.runtime_json.",
+      planRepairRounds:
+        "bounded: one metadata-only entry per plan-repair round, appended before the agent runs and never evicted; rounds are capped by planRepair.maxAttemptsPerContext per context and the hard PLAN_REPAIR_MAX_ROUNDS_PER_EXECUTION backstop of 5 per execution (docs/design/cc-cli/08). In graph_workflow_executions.runtime_json.",
       boundInputs:
         "bounded: one string value per author-declared launch parameter, fixed at seed and never mutated. In graph_workflow_executions.definition_json.",
       // --- runtime_json tier (hot, rewritten every tick) ---

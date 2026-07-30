@@ -244,6 +244,21 @@ function buildMaximalExecution(): unknown {
         charterHash: "hash-after-amendment-1",
       },
     ],
+    planRepairRounds: [
+      {
+        seq: 1,
+        contextId: "ctx-1",
+        haltType: "circuit_breaker",
+        startedAt: "2026-01-02T03:10:00.000Z",
+        settledAt: "2026-01-02T03:20:00.000Z",
+        outcome: "repaired",
+        planningDefect: true,
+        diagnosis: "AC referenced an endpoint removed in revision 2",
+        operationCount: 3,
+        resumed: true,
+        conversationId: "conv-plan-repair-1",
+      },
+    ],
     loopEpoch: 2,
     boundInputs: {
       feature: "search box",
@@ -301,6 +316,15 @@ function buildMaximalExecution(): unknown {
           iterationPolicy: {
             maxIterations: 7,
             continuity: { enabled: false, contextLimitTokens: 90_000 },
+          },
+          planRepair: {
+            enabled: false,
+            maxAttemptsPerContext: 3,
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "high",
+            },
           },
           collaboration: {
             enabled: { value: true, source: "per-node" },

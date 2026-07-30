@@ -190,6 +190,12 @@ Graph workflow config resolves through a **three-tier cascade**:
 
 Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); the resolved context is snapshotted into the execution's `workingDefinition`, so saved-definition or global-config edits never retroactively mutate a running execution. Live edits (`cctl workflow live`, doc 06) do mutate that `workingDefinition` in place — they target the execution's working copy, never the saved definition.
 
+`SEEDED_WORKFLOW_DEFAULTS` in `resolve-config.ts` is the ONE canonical
+"no config anywhere" defaults object. UI surfaces that need a pre-load fallback
+(config form-state, `useGlobalDefaults`, the builder inspector) import it —
+never re-write the literal, or that surface silently substitutes stale defaults
+for real cascade values (`form-state.test.ts` pins the identity).
+
 ```jsonc
 // config.json — global tier
 {

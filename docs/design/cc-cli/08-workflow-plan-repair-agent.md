@@ -302,15 +302,24 @@ resume/abort produces a gate rejection → round `superseded`, halt state untouc
 - **Structured logs**: `workflow.plan-repair` logger, stable event names matching the
   decisions entries (`.kiro/steering/logs.md`).
 
-## CLI and UI (v1: display only, doc 07 parity bucket)
+## CLI and UI
 
 - `cctl workflow live get` header gains `plan-repair: <n> round(s)` when rounds exist;
   `workflow status` halt line already shows the reason — the populated `summary` now
   explains it. Help-registry COVERAGE + cc-cli SKILL sync per `.kiro/steering/cli.md`.
 - Inspector: repair rounds appear in the Events panel via the new event type; the halt
   bar / `HaltDetailsDialog` renders the populated summary. An Overview "plan repair ×N"
-  badge is a cheap optional final slice. Repair *configuration* UI joins the doc 06
-  slice-5 / doc 07 CLI-only parity bucket (revisit at D4).
+  badge is a cheap optional final slice.
+- **Configuration UI (landed post-live-proof, closing the original CLI-only parity
+  bucket):** the shared `PlanRepairEditor` (enabled / max attempts / optional custom
+  agent seeded from `PLAN_REPAIR_DEFAULT_AGENT`) renders on all three config surfaces —
+  the global settings page (`PlanRepairFields`, ninth Workflow-defaults block), the
+  builder inspector (workflow + context tabs, full Override/Reset cascade provenance),
+  and the execution inspector's Config tab (live `update-context` edits). In the same
+  pass, the seeded workflow defaults were single-sourced: `SEEDED_WORKFLOW_DEFAULTS`
+  is exported from `resolve-config.ts` (the cascade owner) and every UI fallback
+  imports it; `DEFAULT_PLAN_REPAIR_POLICY` derives from the Zod schema so plan-repair
+  default values exist in exactly one place.
 
 ## Testing plan (red-green TDD throughout)
 
