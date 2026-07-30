@@ -1196,7 +1196,9 @@ describe("applyLiveExecutionEdits — amend-charter", () => {
         type: "amend-charter",
         rationale: "Invariant inv-x was impossible against the shipped API",
         mission: "Amended mission statement",
-        invariants: [{ id: "inv-new", statement: "One authority per decision" }],
+        invariants: [
+          { id: "inv-new", statement: "One authority per decision" },
+        ],
       },
     ]);
 

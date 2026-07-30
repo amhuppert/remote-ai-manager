@@ -187,6 +187,8 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       mutateActive: repository.mutateActive,
       buildLiveEditDeps: async () => TEST_LIVE_EDIT_DEPS,
       publishLiveEditApplied: publisher.publishLiveEditApplied,
+      publishCharterUpdated: publisher.publishCharterUpdated,
+      writeCharterDocument: async () => {},
     };
     editHandlers = createGraphWorkflowRuntimeEditRouteHandlers(editDeps);
     outlineHandlers = createGraphWorkflowLiveOutlineRouteHandlers({

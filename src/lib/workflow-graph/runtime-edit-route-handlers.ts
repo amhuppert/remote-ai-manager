@@ -31,10 +31,7 @@ import {
   type PublishCharterUpdatedInput,
   type PublishLiveEditAppliedInput,
 } from "./execution-events";
-import {
-  CHARTER_DOCUMENT_PATH,
-  renderCharterMarkdown,
-} from "./charter/render";
+import { CHARTER_DOCUMENT_PATH, renderCharterMarkdown } from "./charter/render";
 import {
   createGraphWorkflowExecutionRepository,
   type MutateActiveResult,

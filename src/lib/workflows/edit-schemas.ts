@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  charterInvariantSchema,
-  sourceOfTruthSchema,
-} from "./charter-schemas";
+import { charterInvariantSchema, sourceOfTruthSchema } from "./charter-schemas";
 import {
   contextValidatorOverrideSchema,
   graphWorkflowAgentConfigSchema,
@@ -301,7 +298,9 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
           ([key, fieldValue]) =>
             key !== "type" && key !== "rationale" && fieldValue !== undefined,
         ),
-      { message: "amend-charter requires at least one charter field to change" },
+      {
+        message: "amend-charter requires at least one charter field to change",
+      },
     ),
   z
     .object({

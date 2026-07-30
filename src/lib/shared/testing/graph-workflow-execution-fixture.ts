@@ -22,7 +22,8 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         seq: 1,
         amendedAt: "2026-01-02T03:00:00.000Z",
         source: "cli",
-        rationale: "Invariant inv-2 was impossible to satisfy against the shipped API",
+        rationale:
+          "Invariant inv-2 was impossible to satisfy against the shipped API",
         fieldsChanged: ["invariants", "mission"],
         charterHash: "hash-after-amendment-1",
       },

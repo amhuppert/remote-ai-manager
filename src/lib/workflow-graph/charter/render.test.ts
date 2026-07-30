@@ -363,9 +363,7 @@ describe("amendment log rendering", () => {
 
   it("omits the amendment section entirely when there are no amendments", () => {
     expect(renderCharterDigest(makeCharter())).not.toContain("Amendment log");
-    expect(renderCharterMarkdown(makeCharter())).not.toContain(
-      "Amendment log",
-    );
+    expect(renderCharterMarkdown(makeCharter())).not.toContain("Amendment log");
   });
 
   it("does not change the charter hash (content-only hashing)", () => {
