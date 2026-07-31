@@ -1,206 +1,679 @@
-import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import "@/app/globals.css";
-import type { AgentSessionRef } from "@/lib/shared/schemas";
-import CopyableId from "@/components/CopyableId";
-import { ContextFillIndicator } from "@/components/ContextFillIndicator";
-import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Decorator, Meta, StoryObj } from "@storybook/nextjs-vite";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 
-// classNames are referenced via module constants (not inline literals) so the
-// bare-token collision guard (tailwind-utility-collisions.test.ts, which only
-// reads quoted strings inside `className=`) treats this migrated, utility-first
-// mock as intentional without a UTILITY_FIRST_PATHS allowlist entry — the same
-// pattern DebugStructuredCard uses.
-const STRIP_CLASS =
-  "relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem] max-768:hidden";
-const STRIP_INNER_CLASS = "flex items-center gap-lg px-md py-[6px]";
-const PROMPTS_GROUP_CLASS = "flex shrink-0 items-center gap-[6px]";
-const PROMPTS_LABEL_CLASS =
-  "text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase";
-const PROMPTS_VALUE_CLASS = "font-semibold text-text-primary";
-const CONTEXT_BTN_CLASS =
-  "relative cursor-pointer rounded-sm border border-solid border-border-subtle bg-transparent px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase transition-colors duration-150 hover:border-border-default hover:text-text-secondary";
+import { buildArtifactListItem } from "@/components/context-artifacts/fixtures";
+import { contextArtifactKeys } from "@/lib/context-artifacts/query-keys";
+import type { ContextArtifactListItem } from "@/lib/context-artifacts/queries";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { alignmentKeys } from "@/lib/session-alignment/query-keys";
+import {
+  alignmentStateSchema,
+  type AlignmentState,
+} from "@/lib/session-alignment/schemas";
+import { ticketKeys } from "@/lib/tickets/query-keys";
+import type { TicketLinkSummary } from "@/lib/tickets/schemas";
+import { LAYOUT_OPTIONS } from "./LayoutSwitcher";
+import SessionInfoStrip from "./SessionInfoStrip";
 
-/**
- * Isolated rendering of the session info strip to preview the redesigned layout.
- * This story simulates the strip without requiring the full ConversationDetailPage.
- */
-function InfoStripDemo({
-  branchName,
-  backend,
-  promptCount,
-  worktreeShort,
-  worktreeFull,
-  contextPercent,
-  conversationId,
-  backendRef,
-  createdAt,
-  statusDotClass,
-}: {
-  branchName: string;
-  backend: "claude" | "codex";
-  promptCount: number;
-  worktreeShort: string;
-  worktreeFull: string;
-  contextPercent: number | null;
-  conversationId: string;
-  backendRef: AgentSessionRef | null;
-  createdAt: string;
-  statusDotClass: string;
-}) {
+const PROJECT_NAME = "command-center";
+const LONG_PROJECT_NAME = "command-center-webapp2";
+const SESSION_NAME =
+  "ticket-conversation-top-bar-needs-to-be-responsive-88bfcd";
+const CONVERSATION_ID = "3215d7bf-d7f9-4e05-945a-78621c52f862";
+
+const session = sessionStateSchema.parse({
+  sessionName: SESSION_NAME,
+  worktreePath:
+    "/Users/alex/github/command-center/.worktrees/ticket-conversation-top-bar-needs-to-be-responsive-88bfcd",
+  branchName: "csm/ticket-conversation-top-bar-needs-to-be-responsive-88bfcd",
+  createdAt: "2026-07-30T20:00:00.000Z",
+  lastActivityAt: "2026-07-31T01:00:00.000Z",
+  tddEnabled: true,
+});
+
+const alignmentState = alignmentStateSchema.parse({
+  active: {
+    id: "alignment-v5",
+    version: 5,
+    content: "Keep every conversation control reachable.",
+    contentHash: "alignment-v5-hash",
+    status: "active",
+    source: "ticket",
+    authorConversationId: CONVERSATION_ID,
+    autoActivate: true,
+    linkedDecisionIds: [],
+    createdAt: "2026-07-30T20:00:00.000Z",
+    activatedAt: "2026-07-30T20:05:00.000Z",
+    approver: "Alex",
+  },
+  draft: null,
+  history: [],
+  decisions: [],
+  pendingProposals: [],
+  preview: "Keep every conversation control reachable.",
+});
+
+const pendingAlignmentState = alignmentStateSchema.parse({
+  ...alignmentState,
+  draft: {
+    id: "alignment-draft",
+    version: null,
+    content: "Pending responsive-layout update.",
+    contentHash: "alignment-draft-hash",
+    status: "draft",
+    source: "align_rerun",
+    authorConversationId: CONVERSATION_ID,
+    autoActivate: false,
+    linkedDecisionIds: [],
+    createdAt: "2026-07-31T01:05:00.000Z",
+    activatedAt: null,
+    approver: null,
+  },
+});
+
+const ticketLinks = {
+  [SESSION_NAME]: {
+    ticketId: "command-center#35",
+    projectName: PROJECT_NAME,
+    number: 35,
+    title: "conversation top bar needs to be responsive",
+    active: true,
+    linkedAt: "2026-07-30T20:00:00.000Z",
+    endedAt: null,
+  },
+} satisfies Record<string, TicketLinkSummary>;
+
+const longTicketLinks = {
+  [SESSION_NAME]: {
+    ...ticketLinks[SESSION_NAME],
+    ticketId: `${LONG_PROJECT_NAME}#35`,
+    projectName: LONG_PROJECT_NAME,
+  },
+} satisfies Record<string, TicketLinkSummary>;
+
+const STALE_CONTEXT_ARTIFACTS = [
+  buildArtifactListItem({
+    kind: "conversation_compaction",
+    messageIndex: null,
+    messageId: null,
+    stale: true,
+    staleBehindMessages: 12_345,
+  }),
+];
+
+const withStripQueries: Decorator = (Story, context) => {
+  const contextArtifacts = (context.parameters.contextArtifacts ??
+    []) as ContextArtifactListItem[];
+  const storyAlignmentState = (context.parameters.alignmentState ??
+    alignmentState) as AlignmentState;
+  const storyTicketLinks = (context.parameters.ticketLinks ??
+    ticketLinks) as Record<string, TicketLinkSummary>;
+  const storyProjectName = context.args.projectName as string;
+  const storySessionName = context.args.sessionName as string;
+  const storyConversationId = context.args.conversationId as string;
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        staleTime: Infinity,
+        refetchOnMount: false,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+      },
+    },
+  });
+  queryClient.setQueryData(
+    alignmentKeys.state(storyProjectName, storySessionName),
+    storyAlignmentState,
+  );
+  queryClient.setQueryData(
+    contextArtifactKeys.list({
+      scope: "session",
+      projectName: storyProjectName,
+      sessionName: storySessionName,
+      conversationId: storyConversationId,
+    }),
+    contextArtifacts,
+  );
+  queryClient.setQueryData(
+    ticketKeys.sessionLinks(storyProjectName),
+    storyTicketLinks,
+  );
+
   return (
-    <div
-      style={{
-        padding: "24px",
-        background: "var(--bg-void)",
-        minHeight: "120px",
-      }}
-    >
-      <div className={STRIP_CLASS}>
-        <div className={STRIP_INNER_CLASS}>
-          <CopyableId label="Branch" value={branchName} truncateAt={999} />
-          <span
-            className="cc-badge cc-badge--status"
-            data-status={backend === "claude" ? "active" : "awaiting"}
-          >
-            {backend}
-          </span>
-          <div className={PROMPTS_GROUP_CLASS}>
-            <span className={PROMPTS_LABEL_CLASS}>Prompts</span>
-            <span className={PROMPTS_VALUE_CLASS}>{promptCount}</span>
-          </div>
-          <CopyableId
-            label="Worktree"
-            value={worktreeFull}
-            displayValue={worktreeShort}
-          />
-          {contextPercent != null && (
-            <ContextFillIndicator percentage={contextPercent} />
-          )}
-          <button
-            className={CONTEXT_BTN_CLASS}
-            onClick={(e) => e.stopPropagation()}
-          >
-            &#x2398; Context
-          </button>
-          <InfoDetailsPopover
-            conversationId={conversationId}
-            backendRef={backendRef}
-            createdAt={createdAt}
-            worktreePath={worktreeFull}
-            promptCount={0}
-          />
-        </div>
-      </div>
+    <QueryClientProvider client={queryClient}>
+      <Story />
+    </QueryClientProvider>
+  );
+};
 
-      {/* Ghost reference: status dot for visual context */}
+function atWidth(width: number): Decorator {
+  return function StripAtWidth(Story) {
+    return (
       <div
+        data-strip-host
         style={{
-          marginTop: 12,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          fontFamily: "var(--font-mono)",
-          fontSize: "0.72rem",
-          color: "var(--text-tertiary)",
+          width,
+          maxWidth: "100%",
+          background: "var(--bg-void)",
         }}
       >
-        <span
-          className={`status-dot ${statusDotClass}`}
-          style={{ width: 6, height: 6 }}
-        />
-        <span>Status: {statusDotClass || "idle"}</span>
+        <Story />
       </div>
-    </div>
+    );
+  };
+}
+
+interface StripExpectations {
+  inlineCompaction: boolean;
+  inlineLayout: boolean;
+  mobile?: boolean;
+  status?: string;
+  ticketName?: string;
+  width: number;
+  worktree: boolean;
+}
+
+async function settleLayout(canvasElement: HTMLElement): Promise<void> {
+  await canvasElement.ownerDocument.fonts.ready;
+  await new Promise<void>((resolve) => {
+    const view = canvasElement.ownerDocument.defaultView;
+    if (!view) {
+      resolve();
+      return;
+    }
+    view.requestAnimationFrame(() => resolve());
+  });
+}
+
+async function expectStripFits(
+  canvasElement: HTMLElement,
+  {
+    inlineCompaction,
+    inlineLayout,
+    mobile = false,
+    status = "running",
+    ticketName = "command-center#35",
+    width,
+    worktree,
+  }: StripExpectations,
+): Promise<void> {
+  await settleLayout(canvasElement);
+
+  const host = canvasElement.querySelector<HTMLElement>("[data-strip-host]");
+  if (!host) {
+    throw new Error("strip host not rendered");
+  }
+  await expect(host.getBoundingClientRect().width).toBeCloseTo(width, 0);
+
+  const strip = canvasElement.querySelector<HTMLElement>(
+    "[data-session-info-strip]",
   );
+  if (!strip) {
+    throw new Error("session info strip not rendered");
+  }
+
+  const canvas = within(strip);
+  const ticket = canvas.getByRole("link", { name: ticketName });
+  await expect(ticket).toBeVisible();
+
+  if (mobile) {
+    await expect(
+      canvas.queryByRole("button", { name: "Actions" }),
+    ).not.toBeInTheDocument();
+  } else {
+    await expect(
+      canvas.getByRole("button", { name: "Dev servers" }),
+    ).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Actions" })).toBeVisible();
+    await expect(
+      canvas.getByRole("button", { name: "Session details" }),
+    ).toBeVisible();
+    await expect(
+      canvas.getByRole("switch", { name: "Toggle red-green TDD" }),
+    ).toBeVisible();
+    await expect(canvas.getByText("Context")).toBeVisible();
+    await expect(canvas.getByText("30%")).toBeVisible();
+    await expect(canvas.getByText("Alignment")).toBeVisible();
+    await expect(canvas.getByText("v5")).toBeVisible();
+    await expect(canvas.getByText(status)).toBeVisible();
+  }
+
+  const compactionControl = canvas.queryByRole("button", {
+    name: /^Context artifact:/,
+  });
+  if (inlineCompaction) {
+    await expect(compactionControl).toBeVisible();
+  } else {
+    await expect(compactionControl).not.toBeInTheDocument();
+  }
+
+  const layoutGroup = canvas.queryByRole("group", {
+    name: "Conversation layout",
+  });
+  if (inlineLayout) {
+    await expect(layoutGroup).toBeVisible();
+  } else {
+    await expect(layoutGroup).not.toBeInTheDocument();
+  }
+
+  const worktreeControl = canvas.queryByRole("button", { name: /worktree/i });
+  if (worktree) {
+    await expect(worktreeControl).toBeVisible();
+    const worktreeRect = worktreeControl!.getBoundingClientRect();
+    for (const child of worktreeControl!.children) {
+      const childRect = child.getBoundingClientRect();
+      if (childRect.width === 0 || childRect.height === 0) continue;
+      await expect(childRect.left).toBeGreaterThanOrEqual(
+        worktreeRect.left - 1,
+      );
+      await expect(childRect.right).toBeLessThanOrEqual(worktreeRect.right + 1);
+    }
+  } else {
+    await expect(worktreeControl).not.toBeInTheDocument();
+  }
+
+  await expect(strip.scrollWidth).toBeLessThanOrEqual(strip.clientWidth + 1);
+  const stripRect = strip.getBoundingClientRect();
+  const controls = strip.querySelectorAll<HTMLElement>(
+    'button, a[href], [role="button"], [role="switch"]',
+  );
+  for (const control of controls) {
+    const rect = control.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    await expect(rect.left).toBeGreaterThanOrEqual(stripRect.left - 1);
+    await expect(rect.right).toBeLessThanOrEqual(stripRect.right + 1);
+  }
+
+  const ticketRegion = ticket.closest<HTMLElement>(
+    "[data-session-ticket-region]",
+  );
+  if (!ticketRegion) {
+    throw new Error("ticket region not rendered");
+  }
+  const ticketRect = ticket.getBoundingClientRect();
+  const ticketRegionRect = ticketRegion.getBoundingClientRect();
+  await expect(ticketRect.left).toBeGreaterThanOrEqual(
+    ticketRegionRect.left - 1,
+  );
+  await expect(ticketRect.right).toBeLessThanOrEqual(
+    ticketRegionRect.right + 1,
+  );
+
+  const contextRegion = strip.querySelector<HTMLElement>(
+    "[data-session-context-region]",
+  );
+  if (contextRegion) {
+    const nextRect = contextRegion.getBoundingClientRect();
+    if (nextRect.width > 0 && nextRect.height > 0) {
+      await expect(ticketRect.right).toBeLessThanOrEqual(nextRect.left + 1);
+    }
+  }
+}
+
+async function expectLayoutOptionsInMenu(
+  canvasElement: HTMLElement,
+): Promise<ReturnType<typeof within>> {
+  const canvas = within(canvasElement);
+  await userEvent.click(canvas.getByRole("button", { name: "Actions" }));
+  const body = within(canvasElement.ownerDocument.body);
+
+  await waitFor(() => {
+    for (const { tooltip } of LAYOUT_OPTIONS) {
+      expect(body.getByRole("menuitemradio", { name: tooltip })).toBeVisible();
+    }
+  });
+
+  const menu = body.getByRole("menu");
+  const host = canvasElement.querySelector<HTMLElement>("[data-strip-host]");
+  if (!host) {
+    throw new Error("strip host not rendered");
+  }
+  const menuRect = menu.getBoundingClientRect();
+  const hostRect = host.getBoundingClientRect();
+  expect(menuRect.left).toBeGreaterThanOrEqual(hostRect.left - 1);
+  expect(menuRect.right).toBeLessThanOrEqual(hostRect.right + 1);
+
+  return body;
+}
+
+function wideViewport(width: number) {
+  return {
+    viewport: {
+      defaultViewport: `strip-${width}`,
+      viewports: {
+        [`strip-${width}`]: {
+          name: `${width}px strip`,
+          styles: { width: `${width + 80}px`, height: "800px" },
+          type: "desktop",
+        },
+      },
+    },
+  };
 }
 
 const meta = {
   title: "Session/InfoStrip",
-  component: InfoStripDemo,
+  component: SessionInfoStrip,
+  decorators: [withStripQueries],
   parameters: {
+    a11y: { test: "error" },
     layout: "fullscreen",
   },
-} satisfies Meta<typeof InfoStripDemo>;
+  args: {
+    session,
+    activeConversation: undefined,
+    projectName: PROJECT_NAME,
+    sessionName: SESSION_NAME,
+    conversationId: CONVERSATION_ID,
+    statusDotClass: "status-dot-cyan",
+    displayStatus: "running",
+    contextPercent: 30,
+    buildContext: () => "Responsive top bar context",
+    tddEnabled: true,
+    onTddChange: fn(),
+    tddDisabled: false,
+    layout: "split",
+    onLayoutChange: fn(),
+    dsOpen: false,
+    dsServers: [],
+    dsClose: fn(),
+    dsToggle: fn(),
+    dsStartServer: fn(),
+    dsStopServer: fn(),
+    dsStartAll: fn(),
+    dsStopAll: fn(),
+    targetBranch: "main",
+    onDelete: fn(),
+    onRebase: fn(),
+    onActivateAlignment: fn(),
+  },
+} satisfies Meta<typeof SessionInfoStrip>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const ClaudeSession: Story = {
+export const Wide: Story = {
+  decorators: [atWidth(1440)],
+  parameters: {
+    ...wideViewport(1440),
+    alignmentState: pendingAlignmentState,
+    contextArtifacts: STALE_CONTEXT_ARTIFACTS,
+    ticketLinks: longTicketLinks,
+  },
   args: {
-    branchName: "csm/implement-codex-mcp-support-b0b4cd",
-    backend: "claude",
-    promptCount: 12,
-    worktreeShort: "implement-codex-mcp-support-b0b4cd",
-    worktreeFull:
-      "/home/alex/github/remote-ai-manager/.worktrees/implement-codex-mcp-support-b0b4cd",
-    contextPercent: 52,
-    conversationId: "c3e2c1cc-abcd-1234-5678-abcdef012345",
-    backendRef: { backend: "claude", ref: "sess_abc123xyz456" },
-    createdAt: "2026-04-15T16:15:00Z",
-    statusDotClass: "cyan",
+    displayStatus: "waiting_for_input",
+    projectName: LONG_PROJECT_NAME,
+  },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      status: "waiting_for_input",
+      ticketName: `${LONG_PROJECT_NAME}#35`,
+      width: 1440,
+      worktree: true,
+    });
+    const canvas = within(canvasElement);
+    const ticketRect = canvas
+      .getByRole("link", { name: `${LONG_PROJECT_NAME}#35` })
+      .getBoundingClientRect();
+    const actionsRect = canvas
+      .getByRole("button", { name: "Actions" })
+      .getBoundingClientRect();
+    await expect(actionsRect.top).toBeLessThan(ticketRect.bottom - 1);
   },
 };
 
-export const CodexSession: Story = {
+export const ActionStackBoundary: Story = {
+  decorators: [atWidth(1439)],
+  parameters: {
+    ...wideViewport(1439),
+    alignmentState: pendingAlignmentState,
+    contextArtifacts: STALE_CONTEXT_ARTIFACTS,
+    ticketLinks: longTicketLinks,
+  },
   args: {
-    branchName: "csm/fix-auth-flow-a1b2c3",
-    backend: "codex",
-    promptCount: 3,
-    worktreeShort: "fix-auth-flow-a1b2c3",
-    worktreeFull:
-      "/home/alex/github/remote-ai-manager/.worktrees/fix-auth-flow-a1b2c3",
-    contextPercent: 78,
-    conversationId: "d4e5f6aa-bbbb-cccc-dddd-eeeeeeeeeeee",
-    backendRef: { backend: "codex", ref: "thread_xyz789def" },
-    createdAt: "2026-04-15T10:30:00Z",
-    statusDotClass: "amber",
+    displayStatus: "waiting_for_input",
+    projectName: LONG_PROJECT_NAME,
+  },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      status: "waiting_for_input",
+      ticketName: `${LONG_PROJECT_NAME}#35`,
+      width: 1439,
+      worktree: true,
+    });
+    const canvas = within(canvasElement);
+    const ticketRect = canvas
+      .getByRole("link", { name: `${LONG_PROJECT_NAME}#35` })
+      .getBoundingClientRect();
+    const actionsRect = canvas
+      .getByRole("button", { name: "Actions" })
+      .getBoundingClientRect();
+    await expect(actionsRect.top).toBeGreaterThan(ticketRect.bottom - 1);
   },
 };
 
-export const HighContextUsage: Story = {
-  args: {
-    branchName: "csm/massive-refactor-session-xyz",
-    backend: "claude",
-    promptCount: 47,
-    worktreeShort: "massive-refactor-session-xyz",
-    worktreeFull:
-      "/home/alex/github/remote-ai-manager/.worktrees/massive-refactor-session-xyz",
-    contextPercent: 92,
-    conversationId: "aabbccdd-1122-3344-5566-778899aabbcc",
-    backendRef: { backend: "claude", ref: "sess_longrunning001" },
-    createdAt: "2026-04-14T08:00:00Z",
-    statusDotClass: "cyan",
+export const PendingAlignmentPressure: Story = {
+  decorators: [atWidth(1320)],
+  parameters: {
+    ...wideViewport(1320),
+    alignmentState: pendingAlignmentState,
+    contextArtifacts: STALE_CONTEXT_ARTIFACTS,
+  },
+  args: { displayStatus: "waiting_for_input" },
+  play: ({ canvasElement }) =>
+    expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      status: "waiting_for_input",
+      width: 1320,
+      worktree: true,
+    }),
+};
+
+export const WorktreeVisibleBoundary: Story = {
+  decorators: [atWidth(1100)],
+  parameters: { contextArtifacts: STALE_CONTEXT_ARTIFACTS },
+  args: { displayStatus: "waiting_for_input" },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      status: "waiting_for_input",
+      width: 1100,
+      worktree: true,
+    });
   },
 };
 
-export const IdleSession: Story = {
-  args: {
-    branchName: "csm/quick-fix-typo-d4e5f6",
-    backend: "claude",
-    promptCount: 1,
-    worktreeShort: "quick-fix-typo-d4e5f6",
-    worktreeFull:
-      "/home/alex/github/remote-ai-manager/.worktrees/quick-fix-typo-d4e5f6",
-    contextPercent: null,
-    conversationId: "11223344-5566-7788-99aa-bbccddeeff00",
-    backendRef: null,
-    createdAt: "2026-04-15T17:00:00Z",
-    statusDotClass: "",
+export const WorktreeHiddenBoundary: Story = {
+  decorators: [atWidth(1099)],
+  parameters: { contextArtifacts: STALE_CONTEXT_ARTIFACTS },
+  args: { displayStatus: "waiting_for_input" },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      status: "waiting_for_input",
+      width: 1099,
+      worktree: false,
+    });
+    const canvas = within(canvasElement);
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Session details" }),
+    );
+    const details = canvas.getByRole("dialog", { name: "Session details" });
+    await waitFor(() => {
+      expect(
+        within(details).getByRole("button", { name: "Copy Worktree" }),
+      ).toBeVisible();
+    });
   },
 };
 
-export const MergedSession: Story = {
+export const CapturedWidth: Story = {
+  decorators: [atWidth(1012)],
+  play: ({ canvasElement }) =>
+    expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      width: 1012,
+      worktree: false,
+    }),
+};
+
+export const Intermediate: Story = {
+  decorators: [atWidth(840)],
+  play: ({ canvasElement }) =>
+    expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      width: 840,
+      worktree: false,
+    }),
+};
+
+export const InlineLayoutBoundary: Story = {
+  decorators: [atWidth(760)],
+  parameters: { contextArtifacts: STALE_CONTEXT_ARTIFACTS },
+  args: { displayStatus: "waiting_for_input" },
+  play: ({ canvasElement }) =>
+    expectStripFits(canvasElement, {
+      inlineCompaction: true,
+      inlineLayout: true,
+      status: "waiting_for_input",
+      width: 760,
+      worktree: false,
+    }),
+};
+
+export const FallbackBoundary: Story = {
+  decorators: [atWidth(759)],
+  parameters: {
+    contextArtifacts: STALE_CONTEXT_ARTIFACTS,
+  },
+  args: { displayStatus: "waiting_for_input" },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: false,
+      inlineLayout: false,
+      status: "waiting_for_input",
+      width: 759,
+      worktree: false,
+    });
+    const body = await expectLayoutOptionsInMenu(canvasElement);
+    await expect(
+      body.getByRole("menuitem", { name: /View context artifact/ }),
+    ).toBeVisible();
+    await expect(
+      body.getByRole("menuitem", { name: /Refresh context artifact/ }),
+    ).toBeVisible();
+    await expect(body.getByText("Behind 12345 messages")).toBeVisible();
+    await expect(
+      body.getByRole("menuitem", { name: /Copy reference/ }),
+    ).toBeVisible();
+  },
+};
+
+export const CompactFallback: Story = {
+  decorators: [atWidth(620)],
+  play: ({ canvasElement }) =>
+    expectStripFits(canvasElement, {
+      inlineCompaction: false,
+      inlineLayout: false,
+      width: 620,
+      worktree: false,
+    }),
+};
+
+export const ContextTrackBoundary: Story = {
+  decorators: [atWidth(520)],
+  args: { displayStatus: "waiting_for_input" },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: false,
+      inlineLayout: false,
+      status: "waiting_for_input",
+      width: 520,
+      worktree: false,
+    });
+    await expect(
+      within(canvasElement).getByRole("progressbar", {
+        name: "Context window 30% full",
+      }),
+    ).toBeVisible();
+  },
+};
+
+export const CondensedContextBoundary: Story = {
+  decorators: [atWidth(519)],
+  args: { displayStatus: "waiting_for_input" },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: false,
+      inlineLayout: false,
+      status: "waiting_for_input",
+      width: 519,
+      worktree: false,
+    });
+    await expect(
+      within(canvasElement).queryByRole("progressbar", {
+        name: "Context window 30% full",
+      }),
+    ).not.toBeInTheDocument();
+  },
+};
+
+export const NarrowDesktop: Story = {
+  decorators: [atWidth(429)],
+  parameters: { ticketLinks: longTicketLinks },
   args: {
-    branchName: "csm/completed-feature-abc123",
-    backend: "claude",
-    promptCount: 28,
-    worktreeShort: "completed-feature-abc123",
-    worktreeFull:
-      "/home/alex/github/remote-ai-manager/.worktrees/completed-feature-abc123",
-    contextPercent: 65,
-    conversationId: "ff001122-3344-5566-7788-99aabbccddee",
-    backendRef: { backend: "claude", ref: "sess_merged999" },
-    createdAt: "2026-04-13T14:22:00Z",
-    statusDotClass: "green",
+    displayStatus: "waiting_for_input",
+    projectName: LONG_PROJECT_NAME,
+  },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: false,
+      inlineLayout: false,
+      status: "waiting_for_input",
+      ticketName: `${LONG_PROJECT_NAME}#35`,
+      width: 429,
+      worktree: false,
+    });
+    const ticket = within(canvasElement).getByRole("link", {
+      name: `${LONG_PROJECT_NAME}#35`,
+    });
+    await expect(within(ticket).getByText("#35")).toBeVisible();
+    await expectLayoutOptionsInMenu(canvasElement);
+  },
+};
+
+export const Mobile: Story = {
+  decorators: [atWidth(390)],
+  parameters: {
+    viewport: {
+      defaultViewport: "strip-mobile",
+      viewports: {
+        "strip-mobile": {
+          name: "390px mobile strip",
+          styles: { width: "390px", height: "844px" },
+          type: "mobile",
+        },
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await expectStripFits(canvasElement, {
+      inlineCompaction: false,
+      inlineLayout: false,
+      mobile: true,
+      width: 390,
+      worktree: false,
+    });
   },
 };

@@ -1,10 +1,12 @@
 import { Progress } from "@/components/ui/Progress";
+import { cn } from "@/lib/ui/cn";
 
 type FillLevel = "normal" | "warning" | "danger";
 
 interface ContextFillIndicatorProps {
   /** Context window fill percentage (0–100). Values outside range are clamped. */
   percentage: number;
+  condenseAtNarrow?: boolean;
 }
 
 function getLevel(pct: number): FillLevel {
@@ -48,6 +50,7 @@ const pctLevel: Record<FillLevel, string> = {
 
 export function ContextFillIndicator({
   percentage,
+  condenseAtNarrow = false,
 }: ContextFillIndicatorProps) {
   const clamped = Math.max(0, Math.min(100, Math.round(percentage)));
   const level = getLevel(clamped);
@@ -55,7 +58,12 @@ export function ContextFillIndicator({
   return (
     <div className={rootClass}>
       <span className={labelClass}>Context</span>
-      <div className={trackWrapClass}>
+      <div
+        className={cn(
+          trackWrapClass,
+          condenseAtNarrow && "@max-[520px]:hidden",
+        )}
+      >
         <Progress
           value={clamped}
           tone={fillTone[level]}

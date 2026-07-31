@@ -12,10 +12,23 @@ Element.prototype.releasePointerCapture = () => {};
 
 afterEach(cleanup);
 
+function defaultLayoutProps() {
+  return {
+    activeLayout: "split" as const,
+    onLayoutChange: vi.fn(),
+  };
+}
+
 describe("SessionActionsMenu", () => {
   it("does not render Commit or Merge actions but keeps Delete", async () => {
     const user = userEvent.setup();
-    render(<SessionActionsMenu targetBranch="main" onDelete={vi.fn()} />);
+    render(
+      <SessionActionsMenu
+        {...defaultLayoutProps()}
+        targetBranch="main"
+        onDelete={vi.fn()}
+      />,
+    );
 
     await user.click(screen.getByRole("button", { name: /actions/i }));
 
@@ -33,7 +46,13 @@ describe("SessionActionsMenu", () => {
   it("invokes onDelete when the delete item is picked", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
-    render(<SessionActionsMenu targetBranch="main" onDelete={onDelete} />);
+    render(
+      <SessionActionsMenu
+        {...defaultLayoutProps()}
+        targetBranch="main"
+        onDelete={onDelete}
+      />,
+    );
 
     await user.click(screen.getByRole("button", { name: /actions/i }));
     await user.click(screen.getByRole("menuitem", { name: /delete session/i }));
@@ -43,7 +62,13 @@ describe("SessionActionsMenu", () => {
 
   it("disables Push and Rebase when no handler is provided", async () => {
     const user = userEvent.setup();
-    render(<SessionActionsMenu targetBranch="main" onDelete={vi.fn()} />);
+    render(
+      <SessionActionsMenu
+        {...defaultLayoutProps()}
+        targetBranch="main"
+        onDelete={vi.fn()}
+      />,
+    );
 
     await user.click(screen.getByRole("button", { name: /actions/i }));
     expect(
@@ -59,6 +84,7 @@ describe("SessionActionsMenu", () => {
     const onRebase = vi.fn();
     render(
       <SessionActionsMenu
+        {...defaultLayoutProps()}
         targetBranch="main"
         onDelete={vi.fn()}
         onRebase={onRebase}
@@ -69,6 +95,55 @@ describe("SessionActionsMenu", () => {
     await user.click(screen.getByRole("menuitem", { name: /rebase on main/i }));
 
     expect(onRebase).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SessionActionsMenu — layout fallback", () => {
+  it("keeps every layout mode reachable and marks the active mode", async () => {
+    const user = userEvent.setup();
+    render(
+      <SessionActionsMenu
+        targetBranch="main"
+        onDelete={vi.fn()}
+        activeLayout="conversation"
+        onLayoutChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /actions/i }));
+
+    expect(screen.getByRole("group", { name: "Layout" })).toBeInTheDocument();
+    for (const name of [
+      "Split 50/50",
+      "Panes (split-screen)",
+      "Conversation only",
+      "Right panel only",
+    ]) {
+      expect(screen.getByRole("menuitemradio", { name })).toBeInTheDocument();
+    }
+    expect(
+      screen.getByRole("menuitemradio", { name: "Conversation only" }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("changes layout from the fallback menu", async () => {
+    const user = userEvent.setup();
+    const onLayoutChange = vi.fn();
+    render(
+      <SessionActionsMenu
+        targetBranch="main"
+        onDelete={vi.fn()}
+        activeLayout="conversation"
+        onLayoutChange={onLayoutChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /actions/i }));
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Panes (split-screen)" }),
+    );
+
+    expect(onLayoutChange).toHaveBeenCalledWith("panes");
   });
 });
 
@@ -84,6 +159,7 @@ describe("SessionActionsMenu — compaction actions", () => {
   ) {
     return render(
       <SessionActionsMenu
+        {...defaultLayoutProps()}
         targetBranch="main"
         onDelete={vi.fn()}
         compaction={state}
@@ -102,7 +178,13 @@ describe("SessionActionsMenu — compaction actions", () => {
   }
 
   it("hides every compaction item when no compaction state is provided", async () => {
-    render(<SessionActionsMenu targetBranch="main" onDelete={vi.fn()} />);
+    render(
+      <SessionActionsMenu
+        {...defaultLayoutProps()}
+        targetBranch="main"
+        onDelete={vi.fn()}
+      />,
+    );
     await openMenu();
     expect(
       screen.queryByRole("menuitem", { name: /compact conversation/i }),

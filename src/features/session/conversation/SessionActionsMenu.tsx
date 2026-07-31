@@ -5,9 +5,14 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
 } from "@/components/ui/DropdownMenu";
 import { cn } from "@/lib/ui/cn";
+import type { LayoutMode } from "@/lib/sessions/schemas";
+import { LAYOUT_OPTIONS } from "./LayoutSwitcher";
 import type { CompactionChipState } from "./compaction-chip-state";
 
 // Rich item content (colored glyph square + label + description) rendered inside
@@ -24,12 +29,15 @@ const DESC_CLASS = "font-mono text-[0.64rem] text-text-tertiary";
 // read off Radix's `data-state` (Radix also injects aria-haspopup/aria-expanded).
 const TRIGGER_CLASS = cn(
   "group inline-flex h-[26px] cursor-pointer items-center gap-[5px] rounded-sm border border-solid border-border-default bg-transparent px-[10px] font-mono text-[0.68rem] font-semibold tracking-[0.04em] text-text-secondary uppercase transition-all duration-150 ease-[ease]",
+  "focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
   "data-[state=closed]:hover:border-cyan data-[state=closed]:hover:text-text-primary",
   "data-[state=open]:border-cyan data-[state=open]:bg-bg-hover data-[state=open]:text-text-primary",
 );
 
 export interface SessionActionsMenuProps {
   targetBranch: string;
+  activeLayout: LayoutMode;
+  onLayoutChange: (mode: LayoutMode) => void;
   onPush?: () => void;
   onRebase?: () => void;
   onDelete: () => void;
@@ -46,6 +54,8 @@ export interface SessionActionsMenuProps {
 
 export default function SessionActionsMenu({
   targetBranch,
+  activeLayout,
+  onLayoutChange,
   onPush,
   onRebase,
   onDelete,
@@ -60,6 +70,12 @@ export default function SessionActionsMenu({
   const showView = compaction !== undefined && compaction.kind !== "none";
   const showRefresh =
     compaction?.kind === "stale" || compaction?.kind === "outdated";
+  const handleLayoutChange = (value: string): void => {
+    const option = LAYOUT_OPTIONS.find(({ mode }) => mode === value);
+    if (!option) return;
+    onLayoutChange(option.mode);
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -74,6 +90,19 @@ export default function SessionActionsMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" layoutClassName="w-[280px]">
+        <DropdownMenuLabel>Layout</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          aria-label="Layout"
+          value={activeLayout}
+          onValueChange={handleLayoutChange}
+        >
+          {LAYOUT_OPTIONS.map(({ mode, tooltip }) => (
+            <DropdownMenuRadioItem key={mode} value={mode}>
+              {tooltip}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
           onSelect={onPush}
           disabled={!onPush}

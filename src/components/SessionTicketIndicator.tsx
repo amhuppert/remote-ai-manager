@@ -42,7 +42,7 @@ export default function SessionTicketIndicator({
       aria-label={
         livenessUnknown
           ? `${identifier}, ticket link status unavailable`
-          : undefined
+          : identifier
       }
       data-active={active || undefined}
       data-liveness={
@@ -50,7 +50,7 @@ export default function SessionTicketIndicator({
       }
       onClick={(event) => event.stopPropagation()}
       className={cn(
-        "inline-flex shrink-0 items-center gap-[3px] rounded-full border border-solid px-[7px] py-[2px] font-mono text-[0.66rem] leading-none font-semibold no-underline transition-[border-color,color] duration-150 ease-[ease]",
+        "inline-flex min-w-0 shrink-0 items-center gap-[3px] rounded-full border border-solid px-[7px] py-[2px] font-mono text-[0.66rem] leading-none font-semibold no-underline transition-[border-color,color] duration-150 ease-[ease]",
         livenessUnknown
           ? "border-amber-dim bg-amber-glow text-amber! hover:border-amber"
           : active
@@ -59,7 +59,10 @@ export default function SessionTicketIndicator({
         layoutClassName,
       )}
     >
-      {identifier}
+      <span className="flex min-w-0">
+        <span className="min-w-0 truncate">{link.projectName}</span>
+        <span className="shrink-0">#{link.number}</span>
+      </span>
       {livenessUnknown && <span aria-hidden="true">?</span>}
     </Link>
   );

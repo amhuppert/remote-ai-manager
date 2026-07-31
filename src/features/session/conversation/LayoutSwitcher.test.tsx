@@ -100,4 +100,23 @@ describe("LayoutSwitcher", () => {
       ]),
     );
   });
+
+  it("exposes the selected layout as a labeled toggle group", () => {
+    render(
+      <LayoutSwitcher activeLayout="conversation" onLayoutChange={vi.fn()} />,
+    );
+
+    expect(
+      screen.getByRole("group", { name: "Conversation layout" }),
+    ).toBeInTheDocument();
+    expect(buttonByLabel("Conversation only")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(buttonByLabel("Split 50/50")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(buttonByLabel("Conversation only").type).toBe("button");
+  });
 });

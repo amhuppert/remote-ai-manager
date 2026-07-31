@@ -167,20 +167,27 @@ function SessionInfoStrip({
   }, [conversationName, conversationId]);
 
   return (
-    <div className="relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem]">
+    <div
+      data-session-info-strip
+      className="@container relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem]"
+    >
       <div className="hidden">
         <StatusDot />
         <span className="text-text-secondary">{session.branchName}</span>
       </div>
-      <div className="flex items-center gap-lg px-md py-[6px] max-768:gap-0 max-768:px-0 max-768:py-0">
-        <div className="contents max-768:hidden">
-          <CopyableId
-            label="worktree"
-            value={session.worktreePath}
-            displayValue={shortenWorktreePath(session.worktreePath)}
-          />
-          <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-          <div className="inline-flex shrink-0 items-center gap-[6px] font-mono text-[0.72rem] leading-none font-medium tracking-[0.05em] text-text-secondary uppercase">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-lg gap-y-xs px-md py-[6px] max-768:block max-768:px-0 max-768:py-0">
+        <div className="flex min-w-0 flex-1 items-center gap-lg @max-[760px]:basis-full max-768:block">
+          <div className="inline-flex min-w-0 items-center gap-lg @max-[1100px]:hidden max-768:hidden">
+            <CopyableId
+              label="worktree"
+              value={session.worktreePath}
+              displayValue={shortenWorktreePath(session.worktreePath)}
+              className="max-w-[300px] min-w-0"
+              valueClassName="min-w-0 flex-1 truncate whitespace-nowrap"
+            />
+            <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+          </div>
+          <div className="inline-flex shrink-0 items-center gap-[6px] font-mono text-[0.72rem] leading-none font-medium tracking-[0.05em] text-text-secondary uppercase max-768:hidden">
             <span
               className={cn(
                 "h-[6px] w-[6px] shrink-0 rounded-full",
@@ -190,24 +197,31 @@ function SessionInfoStrip({
             />
             {displayStatus}
           </div>
-        </div>
-        <div
-          data-session-ticket-region
-          className="inline-flex items-center max-768:flex max-768:min-h-[32px] max-768:px-md max-768:py-[6px] max-768:empty:hidden"
-        >
-          <SessionTicketIndicator
-            projectName={projectName}
-            sessionName={sessionName}
-          />
-        </div>
-        <div className="contents max-768:hidden">
+          <div
+            data-session-ticket-region
+            className="inline-flex max-w-[160px] shrink-0 items-center @max-[760px]:max-w-[120px] max-768:flex max-768:min-h-[32px] max-768:px-md max-768:py-[6px] max-768:empty:hidden"
+          >
+            <SessionTicketIndicator
+              projectName={projectName}
+              sessionName={sessionName}
+              layoutClassName="max-w-full"
+            />
+          </div>
           {contextPercent != null && (
-            <>
+            <div
+              data-session-context-region
+              className="inline-flex shrink-0 items-center gap-lg max-768:hidden"
+            >
               <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-              <ContextFillIndicator percentage={contextPercent} />
-            </>
+              <ContextFillIndicator
+                percentage={contextPercent}
+                condenseAtNarrow
+              />
+            </div>
           )}
-          <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+        </div>
+        <div className="inline-flex shrink-0 items-center gap-lg max-768:hidden">
+          <span className="inline-block h-4 w-px shrink-0 bg-border-default @max-[760px]:hidden" />
           <TddToggle
             enabled={tddEnabled}
             onChange={onTddChange}
@@ -220,44 +234,50 @@ function SessionInfoStrip({
             activeVersion={alignmentState?.active?.version ?? null}
             onActivate={onActivateAlignment}
           />
-          <div className="ml-auto inline-flex shrink-0 items-center gap-sm">
-            <DevServersButton
-              open={dsOpen}
-              servers={dsServers}
-              onClose={dsClose}
-              onToggle={dsToggle}
-              onStart={dsStartServer}
-              onStop={dsStopServer}
-              onStartAll={dsStartAll}
-              onStopAll={dsStopAll}
-              unmanagedConflict={dsUnmanagedConflict}
-              onDismissUnmanagedConflict={dsDismissUnmanagedConflict}
-              onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
-              isStoppingUnmanaged={dsIsStoppingUnmanaged}
-            />
+        </div>
+        <div className="ml-auto inline-flex shrink-0 items-center justify-end gap-sm @min-[760px]:@max-[1440px]:basis-full max-768:hidden">
+          <DevServersButton
+            open={dsOpen}
+            servers={dsServers}
+            onClose={dsClose}
+            onToggle={dsToggle}
+            onStart={dsStartServer}
+            onStop={dsStopServer}
+            onStartAll={dsStartAll}
+            onStopAll={dsStopAll}
+            unmanagedConflict={dsUnmanagedConflict}
+            onDismissUnmanagedConflict={dsDismissUnmanagedConflict}
+            onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
+            isStoppingUnmanaged={dsIsStoppingUnmanaged}
+          />
+          <div className="@max-[760px]:hidden">
             <CompactionStatusChip
               state={compactionState}
               onOpen={openContextArtifactPanel}
             />
-            <SessionActionsMenu
-              targetBranch={targetBranch}
-              onDelete={onDelete}
-              onRebase={onRebase}
-              compaction={compactionState}
-              onCompactConversation={handleCompactConversation}
-              onViewArtifact={openContextArtifactPanel}
-              onRefreshArtifact={handleRefreshArtifact}
-              onCopyReference={handleCopyReference}
-            />
-            <InfoDetailsPopover
-              conversationId={conversationId}
-              backendRef={activeConversation?.backendRef ?? null}
-              createdAt={session.createdAt}
-              worktreePath={session.worktreePath}
-              promptCount={deriveSessionPromptCount(session)}
-              onCopyContext={copyContext}
-              onOpenCapabilities={() => setCapabilitiesOpen(true)}
-            />
+          </div>
+          <SessionActionsMenu
+            targetBranch={targetBranch}
+            activeLayout={layout}
+            onLayoutChange={onLayoutChange}
+            onDelete={onDelete}
+            onRebase={onRebase}
+            compaction={compactionState}
+            onCompactConversation={handleCompactConversation}
+            onViewArtifact={openContextArtifactPanel}
+            onRefreshArtifact={handleRefreshArtifact}
+            onCopyReference={handleCopyReference}
+          />
+          <InfoDetailsPopover
+            conversationId={conversationId}
+            backendRef={activeConversation?.backendRef ?? null}
+            createdAt={session.createdAt}
+            worktreePath={session.worktreePath}
+            promptCount={deriveSessionPromptCount(session)}
+            onCopyContext={copyContext}
+            onOpenCapabilities={() => setCapabilitiesOpen(true)}
+          />
+          <div className="inline-flex shrink-0 items-center gap-sm @max-[760px]:hidden">
             <span className="topbar-sep" />
             <LayoutSwitcher
               activeLayout={layout}
