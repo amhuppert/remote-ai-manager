@@ -40,6 +40,7 @@ const notificationStoreMocks = vi.hoisted(() => ({
   enqueueToast: vi.fn(),
   enqueueInputToast: vi.fn(),
   enqueuePromptErrorToast: vi.fn(),
+  enqueueMergeDonePrompt: vi.fn(),
 }));
 
 vi.mock("@/stores/notification.store", () => ({
@@ -49,6 +50,8 @@ vi.mock("@/stores/notification.store", () => ({
   useEnqueueInputToast: () => notificationStoreMocks.enqueueInputToast,
   useEnqueuePromptErrorToast: () =>
     notificationStoreMocks.enqueuePromptErrorToast,
+  useEnqueueMergeDonePrompt: () =>
+    notificationStoreMocks.enqueueMergeDonePrompt,
 }));
 
 class FakeBrowserNotification {

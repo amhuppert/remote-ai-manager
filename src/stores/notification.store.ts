@@ -6,6 +6,7 @@ import type {
   JobNotification,
   Notification,
 } from "@/lib/notifications/schemas";
+import type { MergeDoneTicketPrompt } from "@/lib/tickets/merge-done-prompt";
 enableMapSet();
 
 // ---------------------------------------------------------------------------
@@ -65,6 +66,8 @@ interface NotificationState {
   inputToastQueue: InputNeededItem[];
   /** Toast queue for prompt execution errors */
   promptErrorQueue: PromptErrorItem[];
+  /** Post-merge "move the linked ticket to Done?" suggestions, one per merge */
+  mergeDonePromptQueue: MergeDoneTicketPrompt[];
 }
 
 interface NotificationActions {
@@ -78,6 +81,8 @@ interface NotificationActions {
   dismissInputToast: () => void;
   enqueuePromptErrorToast: (item: PromptErrorItem) => void;
   dismissPromptErrorToast: () => void;
+  enqueueMergeDonePrompt: (prompt: MergeDoneTicketPrompt) => void;
+  dismissMergeDonePrompt: () => void;
 }
 
 type NotificationStore = NotificationState & NotificationActions;
@@ -92,6 +97,7 @@ export const useNotificationStore = create<NotificationStore>()(
     toastQueue: [],
     inputToastQueue: [],
     promptErrorQueue: [],
+    mergeDonePromptQueue: [],
 
     addOrUpdateJob: (event: JobStatusEvent) =>
       set((state) => {
@@ -188,6 +194,21 @@ export const useNotificationStore = create<NotificationStore>()(
       set((state) => {
         state.promptErrorQueue.shift();
       }),
+
+    enqueueMergeDonePrompt: (prompt: MergeDoneTicketPrompt) =>
+      set((state) => {
+        // One dialog per merge: a redelivered completion must not stack a
+        // second identical prompt behind the one already on screen.
+        if (state.mergeDonePromptQueue.some((q) => q.jobId === prompt.jobId)) {
+          return;
+        }
+        state.mergeDonePromptQueue.push(prompt);
+      }),
+
+    dismissMergeDonePrompt: () =>
+      set((state) => {
+        state.mergeDonePromptQueue.shift();
+      }),
   })),
 );
 
@@ -223,3 +244,9 @@ export const useDismissPromptErrorToast = () =>
   useNotificationStore((s) => s.dismissPromptErrorToast);
 export const usePromptErrorQueue = () =>
   useNotificationStore((s) => s.promptErrorQueue);
+export const useEnqueueMergeDonePrompt = () =>
+  useNotificationStore((s) => s.enqueueMergeDonePrompt);
+export const useDismissMergeDonePrompt = () =>
+  useNotificationStore((s) => s.dismissMergeDonePrompt);
+export const useMergeDonePromptQueue = () =>
+  useNotificationStore((s) => s.mergeDonePromptQueue);

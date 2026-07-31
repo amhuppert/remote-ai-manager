@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { registerJobsReconnectReconciliation } from "./sse-reactions";
+import {
+  registerJobSseReactions,
+  registerJobsReconnectReconciliation,
+} from "./sse-reactions";
 import type { reconnectReconcile } from "@/lib/events/sse-reconnect";
-import type { BackgroundJob } from "@/lib/jobs/schemas";
+import type { BackgroundJob, JobStatusEvent } from "@/lib/jobs/schemas";
 import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
+import type { MergeDoneTicketPrompt } from "@/lib/tickets/merge-done-prompt";
+import { ticketKeys } from "@/lib/tickets/query-keys";
+import type { TicketLinkSummary } from "@/lib/tickets/schemas";
 
 function makeClient(): QueryClient {
   return new QueryClient({
@@ -52,6 +58,81 @@ function setup(payload: unknown) {
 
   return { fake, reconcileJobs, reconnectReconcileStub };
 }
+
+function jobStatus(overrides: Partial<JobStatusEvent> = {}): JobStatusEvent {
+  return {
+    type: "job-status",
+    jobType: "merge",
+    status: "completed",
+    projectName: "proj",
+    sessionName: "sess",
+    jobId: "job-1",
+    branchName: "csm/x",
+    ...overrides,
+  };
+}
+
+/** Registers the live reactions over a client that already knows the link. */
+function setupLive(links?: Record<string, TicketLinkSummary>) {
+  const fake = new FakeEventSource("/api/events");
+  const queryClient = makeClient();
+  if (links) {
+    queryClient.setQueryData(ticketKeys.sessionLinks("proj"), links);
+  }
+  const enqueueMergeDonePrompt =
+    vi.fn<(prompt: MergeDoneTicketPrompt) => void>();
+
+  registerJobSseReactions(fake as unknown as EventSource, {
+    queryClient,
+    addOrUpdateJob: vi.fn(),
+    enqueueMergeDonePrompt,
+  });
+
+  return { fake, enqueueMergeDonePrompt };
+}
+
+const linkedTicket: TicketLinkSummary = {
+  ticketId: "ticket-1",
+  projectName: "proj",
+  number: 37,
+  title: "Suggest moving ticket to Done on merge",
+  active: true,
+  linkedAt: "2026-07-30T00:00:00.000Z",
+  endedAt: null,
+};
+
+describe("registerJobSseReactions", () => {
+  it("suggests moving the linked ticket to Done once the merge completes", () => {
+    const { fake, enqueueMergeDonePrompt } = setupLive({ sess: linkedTicket });
+
+    fake.emit("job-status", jobStatus());
+
+    expect(enqueueMergeDonePrompt).toHaveBeenCalledWith({
+      jobId: "job-1",
+      projectName: "proj",
+      sessionName: "sess",
+      ticketNumber: 37,
+      ticketTitle: "Suggest moving ticket to Done on merge",
+    });
+  });
+
+  it("does not suggest Done while the merge is still running", () => {
+    const { fake, enqueueMergeDonePrompt } = setupLive({ sess: linkedTicket });
+
+    fake.emit("job-status", jobStatus({ status: "running" }));
+    fake.emit("job-status", jobStatus({ status: "ready-to-land" }));
+
+    expect(enqueueMergeDonePrompt).not.toHaveBeenCalled();
+  });
+
+  it("does not suggest Done for a merged session with no ticket link", () => {
+    const { fake, enqueueMergeDonePrompt } = setupLive({});
+
+    fake.emit("job-status", jobStatus());
+
+    expect(enqueueMergeDonePrompt).not.toHaveBeenCalled();
+  });
+});
 
 describe("registerJobsReconnectReconciliation", () => {
   it("reconciles parsed jobs into the store after an error then reconnect", async () => {

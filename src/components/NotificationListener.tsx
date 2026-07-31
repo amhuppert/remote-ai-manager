@@ -25,6 +25,7 @@ import {
   useReconcileJobs,
   useEnqueueToast,
   useEnqueueInputToast,
+  useEnqueueMergeDonePrompt,
   useEnqueuePromptErrorToast,
 } from "@/stores/notification.store";
 import { useSettleOptimisticQueueEntry } from "@/stores/session-detail.store";
@@ -42,6 +43,7 @@ export default function NotificationListener(): null {
   const enqueueToast = useEnqueueToast();
   const enqueueInputToast = useEnqueueInputToast();
   const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
+  const enqueueMergeDonePrompt = useEnqueueMergeDonePrompt();
   const settleOptimisticQueueEntry = useSettleOptimisticQueueEntry();
   const actionsRef = useRef({
     addOrUpdateJob,
@@ -49,6 +51,7 @@ export default function NotificationListener(): null {
     enqueueToast,
     enqueueInputToast,
     enqueuePromptErrorToast,
+    enqueueMergeDonePrompt,
     settleOptimisticQueueEntry,
   });
   // eslint-disable-next-line react-hooks/refs -- event handlers read this after render without reconnecting the SSE effect.
@@ -58,6 +61,7 @@ export default function NotificationListener(): null {
     enqueueToast,
     enqueueInputToast,
     enqueuePromptErrorToast,
+    enqueueMergeDonePrompt,
     settleOptimisticQueueEntry,
   };
 
@@ -78,6 +82,8 @@ export default function NotificationListener(): null {
     registerJobSseReactions(es, {
       queryClient,
       addOrUpdateJob: (event) => actionsRef.current.addOrUpdateJob(event),
+      enqueueMergeDonePrompt: (prompt) =>
+        actionsRef.current.enqueueMergeDonePrompt(prompt),
     });
     registerNotificationSseReactions(es, {
       queryClient,

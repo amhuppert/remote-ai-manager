@@ -84,8 +84,10 @@ Jobs and notification services publish through `events/publication.ts` or an inj
 `notification.store.ts`:
 - `jobs: Map<string, BackgroundJob>` — running only; terminal deletes
 - `toastQueue: Notification[]` — FIFO; populated by `notification-created` SSE
+- `mergeDonePromptQueue: MergeDoneTicketPrompt[]` — FIFO, deduped by `jobId`; drives the global "Move ticket to Done?" dialog (`MergeDoneTicketPromptHost`)
 - `addOrUpdateJob()` — running upserts, terminal deletes
 - `enqueueToast()` / `dismissToast()`
+- `enqueueMergeDonePrompt()` / `dismissMergeDonePrompt()`
 
 React Query: `notificationKeys.list()` server-backed list for Activities panel; invalidated by SSE; enabled only when panel open.
 
@@ -98,4 +100,5 @@ React Query: `notificationKeys.list()` server-backed list for Activities panel; 
 - **Non-throwing persistence** — `persistJobRecord()` / `persistTerminalState()` swallow errors; DB failures must not block job execution
 - **Zod-validate on SSE** — all event handlers validate before processing
 - **Toasts on `notification-created`**, not `job-status` terminal
+- **Decisions on `job-status` terminal**, not `notification-created` — the merge→ticket-Done suggestion (`resolveMergeDoneTicketPrompt`) hangs off the authoritative job transition, because notification persistence is deliberately non-throwing and a swallowed write would silently lose the prompt
 - **Service-owned publication** — notification service mutations publish their own typed events through an injected `PublishFn`; callers and repositories do not duplicate that side effect

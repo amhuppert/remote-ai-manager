@@ -16,6 +16,10 @@ import {
 import { reconnectReconcile } from "@/lib/events/sse-reconnect";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { invalidateTicketSessionLifecycle } from "@/lib/tickets/cache-lifecycle";
+import {
+  resolveMergeDoneTicketPrompt,
+  type MergeDoneTicketPrompt,
+} from "@/lib/tickets/merge-done-prompt";
 
 const logger = createClientLogger("jobs.sse-reactions");
 
@@ -25,6 +29,8 @@ export interface JobSseReactionDeps {
   queryClient: QueryClient;
   /** Routes the live job state into the notification store (topbar jobs). */
   addOrUpdateJob(event: JobStatusEvent): void;
+  /** Queues the post-merge "move the linked ticket to Done?" suggestion. */
+  enqueueMergeDonePrompt(prompt: MergeDoneTicketPrompt): void;
 }
 
 export function registerJobSseReactions(
@@ -33,6 +39,14 @@ export function registerJobSseReactions(
 ): void {
   addSseListener(es, "job-status", jobStatusEventSchema, (data) => {
     deps.addOrUpdateJob(data);
+
+    // Resolved before the invalidations below so the suggestion reads the
+    // session-link map this event is about to refresh.
+    const mergeDonePrompt = resolveMergeDoneTicketPrompt(
+      deps.queryClient,
+      data,
+    );
+    if (mergeDonePrompt) deps.enqueueMergeDonePrompt(mergeDonePrompt);
 
     // On completed merge/commit/resolve: invalidate session queries
     if (

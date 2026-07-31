@@ -7,6 +7,7 @@ import ToastHost from "@/components/ToastHost";
 import DevToolsGate from "@/components/DevToolsGate";
 import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
 import QuickTicketHost from "@/components/quick-ticket/QuickTicketHost";
+import MergeDoneTicketPromptHost from "@/components/MergeDoneTicketPromptHost";
 import {
   HotkeyProvider,
   HotkeyRouteReset,
@@ -74,6 +75,7 @@ export default function RootLayout({
             </UiTooltipProvider>
             <NotificationListener />
             <ToastHost />
+            <MergeDoneTicketPromptHost />
 
             <DevToolsGate />
             <ReactScanInstrumentation />

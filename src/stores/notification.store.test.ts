@@ -10,6 +10,7 @@ import type {
   JobNotification,
   ProjectConversationNotification,
 } from "@/lib/notifications/schemas";
+import type { MergeDoneTicketPrompt } from "@/lib/tickets/merge-done-prompt";
 enableMapSet();
 
 // ============================================================
@@ -23,6 +24,7 @@ function resetStore() {
     toastQueue: [],
     inputToastQueue: [],
     promptErrorQueue: [],
+    mergeDonePromptQueue: [],
   });
 }
 
@@ -459,6 +461,54 @@ describe("notification.store — prompt error toast queue", () => {
     const queue = useNotificationStore.getState().promptErrorQueue;
     expect(queue).toEqual([item]);
     expect("sessionName" in queue[0]!).toBe(false);
+  });
+});
+
+describe("notification.store — merge Done-prompt queue", () => {
+  beforeEach(resetStore);
+
+  it("queues one suggestion per merged session and retires it on dismiss", () => {
+    const first: MergeDoneTicketPrompt = {
+      jobId: "job-1",
+      projectName: "my-project",
+      sessionName: "sess-a",
+      ticketNumber: 37,
+      ticketTitle: "Suggest moving ticket to Done on merge",
+    };
+    const second: MergeDoneTicketPrompt = {
+      ...first,
+      jobId: "job-2",
+      sessionName: "sess-b",
+    };
+
+    useNotificationStore.getState().enqueueMergeDonePrompt(first);
+    useNotificationStore.getState().enqueueMergeDonePrompt(second);
+    expect(useNotificationStore.getState().mergeDonePromptQueue).toEqual([
+      first,
+      second,
+    ]);
+
+    useNotificationStore.getState().dismissMergeDonePrompt();
+    expect(useNotificationStore.getState().mergeDonePromptQueue).toEqual([
+      second,
+    ]);
+  });
+
+  it("does not stack a second dialog for the same merge job", () => {
+    const prompt: MergeDoneTicketPrompt = {
+      jobId: "job-1",
+      projectName: "my-project",
+      sessionName: "sess-a",
+      ticketNumber: 37,
+      ticketTitle: "Suggest moving ticket to Done on merge",
+    };
+
+    useNotificationStore.getState().enqueueMergeDonePrompt(prompt);
+    useNotificationStore.getState().enqueueMergeDonePrompt(prompt);
+
+    expect(useNotificationStore.getState().mergeDonePromptQueue).toEqual([
+      prompt,
+    ]);
   });
 });
 
