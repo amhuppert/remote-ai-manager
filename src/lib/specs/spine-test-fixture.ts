@@ -524,14 +524,55 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       | ((input: {
           projectName: string;
           sessionName: string;
+          workflowExecutionId: string;
+          definitionId: string;
+          definitionRevision: number;
         }) => Promise<
           Awaited<
             ReturnType<ExecutionStartGatePort["approveWorkflowDefinition"]>
           >
         >)
       | null;
-    hasPending: (() => Promise<boolean>) | null;
-  } = { approve: null, hasPending: null };
+    hasPending:
+      | ((input: {
+          projectName: string;
+          sessionName: string;
+          definitionId: string;
+          definitionRevision: number;
+        }) => Promise<string | null>)
+      | null;
+    ensurePending:
+      | ((input: {
+          projectName: string;
+          sessionName: string;
+          definitionId: string;
+          definitionRevision: number;
+        }) => ReturnType<
+          ExecutionStartGatePort["ensurePendingDefinitionApproval"]
+        >)
+      | null;
+  } = { approve: null, hasPending: null, ensurePending: null };
+
+  const executionStartGate: ExecutionStartGatePort = {
+    async hasPendingDefinitionApproval(input) {
+      if (workflowDefinitionGateRef.hasPending === null) return null;
+      return workflowDefinitionGateRef.hasPending(input);
+    },
+    async ensurePendingDefinitionApproval(input) {
+      if (workflowDefinitionGateRef.ensurePending === null) {
+        return { ok: false, reason: "unavailable" };
+      }
+      return workflowDefinitionGateRef.ensurePending(input);
+    },
+    grantApproval: (input) =>
+      reviewService.grantGateApproval({ ...input, gate: "execution_start" }),
+    async approveWorkflowDefinition(input) {
+      if (workflowDefinitionGateRef.approve === null) {
+        return { ok: false, reason: "unavailable" };
+      }
+      return workflowDefinitionGateRef.approve(input);
+    },
+  };
 
   const execution = createExecutionService({
     specsRepo: specs,
@@ -561,20 +602,7 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       return db.transaction(fn).immediate();
     },
     policyNotifier,
-    executionStartGate: {
-      async hasPendingDefinitionApproval() {
-        if (workflowDefinitionGateRef.hasPending === null) return false;
-        return workflowDefinitionGateRef.hasPending();
-      },
-      grantApproval: (input) =>
-        reviewService.grantGateApproval({ ...input, gate: "execution_start" }),
-      async approveWorkflowDefinition(input) {
-        if (workflowDefinitionGateRef.approve === null) {
-          return { ok: false, reason: "unavailable" };
-        }
-        return workflowDefinitionGateRef.approve(input);
-      },
-    },
+    executionStartGate,
   });
 
   const failingLinks = new Proxy(
@@ -1002,20 +1030,41 @@ export function createSpecSpineWorld(): SpecSpineWorld {
         : null,
     normalizeExecutionAfterRestart: async () => activeWorkflowExecution,
     startExecution: (input) => workflowManager.start(input),
-    markRunning: (workflowExecutionId, definitionId) =>
+    markRunning: (
+      context,
+      workflowExecutionId,
+      definitionId,
+      definitionRevision,
+    ) =>
       createRegisteredGraphExecutionLifecycleCallbacks().markRunning(
+        context,
         workflowExecutionId,
         definitionId,
+        definitionRevision,
       ),
-    awaitingDefinitionApproval: (workflowExecutionId, definitionId) =>
+    awaitingDefinitionApproval: (
+      context,
+      workflowExecutionId,
+      definitionId,
+      definitionRevision,
+    ) =>
       createRegisteredGraphExecutionLifecycleCallbacks().awaitingDefinitionApproval?.(
+        context,
         workflowExecutionId,
         definitionId,
+        definitionRevision,
       ) ?? Promise.resolve(),
-    admitDefinitionApproval: (workflowExecutionId, definitionId) =>
+    admitDefinitionApproval: (
+      context,
+      workflowExecutionId,
+      definitionId,
+      definitionRevision,
+    ) =>
       createRegisteredGraphExecutionLifecycleCallbacks().admitDefinitionApproval?.(
+        context,
         workflowExecutionId,
         definitionId,
+        definitionRevision,
       ) ?? Promise.resolve({ ok: true as const }),
     recordDefinitionApproval: (input) =>
       workflowManager.recordDefinitionApproval(input),
@@ -1047,12 +1096,44 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       projectPath: SPINE_PROJECT_PATH,
       projectName: input.projectName,
       sessionName: input.sessionName,
+      expectedExecutionId: input.workflowExecutionId,
+      expectedDefinitionId: input.definitionId,
+      expectedDefinitionRevision: input.definitionRevision,
     });
-  workflowDefinitionGateRef.hasPending = () =>
+  workflowDefinitionGateRef.hasPending = (input) =>
     workflowHandlers.hasPendingDefinitionApproval({
       projectPath: SPINE_PROJECT_PATH,
       sessionName: SPINE_SESSION_NAME,
+      expectedDefinitionId: input.definitionId,
+      expectedDefinitionRevision: input.definitionRevision,
     });
+  workflowDefinitionGateRef.ensurePending = async (input) => {
+    const response = await postWorkflowRoute("START", {
+      definitionId: input.definitionId,
+      definitionRevision: input.definitionRevision,
+    });
+    const pendingExecutionId =
+      await workflowHandlers.hasPendingDefinitionApproval({
+        projectPath: SPINE_PROJECT_PATH,
+        sessionName: SPINE_SESSION_NAME,
+        expectedDefinitionId: input.definitionId,
+        expectedDefinitionRevision: input.definitionRevision,
+      });
+    if (pendingExecutionId !== null) {
+      return { ok: true, workflowExecutionId: pendingExecutionId };
+    }
+    const payload = (await response.json()) as {
+      code?: string;
+      error?: string;
+    };
+    return {
+      ok: false,
+      reason:
+        payload.error ??
+        payload.code ??
+        `workflow start failed with status ${response.status}`,
+    };
+  };
 
   /**
    * Mirrors the production execution loop's failed-merge handling
@@ -1203,6 +1284,7 @@ export interface AuthoredSpineSpec {
 export async function authorSpineDraft(
   world: SpecSpineWorld,
   slug: string,
+  executionStartDial?: "gate" | "notify" | "off",
 ): Promise<AuthoredSpineSpec> {
   // The create call IS the first draft save: the requirement travels inside
   // it, so no durable spec ever exists without content (R4.1).
@@ -1216,7 +1298,13 @@ export async function authorSpineDraft(
       {
         slug,
         name: "Spec Spine Feature",
-        gatePolicy: { preset: "contract-bearing" },
+        gatePolicy:
+          executionStartDial === undefined
+            ? { preset: "contract-bearing" }
+            : {
+                preset: "contract-bearing",
+                overrides: { execution_start: executionStartDial },
+              },
         initialElement: {
           elementId: "element-requirement-1",
           kind: "requirement",
@@ -1534,6 +1622,15 @@ export async function startSpineWorkflowThroughProductionGate(
   // The start/approval handlers report through the registered lifecycle port;
   // make sure this world's composition owns the registration before starting.
   world.registerMergeComposition();
+  const existing = world.repos.delivery.findExecutionById(
+    started.specExecutionId,
+  );
+  if (
+    existing?.workflow_execution_id === SPINE_WORKFLOW_EXECUTION_ID &&
+    existing.state === "running"
+  ) {
+    return;
+  }
   const startResponse = await world.postWorkflowRoute("START", {
     definitionId: started.definition.id,
   });

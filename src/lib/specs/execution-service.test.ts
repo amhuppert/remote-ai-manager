@@ -51,6 +51,10 @@ const specId = "spec-execution-service";
 const revisionId = "revision-approved";
 const proposedRevisionId = "revision-proposed";
 const now = "2026-07-18T15:00:00.000Z";
+const lifecycleContext = {
+  projectPath,
+  sessionName: "session-execution",
+};
 
 describe("ExecutionService start", () => {
   let db: Db;
@@ -407,8 +411,10 @@ describe("ExecutionService start", () => {
     const callbacks = createExecutionLifecycleCallbacks(deps);
 
     await callbacks.markRunning(
+      lifecycleContext,
       "workflow-execution-from-start",
       started.definition.id,
+      started.definition.revision,
     );
 
     expect(
@@ -426,11 +432,114 @@ describe("ExecutionService start", () => {
     ).toHaveLength(1);
   });
 
+  it("does not claim an unlinked spec execution from another project or session", async () => {
+    const started = await service.start(startInput());
+    if (!started.ok) throw new Error("start was refused");
+    const callbacks = createExecutionLifecycleCallbacks(deps);
+
+    await callbacks.markRunning(
+      { ...lifecycleContext, projectPath: "/repos/another-project" },
+      "workflow-wrong-project",
+      started.definition.id,
+      started.definition.revision,
+    );
+    await callbacks.markRunning(
+      { ...lifecycleContext, sessionName: "another-session" },
+      "workflow-wrong-session",
+      started.definition.id,
+      started.definition.revision,
+    );
+
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({
+      state: "definition_review",
+      workflow_execution_id: null,
+    });
+
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-exact-scope",
+      started.definition.id,
+      started.definition.revision,
+    );
+
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({
+      state: "running",
+      workflow_execution_id: "workflow-exact-scope",
+    });
+  });
+
+  it("does not advance an already-linked spec execution from another project or session", async () => {
+    const started = await service.start(startInput());
+    if (!started.ok) throw new Error("start was refused");
+    const callbacks = createExecutionLifecycleCallbacks(deps);
+    await service.linkWorkflowExecution(
+      started.execution.id,
+      "workflow-linked-scope",
+    );
+
+    await callbacks.markRunning(
+      { ...lifecycleContext, projectPath: "/repos/another-project" },
+      "workflow-linked-scope",
+      started.definition.id,
+      started.definition.revision,
+    );
+    await callbacks.markRunning(
+      { ...lifecycleContext, sessionName: "another-session" },
+      "workflow-linked-scope",
+      started.definition.id,
+      started.definition.revision,
+    );
+
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({ state: "definition_review" });
+
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-linked-scope",
+      started.definition.id,
+      started.definition.revision,
+    );
+
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({ state: "running" });
+  });
+
+  it("does not link a workflow execution from a different revision of the prepared definition", async () => {
+    const started = await service.start(startInput());
+    if (!started.ok) throw new Error("start was refused");
+    const callbacks = createExecutionLifecycleCallbacks(deps);
+
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-execution-wrong-revision",
+      started.definition.id,
+      started.definition.revision + 1,
+    );
+
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({
+      state: "definition_review",
+      workflow_execution_id: null,
+    });
+  });
+
   it("leaves non-spec workflow starts untouched when no spec execution awaits the definition", async () => {
     const callbacks = createExecutionLifecycleCallbacks(deps);
 
     await expect(
-      callbacks.markRunning("workflow-unrelated", "definition-unrelated"),
+      callbacks.markRunning(
+        lifecycleContext,
+        "workflow-unrelated",
+        "definition-unrelated",
+        1,
+      ),
     ).resolves.toBeUndefined();
 
     expect(
@@ -456,8 +565,10 @@ describe("ExecutionService start", () => {
     });
 
     await callbacks.awaitingDefinitionApproval(
+      lifecycleContext,
       "workflow-parked-1",
       started.definition.id,
+      started.definition.revision,
     );
 
     expect(
@@ -488,11 +599,96 @@ describe("ExecutionService start", () => {
     });
 
     await callbacks.awaitingDefinitionApproval(
+      lifecycleContext,
       "workflow-unrelated",
       "definition-unrelated",
+      1,
     );
 
     expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it("does not claim a parked workflow from a different revision of the prepared definition", async () => {
+    const started = await service.start(startInput());
+    if (!started.ok) throw new Error("start was refused");
+    const requestApproval = vi.fn(async () => {});
+    const grantApproval = vi.fn(async () => ({
+      ok: true as const,
+      value: { id: "approval-x" },
+    }));
+    const callbacks = createExecutionLifecycleCallbacks({
+      ...deps,
+      lifecycleGate: { requestApproval, grantApproval },
+    });
+
+    await callbacks.awaitingDefinitionApproval(
+      lifecycleContext,
+      "workflow-parked-wrong-revision",
+      started.definition.id,
+      started.definition.revision + 1,
+    );
+    await expect(
+      callbacks.admitDefinitionApproval(
+        lifecycleContext,
+        "workflow-parked-wrong-revision",
+        started.definition.id,
+        started.definition.revision + 1,
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(requestApproval).not.toHaveBeenCalled();
+    expect(grantApproval).not.toHaveBeenCalled();
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({ workflow_execution_id: null });
+  });
+
+  it("correlates an already-linked workflow when its historical definition revision is unavailable", async () => {
+    const started = await service.start(startInput());
+    if (!started.ok) throw new Error("start was refused");
+    await service.linkWorkflowExecution(
+      started.execution.id,
+      "workflow-linked-without-revision",
+    );
+    db.prepare(
+      `UPDATE spec_executions
+       SET workflow_definition_revision = NULL
+       WHERE id = ?`,
+    ).run(started.execution.id);
+    const grantApproval = vi.fn(async () => ({
+      ok: true as const,
+      value: { id: "approval-linked" },
+    }));
+    const callbacks = createExecutionLifecycleCallbacks({
+      ...deps,
+      lifecycleGate: {
+        requestApproval: vi.fn(async () => {}),
+        grantApproval,
+      },
+    });
+
+    await expect(
+      callbacks.admitDefinitionApproval(
+        lifecycleContext,
+        "workflow-linked-without-revision",
+        started.definition.id,
+        started.definition.revision,
+      ),
+    ).resolves.toEqual({ ok: true });
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-linked-without-revision",
+      started.definition.id,
+      started.definition.revision,
+    );
+
+    expect(grantApproval).toHaveBeenCalledOnce();
+    expect(
+      deps.deliveryRepo.findExecutionById(started.execution.id),
+    ).toMatchObject({
+      state: "running",
+      workflow_execution_id: "workflow-linked-without-revision",
+    });
   });
 
   it("records the execution-scoped grant through the lifecycle gate when the definition is approved from the workflow surface", async () => {
@@ -511,8 +707,10 @@ describe("ExecutionService start", () => {
     });
 
     const admitted = await callbacks.admitDefinitionApproval(
+      lifecycleContext,
       "workflow-parked-2",
       started.definition.id,
+      started.definition.revision,
     );
 
     expect(admitted).toEqual({ ok: true });
@@ -549,8 +747,10 @@ describe("ExecutionService start", () => {
     });
 
     const admitted = await callbacks.admitDefinitionApproval(
+      lifecycleContext,
       "workflow-parked-3",
       started.definition.id,
+      started.definition.revision,
     );
 
     expect(admitted).toEqual({
@@ -566,8 +766,10 @@ describe("ExecutionService start", () => {
 
     await expect(
       callbacks.admitDefinitionApproval(
+        lifecycleContext,
         "workflow-unrelated",
         "definition-unrelated",
+        1,
       ),
     ).resolves.toEqual({ ok: true });
   });
@@ -581,7 +783,12 @@ describe("ExecutionService start", () => {
     if (!started.ok) throw new Error("start was refused");
     const callbacks = createExecutionLifecycleCallbacks(deps);
 
-    await callbacks.markRunning("workflow-notify-run", started.definition.id);
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-notify-run",
+      started.definition.id,
+      started.definition.revision,
+    );
     // A second report must not duplicate the admission row.
     await service.markRunning("workflow-notify-run");
 
@@ -609,9 +816,19 @@ describe("ExecutionService start", () => {
       policyNotifier: { policyAdmitted },
     });
 
-    await callbacks.markRunning("workflow-notify-run", started.definition.id);
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-notify-run",
+      started.definition.id,
+      started.definition.revision,
+    );
     // A replayed report must not duplicate the event or the notice.
-    await callbacks.markRunning("workflow-notify-run", started.definition.id);
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-notify-run",
+      started.definition.id,
+      started.definition.revision,
+    );
 
     const admissionEvents = deps.eventsRepo
       .findBySpecId(specId)
@@ -657,7 +874,12 @@ describe("ExecutionService start", () => {
       policyNotifier: { policyAdmitted },
     });
 
-    await callbacks.markRunning("workflow-off-run", started.definition.id);
+    await callbacks.markRunning(
+      lifecycleContext,
+      "workflow-off-run",
+      started.definition.id,
+      started.definition.revision,
+    );
 
     const admissionEvents = deps.eventsRepo
       .findBySpecId(specId)
@@ -844,7 +1066,7 @@ describe("ExecutionService start", () => {
     const callbacks = createExecutionLifecycleCallbacks(deps);
 
     const workflowExecutionId = `workflow-${running.id}`;
-    await callbacks.markRunning(workflowExecutionId);
+    await callbacks.markRunning(lifecycleContext, workflowExecutionId);
     await callbacks.markDelivered(workflowExecutionId, "merge-sha-callback");
 
     expect(deps.deliveryRepo.findExecutionById(running.id)).toMatchObject({
@@ -1173,6 +1395,7 @@ describe("ExecutionService execution-start gate", () => {
   let service: ExecutionService;
   let gate: {
     hasPendingDefinitionApproval: ReturnType<typeof vi.fn>;
+    ensurePendingDefinitionApproval: ReturnType<typeof vi.fn>;
     grantApproval: ReturnType<typeof vi.fn>;
     approveWorkflowDefinition: ReturnType<typeof vi.fn>;
   };
@@ -1184,7 +1407,13 @@ describe("ExecutionService execution-start gate", () => {
     const eventsRepo = createSpecEventsRepo(db);
     let nextId = 0;
     gate = {
-      hasPendingDefinitionApproval: vi.fn(async () => true),
+      hasPendingDefinitionApproval: vi.fn(
+        async () => "workflow-execution-pending",
+      ),
+      ensurePendingDefinitionApproval: vi.fn(async () => ({
+        ok: true as const,
+        workflowExecutionId: "workflow-execution-launched",
+      })),
       grantApproval: vi.fn(async () => ({
         ok: true as const,
         value: { id: "approval-grant-1" },
@@ -1237,13 +1466,19 @@ describe("ExecutionService execution-start gate", () => {
     await startedExecutionId();
 
     expect(gate.hasPendingDefinitionApproval).not.toHaveBeenCalled();
+    expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
     expect(gate.grantApproval).not.toHaveBeenCalled();
     expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
   });
 
-  it("refuses the human approval with no side effects when no workflow execution awaits definition approval", async () => {
+  it("launches the prepared definition before recording exactly one human approval when no workflow execution is pending", async () => {
     const executionId = await startedExecutionId();
-    gate.hasPendingDefinitionApproval.mockResolvedValue(false);
+    const definitionId =
+      deps.deliveryRepo.findExecutionById(executionId)?.workflow_definition_id;
+    if (definitionId === null || definitionId === undefined) {
+      throw new Error("started execution has no prepared workflow definition");
+    }
+    gate.hasPendingDefinitionApproval.mockResolvedValue(null);
 
     const result = await service.approveExecutionStart({
       specId,
@@ -1253,14 +1488,40 @@ describe("ExecutionService execution-start gate", () => {
       projectName: "repo-project",
     });
 
-    expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "gate_blocked" },
+    expect(result).toMatchObject({ ok: true, value: { id: executionId } });
+    expect(gate.ensurePendingDefinitionApproval).toHaveBeenCalledOnce();
+    expect(gate.ensurePendingDefinitionApproval).toHaveBeenCalledWith({
+      projectName: "repo-project",
+      sessionName: "session-execution",
+      definitionId,
+      definitionRevision: 1,
     });
-    if (result.ok) throw new Error("expected refusal");
-    expect(result.refusal.instruction).toMatch(/start the compiled workflow/i);
-    expect(gate.grantApproval).not.toHaveBeenCalled();
-    expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
+    expect(gate.grantApproval).toHaveBeenCalledOnce();
+    expect(gate.grantApproval).toHaveBeenCalledWith({
+      specId,
+      revisionId,
+      executionId,
+      actor: { kind: "human" },
+      approver: "operator",
+    });
+    expect(gate.approveWorkflowDefinition).toHaveBeenCalledOnce();
+    expect(gate.approveWorkflowDefinition).toHaveBeenCalledWith({
+      projectName: "repo-project",
+      sessionName: "session-execution",
+      definitionId,
+      definitionRevision: 1,
+      workflowExecutionId: "workflow-execution-launched",
+    });
+    const ensureOrder =
+      gate.ensurePendingDefinitionApproval.mock.invocationCallOrder[0];
+    const grantOrder = gate.grantApproval.mock.invocationCallOrder[0];
+    const approveOrder =
+      gate.approveWorkflowDefinition.mock.invocationCallOrder[0];
+    expect(ensureOrder).toBeDefined();
+    expect(grantOrder).toBeDefined();
+    expect(approveOrder).toBeDefined();
+    expect(ensureOrder ?? 0).toBeLessThan(grantOrder ?? 0);
+    expect(grantOrder ?? 0).toBeLessThan(approveOrder ?? 0);
   });
 
   it("refuses an agent approval as a human act without touching the gate ports", async () => {
@@ -1278,12 +1539,18 @@ describe("ExecutionService execution-start gate", () => {
       ok: false,
       refusal: { code: "human_act_required" },
     });
+    expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
     expect(gate.grantApproval).not.toHaveBeenCalled();
     expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
   });
 
   it("grants the human approval and approves the workflow definition only after confirming a parked run", async () => {
     const executionId = await startedExecutionId();
+    const definitionId =
+      deps.deliveryRepo.findExecutionById(executionId)?.workflow_definition_id;
+    if (definitionId === null || definitionId === undefined) {
+      throw new Error("started execution has no prepared workflow definition");
+    }
 
     const result = await service.approveExecutionStart({
       specId,
@@ -1297,7 +1564,10 @@ describe("ExecutionService execution-start gate", () => {
     expect(gate.hasPendingDefinitionApproval).toHaveBeenCalledWith({
       projectName: "repo-project",
       sessionName: "session-execution",
+      definitionId,
+      definitionRevision: 1,
     });
+    expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
     expect(gate.grantApproval).toHaveBeenCalledWith({
       specId,
       revisionId,
@@ -1308,6 +1578,9 @@ describe("ExecutionService execution-start gate", () => {
     expect(gate.approveWorkflowDefinition).toHaveBeenCalledWith({
       projectName: "repo-project",
       sessionName: "session-execution",
+      definitionId,
+      definitionRevision: 1,
+      workflowExecutionId: "workflow-execution-pending",
     });
     // The pending probe must precede the grant: an admission may only land
     // when a parked workflow execution is there to unblock.
@@ -1451,6 +1724,35 @@ describe("ExecutionService execution-start gate", () => {
       ok: false,
       refusal: { code: "gate_blocked" },
     });
+    expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
+  });
+
+  it("refuses a legacy execution whose workflow definition revision is unknown", async () => {
+    const executionId = await startedExecutionId();
+    db.prepare(
+      "UPDATE spec_executions SET workflow_definition_revision = NULL WHERE id = ?",
+    ).run(executionId);
+
+    const result = await service.approveExecutionStart({
+      specId,
+      executionId,
+      actor: { kind: "human" },
+      approver: "operator",
+      projectName: "repo-project",
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: {
+        code: "gate_blocked",
+        unmetConditions: [
+          "The execution predates immutable workflow-definition revision pins.",
+        ],
+      },
+    });
+    expect(gate.hasPendingDefinitionApproval).not.toHaveBeenCalled();
+    expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
+    expect(gate.grantApproval).not.toHaveBeenCalled();
     expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
   });
 });

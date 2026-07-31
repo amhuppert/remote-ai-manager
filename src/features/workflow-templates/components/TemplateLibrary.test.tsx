@@ -45,6 +45,13 @@ const projectSameName: TemplateLibraryItem = {
   prerequisites: [],
 };
 
+const projectSameId: TemplateLibraryItem = {
+  ...projectItem,
+  id: globalItem.id,
+  name: "Project workflow with shared id",
+  revision: 9,
+};
+
 // A template row's accessible name includes its tier badge ("Global"/"Project")
 // plus the template name, so match by substring rather than exact equality.
 function selectTemplate(name: string): Promise<void> {
@@ -112,7 +119,7 @@ describe("TemplateLibrary", () => {
     expect(screen.getByText(/no prerequisites/i)).toBeInTheDocument();
   });
 
-  it("sends { id, tier, parameters } to onLaunch on a valid submit (R7.3)", async () => {
+  it("sends the immutable revision with the launch request (R7.3)", async () => {
     const user = userEvent.setup();
     const onLaunch = vi.fn();
     render(<TemplateLibrary items={[globalItem]} onLaunch={onLaunch} />);
@@ -126,8 +133,30 @@ describe("TemplateLibrary", () => {
     expect(onLaunch).toHaveBeenCalledTimes(1);
     expect(onLaunch).toHaveBeenCalledWith({
       id: "kiro-spec",
+      revision: 3,
       tier: "global",
       parameters: { feature: "checkout" },
+    });
+  });
+
+  it("selects and launches by tier plus id when both tiers share an id", async () => {
+    const onLaunch = vi.fn();
+    render(
+      <TemplateLibrary
+        items={[globalItem, projectSameId]}
+        onLaunch={onLaunch}
+      />,
+    );
+
+    await selectTemplate("Project workflow with shared id");
+    expect(screen.queryByLabelText("Feature name")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^launch$/i }));
+
+    expect(onLaunch).toHaveBeenCalledWith({
+      id: globalItem.id,
+      revision: 9,
+      tier: "project",
+      parameters: {},
     });
   });
 
@@ -136,7 +165,7 @@ describe("TemplateLibrary", () => {
       <TemplateLibrary
         items={[globalItem]}
         onLaunch={vi.fn()}
-        selectedTemplateId="kiro-spec"
+        selectedTemplate={{ id: "kiro-spec", tier: "global" }}
         launchOutcome={{
           status: "prerequisites_unmet",
           missing: [
@@ -170,7 +199,7 @@ describe("TemplateLibrary", () => {
       <TemplateLibrary
         items={[globalItem]}
         onLaunch={vi.fn()}
-        selectedTemplateId="kiro-spec"
+        selectedTemplate={{ id: "kiro-spec", tier: "global" }}
         launchOutcome={{
           status: "rejected",
           reason: "Worktree has uncommitted changes.",
@@ -190,12 +219,38 @@ describe("TemplateLibrary", () => {
       <TemplateLibrary
         items={[globalItem]}
         onLaunch={vi.fn()}
-        selectedTemplateId="kiro-spec"
+        selectedTemplate={{ id: "kiro-spec", tier: "global" }}
         launchOutcome={{ status: "started" }}
       />,
     );
 
     expect(screen.getByText(/started/i)).toBeInTheDocument();
+  });
+
+  it("surfaces the recovery instruction when a workflow is parked for approval", () => {
+    render(
+      <TemplateLibrary
+        items={[globalItem]}
+        onLaunch={vi.fn()}
+        selectedTemplate={{ id: "kiro-spec", tier: "global" }}
+        launchOutcome={{
+          status: "awaiting_approval",
+          executionId: "exec-parked",
+          instruction:
+            "Approve the pending workflow definition to resume execution exec-parked.",
+        }}
+      />,
+    );
+
+    const status = screen.getByRole("status");
+    expect(
+      within(status).getByText("Definition awaiting approval"),
+    ).toBeInTheDocument();
+    expect(
+      within(status).getByText(
+        "Approve the pending workflow definition to resume execution exec-parked.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders an EmptyState when the library is empty (R7.7)", () => {
@@ -222,6 +277,9 @@ describe("TemplateLibrary", () => {
     await user.click(
       screen.getByRole("button", { name: /Local Fix Workflow/ }),
     );
-    expect(onSelectTemplate).toHaveBeenCalledWith("local-fix");
+    expect(onSelectTemplate).toHaveBeenCalledWith({
+      id: "local-fix",
+      tier: "project",
+    });
   });
 });

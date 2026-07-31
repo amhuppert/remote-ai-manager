@@ -9,7 +9,10 @@ import type {
   TemplateTier,
 } from "@/lib/workflow-graph/template-library-service";
 import { useProjectTemplatesQuery } from "@/lib/workflows/queries";
-import { useStartGraphWorkflowMutation } from "@/lib/workflows/mutations";
+import {
+  useStartGraphWorkflowMutation,
+  type StartGraphWorkflowResult,
+} from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/Badge";
@@ -163,6 +166,15 @@ export interface DefinitionSummary {
   tier: TemplateTier;
 }
 
+interface DefinitionIdentity {
+  id: string;
+  tier: TemplateTier;
+}
+
+function definitionSelectionKey(definition: DefinitionIdentity): string {
+  return JSON.stringify([definition.tier, definition.id]);
+}
+
 const tierBadgeLabel: Record<TemplateTier, string> = {
   global: "Global",
   project: "Project",
@@ -233,6 +245,7 @@ export function GraphWorkflowLauncher({
   error,
   onRun,
   onSelectionChange,
+  awaitingApproval,
 }: {
   projectName: string;
   sessionName: string;
@@ -240,19 +253,32 @@ export function GraphWorkflowLauncher({
   loading?: boolean;
   starting?: boolean;
   error?: string | null;
-  onRun?: (definitionId: string) => void;
-  /** Reports the currently selected definition id (null when cleared). */
-  onSelectionChange?: (definitionId: string | null) => void;
+  onRun?: (definition: DefinitionIdentity) => void;
+  awaitingApproval?: Extract<
+    StartGraphWorkflowResult,
+    { kind: "awaiting_approval" }
+  > | null;
+  /** Reports the currently selected cross-tier identity (null when cleared). */
+  onSelectionChange?: (definition: DefinitionIdentity | null) => void;
 }): React.JSX.Element {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const templatesHref = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/templates`;
   const workflowsHref = `/projects/${encodeURIComponent(projectName)}/workflows`;
-  const selected = definitions.find((d) => d.id === selectedId) ?? null;
+  const selected =
+    definitions.find(
+      (definition) => definitionSelectionKey(definition) === selectedKey,
+    ) ?? null;
 
-  function selectDefinition(definitionId: string): void {
-    setSelectedId(definitionId);
-    onSelectionChange?.(definitionId);
+  function selectDefinition(selectionKey: string): void {
+    const definition =
+      definitions.find(
+        (candidate) => definitionSelectionKey(candidate) === selectionKey,
+      ) ?? null;
+    setSelectedKey(definition === null ? null : selectionKey);
+    onSelectionChange?.(
+      definition === null ? null : { id: definition.id, tier: definition.tier },
+    );
   }
 
   if (loading) {
@@ -288,7 +314,7 @@ export function GraphWorkflowLauncher({
           replacing the hand-rolled portal/position/outside-click machinery. The
           trigger keeps its rich selected display (tier badge + name + revision)
           via `SelectTrigger asChild`. */}
-      <Select value={selectedId ?? ""} onValueChange={selectDefinition}>
+      <Select value={selectedKey ?? ""} onValueChange={selectDefinition}>
         <SelectTrigger asChild aria-label="Select a workflow">
           <button
             type="button"
@@ -316,7 +342,7 @@ export function GraphWorkflowLauncher({
           {definitions.map((d) => (
             <SelectItem
               key={`${d.tier}:${d.id}`}
-              value={d.id}
+              value={definitionSelectionKey(d)}
               description={`rev ${d.revision}`}
             >
               {tierBadge(d.tier)}
@@ -338,8 +364,10 @@ export function GraphWorkflowLauncher({
           size="sm"
           touch
           layoutClassName="ml-auto"
-          disabled={!selectedId || starting}
-          onClick={() => selectedId && onRun?.(selectedId)}
+          disabled={selected === null || starting}
+          onClick={() =>
+            selected && onRun?.({ id: selected.id, tier: selected.tier })
+          }
           type="button"
         >
           {starting ? "Starting\u2026" : "Run Workflow"}
@@ -347,6 +375,25 @@ export function GraphWorkflowLauncher({
       </div>
       {error && (
         <div className="mt-xs font-mono text-[0.72rem] text-red">{error}</div>
+      )}
+      {awaitingApproval && (
+        <div
+          role="status"
+          className="flex flex-col gap-xs rounded-md border border-solid border-amber-dim bg-amber-glow p-sm"
+        >
+          <span className="font-mono text-[0.72rem] font-semibold text-amber">
+            Definition awaiting approval
+          </span>
+          <span className="font-mono text-[0.7rem] text-text-secondary">
+            {awaitingApproval.instruction}
+          </span>
+          <Link
+            href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/workflow`}
+            className="font-mono text-[0.7rem] font-semibold text-amber underline"
+          >
+            Open workflow monitor
+          </Link>
+        </div>
       )}
     </LauncherShell>
   );
@@ -379,6 +426,10 @@ function ConnectedLauncherCard({
   // Engine-side launch rejection surfaced inside the form (the start route's 400
   // input-validation error names the offending parameter).
   const [engineError, setEngineError] = useState<string | null>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState<Extract<
+    StartGraphWorkflowResult,
+    { kind: "awaiting_approval" }
+  > | null>(null);
 
   const items = templatesQuery.data ?? [];
 
@@ -391,14 +442,19 @@ function ConnectedLauncherCard({
     item: TemplateLibraryItem,
     parameters: Record<string, string> | undefined,
   ): void {
+    setAwaitingApproval(null);
     startMutation.mutate(
       {
         definitionId: item.id,
+        definitionRevision: item.revision,
         tier: item.tier,
         ...(parameters !== undefined ? { parameters } : {}),
       },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
+          setAwaitingApproval(
+            result.kind === "awaiting_approval" ? result : null,
+          );
           setLaunchItem(null);
           setEngineError(null);
         },
@@ -426,8 +482,11 @@ function ConnectedLauncherCard({
     );
   }
 
-  function handleRun(definitionId: string): void {
-    const item = items.find((i) => i.id === definitionId);
+  function handleRun(definition: DefinitionIdentity): void {
+    const item = items.find(
+      (candidate) =>
+        candidate.id === definition.id && candidate.tier === definition.tier,
+    );
     if (!item) return;
     // A parameterized template collects run-specific values in a modal first; a
     // zero-input template keeps the one-click behaviour (no parameters sent).
@@ -460,6 +519,7 @@ function ConnectedLauncherCard({
             : null
         }
         onRun={handleRun}
+        awaitingApproval={awaitingApproval}
       />
       <Dialog
         open={launchItem !== null}

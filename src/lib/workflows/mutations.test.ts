@@ -4,12 +4,14 @@ import { renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  useApproveGraphWorkflowDefinitionMutation,
   useResetExecutionContextMutation,
   useResolveApprovalMutation,
   useStartGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import { graphWorkflowExecutionKeys } from "@/lib/workflows/query-keys";
 import { ApiCallError } from "@/lib/api/errors";
 
 function wrapper({ children }: { children: React.ReactNode }) {
@@ -236,7 +238,9 @@ describe("useStartGraphWorkflowMutation", () => {
       { wrapper },
     );
 
-    await result.current.mutateAsync({ definitionId: "def-1" });
+    await expect(
+      result.current.mutateAsync({ definitionId: "def-1" }),
+    ).resolves.toEqual({ kind: "started" });
 
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/projects/proj-1/sessions/sess-1/graph-workflow");
@@ -258,6 +262,23 @@ describe("useStartGraphWorkflowMutation", () => {
     expect(requestBody()).toEqual({
       definitionId: "def-1",
       parameters: { feature: "Search", mode: "fast" },
+    });
+  });
+
+  it("includes the selected immutable definition revision in the launch body", async () => {
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await result.current.mutateAsync({
+      definitionId: "def-1",
+      definitionRevision: 7,
+    });
+
+    expect(requestBody()).toEqual({
+      definitionId: "def-1",
+      definitionRevision: 7,
     });
   });
 
@@ -286,6 +307,47 @@ describe("useStartGraphWorkflowMutation", () => {
     expect(requestBody()).toEqual({ definitionId: "def-1" });
   });
 
+  it("resolves a seeded approval-required run as parked and invalidates its caches", async () => {
+    const client = makeClient();
+    const executionKey = graphWorkflowExecutionKeys.detail("proj-1", "sess-1");
+    const sessionKey = sessionKeys.detail("proj-1", "sess-1");
+    client.setQueryData(executionKey, { execution: null });
+    client.setQueryData(sessionKey, { sessionName: "sess-1" });
+    const awaitingApproval = {
+      kind: "awaiting_approval",
+      executionId: "exec-parked",
+      instruction:
+        "Approve the pending workflow definition to resume execution exec-parked.",
+    } as const;
+    fetchSpy.mockResolvedValue(
+      jsonResponse(
+        {
+          error:
+            "Workflow execution exec-parked was created and parked awaiting definition approval",
+          code: "definition_approval_required",
+          executionId: "exec-parked",
+          instruction:
+            "Approve the pending workflow definition to resume execution exec-parked.",
+        },
+        409,
+      ),
+    );
+
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await expect(
+      result.current.mutateAsync({ definitionId: "def-1" }),
+    ).resolves.toEqual(awaitingApproval);
+
+    await waitFor(() => {
+      expect(client.getQueryState(executionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+    });
+  });
+
   it("surfaces a 400 input-validation rejection as an ApiCallError with the engine message", async () => {
     fetchSpy.mockResolvedValue(
       jsonResponse(
@@ -307,6 +369,130 @@ describe("useStartGraphWorkflowMutation", () => {
     ).rejects.toMatchObject({
       name: "ApiCallError",
       message: 'Parameter "feature" is required but was not supplied',
+    });
+  });
+
+  it("rejects a malformed approval-required response instead of treating it as parked", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(
+        {
+          error: "Workflow was parked",
+          code: "definition_approval_required",
+          executionId: 42,
+          instruction: null,
+        },
+        409,
+      ),
+    );
+
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await expect(
+      result.current.mutateAsync({ definitionId: "def-1" }),
+    ).rejects.toMatchObject({
+      name: "ApiCallError",
+      code: "definition_approval_required",
+      message: "Workflow was parked",
+    });
+  });
+});
+
+describe("useApproveGraphWorkflowDefinitionMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("POSTs the human approval and invalidates the active execution detail", async () => {
+    const client = makeClient();
+    const executionKey = graphWorkflowExecutionKeys.detail("proj-1", "sess-1");
+    client.setQueryData(executionKey, {
+      execution: { id: "exec-parked", status: "pending" },
+    });
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        execution: { executionId: "exec-parked", status: "running" },
+      }),
+    );
+
+    const { result } = renderHook(
+      () => useApproveGraphWorkflowDefinitionMutation("proj-1", "sess-1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      executionId: "exec-parked",
+      definitionId: "def-parked",
+      definitionRevision: 7,
+    });
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "/api/projects/proj-1/sessions/sess-1/graph-workflow/approve-definition",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(
+      JSON.stringify({
+        executionId: "exec-parked",
+        definitionId: "def-parked",
+        definitionRevision: 7,
+      }),
+    );
+    await waitFor(() => {
+      expect(client.getQueryState(executionKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("preserves a gate refusal's conditions and recovery instruction", async () => {
+    const client = makeClient();
+    const executionKey = graphWorkflowExecutionKeys.detail("proj-1", "sess-1");
+    client.setQueryData(executionKey, {
+      execution: { id: "exec-parked", status: "pending" },
+    });
+    fetchSpy.mockResolvedValue(
+      jsonResponse(
+        {
+          error: "The pinned revision is no longer approved.",
+          code: "revision_not_approved",
+          unmetConditions: ["The pinned revision is no longer approved."],
+          instruction: "Sign off the revision, then approve again.",
+        },
+        409,
+      ),
+    );
+
+    const { result } = renderHook(
+      () => useApproveGraphWorkflowDefinitionMutation("proj-1", "sess-1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    const error = await result.current
+      .mutateAsync({
+        executionId: "exec-parked",
+        definitionId: "def-parked",
+        definitionRevision: 7,
+      })
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ApiCallError);
+    if (error instanceof ApiCallError) {
+      expect(error.code).toBe("revision_not_approved");
+      expect(error.details).toEqual({
+        unmetConditions: ["The pinned revision is no longer approved."],
+        instruction: "Sign off the revision, then approve again.",
+      });
+    }
+    await waitFor(() => {
+      expect(client.getQueryState(executionKey)?.isInvalidated).toBe(true);
     });
   });
 });

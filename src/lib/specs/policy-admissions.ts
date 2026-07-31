@@ -4,7 +4,7 @@ import type {
   SpecEventsPublisher,
 } from "./events";
 import { resolveDial } from "./policy";
-import type { Spec, SpecExecutionRow, SpecGate } from "./schemas";
+import type { Spec, SpecExecutionRow, SpecGate, SpecGateDial } from "./schemas";
 
 /**
  * Policy-basis admissions for the execution-scoped gates (execution_start,
@@ -78,9 +78,11 @@ export function recordPolicyGateAdmissionInTransaction(
     spec: Spec;
     gate: PolicyAdmittedGate;
     execution: SpecExecutionRow;
+    frozenDial?: SpecGateDial;
   },
 ): RecordedPolicyAdmission | null {
-  const dial = resolveDial(input.spec.gatePolicy, input.gate);
+  const dial =
+    input.frozenDial ?? resolveDial(input.spec.gatePolicy, input.gate);
   if (dial !== "notify" && dial !== "off") return null;
   const alreadyAdmitted = deps.reviewRepo
     .findGateAdmissionsByRevision(input.execution.revision_id)

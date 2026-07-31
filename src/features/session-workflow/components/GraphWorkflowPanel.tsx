@@ -10,6 +10,7 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowVisualLayout } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
+import { Button } from "@/components/ui/Button";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import ExecutionStatusBar, {
   type ExecutionControlAction,
@@ -31,6 +32,7 @@ interface GraphWorkflowPanelProps {
   onResume(conflictGuidance?: ConflictDecisionInput[]): void;
   onAbort(): void;
   onClear(): void;
+  onApproveDefinition(): void;
   onAddTask(contextId: string, title: string, instructions: string): void;
   onUpdateTask(
     taskId: string,
@@ -48,6 +50,8 @@ interface GraphWorkflowPanelProps {
   isSavingConfig: boolean;
   isPausingExecution: boolean;
   isResumingExecution: boolean;
+  isApprovingDefinition: boolean;
+  definitionApprovalError: string | null;
   configEditConflict: boolean;
   configSaveSucceeded: boolean;
   isMutating: boolean;
@@ -67,6 +71,7 @@ export default function GraphWorkflowPanel({
   onResume,
   onAbort,
   onClear,
+  onApproveDefinition,
   onAddTask,
   onUpdateTask,
   onRemoveTask,
@@ -76,6 +81,8 @@ export default function GraphWorkflowPanel({
   isSavingConfig,
   isPausingExecution,
   isResumingExecution,
+  isApprovingDefinition,
+  definitionApprovalError,
   configEditConflict,
   configSaveSucceeded,
   isMutating,
@@ -154,6 +161,10 @@ export default function GraphWorkflowPanel({
     execution && viewingTaskId
       ? resolveViewingTask(execution, viewingTaskId)
       : null;
+  const isAwaitingDefinitionApproval =
+    execution?.status === "pending" &&
+    execution.definitionApproval !== null &&
+    execution.definitionApproval.approvedAt === null;
 
   if (!execution) {
     return (
@@ -188,6 +199,39 @@ export default function GraphWorkflowPanel({
           isMutating={isMutating}
           pendingAction={pendingAction}
         />
+        {isAwaitingDefinitionApproval && (
+          <section
+            aria-label="Definition approval"
+            className="flex shrink-0 flex-wrap items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-amber-dim bg-amber-glow px-md py-sm"
+          >
+            <div>
+              <p className="m-0 font-mono text-[0.72rem] font-bold tracking-[0.05em] text-amber uppercase">
+                Definition awaiting approval
+              </p>
+              <p className="mt-[3px] mb-0 text-[0.7rem] text-text-secondary">
+                Approve the parked definition to start this workflow.
+              </p>
+              {definitionApprovalError !== null && (
+                <p
+                  role="alert"
+                  className="mt-xs mb-0 font-mono text-[0.68rem] text-red"
+                >
+                  {definitionApprovalError}
+                </p>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="success"
+              touch
+              loading={isApprovingDefinition}
+              disabled={isMutating}
+              onClick={onApproveDefinition}
+            >
+              Approve definition &amp; start
+            </Button>
+          </section>
+        )}
         <div className="flex min-h-0 flex-1 max-768:flex-col">
           {isMobile ? (
             <>

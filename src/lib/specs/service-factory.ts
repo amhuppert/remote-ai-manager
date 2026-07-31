@@ -8,6 +8,7 @@ import { getNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { readConversationMessagesWithSeq } from "@/lib/prompt/transcript";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { getSession } from "@/lib/state-store";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
@@ -26,6 +27,7 @@ import {
 import type { TicketAttachment } from "@/lib/tickets/schemas";
 import {
   approveGraphWorkflowDefinitionForSession,
+  launchGraphWorkflowExecution,
   sessionHasPendingWorkflowDefinitionApproval,
 } from "@/lib/workflow-graph/execution-route-handlers";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
@@ -397,7 +399,45 @@ export async function createProductionSpecRouteServices(
         return sessionHasPendingWorkflowDefinitionApproval({
           projectPath,
           sessionName: input.sessionName,
+          definitionId: input.definitionId,
+          definitionRevision: input.definitionRevision,
         });
+      },
+      async ensurePendingDefinitionApproval(input) {
+        let launchError: unknown = null;
+        try {
+          await launchGraphWorkflowExecution({
+            projectPath,
+            projectName: input.projectName,
+            sessionName: input.sessionName,
+            definitionId: input.definitionId,
+            expectedDefinitionRevision: input.definitionRevision,
+          });
+        } catch (error) {
+          launchError = error;
+        }
+        const pending = await sessionHasPendingWorkflowDefinitionApproval({
+          projectPath,
+          sessionName: input.sessionName,
+          definitionId: input.definitionId,
+          definitionRevision: input.definitionRevision,
+        });
+        if (pending !== null) {
+          return { ok: true, workflowExecutionId: pending };
+        }
+
+        const reason =
+          launchError === null
+            ? "The compiled workflow did not park for definition approval."
+            : getErrorMessage(launchError);
+        logger.warn("specs.execution.workflow-start-not-pending", {
+          projectPath,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          definitionId: input.definitionId,
+          reason,
+        });
+        return { ok: false, reason };
       },
       grantApproval(input) {
         return review.grantGateApproval({ ...input, gate: "execution_start" });
@@ -407,6 +447,9 @@ export async function createProductionSpecRouteServices(
           projectPath,
           projectName: input.projectName,
           sessionName: input.sessionName,
+          workflowExecutionId: input.workflowExecutionId,
+          definitionId: input.definitionId,
+          definitionRevision: input.definitionRevision,
         });
       },
     },

@@ -841,7 +841,10 @@ function toExecutionView(
     revisionNumber: revisionNumberById.get(execution.revision_id) ?? null,
     state: execution.state,
     workflowDefinitionId: execution.workflow_definition_id,
+    workflowDefinitionRevision: execution.workflow_definition_revision,
     workflowExecutionId: execution.workflow_execution_id,
+    definitionApprovalRequired:
+      definitionApprovalRequiredFromExecution(execution),
     scope,
     sessionName: execution.session_name,
     deliveredAt: execution.delivered_at,
@@ -850,6 +853,13 @@ function toExecutionView(
     updatedAt: execution.updated_at,
     deliveryProjection,
   };
+}
+
+function definitionApprovalRequiredFromExecution(
+  execution: SpecExecutionRow,
+): boolean | null {
+  const dial = execution.execution_start_dial;
+  return dial === null || dial === undefined ? null : dial === "gate";
 }
 
 /**
@@ -868,7 +878,10 @@ function toStartedExecutionView(
     revisionNumber,
     state: execution.state,
     workflowDefinitionId: execution.workflow_definition_id,
+    workflowDefinitionRevision: execution.workflow_definition_revision,
     workflowExecutionId: execution.workflow_execution_id,
+    definitionApprovalRequired:
+      definitionApprovalRequiredFromExecution(execution),
     scope: parseExecutionScope(execution.scope_json),
     sessionName: execution.session_name,
     deliveredAt: execution.delivered_at,

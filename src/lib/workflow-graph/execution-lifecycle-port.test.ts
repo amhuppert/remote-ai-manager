@@ -16,14 +16,19 @@ describe("graph execution lifecycle port", () => {
     registerGraphExecutionLifecycleCallbacks({ markRunning, markDelivered });
 
     const callbacks = createRegisteredGraphExecutionLifecycleCallbacks();
-    await callbacks.markRunning("workflow-execution-1", "definition-1");
-    await callbacks.markDelivered("workflow-execution-1", "merge-sha");
-
-    // The started definition id is forwarded so the consumer can correlate
-    // the run with work prepared under that definition.
-    expect(markRunning).toHaveBeenCalledWith(
+    await callbacks.markRunning(
+      { projectPath: "/repo", sessionName: "session-1" },
       "workflow-execution-1",
       "definition-1",
+      7,
+    );
+    await callbacks.markDelivered("workflow-execution-1", "merge-sha");
+
+    expect(markRunning).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
+      "workflow-execution-1",
+      "definition-1",
+      7,
     );
     expect(markDelivered).toHaveBeenCalledWith(
       "workflow-execution-1",
@@ -34,8 +39,11 @@ describe("graph execution lifecycle port", () => {
   it("fails closed when a linked lifecycle transition has no composition", async () => {
     const callbacks = createRegisteredGraphExecutionLifecycleCallbacks();
 
-    await expect(callbacks.markRunning("workflow-execution-1")).rejects.toThrow(
-      "Graph execution lifecycle callbacks are not registered",
-    );
+    await expect(
+      callbacks.markRunning(
+        { projectPath: "/repo", sessionName: "session-1" },
+        "workflow-execution-1",
+      ),
+    ).rejects.toThrow("Graph execution lifecycle callbacks are not registered");
   });
 });

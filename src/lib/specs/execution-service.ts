@@ -16,6 +16,7 @@ import type {
   WorkflowDefinitionSummary,
   WorkflowScope,
 } from "@/lib/workflow-graph/storage";
+import type { GraphExecutionLifecycleContext } from "@/lib/workflow-graph/execution-lifecycle-port";
 import {
   compileSpecExecutionPlan,
   scopePlanFromRevision,
@@ -34,6 +35,7 @@ import {
 } from "./policy-admissions";
 import {
   refusalCodeSchema,
+  specGateDialSchema,
   type ActorProvenance,
   type Spec,
   type SpecCriterionDisposition,
@@ -144,8 +146,10 @@ export interface ExecutionServiceDeps {
   /**
    * The execution-start gate's review and workflow ports, injected at
    * composition. `hasPendingDefinitionApproval` probes whether the session's
-   * workflow execution is actually parked awaiting definition approval — the
-   * grant is refused without side effects when nothing is waiting to unblock;
+   * workflow execution is actually parked awaiting definition approval;
+   * `ensurePendingDefinitionApproval` launches the prepared definition through
+   * the production workflow seam when the Studio approval is the first launch
+   * act;
    * `grantApproval` records the human execution-start approval (spec approval
    * + gate admission + durable event); `approveWorkflowDefinition` approves
    * the session's pending compiled definition and starts the run through the
@@ -186,7 +190,17 @@ export interface ExecutionStartGatePort {
   hasPendingDefinitionApproval(input: {
     projectName: string;
     sessionName: string;
-  }): Promise<boolean>;
+    definitionId: string;
+    definitionRevision: number;
+  }): Promise<string | null>;
+  ensurePendingDefinitionApproval(input: {
+    projectName: string;
+    sessionName: string;
+    definitionId: string;
+    definitionRevision: number;
+  }): Promise<
+    { ok: true; workflowExecutionId: string } | { ok: false; reason: string }
+  >;
   grantApproval(input: {
     specId: string;
     revisionId: string;
@@ -200,6 +214,9 @@ export interface ExecutionStartGatePort {
   approveWorkflowDefinition(input: {
     projectName: string;
     sessionName: string;
+    workflowExecutionId: string;
+    definitionId: string;
+    definitionRevision: number;
   }): Promise<
     | { ok: true }
     | {
@@ -208,7 +225,10 @@ export interface ExecutionStartGatePort {
           | "unavailable"
           | "no_active_execution"
           | "not_awaiting_approval"
-          | "already_decided";
+          | "already_decided"
+          | "definition_mismatch"
+          | "definition_revision_mismatch"
+          | "execution_mismatch";
       }
     | { ok: false; reason: "gate_refused"; refusal: DefinitionGateRefusal }
   >;
@@ -262,17 +282,23 @@ export type ExecutionLifecycleDeps = Pick<
 
 export interface ExecutionLifecycleCallbacks {
   markRunning(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId?: string,
+    definitionRevision?: number,
   ): Promise<void>;
   markDelivered(workflowExecutionId: string, mergeHash: string): Promise<void>;
   awaitingDefinitionApproval(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId: string,
+    definitionRevision: number,
   ): Promise<void>;
   admitDefinitionApproval(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId: string,
+    definitionRevision: number,
   ): Promise<{ ok: true } | ({ ok: false } & DefinitionGateRefusal)>;
   /**
    * An aborted workflow can never deliver the immutable pin, so the linked
@@ -433,26 +459,82 @@ export function createExecutionLifecycleCallbacks(
   deps: ExecutionLifecycleDeps,
 ): ExecutionLifecycleCallbacks {
   function findExecutionForWorkflow(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId: string | undefined,
+    definitionRevision: number | undefined,
   ): SpecExecutionRow | null {
     const linked =
-      deps.deliveryRepo.findExecutionByWorkflowExecutionId(workflowExecutionId);
-    if (linked !== null || definitionId === undefined) return linked;
-    // A fresh workflow start is not linked yet: the spec execution pinned
-    // this compiled definition while awaiting its workflow, so the start
-    // report's definition id is the correlation key.
-    return deps.deliveryRepo.findExecutionAwaitingWorkflowByDefinitionId(
+      deps.deliveryRepo.findExecutionByWorkflowExecutionIdInSession(
+        context.projectPath,
+        context.sessionName,
+        workflowExecutionId,
+      );
+    if (linked !== null) {
+      const definitionMatches =
+        definitionId === undefined ||
+        linked.workflow_definition_id === definitionId;
+      const revisionMatches =
+        definitionRevision === undefined ||
+        linked.workflow_definition_revision === null ||
+        linked.workflow_definition_revision === definitionRevision;
+      if (definitionMatches && revisionMatches) {
+        if (
+          definitionRevision !== undefined &&
+          linked.workflow_definition_revision === null
+        ) {
+          logger.warn(
+            "specs.execution.workflow-correlation-linked-without-revision",
+            {
+              projectPath: context.projectPath,
+              sessionName: context.sessionName,
+              workflowExecutionId,
+              specExecutionId: linked.id,
+              reportedDefinitionId: definitionId,
+              reportedDefinitionRevision: definitionRevision,
+              pinnedDefinitionId: linked.workflow_definition_id,
+            },
+          );
+        }
+        return linked;
+      }
+      logger.warn("specs.execution.workflow-correlation-refused", {
+        projectPath: context.projectPath,
+        sessionName: context.sessionName,
+        workflowExecutionId,
+        specExecutionId: linked.id,
+        reportedDefinitionId: definitionId,
+        reportedDefinitionRevision: definitionRevision,
+        pinnedDefinitionId: linked.workflow_definition_id,
+        pinnedDefinitionRevision: linked.workflow_definition_revision,
+      });
+      return null;
+    }
+    if (definitionId === undefined || definitionRevision === undefined) {
+      return null;
+    }
+    return deps.deliveryRepo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
+      context.projectPath,
+      context.sessionName,
       definitionId,
+      definitionRevision,
     );
   }
 
   return {
-    async markRunning(workflowExecutionId, definitionId) {
+    async markRunning(
+      context,
+      workflowExecutionId,
+      definitionId,
+      definitionRevision,
+    ) {
       const execution = findExecutionForWorkflow(
+        context,
         workflowExecutionId,
         definitionId,
+        definitionRevision,
       );
+      if (execution === null) return;
       if (execution !== null && execution.workflow_execution_id === null) {
         const linked = await linkWorkflowExecution(
           deps,
@@ -481,10 +563,17 @@ export function createExecutionLifecycleCallbacks(
      * request — the point where a human grant has real waiting work to
      * unblock (R10.9).
      */
-    async awaitingDefinitionApproval(workflowExecutionId, definitionId) {
+    async awaitingDefinitionApproval(
+      context,
+      workflowExecutionId,
+      definitionId,
+      definitionRevision,
+    ) {
       const awaiting = findExecutionForWorkflow(
+        context,
         workflowExecutionId,
         definitionId,
+        definitionRevision,
       );
       if (awaiting === null) return;
       if (awaiting.workflow_execution_id === null) {
@@ -515,10 +604,17 @@ export function createExecutionLifecycleCallbacks(
      * refuse machine-readably so the run cannot start unadmitted (R10.2,
      * R11.2). Definitions this domain did not prepare admit by default.
      */
-    async admitDefinitionApproval(workflowExecutionId, definitionId) {
+    async admitDefinitionApproval(
+      context,
+      workflowExecutionId,
+      definitionId,
+      definitionRevision,
+    ) {
       const execution = findExecutionForWorkflow(
+        context,
         workflowExecutionId,
         definitionId,
+        definitionRevision,
       );
       if (execution === null) return { ok: true };
       if (execution.state === "abandoned" || execution.state === "delivered") {
@@ -603,14 +699,11 @@ function definitionGateRefusal(
 }
 
 /**
- * The human execution-start grant: verifies the session's workflow execution
- * is actually parked awaiting definition approval, records the human-only
- * gate approval (spec approval + execution_start admission + durable event
- * via the review port), then approves the pending compiled definition and
- * starts the run through the graph-workflow seam. The pending probe runs
- * FIRST so a click that lands before the workflow execution exists refuses
- * with no side effects — nothing is admitted, and the waiting request stays
- * open — instead of persisting an admission that unblocks nothing.
+ * The human execution-start grant launches the prepared definition when the
+ * Studio action is the first workflow-side act, records the human-only gate
+ * approval, then approves the parked definition through the graph-workflow
+ * seam. Launching before the grant preserves the invariant that an admission
+ * is written only when a concrete workflow execution is waiting to consume it.
  */
 async function approveExecutionStart(
   deps: ExecutionServiceDeps,
@@ -652,17 +745,48 @@ async function approveExecutionStart(
       "Start the compiled workflow from a session before approving execution start.",
     );
   }
-
-  const pending = await gate.hasPendingDefinitionApproval({
-    projectName: input.projectName,
-    sessionName: execution.session_name,
-  });
-  if (!pending) {
+  if (execution.workflow_definition_revision === null) {
+    logger.warn("specs.execution.start-definition-revision-missing", {
+      specId: input.specId,
+      specExecutionId: execution.id,
+      workflowDefinitionId: execution.workflow_definition_id,
+    });
     return lifecycleRefused(
       "gate_blocked",
-      ["The session has no workflow execution awaiting definition approval."],
-      "Start the compiled workflow from the session first, then approve execution start.",
+      ["The execution predates immutable workflow-definition revision pins."],
+      "Abandon this execution and start a new one from the approved revision before approving execution start.",
     );
+  }
+
+  let workflowExecutionId = await gate.hasPendingDefinitionApproval({
+    projectName: input.projectName,
+    sessionName: execution.session_name,
+    definitionId: execution.workflow_definition_id,
+    definitionRevision: execution.workflow_definition_revision,
+  });
+  if (workflowExecutionId === null) {
+    const ensured = await gate.ensurePendingDefinitionApproval({
+      projectName: input.projectName,
+      sessionName: execution.session_name,
+      definitionId: execution.workflow_definition_id,
+      definitionRevision: execution.workflow_definition_revision,
+    });
+    if (!ensured.ok) {
+      logger.warn("specs.execution.start-launch-refused", {
+        specId: input.specId,
+        specExecutionId: execution.id,
+        workflowDefinitionId: execution.workflow_definition_id,
+        workflowDefinitionRevision: execution.workflow_definition_revision,
+        sessionName: execution.session_name,
+        reason: ensured.reason,
+      });
+      return lifecycleRefused(
+        "gate_blocked",
+        [ensured.reason],
+        "Resolve the workflow start condition, then approve execution start again.",
+      );
+    }
+    workflowExecutionId = ensured.workflowExecutionId;
   }
 
   const grant = await gate.grantApproval({
@@ -677,6 +801,9 @@ async function approveExecutionStart(
   const approved = await gate.approveWorkflowDefinition({
     projectName: input.projectName,
     sessionName: execution.session_name,
+    workflowExecutionId,
+    definitionId: execution.workflow_definition_id,
+    definitionRevision: execution.workflow_definition_revision,
   });
   if (!approved.ok && approved.reason !== "already_decided") {
     if (approved.reason === "unavailable") {
@@ -844,6 +971,14 @@ function recordPolicyStartAdmission(
 ): void {
   const spec = deps.specsRepo.findByIdInTransaction(execution.spec_id);
   if (spec === null) return;
+  if (execution.execution_start_dial === null) {
+    logger.warn("specs.execution.start-policy-unavailable", {
+      specExecutionId: execution.id,
+      workflowDefinitionId: execution.workflow_definition_id,
+      workflowDefinitionRevision: execution.workflow_definition_revision,
+    });
+    return;
+  }
   const recorded = recordPolicyGateAdmissionInTransaction(
     {
       reviewRepo: deps.reviewRepo,
@@ -851,7 +986,12 @@ function recordPolicyStartAdmission(
       newAdmissionId: () => deps.nextId("admission"),
       now: deps.now,
     },
-    { spec, gate: "execution_start", execution },
+    {
+      spec,
+      gate: "execution_start",
+      execution,
+      frozenDial: execution.execution_start_dial,
+    },
   );
   if (recorded === null) return;
   prepared.push(recorded.prepared);
@@ -1452,13 +1592,15 @@ async function startWithinQueue(
   }
 
   const scopeHash = hashExecutionScope(input.scope);
+  const executionStartDial = specGateDialSchema.parse(
+    resolveDial(spec.gatePolicy, "execution_start"),
+  );
   const definitionValue = compileSpecExecutionPlan({
     spec: { id: spec.id, slug: spec.slug, name: spec.name },
     revisionSnapshot: snapshot,
     scope: input.scope,
     scopeHash,
-    approvalRequired:
-      resolveDial(spec.gatePolicy, "execution_start") === "gate",
+    approvalRequired: executionStartDial === "gate",
   });
   const definitionDraft = workflowDraft(
     spec.name,
@@ -1482,6 +1624,8 @@ async function startWithinQueue(
     specId: spec.id,
     revisionId: snapshot.revision.id,
     workflowDefinitionId: definition.id,
+    workflowDefinitionRevision: definition.revision,
+    executionStartDial,
     reused: orphan !== null,
   });
   await deps.afterDefinitionPrepared?.(definition);
@@ -1512,7 +1656,9 @@ async function startWithinQueue(
         revision_id: snapshot.revision.id,
         scope_json: JSON.stringify(input.scope),
         state: "definition_review",
+        execution_start_dial: executionStartDial,
         workflow_definition_id: definition.id,
+        workflow_definition_revision: definition.revision,
         workflow_execution_id: null,
         session_name: input.sessionName,
         delivered_at: null,
@@ -1534,6 +1680,7 @@ async function startWithinQueue(
         object_kind: "workflow_execution",
         object_ref_json: JSON.stringify({
           workflowDefinitionId: definition.id,
+          workflowDefinitionRevision: definition.revision,
           workflowExecutionId: null,
         }),
         direction: "outbound",
@@ -1541,6 +1688,7 @@ async function startWithinQueue(
         snapshot_json: JSON.stringify({
           revisionId: snapshot.revision.id,
           scopeHash,
+          executionStartDial,
         }),
         element_ids_json: JSON.stringify([
           ...input.scope.selectedTaskIds,
@@ -1558,6 +1706,8 @@ async function startWithinQueue(
             executionId: execution.id,
             revisionId: snapshot.revision.id,
             workflowDefinitionId: definition.id,
+            workflowDefinitionRevision: definition.revision,
+            executionStartDial,
             scopeHash,
           },
           sseEvent: {
@@ -1578,6 +1728,8 @@ async function startWithinQueue(
         revisionId: snapshot.revision.id,
         executionId: execution.id,
         workflowDefinitionId: definition.id,
+        workflowDefinitionRevision: definition.revision,
+        executionStartDial,
         selectedTaskCount: input.scope.selectedTaskIds.length,
         selectedCriterionCount: input.scope.selectedCriterionIds.length,
       });

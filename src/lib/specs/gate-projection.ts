@@ -101,11 +101,22 @@ export function gateStatuses(
   spec: Spec,
   revisionId: string | null,
   admissions: readonly SpecGateAdmissionRow[],
-  currentExecution: Pick<SpecExecutionRow, "id" | "revision_id"> | null,
+  currentExecution: Pick<
+    SpecExecutionRow,
+    | "id"
+    | "revision_id"
+    | "state"
+    | "workflow_execution_id"
+    | "execution_start_dial"
+  > | null,
   revisionNumberById: ReadonlyMap<string, number>,
 ): SpecGateStatus[] {
   return specGateSchema.options.map((gate) => {
-    const dial = resolveDial(spec.gatePolicy, gate);
+    const dial =
+      gate === "execution_start" &&
+      currentExecution?.execution_start_dial != null
+        ? currentExecution.execution_start_dial
+        : resolveDial(spec.gatePolicy, gate);
     // Execution-scoped gates admit one run, read against the run's PINNED
     // revision: an older run's admission must not make the current run read
     // as admitted, and a newer draft amendment must not hide the active
@@ -119,6 +130,9 @@ export function gateStatuses(
             admission.revision_id === currentExecution.revision_id
           : revisionId === null || admission.revision_id === revisionId;
     const admitted = admissions.some(countsNow);
+    const frozenExecutionStartPending =
+      gate === "execution_start" &&
+      executionGateActionable("execution_start", currentExecution);
     // Everything the gate ever admitted that today's `state` does NOT reflect.
     // An amendment legitimately leaves a gate pending; without this an
     // operator cannot tell that from an approval that was lost.
@@ -153,9 +167,11 @@ export function gateStatuses(
       priorAdmissions,
       state: admitted
         ? "admitted"
-        : dialRequiresHumanApproval(dial)
+        : frozenExecutionStartPending
           ? "pending"
-          : "not_required",
+          : dialRequiresHumanApproval(dial)
+            ? "pending"
+            : "not_required",
     };
   });
 }
@@ -307,7 +323,11 @@ export interface ApprovalRequestContext {
   admissions: readonly SpecGateAdmissionRow[];
   currentExecution: Pick<
     SpecExecutionRow,
-    "id" | "revision_id" | "state" | "workflow_execution_id"
+    | "id"
+    | "revision_id"
+    | "state"
+    | "workflow_execution_id"
+    | "execution_start_dial"
   > | null;
   revisionNumberById: ReadonlyMap<string, number>;
   gate: SpecGate;

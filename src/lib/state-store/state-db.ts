@@ -320,7 +320,13 @@ const SPEC_SCHEMA_DDL = `
     state                  TEXT NOT NULL CHECK (state IN (
       'definition_review', 'running', 'delivered', 'abandoned'
     )),
+    execution_start_dial   TEXT CHECK (execution_start_dial IN (
+      'gate', 'notify', 'off'
+    )),
     workflow_definition_id TEXT NOT NULL,
+    workflow_definition_revision INTEGER CHECK (
+      workflow_definition_revision > 0
+    ),
     workflow_execution_id  TEXT,
     session_name           TEXT,
     delivered_at           TEXT,
@@ -705,7 +711,13 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
     state                  TEXT NOT NULL CHECK (state IN (
       'definition_review', 'running', 'delivered', 'abandoned'
     )),
+    execution_start_dial   TEXT CHECK (execution_start_dial IN (
+      'gate', 'notify', 'off'
+    )),
     workflow_definition_id TEXT NOT NULL,
+    workflow_definition_revision INTEGER CHECK (
+      workflow_definition_revision > 0
+    ),
     workflow_execution_id  TEXT,
     session_name           TEXT,
     delivered_at           TEXT,
@@ -1601,6 +1613,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "spec_revisions",
     column: "authoring_stage",
     type: "TEXT NOT NULL DEFAULT 'plan' CHECK (authoring_stage IN ('requirements', 'design', 'plan'))",
+  },
+  {
+    table: "spec_executions",
+    column: "execution_start_dial",
+    type: "TEXT CHECK (execution_start_dial IN ('gate', 'notify', 'off'))",
+  },
+  {
+    table: "spec_executions",
+    column: "workflow_definition_revision",
+    type: "INTEGER CHECK (workflow_definition_revision > 0)",
   },
 ];
 

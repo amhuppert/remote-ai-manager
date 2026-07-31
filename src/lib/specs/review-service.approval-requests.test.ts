@@ -427,6 +427,31 @@ describe("ReviewService.requestApproval validation", () => {
     expect(attentionEvents()).toHaveLength(1);
   });
 
+  it("issues the frozen execution-start request after the live dial changes to Notify", async () => {
+    db.prepare(
+      "UPDATE spec_executions SET state = 'definition_review', workflow_execution_id = 'workflow-execution-1' WHERE id = ?",
+    ).run(EXECUTION_ID);
+    db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
+      '{"preset":"contract-bearing","overrides":{"execution_start":"notify"}}',
+      SPEC_ID,
+    );
+
+    const result = await service.requestApproval({
+      specId: SPEC_ID,
+      revisionId: APPROVED_REVISION_ID,
+      gate: "execution_start",
+      subject: "execution_start",
+      actor: AGENT,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { gate: "execution_start", subject: "execution_start" },
+    });
+    expect(attentionEvents()).toHaveLength(1);
+    expect(requested).toHaveLength(1);
+  });
+
   it("refuses a subject that is not outstanding at the named gate", async () => {
     const unknown = await service.requestApproval({
       specId: SPEC_ID,

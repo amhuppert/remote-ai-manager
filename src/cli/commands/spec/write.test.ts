@@ -236,7 +236,7 @@ function makeHost(
     /** false emulates a server built before handles were projected. */
     handles?: boolean;
     /** Drives the execution_start dial the CLI resolves locally. */
-    preset?: string;
+    preset?: SpecGatePreset;
     /** The approval ask was already open, so no second request was created. */
     alreadyRequested?: boolean;
   } = {},
@@ -587,7 +587,13 @@ function makeHost(
               scope: null,
               state: "definition_review",
               workflowDefinitionId: "workflow-1",
+              workflowDefinitionRevision: 1,
               workflowExecutionId: null,
+              definitionApprovalRequired:
+                resolveDial(
+                  { preset: options.preset ?? "contract-bearing" },
+                  "execution_start",
+                ) === "gate",
               sessionName: "feature-session",
               deliveredAt: null,
               abandonedReason: null,
@@ -617,7 +623,9 @@ function makeHost(
             revision_id: "revision-approved",
             scope_json: "{}",
             state: "abandoned",
+            execution_start_dial: "gate",
             workflow_definition_id: "workflow-1",
+            workflow_definition_revision: 1,
             workflow_execution_id: null,
             session_name: "feature-session",
             delivered_at: null,

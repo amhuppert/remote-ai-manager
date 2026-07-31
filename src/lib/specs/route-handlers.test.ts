@@ -205,7 +205,9 @@ function execution(
     revision_id: revision.id,
     scope_json: JSON.stringify({ selectedTaskIds: ["task-1"] }),
     state: "delivered",
+    execution_start_dial: "gate",
     workflow_definition_id: "workflow-definition-1",
+    workflow_definition_revision: 1,
     workflow_execution_id: "workflow-execution-1",
     session_name: "session-1",
     delivered_at: revision.createdAt,
@@ -449,7 +451,11 @@ describe("spec read route handlers", () => {
     );
 
     expect(response.status).toBe(200);
-    const detail = specDetailViewSchema.parse(await response.json());
+    const body = await response.json();
+    expect(body).toMatchObject({
+      executions: [{ definitionApprovalRequired: true }],
+    });
+    const detail = specDetailViewSchema.parse(body);
     expect(detail.executions).toEqual([
       {
         id: "execution-1",
@@ -459,7 +465,9 @@ describe("spec read route handlers", () => {
         // The fields that make a parked run diagnosable at all.
         state: "definition_review",
         workflowDefinitionId: "workflow-definition-1",
+        workflowDefinitionRevision: 1,
         workflowExecutionId: null,
+        definitionApprovalRequired: true,
         scope: {
           selectedTaskIds: ["task-1"],
           selectedCriterionIds: [],

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -18,6 +19,7 @@ const noopCallbacks = {
   onResume: vi.fn(),
   onAbort: vi.fn(),
   onClear: vi.fn(),
+  onApproveDefinition: vi.fn(),
   onAddTask: vi.fn(),
   onUpdateTask: vi.fn(),
   onRemoveTask: vi.fn(),
@@ -28,6 +30,8 @@ const noopCallbacks = {
   isSavingConfig: false,
   isPausingExecution: false,
   isResumingExecution: false,
+  isApprovingDefinition: false,
+  definitionApprovalError: null,
   configEditConflict: false,
   configSaveSucceeded: false,
   isMutating: false,
@@ -55,6 +59,60 @@ describe("GraphWorkflowPanel", () => {
         .querySelector("[data-workflow-execution-id]")
         ?.getAttribute("data-workflow-execution-id"),
     ).toBe("workflow-observed");
+  });
+
+  it("offers the definition-approval recovery action for a parked execution", async () => {
+    const onApproveDefinition = vi.fn();
+    const execution = createWorkflowExecution({
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-07-31T05:29:58.000Z",
+        approvedAt: null,
+      },
+    });
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+        onApproveDefinition={onApproveDefinition}
+      />,
+    );
+
+    expect(screen.getByText("Definition awaiting approval")).toBeVisible();
+    const approve = screen.getByRole("button", {
+      name: "Approve definition & start",
+    });
+    await userEvent.click(approve);
+
+    expect(onApproveDefinition).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables definition approval while another workflow mutation is in flight", () => {
+    const execution = createWorkflowExecution({
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-07-31T05:29:58.000Z",
+        approvedAt: null,
+      },
+    });
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+        isMutating
+        isApprovingDefinition={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "Approve definition & start",
+      }),
+    ).toBeDisabled();
   });
 
   it("renders empty state when no execution exists", () => {

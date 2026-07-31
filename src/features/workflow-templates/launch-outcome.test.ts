@@ -10,6 +10,22 @@ describe("mapLaunchOutcome", () => {
     });
   });
 
+  it("maps a parked start to an actionable awaiting-approval outcome", () => {
+    const awaitingApproval = {
+      kind: "awaiting_approval",
+      executionId: "exec-parked",
+      instruction:
+        "Approve the pending workflow definition to resume execution exec-parked.",
+    } as const;
+
+    expect(mapLaunchOutcome(awaitingApproval)).toEqual({
+      status: "awaiting_approval",
+      executionId: "exec-parked",
+      instruction:
+        "Approve the pending workflow definition to resume execution exec-parked.",
+    });
+  });
+
   it("maps a prerequisites_unmet ApiCallError to an itemized prerequisites_unmet outcome", () => {
     const missing: MissingPrerequisite[] = [
       {

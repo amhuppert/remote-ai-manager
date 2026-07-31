@@ -24,8 +24,18 @@ export type TemplateLaunchOutcome =
   | { status: "idle" }
   | { status: "starting" }
   | { status: "started" } // R7.6
+  | {
+      status: "awaiting_approval";
+      executionId: string;
+      instruction: string;
+    }
   | { status: "prerequisites_unmet"; missing: MissingPrerequisite[] } // R7.4
   | { status: "rejected"; reason: string }; // R7.5
+
+export interface TemplateSelection {
+  id: string;
+  tier: TemplateTier;
+}
 
 export interface TemplateLibraryProps {
   /** Cross-tier, tier-tagged templates (global + project) — R7.1. */
@@ -33,21 +43,26 @@ export interface TemplateLibraryProps {
   /** Emits the launch request for the selected template — R7.3. */
   onLaunch: (input: {
     id: string;
+    revision: number;
     tier: TemplateTier;
     parameters: Record<string, string>;
   }) => void;
   /** The launch result for the selected template — R7.4–R7.6. */
   launchOutcome?: TemplateLaunchOutcome;
-  /** Controlled selection; when omitted, selection is managed internally. */
-  selectedTemplateId?: string | null;
+  /** Controlled cross-tier selection; when omitted, selection is internal. */
+  selectedTemplate?: TemplateSelection | null;
   /** Notified when the selected template changes. */
-  onSelectTemplate?: (id: string | null) => void;
+  onSelectTemplate?: (selection: TemplateSelection | null) => void;
 }
 
 const tierLabel: Record<TemplateTier, string> = {
   global: "Global",
   project: "Project",
 };
+
+function templateSelectionKey(selection: TemplateSelection): string {
+  return JSON.stringify([selection.tier, selection.id]);
+}
 
 // A human-facing phrase for a probe outcome reason: a definitively-absent
 // prerequisite reads differently from one whose probe could not be evaluated
@@ -133,9 +148,10 @@ function MissingPrerequisiteRow({
   );
 }
 
-// A bordered banner reflecting the launch outcome. `prerequisites_unmet` and
-// `rejected` both reflect that the run did not start (R7.4/R7.5); `started`
-// reflects a successful start (R7.6).
+// A bordered banner reflecting the launch outcome. `awaiting_approval` exposes
+// the next human action, `prerequisites_unmet` and `rejected` reflect that no
+// execution was created (R7.4/R7.5), and `started` reflects a running execution
+// (R7.6).
 function LaunchOutcomeBanner({
   outcome,
 }: {
@@ -150,6 +166,22 @@ function LaunchOutcomeBanner({
         className="flex flex-col gap-xs rounded-md border border-solid border-green-dim bg-green-glow p-sm font-mono text-[0.78rem] text-green"
       >
         <span className="font-semibold">Workflow started.</span>
+      </div>
+    );
+  }
+
+  if (outcome.status === "awaiting_approval") {
+    return (
+      <div
+        role="status"
+        className="flex flex-col gap-xs rounded-md border border-solid border-amber-dim bg-amber-glow p-sm"
+      >
+        <span className="font-mono text-[0.78rem] font-semibold text-amber">
+          Definition awaiting approval
+        </span>
+        <p className="m-0 font-mono text-[0.78rem] text-text-secondary">
+          {outcome.instruction}
+        </p>
       </div>
     );
   }
@@ -236,18 +268,22 @@ export default function TemplateLibrary({
   items,
   onLaunch,
   launchOutcome = { status: "idle" },
-  selectedTemplateId,
+  selectedTemplate,
   onSelectTemplate,
 }: TemplateLibraryProps): React.JSX.Element {
-  // Selection is controlled when `selectedTemplateId` is provided, otherwise
+  // Selection is controlled when `selectedTemplate` is provided, otherwise
   // managed internally — the standard React controlled/uncontrolled idiom.
-  const [internalSelected, setInternalSelected] = useState<string | null>(null);
-  const activeId =
-    selectedTemplateId !== undefined ? selectedTemplateId : internalSelected;
+  const [internalSelected, setInternalSelected] =
+    useState<TemplateSelection | null>(null);
+  const activeSelection =
+    selectedTemplate !== undefined ? selectedTemplate : internalSelected;
+  const activeKey =
+    activeSelection === null ? null : templateSelectionKey(activeSelection);
 
-  function handleSelect(id: string): void {
-    const next = id === activeId ? null : id;
-    if (selectedTemplateId === undefined) setInternalSelected(next);
+  function handleSelect(item: TemplateLibraryItem): void {
+    const identity = { id: item.id, tier: item.tier };
+    const next = templateSelectionKey(identity) === activeKey ? null : identity;
+    if (selectedTemplate === undefined) setInternalSelected(next);
     onSelectTemplate?.(next);
   }
 
@@ -263,7 +299,11 @@ export default function TemplateLibrary({
     );
   }
 
-  const selected = items.find((item) => item.id === activeId) ?? null;
+  const selected =
+    items.find(
+      (item) =>
+        item.id === activeSelection?.id && item.tier === activeSelection.tier,
+    ) ?? null;
   const isLaunching = launchOutcome.status === "starting";
 
   return (
@@ -275,8 +315,8 @@ export default function TemplateLibrary({
             // same-name templates from different tiers stay distinct (R7.1).
             key={`${item.tier}:${item.id}`}
             item={item}
-            selected={item.id === activeId}
-            onSelect={() => handleSelect(item.id)}
+            selected={templateSelectionKey(item) === activeKey}
+            onSelect={() => handleSelect(item)}
           />
         ))}
       </ul>
@@ -299,7 +339,12 @@ export default function TemplateLibrary({
             parameters={selected.parameters}
             isLaunching={isLaunching}
             onLaunch={(parameters) =>
-              onLaunch({ id: selected.id, tier: selected.tier, parameters })
+              onLaunch({
+                id: selected.id,
+                revision: selected.revision,
+                tier: selected.tier,
+                parameters,
+              })
             }
           />
         </div>

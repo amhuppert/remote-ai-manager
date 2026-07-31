@@ -155,6 +155,7 @@ describe("GraphWorkflowCard launcher integration", () => {
     await waitFor(() => expect(startBodies).toHaveLength(1));
     expect(startBodies[0]).toEqual({
       definitionId: "def-zero",
+      definitionRevision: 1,
       tier: "project",
     });
     // No launch form modal for a zero-input definition.
@@ -194,9 +195,131 @@ describe("GraphWorkflowCard launcher integration", () => {
     await waitFor(() => expect(startBodies).toHaveLength(1));
     expect(startBodies[0]).toEqual({
       definitionId: "def-params",
+      definitionRevision: 1,
       tier: "global",
       parameters: { feature: "Search box" },
     });
+  });
+
+  it("selects the exact tier when global and project templates share an id", async () => {
+    const user = userEvent.setup();
+    const { startBodies } = installRouter({
+      zeroInput: templateItem(
+        "shared-definition",
+        "Global shared workflow",
+        [],
+        "global",
+      ),
+      parameterized: templateItem(
+        "shared-definition",
+        "Project parameterized workflow",
+        PARAMS,
+        "project",
+      ),
+    });
+
+    renderCard();
+    await user.click(
+      await screen.findByRole("combobox", { name: /select a workflow/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: /Project parameterized workflow/i,
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: /run workflow/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Feature name"), "Shared ID");
+    await user.click(within(dialog).getByRole("button", { name: /^launch$/i }));
+
+    await waitFor(() => expect(startBodies).toHaveLength(1));
+    expect(startBodies[0]).toEqual({
+      definitionId: "shared-definition",
+      definitionRevision: 1,
+      tier: "project",
+      parameters: { feature: "Shared ID" },
+    });
+  });
+
+  it("surfaces a parked zero-input launch with its recovery instruction", async () => {
+    const user = userEvent.setup();
+    installRouter({
+      zeroInput: templateItem("def-zero", "Zero Input", [], "project"),
+      parameterized: templateItem(
+        "def-params",
+        "Parameterized",
+        PARAMS,
+        "global",
+      ),
+      startResponse: () =>
+        jsonResponse(
+          {
+            error: "Workflow execution exec-parked was parked",
+            code: "definition_approval_required",
+            executionId: "exec-parked",
+            instruction: "Approve definition exec-parked to continue.",
+          },
+          409,
+        ),
+    });
+    renderCard();
+
+    await user.click(
+      await screen.findByRole("combobox", { name: /select a workflow/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /Zero Input/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /run workflow/i }));
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(
+      "Approve definition exec-parked to continue.",
+    );
+    expect(
+      within(status).getByRole("link", { name: /open workflow monitor/i }),
+    ).toHaveAttribute("href", "/projects/proj-1/sess-1/workflow");
+  });
+
+  it("surfaces a parked parameterized launch after closing its form", async () => {
+    const user = userEvent.setup();
+    installRouter({
+      zeroInput: templateItem("def-zero", "Zero Input", [], "project"),
+      parameterized: templateItem(
+        "def-params",
+        "Parameterized",
+        PARAMS,
+        "global",
+      ),
+      startResponse: () =>
+        jsonResponse(
+          {
+            error: "Workflow execution exec-parked was parked",
+            code: "definition_approval_required",
+            executionId: "exec-parked",
+            instruction: "Approve definition exec-parked to continue.",
+          },
+          409,
+        ),
+    });
+    renderCard();
+
+    await user.click(
+      await screen.findByRole("combobox", { name: /select a workflow/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /Parameterized/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /run workflow/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Feature name"), "Search");
+    await user.click(within(dialog).getByRole("button", { name: /^launch$/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Approve definition exec-parked to continue.",
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("surfaces a 400 input rejection inside the launch form", async () => {

@@ -88,7 +88,9 @@ export function executionViewFixture(
     revisionNumber: 1,
     state: "running",
     workflowDefinitionId: "workflow-definition-1",
+    workflowDefinitionRevision: 1,
     workflowExecutionId: null,
+    definitionApprovalRequired: true,
     scope: {
       selectedTaskIds: ["task-1"],
       selectedCriterionIds: ["criterion-1"],

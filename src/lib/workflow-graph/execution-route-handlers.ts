@@ -87,6 +87,7 @@ import {
 import {
   createGraphWorkflowManager,
   WorkflowDefinitionApprovalRequiredError,
+  WorkflowDefinitionRevisionMismatchError,
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
   WorkflowStartInputError,
@@ -102,6 +103,7 @@ import { createRegisteredDeliveryGateEvaluator } from "@/lib/workflows/merge/del
 import {
   createRegisteredGraphExecutionLifecycleCallbacks,
   type DefinitionApprovalGateDecision,
+  type GraphExecutionLifecycleContext,
 } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflight-prerequisite-service";
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
@@ -141,6 +143,7 @@ type RouteContext = {
 
 const startExecutionSchema = z.object({
   definitionId: z.string().trim().min(1),
+  definitionRevision: z.number().int().positive().optional(),
   parameters: z.record(z.string(), z.unknown()).optional(),
   // Additive tier discriminator (the schema is not `.strict()`, so this
   // preserves every existing caller). Defaults to `project` — the per-project
@@ -580,12 +583,15 @@ export interface GraphWorkflowExecutionRouteDeps {
     projectPath: string;
     sessionName: string;
     definitionId: string;
+    expectedDefinitionRevision?: number;
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
   }): Promise<GraphWorkflowExecution>;
   markRunning?(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId?: string,
+    definitionRevision?: number,
   ): Promise<void>;
   /**
    * Reports an execution that started but parked awaiting definition
@@ -593,8 +599,10 @@ export interface GraphWorkflowExecutionRouteDeps {
    * request for the pending definition. Defaults to the registered port.
    */
   awaitingDefinitionApproval?(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId: string,
+    definitionRevision: number,
   ): Promise<void>;
   /**
    * Consulted before a pending definition approval is recorded so the
@@ -603,8 +611,10 @@ export interface GraphWorkflowExecutionRouteDeps {
    * reason. Defaults to the registered port (admit when nobody claims it).
    */
   admitDefinitionApproval?(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId: string,
+    definitionRevision: number,
   ): Promise<DefinitionApprovalGateDecision>;
   /**
    * Reports a successful abort so the registered lifecycle consumer can
@@ -655,6 +665,9 @@ export interface GraphWorkflowExecutionRouteDeps {
   recordDefinitionApproval?(input: {
     projectPath: string;
     sessionName: string;
+    expectedExecutionId?: string;
+    expectedDefinitionId?: string;
+    expectedDefinitionRevision?: number;
   }): Promise<RecordDefinitionApprovalResult>;
   /**
    * Transport identity for the definition-approval gate. Definition approval
@@ -938,6 +951,21 @@ function respondToManagerError(error: unknown): Response {
     );
   }
 
+  if (error instanceof WorkflowDefinitionRevisionMismatchError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: error.code,
+        details: {
+          definitionId: error.definitionId,
+          expectedRevision: error.expectedRevision,
+          actualRevision: error.actualRevision,
+        },
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+
   if (
     error instanceof GraphWorkflowValidationError ||
     (typeof error === "object" &&
@@ -992,14 +1020,22 @@ export function createGraphWorkflowExecutionRouteHandlers(
 ) {
   const executionContract = createRegisteredGraphExecutionContract();
   async function markExecutionRunning(
+    context: GraphExecutionLifecycleContext,
     execution: GraphWorkflowExecution,
   ): Promise<void> {
     if (deps.markRunning === undefined) return;
     try {
-      await deps.markRunning(execution.id, execution.seedDefinitionId);
+      await deps.markRunning(
+        context,
+        execution.id,
+        execution.seedDefinitionId,
+        execution.seedDefinitionRevision,
+      );
     } catch (error) {
       logger.warn("graph-workflow.execution_mark_running_failed", {
         workflowExecutionId: execution.id,
+        definitionId: execution.seedDefinitionId,
+        definitionRevision: execution.seedDefinitionRevision,
         error: getErrorMessage(error),
       });
     }
@@ -1012,16 +1048,24 @@ export function createGraphWorkflowExecutionRouteHandlers(
    * machine-readable `definition_approval_required` response.
    */
   async function reportAwaitingDefinitionApproval(
+    context: GraphExecutionLifecycleContext,
     workflowExecutionId: string,
     definitionId: string,
+    definitionRevision: number,
   ): Promise<void> {
     if (deps.awaitingDefinitionApproval === undefined) return;
     try {
-      await deps.awaitingDefinitionApproval(workflowExecutionId, definitionId);
+      await deps.awaitingDefinitionApproval(
+        context,
+        workflowExecutionId,
+        definitionId,
+        definitionRevision,
+      );
     } catch (error) {
       logger.warn("graph-workflow.execution_awaiting_approval_report_failed", {
         workflowExecutionId,
         definitionId,
+        definitionRevision,
         error: getErrorMessage(error),
       });
     }
@@ -1030,6 +1074,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
   async function reportExecutionLoopFailure(input: {
     projectPath: string;
     sessionName: string;
+    expectedExecutionId: string;
     error: unknown;
     phase: "start" | "resume";
   }): Promise<void> {
@@ -1053,26 +1098,50 @@ export function createGraphWorkflowExecutionRouteHandlers(
       });
       return;
     }
-    if (!active || isTerminalStatus(active.status)) {
+    if (
+      !active ||
+      active.id !== input.expectedExecutionId ||
+      active.status !== "running"
+    ) {
       logger.error("graph-workflow.execution_loop_failed", {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         phase: input.phase,
         haltReasonType: reason.type,
         hasActiveExecution: active !== null,
+        expectedExecutionId: input.expectedExecutionId,
+        activeExecutionId: active?.id ?? null,
         executionStatus: active?.status ?? null,
+        haltRecovery:
+          active !== null && active.id !== input.expectedExecutionId
+            ? "execution_mismatch"
+            : "not_applicable",
       });
       return;
     }
     try {
-      await deps.recordPendingHaltReason({
+      const recorded = await deps.recordPendingHaltReason({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
+        expectedExecutionId: input.expectedExecutionId,
         reason,
       });
+      if (!recorded.accepted) {
+        logger.error("graph-workflow.execution_loop_failed", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          phase: input.phase,
+          haltReasonType: reason.type,
+          hasActiveExecution: true,
+          executionStatus: recorded.execution.status,
+          haltRecovery: "rejected",
+        });
+        return;
+      }
       await deps.drainAndHalt({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
+        expectedExecutionId: input.expectedExecutionId,
       });
       logger.error("graph-workflow.execution_loop_failed", {
         projectPath: input.projectPath,
@@ -1080,6 +1149,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
         phase: input.phase,
         haltReasonType: reason.type,
         hasActiveExecution: true,
+        haltRecovery: "completed",
       });
     } catch (haltError) {
       logger.error("graph-workflow.execution_loop_failed", {
@@ -1125,6 +1195,9 @@ export function createGraphWorkflowExecutionRouteHandlers(
         projectPath,
         sessionName,
         definitionId: parsed.data.definitionId,
+        ...(parsed.data.definitionRevision !== undefined
+          ? { expectedDefinitionRevision: parsed.data.definitionRevision }
+          : {}),
         tier: parsed.data.tier,
         ...(parsed.data.parameters !== undefined
           ? { parameters: parsed.data.parameters }
@@ -1133,8 +1206,10 @@ export function createGraphWorkflowExecutionRouteHandlers(
     } catch (error) {
       if (error instanceof WorkflowDefinitionApprovalRequiredError) {
         await reportAwaitingDefinitionApproval(
+          { projectPath, sessionName },
           error.executionId,
-          parsed.data.definitionId,
+          error.definitionId,
+          error.definitionRevision,
         );
         return NextResponse.json(
           {
@@ -1185,37 +1260,34 @@ export function createGraphWorkflowExecutionRouteHandlers(
       if (error instanceof GraphExecutionContractViolationError) {
         return respondToManagerError(error);
       }
-      await reportExecutionLoopFailure({
-        projectPath,
-        sessionName,
-        error,
-        phase: "start",
-      });
       return respondToManagerError(error);
     }
 
     try {
-      await markExecutionRunning(execution);
-      void Promise.resolve(
-        deps.kickOffExecutionLoop({
-          projectPath,
-          projectName: resolved.projectName,
-          sessionName,
-          execution,
-        }),
-      ).catch(async (error) => {
-        logger.warn("graph-workflow.execution_loop_start_failed", {
-          projectPath,
-          sessionName,
-          error: getErrorMessage(error),
+      await markExecutionRunning({ projectPath, sessionName }, execution);
+      void Promise.resolve()
+        .then(() =>
+          deps.kickOffExecutionLoop({
+            projectPath,
+            projectName: resolved.projectName,
+            sessionName,
+            execution,
+          }),
+        )
+        .catch(async (error) => {
+          logger.warn("graph-workflow.execution_loop_start_failed", {
+            projectPath,
+            sessionName,
+            error: getErrorMessage(error),
+          });
+          await reportExecutionLoopFailure({
+            projectPath,
+            sessionName,
+            expectedExecutionId: execution.id,
+            error,
+            phase: "start",
+          });
         });
-        await reportExecutionLoopFailure({
-          projectPath,
-          sessionName,
-          error,
-          phase: "start",
-        });
-      });
       return NextResponse.json(
         { execution: summarizeExecution(execution, false) },
         { status: 202 },
@@ -1224,6 +1296,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       await reportExecutionLoopFailure({
         projectPath,
         sessionName,
+        expectedExecutionId: execution.id,
         error,
         phase: "start",
       });
@@ -1246,6 +1319,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     projectName: string;
     sessionName: string;
     definitionId: string;
+    expectedDefinitionRevision?: number;
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
   }): Promise<GraphWorkflowExecution> {
@@ -1255,6 +1329,9 @@ export function createGraphWorkflowExecutionRouteHandlers(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         definitionId: input.definitionId,
+        ...(input.expectedDefinitionRevision !== undefined
+          ? { expectedDefinitionRevision: input.expectedDefinitionRevision }
+          : {}),
         ...(input.tier !== undefined ? { tier: input.tier } : {}),
         ...(input.parameters !== undefined
           ? { parameters: input.parameters }
@@ -1263,35 +1340,46 @@ export function createGraphWorkflowExecutionRouteHandlers(
     } catch (error) {
       if (error instanceof WorkflowDefinitionApprovalRequiredError) {
         await reportAwaitingDefinitionApproval(
+          {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+          },
           error.executionId,
-          input.definitionId,
+          error.definitionId,
+          error.definitionRevision,
         );
       }
       throw error;
     }
 
-    await markExecutionRunning(execution);
+    await markExecutionRunning(
+      { projectPath: input.projectPath, sessionName: input.sessionName },
+      execution,
+    );
 
-    void Promise.resolve(
-      deps.kickOffExecutionLoop({
-        projectPath: input.projectPath,
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        execution,
-      }),
-    ).catch(async (error) => {
-      logger.warn("graph-workflow.execution_loop_start_failed", {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        error: getErrorMessage(error),
+    void Promise.resolve()
+      .then(() =>
+        deps.kickOffExecutionLoop({
+          projectPath: input.projectPath,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          execution,
+        }),
+      )
+      .catch(async (error) => {
+        logger.warn("graph-workflow.execution_loop_start_failed", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          error: getErrorMessage(error),
+        });
+        await reportExecutionLoopFailure({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          expectedExecutionId: execution.id,
+          error,
+          phase: "start",
+        });
       });
-      await reportExecutionLoopFailure({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        error,
-        phase: "start",
-      });
-    });
 
     return execution;
   }
@@ -1461,36 +1549,33 @@ export function createGraphWorkflowExecutionRouteHandlers(
         resolved.sessionName,
         resumeOptions,
       );
-      void Promise.resolve(
-        deps.kickOffExecutionLoop({
-          projectPath: resolved.projectPath,
-          projectName: resolved.projectName,
-          sessionName: resolved.sessionName,
-          execution,
-        }),
-      ).catch(async (error) => {
-        logger.warn("graph-workflow.execution_loop_resume_failed", {
-          projectPath: resolved.projectPath,
-          sessionName: resolved.sessionName,
-          error: getErrorMessage(error),
+      void Promise.resolve()
+        .then(() =>
+          deps.kickOffExecutionLoop({
+            projectPath: resolved.projectPath,
+            projectName: resolved.projectName,
+            sessionName: resolved.sessionName,
+            execution,
+          }),
+        )
+        .catch(async (error) => {
+          logger.warn("graph-workflow.execution_loop_resume_failed", {
+            projectPath: resolved.projectPath,
+            sessionName: resolved.sessionName,
+            error: getErrorMessage(error),
+          });
+          await reportExecutionLoopFailure({
+            projectPath: resolved.projectPath,
+            sessionName: resolved.sessionName,
+            expectedExecutionId: execution.id,
+            error,
+            phase: "resume",
+          });
         });
-        await reportExecutionLoopFailure({
-          projectPath: resolved.projectPath,
-          sessionName: resolved.sessionName,
-          error,
-          phase: "resume",
-        });
-      });
       return NextResponse.json({
         execution: summarizeExecution(execution, false),
       });
     } catch (error) {
-      await reportExecutionLoopFailure({
-        projectPath: resolved.projectPath,
-        sessionName: resolved.sessionName,
-        error,
-        phase: "resume",
-      });
       return respondToManagerError(error);
     }
   }
@@ -1663,12 +1748,20 @@ export function createGraphWorkflowExecutionRouteHandlers(
   async function hasPendingDefinitionApproval(input: {
     projectPath: string;
     sessionName: string;
-  }): Promise<boolean> {
+    expectedDefinitionId?: string;
+    expectedDefinitionRevision?: number;
+  }): Promise<string | null> {
     const active = await deps.getActiveExecution(
       input.projectPath,
       input.sessionName,
     );
-    return executionAwaitsDefinitionApproval(active);
+    const matches =
+      executionAwaitsDefinitionApproval(active) &&
+      (input.expectedDefinitionId === undefined ||
+        active.seedDefinitionId === input.expectedDefinitionId) &&
+      (input.expectedDefinitionRevision === undefined ||
+        active.seedDefinitionRevision === input.expectedDefinitionRevision);
+    return matches ? active.id : null;
   }
 
   /**
@@ -1685,6 +1778,9 @@ export function createGraphWorkflowExecutionRouteHandlers(
     projectPath: string;
     projectName: string;
     sessionName: string;
+    expectedExecutionId?: string;
+    expectedDefinitionId?: string;
+    expectedDefinitionRevision?: number;
   }): Promise<
     | RecordDefinitionApprovalResult
     | { ok: false; reason: "unavailable" }
@@ -1697,11 +1793,55 @@ export function createGraphWorkflowExecutionRouteHandlers(
     if (deps.recordDefinitionApproval === undefined) {
       return { ok: false, reason: "unavailable" };
     }
+    const active = await deps.getActiveExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (
+      executionAwaitsDefinitionApproval(active) &&
+      input.expectedExecutionId !== undefined &&
+      active.id !== input.expectedExecutionId
+    ) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: active.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "execution_mismatch",
+        expectedExecutionId: input.expectedExecutionId,
+      });
+      return { ok: false, reason: "execution_mismatch" };
+    }
+    if (
+      executionAwaitsDefinitionApproval(active) &&
+      input.expectedDefinitionId !== undefined &&
+      active.seedDefinitionId !== input.expectedDefinitionId
+    ) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: active.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "definition_mismatch",
+        expectedDefinitionId: input.expectedDefinitionId,
+        activeDefinitionId: active.seedDefinitionId,
+      });
+      return { ok: false, reason: "definition_mismatch" };
+    }
+    if (
+      executionAwaitsDefinitionApproval(active) &&
+      input.expectedDefinitionRevision !== undefined &&
+      active.seedDefinitionRevision !== input.expectedDefinitionRevision
+    ) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: active.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "definition_revision_mismatch",
+        expectedDefinitionRevision: input.expectedDefinitionRevision,
+        activeDefinitionRevision: active.seedDefinitionRevision,
+      });
+      return { ok: false, reason: "definition_revision_mismatch" };
+    }
     if (deps.admitDefinitionApproval !== undefined) {
-      const active = await deps.getActiveExecution(
-        input.projectPath,
-        input.sessionName,
-      );
       if (executionAwaitsDefinitionApproval(active)) {
         const contractDecision = executionContract.validateDefinition(
           active.workingDefinition,
@@ -1719,36 +1859,59 @@ export function createGraphWorkflowExecutionRouteHandlers(
         }
         assertGraphExecutionContractAccepted(contractDecision);
         const admitted = await deps.admitDefinitionApproval(
+          {
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+          },
           active.id,
           active.seedDefinitionId,
+          active.seedDefinitionRevision,
         );
         if (!admitted.ok) {
           return { ok: false, reason: "gate_refused", refusal: admitted };
         }
       }
     }
+    const guardedExecutionId = executionAwaitsDefinitionApproval(active)
+      ? active.id
+      : input.expectedExecutionId;
     const result = await deps.recordDefinitionApproval({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
+      ...(guardedExecutionId === undefined
+        ? {}
+        : { expectedExecutionId: guardedExecutionId }),
+      ...(input.expectedDefinitionId === undefined
+        ? {}
+        : { expectedDefinitionId: input.expectedDefinitionId }),
+      ...(input.expectedDefinitionRevision === undefined
+        ? {}
+        : { expectedDefinitionRevision: input.expectedDefinitionRevision }),
     });
     if (!result.ok) return result;
 
-    await markExecutionRunning(result.execution);
-    void Promise.resolve(
-      deps.kickOffExecutionLoop({
-        projectPath: input.projectPath,
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        execution: result.execution,
-      }),
-    ).catch(async (error) => {
-      await reportExecutionLoopFailure({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        error,
-        phase: "start",
+    await markExecutionRunning(
+      { projectPath: input.projectPath, sessionName: input.sessionName },
+      result.execution,
+    );
+    void Promise.resolve()
+      .then(() =>
+        deps.kickOffExecutionLoop({
+          projectPath: input.projectPath,
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          execution: result.execution,
+        }),
+      )
+      .catch(async (error) => {
+        await reportExecutionLoopFailure({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          expectedExecutionId: result.execution.id,
+          error,
+          phase: "start",
+        });
       });
-    });
     return result;
   }
 
@@ -1785,12 +1948,34 @@ export function createGraphWorkflowExecutionRouteHandlers(
       return resolved.error;
     }
 
+    const approvalIdentitySchema = z
+      .object({
+        executionId: z.string().min(1),
+        definitionId: z.string().min(1),
+        definitionRevision: z.number().int().positive(),
+      })
+      .strict();
+    const rawBody: unknown = await request.json().catch(() => null);
+    const approvalIdentity = approvalIdentitySchema.safeParse(rawBody);
+    if (!approvalIdentity.success) {
+      return NextResponse.json(
+        {
+          error: `Invalid definition approval request: ${approvalIdentity.error.issues[0]?.message ?? "malformed body"}`,
+          code: "invalid_request",
+        } satisfies ApiError & { code: string },
+        { status: 400 },
+      );
+    }
+
     let result: Awaited<ReturnType<typeof approveDefinition>>;
     try {
       result = await approveDefinition({
         projectPath: resolved.projectPath,
         projectName: resolved.projectName,
         sessionName: resolved.sessionName,
+        expectedExecutionId: approvalIdentity.data.executionId,
+        expectedDefinitionId: approvalIdentity.data.definitionId,
+        expectedDefinitionRevision: approvalIdentity.data.definitionRevision,
       });
     } catch (error) {
       return respondToManagerError(error);
@@ -1828,7 +2013,13 @@ export function createGraphWorkflowExecutionRouteHandlers(
           error:
             result.reason === "already_decided"
               ? "The pending workflow definition is already approved (already_decided)"
-              : "The active execution is not awaiting definition approval (not_awaiting_approval)",
+              : result.reason === "execution_mismatch"
+                ? "The active workflow execution changed before approval (execution_mismatch)"
+                : result.reason === "definition_mismatch"
+                  ? "The active workflow definition changed before approval (definition_mismatch)"
+                  : result.reason === "definition_revision_mismatch"
+                    ? "The active workflow definition revision changed before approval (definition_revision_mismatch)"
+                    : "The active execution is not awaiting definition approval (not_awaiting_approval)",
           code: result.reason,
         } satisfies ApiError & { code: string },
         { status: 409 },
@@ -1905,6 +2096,7 @@ export async function launchGraphWorkflowExecution(
     projectName: string;
     sessionName: string;
     definitionId: string;
+    expectedDefinitionRevision?: number;
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
   },
@@ -1929,6 +2121,9 @@ export async function approveGraphWorkflowDefinitionForSession(input: {
   projectPath: string;
   projectName: string;
   sessionName: string;
+  workflowExecutionId: string;
+  definitionId: string;
+  definitionRevision: number;
 }): Promise<
   | RecordDefinitionApprovalResult
   | { ok: false; reason: "unavailable" }
@@ -1938,7 +2133,12 @@ export async function approveGraphWorkflowDefinitionForSession(input: {
       refusal: Exclude<DefinitionApprovalGateDecision, { ok: true }>;
     }
 > {
-  return defaultGraphWorkflowExecutionHandlers.approveDefinition(input);
+  return defaultGraphWorkflowExecutionHandlers.approveDefinition({
+    ...input,
+    expectedExecutionId: input.workflowExecutionId,
+    expectedDefinitionId: input.definitionId,
+    expectedDefinitionRevision: input.definitionRevision,
+  });
 }
 
 /**
@@ -1951,10 +2151,15 @@ export async function approveGraphWorkflowDefinitionForSession(input: {
 export async function sessionHasPendingWorkflowDefinitionApproval(input: {
   projectPath: string;
   sessionName: string;
-}): Promise<boolean> {
-  return defaultGraphWorkflowExecutionHandlers.hasPendingDefinitionApproval(
-    input,
-  );
+  definitionId: string;
+  definitionRevision: number;
+}): Promise<string | null> {
+  return defaultGraphWorkflowExecutionHandlers.hasPendingDefinitionApproval({
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    expectedDefinitionId: input.definitionId,
+    expectedDefinitionRevision: input.definitionRevision,
+  });
 }
 
 export const startGraphWorkflowExecution = withTracing(

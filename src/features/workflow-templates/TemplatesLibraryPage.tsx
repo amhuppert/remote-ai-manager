@@ -14,6 +14,7 @@ import { useProjectTemplatesQuery } from "@/lib/workflows/queries";
 import { useStartGraphWorkflowMutation } from "@/lib/workflows/mutations";
 import TemplateLibrary, {
   type TemplateLaunchOutcome,
+  type TemplateSelection,
 } from "./components/TemplateLibrary";
 import { mapLaunchOutcome } from "./launch-outcome";
 
@@ -29,26 +30,31 @@ export default function TemplatesLibraryPage(): React.JSX.Element {
   const templatesQuery = useProjectTemplatesQuery(projectName);
   const startMutation = useStartGraphWorkflowMutation(projectName, sessionName);
 
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-    null,
-  );
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<TemplateSelection | null>(null);
   const [launchOutcome, setLaunchOutcome] = useState<TemplateLaunchOutcome>({
     status: "idle",
   });
 
   async function handleLaunch(input: {
     id: string;
+    revision: number;
     tier: "project" | "global";
     parameters: Record<string, string>;
   }): Promise<void> {
     setLaunchOutcome({ status: "starting" });
     try {
-      await startMutation.mutateAsync({
+      const result = await startMutation.mutateAsync({
         definitionId: input.id,
+        definitionRevision: input.revision,
         tier: input.tier,
         parameters: input.parameters,
       });
-      setLaunchOutcome(mapLaunchOutcome({ kind: "success" }));
+      setLaunchOutcome(
+        mapLaunchOutcome(
+          result.kind === "started" ? { kind: "success" } : result,
+        ),
+      );
     } catch (error) {
       setLaunchOutcome(mapLaunchOutcome({ kind: "error", error }));
     }
@@ -95,17 +101,28 @@ export default function TemplatesLibraryPage(): React.JSX.Element {
             </EmptyState>
           ) : (
             <>
-              {launchOutcome.status === "started" && (
+              {(launchOutcome.status === "started" ||
+                launchOutcome.status === "awaiting_approval") && (
                 <div
                   role="status"
-                  className="flex flex-wrap items-center justify-between gap-sm rounded-md border border-solid border-green-dim bg-green-glow p-sm font-mono text-[0.78rem] text-green"
+                  className={
+                    launchOutcome.status === "started"
+                      ? "flex flex-wrap items-center justify-between gap-sm rounded-md border border-solid border-green-dim bg-green-glow p-sm font-mono text-[0.78rem] text-green"
+                      : "flex flex-wrap items-center justify-between gap-sm rounded-md border border-solid border-amber-dim bg-amber-glow p-sm font-mono text-[0.78rem] text-amber"
+                  }
                 >
                   <span className="font-semibold">
-                    Workflow started for {sessionName}.
+                    {launchOutcome.status === "started"
+                      ? `Workflow started for ${sessionName}.`
+                      : `Workflow parked for approval in ${sessionName}.`}
                   </span>
                   <Link
                     href={workflowHref}
-                    className="font-semibold text-green underline hover:text-green-dim!"
+                    className={
+                      launchOutcome.status === "started"
+                        ? "font-semibold text-green underline hover:text-green-dim!"
+                        : "font-semibold text-amber underline hover:text-amber-dim!"
+                    }
                   >
                     Open workflow monitor →
                   </Link>
@@ -113,8 +130,8 @@ export default function TemplatesLibraryPage(): React.JSX.Element {
               )}
               <TemplateLibrary
                 items={templatesQuery.data}
-                selectedTemplateId={selectedTemplateId}
-                onSelectTemplate={setSelectedTemplateId}
+                selectedTemplate={selectedTemplate}
+                onSelectTemplate={setSelectedTemplate}
                 launchOutcome={launchOutcome}
                 onLaunch={(input) => {
                   void handleLaunch(input);

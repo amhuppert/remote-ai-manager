@@ -31,12 +31,17 @@ const missingListSchema = z.array(missingPrerequisiteSchema);
 
 /**
  * The result of a single launch attempt, before it is mapped to the library's
- * `TemplateLaunchOutcome`. `success` is the resolved start; `error` carries the
- * thrown value from the start mutation (an `ApiCallError` on a non-2xx body, or
- * any other thrown value).
+ * `TemplateLaunchOutcome`. `success` is a running start,
+ * `awaiting_approval` is a created execution parked for a human decision, and
+ * `error` carries a thrown value from the start mutation.
  */
 export type LaunchAttempt =
   | { kind: "success" }
+  | {
+      kind: "awaiting_approval";
+      executionId: string;
+      instruction: string;
+    }
   | { kind: "error"; error: unknown };
 
 function errorMessage(error: unknown): string {
@@ -46,17 +51,24 @@ function errorMessage(error: unknown): string {
 
 /**
  * Maps a launch attempt to the `TemplateLaunchOutcome` the TemplateLibrary
- * renders. A `prerequisites_unmet` ApiCallError whose `details.missing` parses
- * to a valid itemized list becomes the itemized `prerequisites_unmet` outcome;
- * any other failure (including a malformed `details.missing`) becomes a
- * `rejected` outcome carrying the engine's message, so a halt never starts a run
- * and a malformed payload degrades safely rather than throwing.
+ * renders. A parked execution remains an actionable approval outcome. A
+ * `prerequisites_unmet` ApiCallError whose `details.missing` parses to a valid
+ * itemized list becomes the itemized `prerequisites_unmet` outcome; any other
+ * failure becomes a `rejected` outcome carrying the engine's message.
  */
 export function mapLaunchOutcome(
   attempt: LaunchAttempt,
 ): TemplateLaunchOutcome {
   if (attempt.kind === "success") {
     return { status: "started" };
+  }
+
+  if (attempt.kind === "awaiting_approval") {
+    return {
+      status: "awaiting_approval",
+      executionId: attempt.executionId,
+      instruction: attempt.instruction,
+    };
   }
 
   const { error } = attempt;

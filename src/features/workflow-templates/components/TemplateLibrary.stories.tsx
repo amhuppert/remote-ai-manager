@@ -94,7 +94,7 @@ export const Browsing = {} satisfies Story;
 // (R7.2, R7.3).
 export const SelectedWithPrerequisites = {
   args: {
-    selectedTemplateId: "kiro-spec",
+    selectedTemplate: { id: "kiro-spec", tier: "global" },
   },
 } satisfies Story;
 
@@ -102,7 +102,7 @@ export const SelectedWithPrerequisites = {
 // prerequisites" indication and a zero-input launch form (R7.2, R7.6).
 export const SelectedNoPrerequisites = {
   args: {
-    selectedTemplateId: "local-fix",
+    selectedTemplate: { id: "local-fix", tier: "project" },
   },
 } satisfies Story;
 
@@ -112,7 +112,7 @@ export const SelectedNoPrerequisites = {
 // is reflected as not started (R7.4).
 export const PrerequisitesUnmet = {
   args: {
-    selectedTemplateId: "kiro-spec",
+    selectedTemplate: { id: "kiro-spec", tier: "global" },
     launchOutcome: {
       status: "prerequisites_unmet",
       missing: [
@@ -140,7 +140,7 @@ export const PrerequisitesUnmet = {
 // is surfaced and the run is reflected as not started (R7.5).
 export const Rejected = {
   args: {
-    selectedTemplateId: "kiro-spec",
+    selectedTemplate: { id: "kiro-spec", tier: "global" },
     launchOutcome: {
       status: "rejected",
       reason: "Worktree has uncommitted changes. Commit or stash them first.",
@@ -151,7 +151,7 @@ export const Rejected = {
 // A launch that passed all gates and started (R7.6).
 export const Started = {
   args: {
-    selectedTemplateId: "local-fix",
+    selectedTemplate: { id: "local-fix", tier: "project" },
     launchOutcome: { status: "started" },
   },
 } satisfies Story;

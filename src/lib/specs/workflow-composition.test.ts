@@ -66,7 +66,12 @@ describe("spec workflow composition", () => {
       expectedTargetSha: "target-sha",
     });
     const callbacks = createRegisteredGraphExecutionLifecycleCallbacks();
-    await callbacks.markRunning("workflow-execution-1", "definition-1");
+    await callbacks.markRunning(
+      { projectPath: "/repo", sessionName: "session-1" },
+      "workflow-execution-1",
+      "definition-1",
+      7,
+    );
     await callbacks.markDelivered("workflow-execution-1", "merge-sha");
     const association = resolveRegisteredMergeAssociation({
       projectPath: "/repo",
@@ -80,8 +85,10 @@ describe("spec workflow composition", () => {
 
     expect(evaluate).toHaveBeenCalledOnce();
     expect(markRunning).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "workflow-execution-1",
       "definition-1",
+      7,
     );
     expect(markDelivered).toHaveBeenCalledWith(
       "workflow-execution-1",

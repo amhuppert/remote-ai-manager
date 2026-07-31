@@ -395,7 +395,11 @@ describe("cctl workflow against the real workflow route handlers", () => {
       routeHost(
         null,
         {},
-        new WorkflowDefinitionApprovalRequiredError("execution-review"),
+        new WorkflowDefinitionApprovalRequiredError(
+          "execution-review",
+          "definition-review",
+          1,
+        ),
       ),
     );
 

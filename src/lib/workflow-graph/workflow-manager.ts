@@ -106,6 +106,7 @@ export interface GraphWorkflowStartInput {
   projectPath: string;
   sessionName: string;
   definitionId: string;
+  expectedDefinitionRevision?: number;
   /**
    * Template tier to resolve the definition from. Omitted defaults to
    * `"project"`, preserving every current caller (the per-project load).
@@ -163,7 +164,11 @@ export class WorkflowDefinitionApprovalRequiredError extends Error {
   readonly code = "definition_approval_required" as const;
   readonly instruction: string;
 
-  constructor(readonly executionId: string) {
+  constructor(
+    readonly executionId: string,
+    readonly definitionId: string,
+    readonly definitionRevision: number,
+  ) {
     super(
       `Workflow execution ${executionId} was created and parked awaiting definition approval`,
     );
@@ -179,12 +184,18 @@ export type RecordDefinitionApprovalResult =
       reason:
         | "no_active_execution"
         | "not_awaiting_approval"
-        | "already_decided";
+        | "already_decided"
+        | "definition_mismatch"
+        | "definition_revision_mismatch"
+        | "execution_mismatch";
     };
 
 export interface RecordDefinitionApprovalInput {
   projectPath: string;
   sessionName: string;
+  expectedExecutionId?: string;
+  expectedDefinitionId?: string;
+  expectedDefinitionRevision?: number;
 }
 
 /**
@@ -204,6 +215,21 @@ export class WorkflowDefinitionNotFoundError extends Error {
     this.name = "WorkflowDefinitionNotFoundError";
     this.definitionId = definitionId;
     this.tier = tier;
+  }
+}
+
+export class WorkflowDefinitionRevisionMismatchError extends Error {
+  readonly code = "definition_revision_mismatch" as const;
+
+  constructor(
+    readonly definitionId: string,
+    readonly expectedRevision: number,
+    readonly actualRevision: number,
+  ) {
+    super(
+      `Workflow definition "${definitionId}" changed from revision ${expectedRevision} to revision ${actualRevision}`,
+    );
+    this.name = "WorkflowDefinitionRevisionMismatchError";
   }
 }
 
@@ -341,6 +367,7 @@ export interface ScheduleEligibleContextsResult {
 export interface RecordPendingHaltReasonInput {
   projectPath: string;
   sessionName: string;
+  expectedExecutionId?: string;
   reason: GraphWorkflowHaltReason;
   /**
    * Additional mutation applied to the execution within the same
@@ -364,6 +391,7 @@ export interface RecordPendingHaltReasonResult {
 export interface DrainAndHaltInput {
   projectPath: string;
   sessionName: string;
+  expectedExecutionId?: string;
 }
 
 const logger = createLogger("graph-workflow-manager");
@@ -717,6 +745,23 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     if (!definition) {
       throw new WorkflowDefinitionNotFoundError(input.definitionId, tier);
     }
+    if (
+      input.expectedDefinitionRevision !== undefined &&
+      definition.revision !== input.expectedDefinitionRevision
+    ) {
+      logger.warn("graph-workflow.start.definition_revision_mismatch", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        definitionId: input.definitionId,
+        expectedDefinitionRevision: input.expectedDefinitionRevision,
+        actualDefinitionRevision: definition.revision,
+      });
+      throw new WorkflowDefinitionRevisionMismatchError(
+        input.definitionId,
+        input.expectedDefinitionRevision,
+        definition.revision,
+      );
+    }
 
     const contractDecision = executionContract.validateDefinition(
       definition.definition,
@@ -817,7 +862,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName: input.sessionName,
         requestedAt: pendingExecution.definitionApproval.requestedAt,
       });
-      throw new WorkflowDefinitionApprovalRequiredError(pendingExecution.id);
+      throw new WorkflowDefinitionApprovalRequiredError(
+        pendingExecution.id,
+        pendingExecution.seedDefinitionId,
+        pendingExecution.seedDefinitionRevision,
+      );
     }
 
     const nextExecution = await deps.executionRepository.mutateActive(
@@ -856,6 +905,50 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     if (
+      input.expectedExecutionId !== undefined &&
+      active.id !== input.expectedExecutionId
+    ) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: active.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "execution_mismatch",
+        expectedExecutionId: input.expectedExecutionId,
+      });
+      return { ok: false, reason: "execution_mismatch" };
+    }
+
+    if (
+      input.expectedDefinitionId !== undefined &&
+      active.seedDefinitionId !== input.expectedDefinitionId
+    ) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: active.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "definition_mismatch",
+        expectedDefinitionId: input.expectedDefinitionId,
+        activeDefinitionId: active.seedDefinitionId,
+      });
+      return { ok: false, reason: "definition_mismatch" };
+    }
+
+    if (
+      input.expectedDefinitionRevision !== undefined &&
+      active.seedDefinitionRevision !== input.expectedDefinitionRevision
+    ) {
+      logger.warn("graph-workflow.definition_approval.guard_failed", {
+        executionId: active.id,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: "definition_revision_mismatch",
+        expectedDefinitionRevision: input.expectedDefinitionRevision,
+        activeDefinitionRevision: active.seedDefinitionRevision,
+      });
+      return { ok: false, reason: "definition_revision_mismatch" };
+    }
+
+    if (
       active.definitionApproval?.approvedAt === null &&
       active.status === "pending"
     ) {
@@ -877,11 +970,38 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       assertGraphExecutionContractAccepted(contractDecision);
     }
 
-    let guardFailure: "not_awaiting_approval" | "already_decided" | null = null;
+    let guardFailure:
+      | "not_awaiting_approval"
+      | "already_decided"
+      | "definition_mismatch"
+      | "definition_revision_mismatch"
+      | "execution_mismatch"
+      | null = null;
     const nextExecution = await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
       (execution) => {
+        if (
+          input.expectedExecutionId !== undefined &&
+          execution.id !== input.expectedExecutionId
+        ) {
+          guardFailure = "execution_mismatch";
+          return execution;
+        }
+        if (
+          input.expectedDefinitionId !== undefined &&
+          execution.seedDefinitionId !== input.expectedDefinitionId
+        ) {
+          guardFailure = "definition_mismatch";
+          return execution;
+        }
+        if (
+          input.expectedDefinitionRevision !== undefined &&
+          execution.seedDefinitionRevision !== input.expectedDefinitionRevision
+        ) {
+          guardFailure = "definition_revision_mismatch";
+          return execution;
+        }
         const approval = execution.definitionApproval;
         if (approval === null) {
           guardFailure = "not_awaiting_approval";
@@ -913,6 +1033,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         reason: guardFailure,
+        expectedExecutionId: input.expectedExecutionId,
+        expectedDefinitionId: input.expectedDefinitionId,
+        expectedDefinitionRevision: input.expectedDefinitionRevision,
+        activeDefinitionId: nextExecution.seedDefinitionId,
+        activeDefinitionRevision: nextExecution.seedDefinitionRevision,
       });
       return { ok: false, reason: guardFailure };
     }
@@ -2284,11 +2409,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const { projectPath, sessionName, reason, applyAdditionalMutation } = input;
     let accepted = false;
     let rejectedStatus: GraphWorkflowStatus | null = null;
+    let rejectedExecutionId: string | null = null;
 
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
       (execution) => {
+        if (
+          input.expectedExecutionId !== undefined &&
+          execution.id !== input.expectedExecutionId
+        ) {
+          rejectedExecutionId = execution.id;
+          return execution;
+        }
         // A pending halt reason is a signal to a running loop's
         // drain-then-halt path. Once a transition has parked the execution
         // (pause/halt/abort), a late-settling turn — typically one the
@@ -2312,6 +2445,18 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         return next;
       },
     );
+
+    if (rejectedExecutionId !== null) {
+      logger.warn(
+        "graph-workflow.parallel.pending_halt_rejected_execution_mismatch",
+        {
+          expectedExecutionId: input.expectedExecutionId,
+          activeExecutionId: rejectedExecutionId,
+          attemptedHaltReasonType: reason.type,
+        },
+      );
+      return { execution: nextExecution, accepted: false };
+    }
 
     if (rejectedStatus !== null) {
       const execLogger = getExecutionLogger(nextExecution.id);
@@ -2362,6 +2507,18 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
       (execution) => {
+        if (
+          input.expectedExecutionId !== undefined &&
+          execution.id !== input.expectedExecutionId
+        ) {
+          logger.warn("graph-workflow.drain_halt.execution_mismatch", {
+            expectedExecutionId: input.expectedExecutionId,
+            activeExecutionId: execution.id,
+          });
+          throw new Error(
+            `Cannot drain execution ${input.expectedExecutionId}: active execution is ${execution.id}`,
+          );
+        }
         const haltReason = execution.pendingHaltReason;
         if (haltReason === null) {
           throw new Error(

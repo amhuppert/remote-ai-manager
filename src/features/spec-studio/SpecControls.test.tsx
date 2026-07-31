@@ -1132,6 +1132,80 @@ describe("ExecutionPanel", () => {
     });
   });
 
+  it("keeps the approval recovery action after an unlaunched gate definition is switched to notify", () => {
+    const detail = detailFixture("definition_review");
+    const execution = detail.executions[0];
+    if (execution === undefined) throw new Error("Execution fixture missing");
+    detail.spec.gatePolicy = {
+      preset: "contract-bearing",
+      overrides: { execution_start: "notify" },
+    };
+    Object.assign(execution, { definitionApprovalRequired: true });
+    execution.workflowExecutionId = null;
+
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Approve definition & start" }),
+    ).toBeVisible();
+  });
+
+  it("starts a Notify-compiled definition directly with its immutable revision", async () => {
+    const detail = detailFixture("definition_review");
+    const execution = detail.executions[0];
+    if (execution === undefined) throw new Error("Execution fixture missing");
+    detail.spec.gatePolicy = {
+      preset: "contract-bearing",
+      overrides: { execution_start: "notify" },
+    };
+    Object.assign(execution, {
+      definitionApprovalRequired: false,
+      workflowDefinitionRevision: 4,
+    });
+    const onStartPreparedWorkflow = vi.fn();
+
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onStartPreparedWorkflow={onStartPreparedWorkflow}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Definition ready to start")).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start workflow" }),
+    );
+    expect(onStartPreparedWorkflow).toHaveBeenCalledWith({
+      sessionName: "native-sdd-run",
+      definitionId: "workflow-definition-1",
+      definitionRevision: 4,
+    });
+  });
+
   it("renders the recorded execution-start approval without claiming the run started", () => {
     const detail = detailFixture("definition_review");
     detail.gateAdmissions = [
@@ -1986,6 +2060,102 @@ describe("SpecControlsPanel gate policy change", () => {
       expect(policyRegion).toHaveAttribute("aria-busy", "false");
     });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("SpecControlsPanel execution-start refusal", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  it("renders the unmet condition and recovery instruction beside the definition approval control", async () => {
+    const detail = detailFixture("definition_review");
+    const approvePath = `/api/specs/command-center/${detail.spec.slug}/actions/approve-execution-start`;
+    api.pending(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+    );
+    api.reply("POST", approvePath, {
+      status: 409,
+      json: {
+        code: "gate_blocked",
+        unmetConditions: [
+          "The session has no workflow execution awaiting definition approval.",
+        ],
+        instruction:
+          "Start the compiled workflow from the session first, then approve execution start.",
+      },
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel detail={detail} projectName="command-center" />,
+    );
+
+    const banner = screen.getByTestId("definition-review-banner");
+    await user.click(
+      within(banner).getByRole("button", {
+        name: "Approve definition & start",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(api.requestsTo("POST", approvePath)).toHaveLength(1);
+    });
+    expect(api.requestsTo("POST", approvePath)[0]?.jsonBody).toEqual({
+      executionId: "execution-1",
+    });
+
+    const refusal = await within(banner).findByRole("alert");
+    expect(refusal).toHaveTextContent(
+      "The session has no workflow execution awaiting definition approval.",
+    );
+    expect(refusal).toHaveTextContent(
+      "Start the compiled workflow from the session first, then approve execution start.",
+    );
+  });
+
+  it("starts a Notify-compiled definition from Studio with the pinned revision", async () => {
+    const detail = detailFixture("definition_review");
+    const execution = detail.executions[0];
+    if (execution === undefined) throw new Error("Execution fixture missing");
+    detail.spec.gatePolicy = {
+      preset: "contract-bearing",
+      overrides: { execution_start: "notify" },
+    };
+    execution.definitionApprovalRequired = false;
+    execution.workflowDefinitionRevision = 7;
+    const startPath =
+      "/api/projects/command-center/sessions/native-sdd-run/graph-workflow";
+    api.pending(
+      "POST",
+      `/api/specs/command-center/${detail.spec.slug}/actions/verify`,
+    );
+    api.reply("POST", startPath, { status: 202, json: {} });
+
+    renderWithQuery(
+      <SpecControlsPanel detail={detail} projectName="command-center" />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start workflow" }),
+    );
+
+    await waitFor(() => {
+      expect(api.requestsTo("POST", startPath)).toHaveLength(1);
+    });
+    expect(api.requestsTo("POST", startPath)[0]?.jsonBody).toEqual({
+      definitionId: "workflow-definition-1",
+      definitionRevision: 7,
+      tier: "project",
+    });
+    expect(await screen.findByText("Workflow started")).toBeVisible();
   });
 });
 

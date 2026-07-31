@@ -250,7 +250,9 @@ function maximalExecution(): SpecExecutionRow {
       },
     }),
     state: "abandoned",
+    execution_start_dial: "notify",
     workflow_definition_id: "workflow-definition-delivery-maximal",
+    workflow_definition_revision: 4,
     workflow_execution_id: "workflow-execution-delivery-maximal",
     session_name: "native-sdd-delivery-maximal",
     delivered_at: "2026-07-18T11:07:00.000Z",
@@ -369,6 +371,141 @@ describe("spec-delivery-repo durability contract", () => {
     expect(
       repo.findWaiverForCriterionRevision(CRITERION_ID, REVISION_ID),
     ).toEqual(maximalWaiver());
+  });
+
+  it("round-trips the immutable workflow launch contract", () => {
+    const execution = {
+      ...maximalExecution(),
+      id: "execution-frozen-launch",
+      workflow_definition_id: "workflow-definition-frozen-launch",
+      workflow_definition_revision: 7,
+      workflow_execution_id: "workflow-execution-frozen-launch",
+      execution_start_dial: "off",
+    } as SpecExecutionRow;
+
+    repo.insertExecution(execution);
+
+    expect(repo.findExecutionById(execution.id)).toMatchObject({
+      execution_start_dial: "off",
+      workflow_definition_id: "workflow-definition-frozen-launch",
+      workflow_definition_revision: 7,
+    });
+  });
+
+  it("finds the awaiting execution by exact workflow definition revision", () => {
+    const revisionSeven = {
+      ...maximalExecution(),
+      id: "execution-definition-revision-7",
+      state: "definition_review",
+      workflow_definition_id: "workflow-definition-shared",
+      workflow_definition_revision: 7,
+      workflow_execution_id: null,
+      delivered_at: null,
+      abandoned_reason: null,
+      created_at: "2026-07-18T12:00:00.000Z",
+      updated_at: "2026-07-18T12:00:00.000Z",
+    } as SpecExecutionRow;
+    const revisionEight = {
+      ...revisionSeven,
+      id: "execution-definition-revision-8",
+      workflow_definition_revision: 8,
+      created_at: "2026-07-18T12:01:00.000Z",
+      updated_at: "2026-07-18T12:01:00.000Z",
+    } as SpecExecutionRow;
+    repo.insertExecution(revisionSeven);
+    repo.insertExecution(revisionEight);
+
+    expect(
+      repo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
+        "/repos/delivery-contract",
+        "native-sdd-delivery-maximal",
+        "workflow-definition-shared",
+        7,
+      ),
+    ).toMatchObject({
+      id: "execution-definition-revision-7",
+      workflow_definition_revision: 7,
+    });
+  });
+
+  it("isolates identical awaiting definition identities by project and session", () => {
+    const otherProjectPath = "/repos/delivery-contract-other";
+    const otherSpecId = "spec-delivery-other";
+    const otherRevisionId = "revision-delivery-other";
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(
+      otherProjectPath,
+    );
+    db.prepare(
+      `INSERT INTO specs (
+         id, project_path, slug, name, gate_policy_json,
+         abandoned_at, abandoned_reason, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      otherSpecId,
+      otherProjectPath,
+      "delivery-other",
+      "Delivery other",
+      '{"preset":"contract-bearing"}',
+      null,
+      null,
+      "2026-07-18T08:00:00.000Z",
+      "2026-07-18T08:01:00.000Z",
+    );
+    db.prepare(
+      `INSERT INTO spec_revisions (
+         id, spec_id, number, state, based_on_revision_id, content_hash,
+         proposed_at, approved_at, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      otherRevisionId,
+      otherSpecId,
+      1,
+      "approved",
+      null,
+      "sha256:delivery-other",
+      "2026-07-18T08:04:00.000Z",
+      "2026-07-18T08:05:00.000Z",
+      "2026-07-18T08:03:30.000Z",
+    );
+
+    const sharedIdentity = {
+      state: "definition_review" as const,
+      workflow_definition_id: "workflow-definition-collision",
+      workflow_definition_revision: 3,
+      workflow_execution_id: null,
+      session_name: "shared-session",
+      delivered_at: null,
+      abandoned_reason: null,
+    };
+    repo.insertExecution({
+      ...maximalExecution(),
+      ...sharedIdentity,
+      id: "execution-collision-primary",
+    });
+    repo.insertExecution({
+      ...maximalExecution(),
+      ...sharedIdentity,
+      id: "execution-collision-other",
+      spec_id: otherSpecId,
+      revision_id: otherRevisionId,
+    });
+
+    expect(
+      repo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
+        "/repos/delivery-contract",
+        "shared-session",
+        "workflow-definition-collision",
+        3,
+      ),
+    ).toMatchObject({ id: "execution-collision-primary" });
+    expect(
+      repo.findExecutionAwaitingWorkflowByDefinitionIdInSession(
+        otherProjectPath,
+        "shared-session",
+        "workflow-definition-collision",
+        3,
+      ),
+    ).toMatchObject({ id: "execution-collision-other" });
   });
 
   it("exposes no evidence update path and refuses reinsertion as an update", () => {

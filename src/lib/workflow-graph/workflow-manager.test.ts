@@ -332,6 +332,147 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("atomically refuses definition approval when the active definition changes before the mutation", async () => {
+    const expectedPending = createWorkflowExecution({
+      id: "execution-expected",
+      status: "pending",
+      seedDefinitionId: "workflow-def-expected",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const unrelatedPending = createWorkflowExecution({
+      id: "execution-unrelated",
+      status: "pending",
+      seedDefinitionId: "workflow-def-unrelated",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:01:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const repository = createRepository(unrelatedPending);
+    const manager = createGraphWorkflowManager({
+      executionRepository: {
+        ...repository,
+        async getActive() {
+          return expectedPending;
+        },
+      },
+      async loadDefinition() {
+        return null;
+      },
+      now() {
+        return "2026-07-18T10:02:00.000Z";
+      },
+    });
+
+    const result = await manager.recordDefinitionApproval({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      expectedDefinitionId: "workflow-def-expected",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "definition_mismatch" });
+    expect(repository.read()).toMatchObject({
+      id: "execution-unrelated",
+      seedDefinitionId: "workflow-def-unrelated",
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:01:00.000Z",
+        approvedAt: null,
+      },
+    });
+  });
+
+  it("atomically refuses definition approval when the active execution changes to another run of the same definition", async () => {
+    const expectedPending = createWorkflowExecution({
+      id: "execution-expected",
+      status: "pending",
+      seedDefinitionId: "workflow-def-shared",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const replacementPending = createWorkflowExecution({
+      id: "execution-replacement",
+      status: "pending",
+      seedDefinitionId: "workflow-def-shared",
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:01:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const repository = createRepository(replacementPending);
+    const manager = createGraphWorkflowManager({
+      executionRepository: {
+        ...repository,
+        async getActive() {
+          return expectedPending;
+        },
+      },
+      async loadDefinition() {
+        return null;
+      },
+      now() {
+        return "2026-07-18T10:02:00.000Z";
+      },
+    });
+
+    const result = await manager.recordDefinitionApproval({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      expectedExecutionId: "execution-expected",
+      expectedDefinitionId: "workflow-def-shared",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "execution_mismatch" });
+    expect(repository.read()).toMatchObject({
+      id: "execution-replacement",
+      status: "pending",
+      definitionApproval: { approvedAt: null },
+    });
+  });
+
+  it("atomically refuses definition approval when the definition revision changes", async () => {
+    const active = createWorkflowExecution({
+      id: "execution-expected",
+      status: "pending",
+      seedDefinitionId: "workflow-def-shared",
+      seedDefinitionRevision: 3,
+      definitionApproval: {
+        requestedAt: "2026-07-18T10:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const repository = createRepository(active);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const result = await manager.recordDefinitionApproval({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      expectedExecutionId: "execution-expected",
+      expectedDefinitionId: "workflow-def-shared",
+      expectedDefinitionRevision: 2,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "definition_revision_mismatch",
+    });
+    expect(repository.read()).toMatchObject({
+      status: "pending",
+      seedDefinitionRevision: 3,
+      definitionApproval: { approvedAt: null },
+    });
+  });
+
   it("refuses an approval-required definition until the first atomic approval starts its pending execution", async () => {
     const definition = createWorkflowDefinitionRecord({
       definition: createWorkflowDefinition({ approvalRequired: true }),
@@ -359,6 +500,8 @@ describe("graph workflow manager", () => {
     ).rejects.toMatchObject({
       code: "definition_approval_required",
       executionId: "execution-awaiting-definition-approval",
+      definitionId: definition.id,
+      definitionRevision: definition.revision,
     } satisfies Partial<WorkflowDefinitionApprovalRequiredError>);
 
     expect(repository.read()).toMatchObject({
@@ -2936,6 +3079,34 @@ describe("graph workflow manager", () => {
     expect(finalState?.secondaryHaltReasons[9]).toEqual({
       type: "recovery_error",
       message: "secondary-9",
+    });
+  });
+
+  it("does not record a loop failure on a replacement active execution", async () => {
+    const replacement = createWorkflowExecution({
+      id: "execution-replacement",
+      status: "running",
+    });
+    const repository = createRepository(replacement);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const result = await manager.recordPendingHaltReason({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      expectedExecutionId: "execution-failed",
+      reason: { type: "recovery_error", message: "failed loop" },
+    });
+
+    expect(result.accepted).toBe(false);
+    expect(repository.read()).toMatchObject({
+      id: "execution-replacement",
+      status: "running",
+      pendingHaltReason: null,
     });
   });
 
@@ -6892,6 +7063,34 @@ describe("graph workflow manager", () => {
       expect(repository.read()?.status).toBe("running");
     });
 
+    it("does not drain a replacement active execution", async () => {
+      const repository = createRepository(
+        createWorkflowExecution({
+          id: "execution-replacement",
+          status: "running",
+          pendingHaltReason: { type: "recovery_error", message: "replacement" },
+        }),
+      );
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+      });
+
+      await expect(
+        manager.drainAndHalt({
+          projectPath: "/repo",
+          sessionName: "session-1",
+          expectedExecutionId: "execution-failed",
+        }),
+      ).rejects.toThrow(/execution-failed/);
+      expect(repository.read()).toMatchObject({
+        id: "execution-replacement",
+        status: "running",
+      });
+    });
+
     it("throws when there is no active graph workflow execution", async () => {
       const repository = createRepository(null);
       const manager = createGraphWorkflowManager({
@@ -6966,6 +7165,31 @@ describe("graph workflow manager", () => {
       expect(repository.createCalls).toHaveLength(1);
       expect(repository.createCalls[0]?.inputs).toEqual({});
       expect(execution.boundInputs).toEqual({});
+    });
+
+    it("refuses a changed definition revision before seeding an execution", async () => {
+      const definition = createWorkflowDefinitionRecord({ revision: 3 });
+      const repository = createRepository();
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return definition;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+      });
+
+      await expect(
+        manager.start({
+          ...startInput(),
+          expectedDefinitionRevision: 2,
+        }),
+      ).rejects.toMatchObject({
+        code: "definition_revision_mismatch",
+        expectedRevision: 2,
+        actualRevision: 3,
+      });
+      expect(repository.createCalls).toHaveLength(0);
     });
 
     it("seeds with applied defaults for a valid parameterized launch", async () => {

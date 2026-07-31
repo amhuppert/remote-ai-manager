@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { mutationFetch } from "@/lib/api/fetcher";
+import { z } from "zod";
+import { apiCallErrorFromMutationBody, mutationFetch } from "@/lib/api/fetcher";
 import { ApiCallError } from "@/lib/api/errors";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import {
@@ -131,6 +132,8 @@ export function useDeleteWorkflowDefinitionMutation(projectName: string) {
 
 export interface StartGraphWorkflowVariables {
   definitionId: string;
+  /** The revision displayed when the operator chose this mutable definition. */
+  definitionRevision?: number;
   /**
    * Run-specific values for the definition's declared launch parameters. Omitted
    * for a zero-input launch so the request body is identical to a parameterless
@@ -145,6 +148,45 @@ export interface StartGraphWorkflowVariables {
   tier?: "project" | "global";
 }
 
+export type StartGraphWorkflowResult =
+  | { kind: "started" }
+  | {
+      kind: "awaiting_approval";
+      executionId: string;
+      instruction: string;
+    };
+
+const startGraphWorkflowAwaitingApprovalSchema = z.object({
+  code: z.literal("definition_approval_required"),
+  executionId: z.string().min(1),
+  instruction: z.string().min(1),
+});
+
+async function startGraphWorkflowRequest(
+  url: string,
+  options: RequestInit,
+): Promise<StartGraphWorkflowResult> {
+  const response = await tracedFetch(url, "start-graph-workflow", options);
+  if (response.ok) {
+    return { kind: "started" };
+  }
+
+  const body: unknown = await response.json().catch(() => null);
+  if (response.status === 409) {
+    const awaitingApproval =
+      startGraphWorkflowAwaitingApprovalSchema.safeParse(body);
+    if (awaitingApproval.success) {
+      return {
+        kind: "awaiting_approval",
+        executionId: awaitingApproval.data.executionId,
+        instruction: awaitingApproval.data.instruction,
+      };
+    }
+  }
+
+  throw apiCallErrorFromMutationBody(body, response.status);
+}
+
 export function useStartGraphWorkflowMutation(
   projectName: string,
   sessionName: string,
@@ -154,17 +196,18 @@ export function useStartGraphWorkflowMutation(
   return useMutation({
     mutationFn: ({
       definitionId,
+      definitionRevision,
       parameters,
       tier,
     }: StartGraphWorkflowVariables) =>
-      mutationFetch(
+      startGraphWorkflowRequest(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow`,
-        "start-graph-workflow",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             definitionId,
+            ...(definitionRevision !== undefined ? { definitionRevision } : {}),
             ...(parameters !== undefined ? { parameters } : {}),
             ...(tier !== undefined ? { tier } : {}),
           }),
@@ -174,6 +217,45 @@ export function useStartGraphWorkflowMutation(
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export function useApproveGraphWorkflowDefinitionMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (identity: {
+      executionId: string;
+      definitionId: string;
+      definitionRevision: number;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/approve-definition`,
+        "approve-graph-workflow-definition",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(identity),
+        },
+      ),
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: sessionKeys.detail(projectName, sessionName),
+        }),
+      ]);
     },
   });
 }

@@ -19,7 +19,10 @@ import {
   type GraphWorkflowExecutionRouteDeps,
 } from "./execution-route-handlers";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
-import type { DefinitionApprovalGateDecision } from "./execution-lifecycle-port";
+import type {
+  DefinitionApprovalGateDecision,
+  GraphExecutionLifecycleContext,
+} from "./execution-lifecycle-port";
 import {
   WorkflowDefinitionApprovalRequiredError,
   WorkflowPrerequisitesUnmetError,
@@ -107,8 +110,10 @@ describe("graph workflow execution route handlers", () => {
   const executionAborted = vi.fn(async () => {});
   const admitDefinitionApproval = vi.fn<
     (
+      context: GraphExecutionLifecycleContext,
       workflowExecutionId: string,
       definitionId: string,
+      definitionRevision: number,
     ) => Promise<DefinitionApprovalGateDecision>
   >(async () => ({ ok: true }));
   const stopExecutionLaneDevServers = vi.fn(async () => {});
@@ -244,6 +249,35 @@ describe("graph workflow execution route handlers", () => {
     });
   });
 
+  it("guards an HTTP launch with the selected definition revision", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-revision-guarded",
+      status: "running",
+      seedDefinitionRevision: 4,
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockResolvedValue(startedExecution);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1", definitionRevision: 4 },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      expectedDefinitionRevision: 4,
+      tier: "project",
+    });
+  });
+
   it("threads an explicit global tier into the shared start path (R3.4)", async () => {
     const startedExecution = createWorkflowExecution({
       id: "execution-global",
@@ -323,7 +357,11 @@ describe("graph workflow execution route handlers", () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
     startExecution.mockRejectedValue(
-      new WorkflowDefinitionApprovalRequiredError("execution-review-1"),
+      new WorkflowDefinitionApprovalRequiredError(
+        "execution-review-1",
+        "workflow-1",
+        1,
+      ),
     );
 
     const response = await handlers.START(
@@ -352,7 +390,11 @@ describe("graph workflow execution route handlers", () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
     startExecution.mockRejectedValue(
-      new WorkflowDefinitionApprovalRequiredError("execution-review-2"),
+      new WorkflowDefinitionApprovalRequiredError(
+        "execution-review-2",
+        "workflow-def-parked",
+        4,
+      ),
     );
 
     const response = await handlers.START(
@@ -366,8 +408,10 @@ describe("graph workflow execution route handlers", () => {
 
     expect(response.status).toBe(409);
     expect(awaitingDefinitionApproval).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "execution-review-2",
       "workflow-def-parked",
+      4,
     );
   });
 
@@ -396,7 +440,11 @@ describe("graph workflow execution route handlers", () => {
       makeRequest(
         "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
         "POST",
-        {},
+        {
+          executionId: parkedExecution.id,
+          definitionId: parkedExecution.seedDefinitionId,
+          definitionRevision: parkedExecution.seedDefinitionRevision,
+        },
       ),
       makeContext({ name: "repo", session: "session-1" }),
     );
@@ -408,12 +456,32 @@ describe("graph workflow execution route handlers", () => {
       instruction: "Sign off the revision, then approve again.",
     });
     expect(admitDefinitionApproval).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "execution-parked",
       "workflow-def-9",
+      parkedExecution.seedDefinitionRevision,
     );
     // The refused approval records nothing and starts nothing.
     expect(recordDefinitionApproval).not.toHaveBeenCalled();
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unscoped HTTP definition approval body", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+
+    const response = await handlers.APPROVE_DEFINITION(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
+        "POST",
+        {},
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(admitDefinitionApproval).not.toHaveBeenCalled();
+    expect(recordDefinitionApproval).not.toHaveBeenCalled();
   });
 
   it("refuses an invalid execution contract before recording the spec-side approval admission", async () => {
@@ -498,19 +566,28 @@ describe("graph workflow execution route handlers", () => {
       makeRequest(
         "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
         "POST",
-        {},
+        {
+          executionId: parkedExecution.id,
+          definitionId: parkedExecution.seedDefinitionId,
+          definitionRevision: parkedExecution.seedDefinitionRevision,
+        },
       ),
       makeContext({ name: "repo", session: "session-1" }),
     );
 
     expect(response.status).toBe(200);
     expect(admitDefinitionApproval).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "execution-parked-ok",
       "workflow-def-9",
+      parkedExecution.seedDefinitionRevision,
     );
     expect(recordDefinitionApproval).toHaveBeenCalledWith({
       projectPath: "/repo",
       sessionName: "session-1",
+      expectedExecutionId: parkedExecution.id,
+      expectedDefinitionId: parkedExecution.seedDefinitionId,
+      expectedDefinitionRevision: parkedExecution.seedDefinitionRevision,
     });
   });
 
@@ -534,7 +611,7 @@ describe("graph workflow execution route handlers", () => {
         projectPath: "/repo",
         sessionName: "session-1",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe("execution-probe");
 
     getSession.mockResolvedValue(makeSession());
     await expect(
@@ -542,7 +619,7 @@ describe("graph workflow execution route handlers", () => {
         projectPath: "/repo",
         sessionName: "session-1",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
 
     getSession.mockResolvedValue(
       makeSession({
@@ -561,7 +638,171 @@ describe("graph workflow execution route handlers", () => {
         projectPath: "/repo",
         sessionName: "session-1",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBeNull();
+  });
+
+  it("does not report an unrelated parked definition as the expected pending definition", async () => {
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-unrelated",
+          status: "pending",
+          seedDefinitionId: "workflow-def-unrelated",
+          definitionApproval: {
+            requestedAt: "2026-03-27T12:00:00.000Z",
+            approvedAt: null,
+          },
+        }),
+      }),
+    );
+
+    await expect(
+      handlers.hasPendingDefinitionApproval({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        expectedDefinitionId: "workflow-def-expected",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("does not report another revision of the expected definition as pending", async () => {
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-revised",
+          status: "pending",
+          seedDefinitionId: "workflow-def-expected",
+          seedDefinitionRevision: 4,
+          definitionApproval: {
+            requestedAt: "2026-03-27T12:00:00.000Z",
+            approvedAt: null,
+          },
+        }),
+      }),
+    );
+
+    await expect(
+      handlers.hasPendingDefinitionApproval({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        expectedDefinitionId: "workflow-def-expected",
+        expectedDefinitionRevision: 3,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("refuses the non-HTTP approval seam when the parked definition does not match the expected definition", async () => {
+    const unrelatedParked = createWorkflowExecution({
+      id: "execution-unrelated",
+      status: "pending",
+      seedDefinitionId: "workflow-def-unrelated",
+      definitionApproval: {
+        requestedAt: "2026-03-27T12:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const unrelatedApproved = createWorkflowExecution({
+      id: "execution-unrelated",
+      status: "running",
+      seedDefinitionId: "workflow-def-unrelated",
+    });
+    getSession.mockResolvedValue(
+      makeSession({ graphWorkflowExecution: unrelatedParked }),
+    );
+    recordDefinitionApproval.mockResolvedValue({
+      ok: true,
+      execution: unrelatedApproved,
+    });
+
+    const result = await handlers.approveDefinition({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      expectedDefinitionId: "workflow-def-expected",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "definition_mismatch" });
+    expect(admitDefinitionApproval).not.toHaveBeenCalled();
+    expect(recordDefinitionApproval).not.toHaveBeenCalled();
+    expect(markRunning).not.toHaveBeenCalled();
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("refuses approval when a different execution of the expected definition became active", async () => {
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-replacement",
+          status: "pending",
+          seedDefinitionId: "workflow-def-shared",
+          definitionApproval: {
+            requestedAt: "2026-03-27T12:00:00.000Z",
+            approvedAt: null,
+          },
+        }),
+      }),
+    );
+
+    const result = await handlers.approveDefinition({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      expectedExecutionId: "execution-stale",
+      expectedDefinitionId: "workflow-def-shared",
+    });
+
+    expect(result).toEqual({ ok: false, reason: "execution_mismatch" });
+    expect(admitDefinitionApproval).not.toHaveBeenCalled();
+    expect(recordDefinitionApproval).not.toHaveBeenCalled();
+    expect(markRunning).not.toHaveBeenCalled();
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("binds an HTTP approval to the execution and definition shown to the human", async () => {
+    const parkedExecution = createWorkflowExecution({
+      id: "execution-visible",
+      status: "pending",
+      seedDefinitionId: "workflow-def-visible",
+      definitionApproval: {
+        requestedAt: "2026-03-27T12:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    const approvedExecution = createWorkflowExecution({
+      id: "execution-visible",
+      status: "running",
+      seedDefinitionId: "workflow-def-visible",
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ graphWorkflowExecution: parkedExecution }),
+    );
+    recordDefinitionApproval.mockResolvedValue({
+      ok: true,
+      execution: approvedExecution,
+    });
+
+    const response = await handlers.APPROVE_DEFINITION(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
+        "POST",
+        {
+          executionId: "execution-visible",
+          definitionId: "workflow-def-visible",
+          definitionRevision: 1,
+        },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(recordDefinitionApproval).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      expectedExecutionId: "execution-visible",
+      expectedDefinitionId: "workflow-def-visible",
+      expectedDefinitionRevision: 1,
+    });
   });
 
   it("approves a pending definition, reports the started run to the lifecycle port, and kicks off the loop", async () => {
@@ -581,7 +822,11 @@ describe("graph workflow execution route handlers", () => {
       makeRequest(
         "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
         "POST",
-        {},
+        {
+          executionId: approvedExecution.id,
+          definitionId: approvedExecution.seedDefinitionId,
+          definitionRevision: approvedExecution.seedDefinitionRevision,
+        },
       ),
       makeContext({ name: "repo", session: "session-1" }),
     );
@@ -590,10 +835,15 @@ describe("graph workflow execution route handlers", () => {
     expect(recordDefinitionApproval).toHaveBeenCalledWith({
       projectPath: "/repo",
       sessionName: "session-1",
+      expectedExecutionId: approvedExecution.id,
+      expectedDefinitionId: approvedExecution.seedDefinitionId,
+      expectedDefinitionRevision: approvedExecution.seedDefinitionRevision,
     });
     expect(markRunning).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "execution-approved",
       "workflow-def-9",
+      approvedExecution.seedDefinitionRevision,
     );
     expect(kickOffExecutionLoop).toHaveBeenCalledWith({
       projectPath: "/repo",
@@ -618,7 +868,11 @@ describe("graph workflow execution route handlers", () => {
       makeRequest(
         "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
         "POST",
-        {},
+        {
+          executionId: "execution-guarded",
+          definitionId: "workflow-def-guarded",
+          definitionRevision: 1,
+        },
       ),
       makeContext({ name: "repo", session: "session-1" }),
     );
@@ -634,7 +888,11 @@ describe("graph workflow execution route handlers", () => {
       makeRequest(
         "/api/projects/repo/sessions/session-1/graph-workflow/approve-definition",
         "POST",
-        {},
+        {
+          executionId: "execution-guarded",
+          definitionId: "workflow-def-guarded",
+          definitionRevision: 1,
+        },
       ),
       makeContext({ name: "repo", session: "session-1" }),
     );
@@ -706,8 +964,10 @@ describe("graph workflow execution route handlers", () => {
       sessionName: "session-1",
     });
     expect(markRunning).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "execution-seam-approved",
       "workflow-def-9",
+      approvedExecution.seedDefinitionRevision,
     );
     expect(kickOffExecutionLoop).toHaveBeenCalledWith({
       projectPath: "/repo",
@@ -933,6 +1193,7 @@ describe("graph workflow execution route handlers", () => {
     expect(drainAndHalt).toHaveBeenCalledWith({
       projectPath: "/repo",
       sessionName: "session-1",
+      expectedExecutionId: "execution-loop-crash",
     });
   });
 
@@ -1629,6 +1890,103 @@ describe("graph workflow execution route handlers", () => {
       undefined,
     );
     expect(abortExecution).toHaveBeenCalledWith("/repo", "session-1");
+  });
+
+  it("returns 409 without halt recovery when a pending execution cannot be resumed", async () => {
+    const pendingExecution = createWorkflowExecution({
+      status: "pending",
+      definitionApproval: {
+        requestedAt: "2026-03-27T12:00:00.000Z",
+        approvedAt: null,
+      },
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ graphWorkflowExecution: pendingExecution }),
+    );
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    resumeExecution.mockRejectedValue(
+      new Error(
+        "Only paused or halted graph workflow executions can be resumed",
+      ),
+    );
+
+    const response = await handlers.RESUME(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/resume",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(recordPendingHaltReason).not.toHaveBeenCalled();
+    expect(drainAndHalt).not.toHaveBeenCalled();
+  });
+
+  it("does not drain when a resume-loop failure loses a race to a non-running transition", async () => {
+    const resumedExecution = createWorkflowExecution({ status: "running" });
+    const concurrentlyPausedExecution = createWorkflowExecution({
+      status: "paused",
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ graphWorkflowExecution: resumedExecution }),
+    );
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    resumeExecution.mockResolvedValue(resumedExecution);
+    kickOffExecutionLoop.mockRejectedValue(new Error("resume loop failed"));
+    recordPendingHaltReason.mockResolvedValue({
+      execution: concurrentlyPausedExecution,
+      accepted: false,
+    });
+
+    const response = await handlers.RESUME(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/resume",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(200);
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(recordPendingHaltReason).toHaveBeenCalledTimes(1);
+    expect(drainAndHalt).not.toHaveBeenCalled();
+  });
+
+  it("does not report a failed loop against a replacement running execution", async () => {
+    const failedExecution = createWorkflowExecution({
+      id: "execution-failed",
+      status: "running",
+    });
+    const replacementExecution = createWorkflowExecution({
+      id: "execution-replacement",
+      status: "running",
+    });
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ graphWorkflowExecution: failedExecution }),
+    );
+    getActiveExecution.mockResolvedValue(replacementExecution);
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    resumeExecution.mockResolvedValue(failedExecution);
+    kickOffExecutionLoop.mockRejectedValue(new Error("failed loop"));
+
+    const response = await handlers.RESUME(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/resume",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(200);
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(recordPendingHaltReason).not.toHaveBeenCalled();
+    expect(drainAndHalt).not.toHaveBeenCalled();
   });
 
   it("reports a successful abort to the execution lifecycle port", async () => {
@@ -2756,8 +3114,10 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
     // The started definition id rides along so the lifecycle consumer can
     // correlate the run with work it prepared under that definition.
     expect(markRunning).toHaveBeenCalledWith(
+      { projectPath: "/repo", sessionName: "session-1" },
       "execution-lifecycle",
       started.seedDefinitionId,
+      started.seedDefinitionRevision,
     );
     expect(calls).toEqual(["start", "mark-running", "kickoff"]);
   });

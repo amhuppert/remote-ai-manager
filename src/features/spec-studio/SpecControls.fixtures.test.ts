@@ -127,7 +127,10 @@ function executionRowFromView(view: SpecExecutionView): SpecExecutionRow {
     revision_id: view.revisionId,
     scope_json: JSON.stringify(view.scope),
     state: view.state,
+    execution_start_dial:
+      view.definitionApprovalRequired === true ? "gate" : null,
     workflow_definition_id: view.workflowDefinitionId,
+    workflow_definition_revision: null,
     workflow_execution_id: view.workflowExecutionId,
     session_name: view.sessionName,
     delivered_at: view.deliveredAt,

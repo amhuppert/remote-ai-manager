@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   useGraphWorkflowEventsQuery,
   useGraphWorkflowExecutionQuery,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/workflows/queries";
 import {
   useAbortGraphWorkflowMutation,
+  useApproveGraphWorkflowDefinitionMutation,
   useClearGraphWorkflowMutation,
   usePauseGraphWorkflowMutation,
   useResetExecutionContextMutation,
@@ -15,10 +16,32 @@ import {
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
+import { createClientLogger } from "@/lib/logging/client-logger";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import type { ExecutionControlAction } from "./ExecutionStatusBar";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
+
+const logger = createClientLogger("session-workflow");
+
+function definitionApprovalErrorMessage(error: Error | null): string | null {
+  if (!(error instanceof ApiCallError)) return error?.message ?? null;
+
+  const unmetConditions = error.details?.unmetConditions;
+  const instruction = error.details?.instruction;
+  const recoveryGuidance = [
+    ...(Array.isArray(unmetConditions)
+      ? unmetConditions.filter(
+          (condition): condition is string => typeof condition === "string",
+        )
+      : []),
+    ...(typeof instruction === "string" ? [instruction] : []),
+  ];
+
+  return recoveryGuidance.length > 0
+    ? recoveryGuidance.join(" ")
+    : error.message;
+}
 
 interface ConnectedGraphWorkflowPanelProps {
   projectName: string;
@@ -40,7 +63,9 @@ export default function ConnectedGraphWorkflowPanel({
     sessionName,
   );
   const execution = executionQuery.data ?? null;
+  const executionId = execution?.id ?? null;
   const seedDefinitionId = execution?.seedDefinitionId ?? null;
+  const seedDefinitionRevision = execution?.seedDefinitionRevision ?? null;
   const seedDefinitionQuery = useWorkflowDefinitionQuery(
     projectName,
     seedDefinitionId,
@@ -52,6 +77,25 @@ export default function ConnectedGraphWorkflowPanel({
   );
   const abortMutation = useAbortGraphWorkflowMutation(projectName, sessionName);
   const clearMutation = useClearGraphWorkflowMutation(projectName, sessionName);
+  const approveDefinitionMutation = useApproveGraphWorkflowDefinitionMutation(
+    projectName,
+    sessionName,
+  );
+  const previousApprovalExecutionId = useRef(executionId);
+  const resetDefinitionApprovalMutation = approveDefinitionMutation.reset;
+  useEffect(() => {
+    const previousExecutionId = previousApprovalExecutionId.current;
+    if (previousExecutionId === executionId) return;
+
+    previousApprovalExecutionId.current = executionId;
+    resetDefinitionApprovalMutation();
+    logger.info("session_workflow.definition_approval.identity_changed", {
+      projectName,
+      sessionName,
+      previousExecutionId,
+      executionId,
+    });
+  }, [executionId, projectName, resetDefinitionApprovalMutation, sessionName]);
   const runtimeEditMutation = useRuntimeEditGraphWorkflowMutation(
     projectName,
     sessionName,
@@ -166,7 +210,6 @@ export default function ConnectedGraphWorkflowPanel({
     configEditMutation.error instanceof ApiCallError &&
     configEditMutation.error.code === "revision_conflict";
 
-  const executionId = execution?.id ?? null;
   const eventsQuery = useGraphWorkflowEventsQuery(
     projectName,
     sessionName,
@@ -179,6 +222,52 @@ export default function ConnectedGraphWorkflowPanel({
     },
     [executionId, resetContextMutation],
   );
+  const handleApproveDefinition = useCallback(() => {
+    if (!executionId || !seedDefinitionId || !seedDefinitionRevision) return;
+
+    logger.info("session_workflow.definition_approval.requested", {
+      projectName,
+      sessionName,
+      executionId,
+      definitionId: seedDefinitionId,
+      definitionRevision: seedDefinitionRevision,
+    });
+    approveDefinitionMutation.mutate(
+      {
+        executionId,
+        definitionId: seedDefinitionId,
+        definitionRevision: seedDefinitionRevision,
+      },
+      {
+        onSuccess: () => {
+          logger.info("session_workflow.definition_approval.completed", {
+            projectName,
+            sessionName,
+            executionId,
+            definitionId: seedDefinitionId,
+            definitionRevision: seedDefinitionRevision,
+          });
+        },
+        onError: (error) => {
+          logger.warn("session_workflow.definition_approval.failed", {
+            projectName,
+            sessionName,
+            executionId,
+            definitionId: seedDefinitionId,
+            definitionRevision: seedDefinitionRevision,
+            error: error.message,
+          });
+        },
+      },
+    );
+  }, [
+    approveDefinitionMutation,
+    executionId,
+    projectName,
+    seedDefinitionId,
+    seedDefinitionRevision,
+    sessionName,
+  ]);
 
   const pendingAction: ExecutionControlAction | null = pauseMutation.isPending
     ? "pause"
@@ -208,6 +297,7 @@ export default function ConnectedGraphWorkflowPanel({
       }
       onAbort={() => abortMutation.mutate()}
       onClear={() => clearMutation.mutate()}
+      onApproveDefinition={handleApproveDefinition}
       onAddTask={handleAddTask}
       onUpdateTask={handleUpdateTask}
       onRemoveTask={handleRemoveTask}
@@ -218,6 +308,10 @@ export default function ConnectedGraphWorkflowPanel({
       isSavingConfig={configEditMutation.isPending}
       isPausingExecution={pauseMutation.isPending}
       isResumingExecution={resumeMutation.isPending}
+      isApprovingDefinition={approveDefinitionMutation.isPending}
+      definitionApprovalError={definitionApprovalErrorMessage(
+        approveDefinitionMutation.error,
+      )}
       configEditConflict={configEditConflict}
       configSaveSucceeded={configEditMutation.isSuccess}
       isMutating={
@@ -225,6 +319,7 @@ export default function ConnectedGraphWorkflowPanel({
         resumeMutation.isPending ||
         abortMutation.isPending ||
         clearMutation.isPending ||
+        approveDefinitionMutation.isPending ||
         runtimeEditMutation.isPending ||
         configEditMutation.isPending ||
         resetContextMutation.isPending

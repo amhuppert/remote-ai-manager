@@ -9,6 +9,61 @@ import type { z } from "zod";
 import { ApiCallError, type RequestIssue } from "@/lib/api/errors";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 
+interface MutationErrorBody {
+  error?: string;
+  code?: string;
+  output?: string;
+  details?: Record<string, unknown>;
+  issues?: RequestIssue[];
+  unmetConditions?: unknown;
+  instruction?: unknown;
+}
+
+export function apiCallErrorFromMutationBody(
+  body: unknown,
+  status: number,
+): ApiCallError {
+  const apiBody =
+    typeof body === "object" && body !== null
+      ? (body as MutationErrorBody)
+      : {};
+  const unmetConditions = Array.isArray(apiBody.unmetConditions)
+    ? apiBody.unmetConditions.filter(
+        (condition): condition is string => typeof condition === "string",
+      )
+    : [];
+  const instruction =
+    typeof apiBody.instruction === "string" ? apiBody.instruction : null;
+  const refusalParts = [
+    ...unmetConditions,
+    ...(instruction === null ? [] : [instruction]),
+  ];
+  const issues =
+    apiBody.issues ??
+    (unmetConditions.length === 0
+      ? undefined
+      : unmetConditions.map((message, index) => ({
+          path: `unmetConditions[${index}]`,
+          message,
+        })));
+  const details =
+    apiBody.details ??
+    (refusalParts.length === 0
+      ? undefined
+      : {
+          unmetConditions,
+          ...(instruction === null ? {} : { instruction }),
+        });
+  return new ApiCallError(
+    apiBody.error ?? (refusalParts.join(" ") || `API error ${status}`),
+    apiBody.code,
+    apiBody.output,
+    details,
+    status,
+    issues,
+  );
+}
+
 /**
  * Fetch a GET endpoint and validate the response with a Zod schema.
  */
@@ -62,50 +117,7 @@ export async function mutationFetch<T>(
   const res = await tracedFetch(url, traceLabel, options);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Request failed" }));
-    const apiBody = body as {
-      error?: string;
-      code?: string;
-      output?: string;
-      details?: Record<string, unknown>;
-      issues?: RequestIssue[];
-      unmetConditions?: unknown;
-      instruction?: unknown;
-    };
-    const unmetConditions = Array.isArray(apiBody.unmetConditions)
-      ? apiBody.unmetConditions.filter(
-          (condition): condition is string => typeof condition === "string",
-        )
-      : [];
-    const instruction =
-      typeof apiBody.instruction === "string" ? apiBody.instruction : null;
-    const refusalParts = [
-      ...unmetConditions,
-      ...(instruction === null ? [] : [instruction]),
-    ];
-    const issues =
-      apiBody.issues ??
-      (unmetConditions.length === 0
-        ? undefined
-        : unmetConditions.map((message, index) => ({
-            path: `unmetConditions[${index}]`,
-            message,
-          })));
-    const details =
-      apiBody.details ??
-      (refusalParts.length === 0
-        ? undefined
-        : {
-            unmetConditions,
-            ...(instruction === null ? {} : { instruction }),
-          });
-    throw new ApiCallError(
-      apiBody.error ?? (refusalParts.join(" ") || `API error ${res.status}`),
-      apiBody.code,
-      apiBody.output,
-      details,
-      res.status,
-      issues,
-    );
+    throw apiCallErrorFromMutationBody(body, res.status);
   }
   const data: unknown = await res.json();
   return schema ? schema.parse(data) : (data as T);

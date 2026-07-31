@@ -85,14 +85,23 @@ export interface SpecDeliveryRepo {
   findExecutionByWorkflowExecutionId(
     workflowExecutionId: string,
   ): SpecExecutionRow | null;
+  findExecutionByWorkflowExecutionIdInSession(
+    projectPath: string,
+    sessionName: string,
+    workflowExecutionId: string,
+  ): SpecExecutionRow | null;
   /**
    * The spec execution still awaiting its workflow: in definition_review with
-   * this compiled definition pinned and no workflow execution linked yet. This
-   * is how a generic workflow start finds the spec side without the workflow
-   * machinery knowing about specs.
+   * this exact compiled definition revision pinned and no workflow execution
+   * linked yet, within the project/session that launched it. This is how a
+   * generic workflow start finds the spec side without the workflow machinery
+   * knowing about specs.
    */
-  findExecutionAwaitingWorkflowByDefinitionId(
+  findExecutionAwaitingWorkflowByDefinitionIdInSession(
+    projectPath: string,
+    sessionName: string,
     workflowDefinitionId: string,
+    workflowDefinitionRevision: number,
   ): SpecExecutionRow | null;
   linkWorkflowExecution(
     executionId: string,
@@ -271,12 +280,14 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
 
   const insertExecutionStmt = db.prepare(
     `INSERT INTO spec_executions (
-       id, spec_id, revision_id, scope_json, state, workflow_definition_id,
+       id, spec_id, revision_id, scope_json, state, execution_start_dial,
+       workflow_definition_id, workflow_definition_revision,
        workflow_execution_id, session_name, delivered_at, abandoned_reason,
        created_at, updated_at
      ) VALUES (
        @id, @spec_id, @revision_id, @scope_json, @state,
-       @workflow_definition_id, @workflow_execution_id, @session_name,
+       @execution_start_dial, @workflow_definition_id,
+       @workflow_definition_revision, @workflow_execution_id, @session_name,
        @delivered_at, @abandoned_reason, @created_at, @updated_at
      )`,
   );
@@ -312,12 +323,24 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
      WHERE workflow_execution_id = ?
      LIMIT 1`,
   );
-  const findExecutionAwaitingWorkflowByDefinitionStmt = db.prepare(
-    `SELECT * FROM spec_executions
-     WHERE workflow_definition_id = ?
-       AND workflow_execution_id IS NULL
-       AND state = 'definition_review'
-     ORDER BY created_at DESC, id DESC
+  const findExecutionByWorkflowExecutionInSessionStmt = db.prepare(
+    `SELECT e.* FROM spec_executions e
+     JOIN specs s ON s.id = e.spec_id
+     WHERE s.project_path = ?
+       AND e.session_name = ?
+       AND e.workflow_execution_id = ?
+     LIMIT 1`,
+  );
+  const findExecutionAwaitingWorkflowByDefinitionInSessionStmt = db.prepare(
+    `SELECT e.* FROM spec_executions e
+     JOIN specs s ON s.id = e.spec_id
+     WHERE s.project_path = ?
+       AND e.session_name = ?
+       AND e.workflow_definition_id = ?
+       AND e.workflow_definition_revision = ?
+       AND e.workflow_execution_id IS NULL
+       AND e.state = 'definition_review'
+     ORDER BY e.created_at DESC, e.id DESC
      LIMIT 1`,
   );
   const linkWorkflowExecutionStmt = db.prepare(
@@ -662,20 +685,45 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
           ),
       );
     },
-    findExecutionAwaitingWorkflowByDefinitionId(workflowDefinitionId) {
+    findExecutionByWorkflowExecutionIdInSession(
+      projectPath,
+      sessionName,
+      workflowExecutionId,
+    ) {
+      const identifier = `${projectPath}:${sessionName}:${workflowExecutionId}`;
       return timed(
-        "find_awaiting_by_definition",
+        "find_by_workflow_execution_in_session",
         "spec_execution",
-        workflowDefinitionId,
+        identifier,
         () =>
-          readOne(
-            specExecutionRowSchema,
-            "spec_execution",
-            workflowDefinitionId,
-            () =>
-              findExecutionAwaitingWorkflowByDefinitionStmt.get(
-                workflowDefinitionId,
-              ),
+          readOne(specExecutionRowSchema, "spec_execution", identifier, () =>
+            findExecutionByWorkflowExecutionInSessionStmt.get(
+              projectPath,
+              sessionName,
+              workflowExecutionId,
+            ),
+          ),
+      );
+    },
+    findExecutionAwaitingWorkflowByDefinitionIdInSession(
+      projectPath,
+      sessionName,
+      workflowDefinitionId,
+      workflowDefinitionRevision,
+    ) {
+      const identifier = `${projectPath}:${sessionName}:${workflowDefinitionId}@${workflowDefinitionRevision}`;
+      return timed(
+        "find_awaiting_by_definition_in_session",
+        "spec_execution",
+        identifier,
+        () =>
+          readOne(specExecutionRowSchema, "spec_execution", identifier, () =>
+            findExecutionAwaitingWorkflowByDefinitionInSessionStmt.get(
+              projectPath,
+              sessionName,
+              workflowDefinitionId,
+              workflowDefinitionRevision,
+            ),
           ),
       );
     },

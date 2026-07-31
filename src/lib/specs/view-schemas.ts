@@ -305,7 +305,17 @@ export const specExecutionViewSchema = z
     revisionNumber: z.number().int().positive().nullable(),
     state: specExecutionStateSchema,
     workflowDefinitionId: z.string().min(1),
+    /**
+     * The immutable workflow definition revision compiled for this execution.
+     * Null identifies a legacy row that cannot be launched safely by revision.
+     */
+    workflowDefinitionRevision: z.number().int().positive().nullable(),
     workflowExecutionId: z.string().min(1).nullable(),
+    /**
+     * The approval contract frozen on the immutable spec execution row. Null
+     * identifies a legacy row whose launch contract predates that field.
+     */
+    definitionApprovalRequired: z.boolean().nullable(),
     /**
      * Null when the stored scope does not parse. A row written by an older
      * build must not 500 the read, and an empty scope would be a different
