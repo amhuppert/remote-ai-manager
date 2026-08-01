@@ -60,6 +60,10 @@ function makeValidationEvent(
     executionId: "execution-1",
     contextId: "context-plan",
     validatorType: "context",
+    kind: "context_validation",
+    rejectedOutput: null,
+    gateRepairAttempts: null,
+    gateRepairBudget: null,
     pass: true,
     summary: "All good",
     issues: [],
@@ -1730,5 +1734,445 @@ describe("ExecutionInspectorPanel — brief markdown + focus modal", () => {
     // Disabled gates render no chip.
     expect(strip!.textContent).not.toContain("Script");
     expect(strip!.textContent).not.toContain("Questions");
+  });
+});
+
+describe("ExecutionInspectorPanel — output-schema validation card (R3.2)", () => {
+  const schemaRejection = makeValidationEvent({
+    kind: "output_schema",
+    pass: false,
+    summary: "Output rejected — 1 of 1 required field failed the contract.",
+    sessionRef: conversationValidationRef("conv-1"),
+    issues: [
+      {
+        title: "/verdict",
+        description: "not one of the allowed values",
+        path: "/verdict",
+      },
+    ],
+    rejectedOutput: '{ "verdict": "partial" }',
+    gateRepairAttempts: null,
+    gateRepairBudget: null,
+  });
+
+  function renderHistory(event: GraphWorkflowValidationResultEvent) {
+    const { execution, events } = makeExecutionWithHistory([event]);
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        onViewConversation={vi.fn()}
+      />,
+    );
+    selectDetailTab("History");
+  }
+
+  it("badges a schema rejection with its kind and drops the lane badge", () => {
+    renderHistory(schemaRejection);
+
+    expect(screen.getByText("Output schema")).toBeInTheDocument();
+    // The engine produced this verdict, not a validator lane agent.
+    expect(screen.queryByText("Context")).not.toBeInTheDocument();
+  });
+
+  it("offers no transcript link for a schema rejection", () => {
+    renderHistory(schemaRejection);
+
+    expect(
+      screen.queryByRole("button", { name: "View Transcript" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the instance path as the issue title", () => {
+    renderHistory(schemaRejection);
+
+    const title = screen.getByText("/verdict");
+    expect(title.tagName).toBe("CODE");
+  });
+
+  it("keeps the lane badge and transcript link for an agent-validator failure", () => {
+    renderHistory(
+      makeValidationEvent({
+        pass: false,
+        summary: "Root cause not evidenced",
+        sessionRef: conversationValidationRef("conv-1"),
+        issues: [
+          { title: "Missing job reference", description: "Criterion 1" },
+        ],
+      }),
+    );
+
+    expect(screen.getByText("Context")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "View Transcript" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Output schema")).not.toBeInTheDocument();
+  });
+});
+
+describe("ExecutionInspectorPanel — output-schema halt card (R3.2)", () => {
+  function outputSchemaHaltFixture(): {
+    execution: GraphWorkflowExecution;
+    events: GraphWorkflowExecutionEvent[];
+  } {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan"
+          ? { ...context, outputSchema: { type: "object", properties: {} } }
+          : context,
+    );
+    return {
+      execution: createWorkflowExecution({
+        workingDefinition: definition,
+        status: "halted",
+        haltReason: {
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "output_schema_validation",
+          failureCount: 3,
+          summary: "Output schema not satisfied",
+        },
+      }),
+      events: [
+        {
+          occurredAt: "2026-03-27T09:41:00.000Z",
+          preReset: false,
+          event: makeValidationEvent({
+            kind: "output_schema",
+            pass: false,
+            summary: "Output rejected",
+            issues: [
+              {
+                title: "/verdict",
+                description: "not one of the allowed values",
+                path: "/verdict",
+              },
+            ],
+            rejectedOutput: '{ "verdict": "partial" }',
+            gateRepairAttempts: null,
+            gateRepairBudget: null,
+          }),
+        },
+      ],
+    };
+  }
+
+  it("lists the refused instance paths in the context halt card", () => {
+    const { execution, events } = outputSchemaHaltFixture();
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(
+      /Output schema not satisfied in context-plan/,
+    );
+    expect(within(alert).getByText("/verdict")).toBeInTheDocument();
+    expect(
+      within(alert).getByText(/not one of the allowed values/),
+    ).toBeInTheDocument();
+  });
+
+  it("lists the refused instance paths on the overview card, which is the first halt surface seen", () => {
+    const { execution, events } = outputSchemaHaltFixture();
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByText("/verdict")).toBeInTheDocument();
+    expect(
+      within(alert).getByText(/not one of the allowed values/),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Edit schema on the overview card, routing the host to the refusing context", () => {
+    const { execution, events } = outputSchemaHaltFixture();
+    const onEditSchema = vi.fn();
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId={null}
+        onEditSchema={onEditSchema}
+        {...baseHandlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit schema" }));
+    expect(onEditSchema).toHaveBeenCalledWith("context-plan");
+  });
+
+  it("renders a concurrent secondary output-schema failure with its own paths", () => {
+    const { execution, events } = outputSchemaHaltFixture();
+    const withSecondary: GraphWorkflowExecution = {
+      ...execution,
+      secondaryHaltReasons: [
+        {
+          type: "circuit_breaker",
+          contextId: "context-build",
+          condition: "output_schema_validation",
+          failureCount: 2,
+          summary: "Output schema not satisfied",
+        },
+      ],
+    };
+    const withBuildRejection: GraphWorkflowExecutionEvent[] = [
+      ...events,
+      {
+        occurredAt: "2026-03-27T09:42:00.000Z",
+        preReset: false,
+        event: makeValidationEvent({
+          contextId: "context-build",
+          kind: "output_schema",
+          pass: false,
+          summary: "Output rejected",
+          issues: [
+            {
+              title: "/artifact",
+              description: "is required",
+              path: "/artifact",
+            },
+          ],
+          rejectedOutput: "{}",
+          gateRepairAttempts: null,
+          gateRepairBudget: null,
+        }),
+      },
+    ];
+
+    render(
+      <ExecutionInspectorPanel
+        execution={withSecondary}
+        events={withBuildRejection}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /1 more failure/ }));
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByText("/artifact")).toBeInTheDocument();
+    expect(within(alert).getByText(/is required/)).toBeInTheDocument();
+  });
+});
+
+describe("ExecutionInspectorPanel — captured output group", () => {
+  const outputSchema = {
+    type: "object",
+    properties: { verdict: { type: "string" } },
+    required: ["verdict"],
+  };
+
+  function withSchema(): GraphWorkflowExecution {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan" ? { ...context, outputSchema } : context,
+    );
+    return createWorkflowExecution({ workingDefinition: definition });
+  }
+
+  it("omits the Output group entirely for a context with no declared schema (R7.6)", () => {
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(container.querySelector('[data-section="output"]')).toBeNull();
+  });
+
+  it("renders the pending Output group for a schema-declaring context (R7.6)", () => {
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={withSchema()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(container.querySelector('[data-section="output"]')).not.toBeNull();
+    expect(screen.getByTestId("captured-output-contract")).toHaveTextContent(
+      "object · 1 field · 1 required",
+    );
+  });
+
+  it("renders the captured payload once the context banks its output (R7.6)", () => {
+    const execution = withSchema();
+    render(
+      <ExecutionInspectorPanel
+        execution={{
+          ...execution,
+          contextOutputs: {
+            "context-plan": {
+              value: { verdict: "pass" },
+              capturedAt: "2026-03-27T14:22:00.000Z",
+              iteration: 2,
+              parse: { source: "native" },
+            },
+          },
+        }}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByTestId("captured-output-status")).toHaveTextContent(
+      "Captured",
+    );
+    expect(screen.getByText('"verdict":')).toBeInTheDocument();
+  });
+
+  it("renders the rejected state from the recorded output-schema failure (R3.2)", () => {
+    const execution = withSchema();
+    const events: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-03-27T09:41:00.000Z",
+        preReset: false,
+        event: makeValidationEvent({
+          kind: "output_schema",
+          pass: false,
+          summary: "Output rejected — 1 issue",
+          rejectedOutput: '{ "verdict": "partial" }',
+          gateRepairAttempts: null,
+          gateRepairBudget: null,
+          issues: [{ title: "/verdict", description: "not allowed" }],
+        }),
+      },
+    ];
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByTestId("captured-output-status")).toHaveTextContent(
+      "Rejected",
+    );
+    expect(screen.getByTestId("captured-output-rejected")).toHaveTextContent(
+      '"verdict": "partial"',
+    );
+  });
+});
+
+// R7.8: the execution inspector's rows are EXECUTION-derived — the same
+// predecessors the prompt injects, with what each has actually banked.
+describe("ExecutionInspectorPanel — upstream inputs", () => {
+  const planSchema = {
+    type: "object",
+    properties: { verdict: { type: "string" }, notes: { type: "string" } },
+    required: ["verdict"],
+  };
+
+  function executionWithPlanSchema(): GraphWorkflowExecution {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan"
+          ? { ...context, outputSchema: planSchema }
+          : context,
+    );
+    return createWorkflowExecution({ workingDefinition: definition });
+  }
+
+  it("omits the block for a root context", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={executionWithPlanSchema()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByTestId("upstream-inputs")).toBeNull();
+  });
+
+  it("lists the direct predecessor with its declared fields, still uncaptured", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={executionWithPlanSchema()}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("upstream-input-row");
+    expect(rows.map((row) => row.dataset.contextId)).toEqual(["context-plan"]);
+    expect(
+      within(rows[0]!)
+        .getAllByTestId("upstream-input-field")
+        .map((chip) => chip.textContent),
+    ).toEqual(["verdict", "notes"]);
+    expect(rows[0]!.dataset.captured).toBe("false");
+  });
+
+  it("marks the predecessor captured once its output is banked", () => {
+    const execution = executionWithPlanSchema();
+    render(
+      <ExecutionInspectorPanel
+        execution={{
+          ...execution,
+          contextOutputs: {
+            "context-plan": {
+              value: { verdict: "pass", notes: "none" },
+              capturedAt: "2026-03-27T14:22:00.000Z",
+              iteration: 1,
+              parse: { source: "native" },
+            },
+          },
+        }}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(
+      screen.getAllByTestId("upstream-input-row")[0]!.dataset.captured,
+    ).toBe("true");
+  });
+
+  it("keeps a schema-less predecessor listed as prose-only", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("upstream-input-row");
+    expect(rows.map((row) => row.dataset.contextId)).toEqual(["context-plan"]);
+    expect(rows[0]!.dataset.declared).toBe("false");
+    expect(within(rows[0]!).getByTestId("upstream-input-prose")).toBeTruthy();
   });
 });

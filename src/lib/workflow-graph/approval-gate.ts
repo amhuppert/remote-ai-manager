@@ -376,6 +376,17 @@ export function createApprovalGateService(
       reason: "approval_gate.apply_rejected_decision",
     });
 
+    // A captured structured output (D2) describes the work the human just
+    // refused. The capture step is skipped whenever an output already exists,
+    // so keeping it would let the context re-complete after remediation while
+    // still carrying the pre-rejection payload. Dropping it makes the
+    // remediated work satisfy the declared contract again.
+    if (execution.contextOutputs[contextId] !== undefined) {
+      const remaining = { ...execution.contextOutputs };
+      delete remaining[contextId];
+      execution.contextOutputs = remaining;
+    }
+
     tasks.push(remediationTask);
     execution.taskStates[remediationTask.id] = {
       taskId: remediationTask.id,

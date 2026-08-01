@@ -20,6 +20,10 @@ import {
   getDisplayValidators,
 } from "./derive-graph";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import {
+  createResolvedWorkflowDefinition,
+  createWorkflowExecution,
+} from "@/lib/workflow-graph/test-fixtures";
 
 function makeDefinition(
   overrides: Partial<WorkflowSemanticDefinition> = {},
@@ -62,6 +66,7 @@ function makeExecution(
     activeTaskId: null,
     contextStates: {},
     taskStates: {},
+    contextOutputs: {},
     sharedDocuments: [],
     machineSnapshot: null,
     history: [],
@@ -806,6 +811,105 @@ describe("getDisplayApprovalGate", () => {
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
     };
     expect(getDisplayApprovalGate(ctx)).toBe(false);
+  });
+});
+
+describe("deriveNodes — output schema indicator (R7.7)", () => {
+  const schema = {
+    type: "object",
+    properties: { verdict: { type: "string" } },
+  };
+
+  /**
+   * A real resolved definition: the execution branch reads the SAME document
+   * through `getContextOutput`, so the node's `captured` verdict is only
+   * trustworthy when the fixture is the shape an execution actually carries.
+   */
+  function definitionWithSchema(): ResolvedWorkflowSemanticDefinition {
+    const base = createResolvedWorkflowDefinition();
+    const [declaring, freeForm] = base.executionContexts;
+    if (!declaring || !freeForm) {
+      throw new Error("the resolved fixture needs at least two contexts");
+    }
+    return {
+      ...base,
+      executionContexts: [{ ...declaring, outputSchema: schema }, freeForm],
+    };
+  }
+
+  function nodesFor(
+    definition: ResolvedWorkflowSemanticDefinition,
+    execution?: GraphWorkflowExecution,
+  ) {
+    return deriveNodes(definition, makeLayout(), execution);
+  }
+
+  it("omits the indicator for a context that declares no schema", () => {
+    const definition = definitionWithSchema();
+    const nodes = nodesFor(definition);
+    expect(nodes[1]!.data.outputSchema).toBeUndefined();
+  });
+
+  it("marks a declared schema uncaptured in builder mode", () => {
+    const nodes = nodesFor(definitionWithSchema());
+    expect(nodes[0]!.data.outputSchema).toEqual({ captured: false });
+  });
+
+  it("marks a declared schema uncaptured while the execution has banked nothing", () => {
+    const definition = definitionWithSchema();
+    const nodes = nodesFor(
+      definition,
+      createWorkflowExecution({ workingDefinition: definition }),
+    );
+    expect(nodes[0]!.data.outputSchema).toEqual({ captured: false });
+  });
+
+  it("marks the indicator captured once the output is banked", () => {
+    const definition = definitionWithSchema();
+    const contextId = definition.executionContexts[0]!.id;
+    const nodes = nodesFor(
+      definition,
+      createWorkflowExecution({
+        workingDefinition: definition,
+        contextOutputs: {
+          [contextId]: {
+            value: { verdict: "pass" },
+            capturedAt: "2026-03-27T10:00:00.000Z",
+            iteration: 1,
+            parse: { source: "native" },
+          },
+        },
+      }),
+    );
+    expect(nodes[0]!.data.outputSchema).toEqual({ captured: true });
+  });
+
+  // The read side keys off the CURRENT declaration, so a payload left behind by
+  // a cleared contract must not light the glyph (R7.7).
+  it("omits the indicator when the schema is gone but a payload lingers", () => {
+    const definition = definitionWithSchema();
+    const contextId = definition.executionContexts[0]!.id;
+    const cleared: ResolvedWorkflowSemanticDefinition = {
+      ...definition,
+      executionContexts: definition.executionContexts.map(
+        ({ outputSchema: _dropped, ...context }) => context,
+      ),
+    };
+    const nodes = nodesFor(
+      cleared,
+      createWorkflowExecution({
+        workingDefinition: cleared,
+        contextOutputs: {
+          [contextId]: {
+            value: { verdict: "pass" },
+            capturedAt: "2026-03-27T10:00:00.000Z",
+            iteration: 1,
+            parse: { source: "native" },
+          },
+        },
+      }),
+    );
+    expect(nodes[0]!.data.outputSchema).toBeUndefined();
   });
 });
 

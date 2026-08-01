@@ -1409,3 +1409,285 @@ describe("workflowLiveEditOperationSchema — amend-charter shape", () => {
     });
   });
 });
+
+describe("applyLiveExecutionEdits — outputSchema on the live tier (R1.1, R1.2)", () => {
+  const VALID_SCHEMA = {
+    type: "object",
+    required: ["verdict"],
+    additionalProperties: false,
+    properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+  };
+  const UNENFORCEABLE_SCHEMA = {
+    type: "object",
+    properties: { verdict: { type: "string", format: "uri" } },
+  };
+
+  /** Parse through the shared vocabulary so the tests exercise the real ops. */
+  function liveOps(...raw: unknown[]): WorkflowLiveEditOperation[] {
+    return raw.map((entry) => workflowLiveEditOperationSchema.parse(entry));
+  }
+
+  function contextOf(result: ReturnType<typeof apply>, contextId: string) {
+    if (!result.ok) throw new Error("expected the live edit batch to succeed");
+    return result.execution.workingDefinition.executionContexts.find(
+      (context) => context.id === contextId,
+    );
+  }
+
+  it("sets outputSchema on a live add-context", () => {
+    const result = apply(
+      createWorkflowExecution({ status: "paused" }),
+      liveOps({
+        type: "add-context",
+        id: "context-review",
+        title: "Review",
+        acceptanceCriteria: "Every finding is triaged.",
+        outputSchema: VALID_SCHEMA,
+      }),
+    );
+
+    expect(contextOf(result, "context-review")?.outputSchema).toEqual(
+      VALID_SCHEMA,
+    );
+  });
+
+  it("sets and then clears outputSchema through a live update-context", () => {
+    const seeded = apply(
+      createWorkflowExecution({ status: "paused" }),
+      liveOps({
+        type: "update-context",
+        contextId: "context-verify",
+        outputSchema: VALID_SCHEMA,
+      }),
+    );
+    expect(contextOf(seeded, "context-verify")?.outputSchema).toEqual(
+      VALID_SCHEMA,
+    );
+
+    if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
+    const cleared = apply(
+      seeded.execution,
+      liveOps({
+        type: "update-context",
+        contextId: "context-verify",
+        outputSchema: null,
+      }),
+    );
+
+    expect(contextOf(cleared, "context-verify")).not.toHaveProperty(
+      "outputSchema",
+    );
+  });
+
+  /**
+   * A banked payload is evidence about ONE contract. Clearing or replacing that
+   * contract makes the payload unvalidated against everything the definition
+   * now says, so the row goes with the declaration rather than surviving to be
+   * shown as this context's captured output (R7.6/R7.7).
+   */
+  it.each([
+    { label: "cleared", next: null },
+    {
+      label: "replaced",
+      next: {
+        type: "object",
+        required: ["verdict", "confidence"],
+        properties: {
+          verdict: { type: "string" },
+          confidence: { type: "number" },
+        },
+      },
+    },
+  ])(
+    "drops a banked output when its schema is $label by a live update-context",
+    ({ next }) => {
+      const seeded = createWorkflowExecution({
+        status: "paused",
+        contextOutputs: {
+          "context-verify": {
+            value: { verdict: "pass" },
+            capturedAt: "2026-07-31T10:00:00.000Z",
+            iteration: 1,
+            parse: { source: "native" },
+          },
+        },
+      });
+      seeded.workingDefinition.executionContexts =
+        seeded.workingDefinition.executionContexts.map((context) =>
+          context.id === "context-verify"
+            ? { ...context, outputSchema: VALID_SCHEMA }
+            : context,
+        );
+
+      const result = apply(
+        seeded,
+        liveOps({
+          type: "update-context",
+          contextId: "context-verify",
+          outputSchema: next,
+        }),
+      );
+
+      if (!result.ok)
+        throw new Error("expected the live edit batch to succeed");
+      expect(result.execution.contextOutputs).not.toHaveProperty(
+        "context-verify",
+      );
+    },
+  );
+
+  it("keeps a banked output when the edit re-states the same schema", () => {
+    const seeded = createWorkflowExecution({
+      status: "paused",
+      contextOutputs: {
+        "context-verify": {
+          value: { verdict: "pass" },
+          capturedAt: "2026-07-31T10:00:00.000Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+    });
+    seeded.workingDefinition.executionContexts =
+      seeded.workingDefinition.executionContexts.map((context) =>
+        context.id === "context-verify"
+          ? { ...context, outputSchema: VALID_SCHEMA }
+          : context,
+      );
+
+    const result = apply(
+      seeded,
+      liveOps({
+        type: "update-context",
+        contextId: "context-verify",
+        // Same document, different key order — an unchanged contract, so the
+        // payload it validated stays valid.
+        outputSchema: {
+          properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+          additionalProperties: false,
+          required: ["verdict"],
+          type: "object",
+        },
+      }),
+    );
+
+    if (!result.ok) throw new Error("expected the live edit batch to succeed");
+    expect(result.execution.contextOutputs["context-verify"]?.value).toEqual({
+      verdict: "pass",
+    });
+  });
+
+  it.each([
+    [
+      "add-context",
+      {
+        type: "add-context",
+        id: "context-review",
+        title: "Review",
+        acceptanceCriteria: "Every finding is triaged.",
+        outputSchema: UNENFORCEABLE_SCHEMA,
+      },
+      "executionContexts[3].outputSchema.properties.verdict.format",
+    ],
+    [
+      "update-context",
+      {
+        type: "update-context",
+        contextId: "context-verify",
+        outputSchema: UNENFORCEABLE_SCHEMA,
+      },
+      "executionContexts[2].outputSchema.properties.verdict.format",
+    ],
+  ])(
+    "refuses a live %s fail-closed with a locator naming the context and schema path",
+    (_label, operation, expectedField) => {
+      const execution = createWorkflowExecution({ status: "paused" });
+      const before = structuredClone(execution);
+
+      const result = apply(execution, liveOps(operation));
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe("invalid_edit");
+      const issue = result.issues.find(
+        (candidate) => candidate.field === expectedField,
+      );
+      expect(issue?.contextId).toBe(
+        expectedField.startsWith("executionContexts[3]")
+          ? "context-review"
+          : "context-verify",
+      );
+      expect(issue?.message).toContain("format");
+      // Fail-closed means the whole batch is refused, not partially applied.
+      expect(execution).toEqual(before);
+    },
+  );
+
+  /**
+   * `outputSchema` rides the SAME lifecycle gate as every other context field —
+   * it gets no bypass. A completed context refuses both a set and a clear.
+   * The case type is derived from the op schema itself, so a change to the
+   * field's vocabulary breaks this table at compile time.
+   */
+  type FrozenOutputSchemaCase = {
+    label: string;
+    outputSchema: Exclude<
+      Extract<
+        WorkflowLiveEditOperation,
+        { type: "update-context" }
+      >["outputSchema"],
+      undefined
+    >;
+  };
+
+  it.each<FrozenOutputSchemaCase>([
+    { label: "sets", outputSchema: VALID_SCHEMA },
+    { label: "clears", outputSchema: null },
+  ])(
+    "refuses a live update-context that $label outputSchema on a frozen context",
+    ({ outputSchema }) => {
+      const execution = createWorkflowExecution({ status: "paused" });
+      const planContext = execution.contextStates["context-plan"];
+      const planTask = execution.taskStates["task-plan-1"];
+      if (!planContext || !planTask) {
+        throw new Error("fixture must seed context-plan and task-plan-1");
+      }
+      const frozen: GraphWorkflowExecution = {
+        ...execution,
+        contextStates: {
+          ...execution.contextStates,
+          "context-plan": {
+            ...planContext,
+            status: "completed",
+            completedTaskCount: 1,
+          },
+        },
+        taskStates: {
+          ...execution.taskStates,
+          "task-plan-1": {
+            ...planTask,
+            status: "completed",
+            completedAt: "2026-03-27T16:40:00.000Z",
+          },
+        },
+      };
+      const before = structuredClone(frozen);
+
+      const result = apply(
+        frozen,
+        liveOps({
+          type: "update-context",
+          contextId: "context-plan",
+          outputSchema,
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe("frozen");
+      expect(result.issues[0]?.contextId).toBe("context-plan");
+      expect(result.issues[0]?.operationIndex).toBe(0);
+      expect(frozen).toEqual(before);
+    },
+  );
+});

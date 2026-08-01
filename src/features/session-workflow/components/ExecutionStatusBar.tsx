@@ -6,6 +6,11 @@ import { Spinner } from "@/components/ui/Spinner";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { formatGraphWorkflowHaltReason } from "@/components/workflow-graph/ContextHaltCard";
+import {
+  collectValidationResults,
+  deriveOutputSchemaHaltEvidenceByContext,
+} from "@/components/workflow-graph/derive-output-schema-halt";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import HaltDetailsDialog from "./HaltDetailsDialog";
 
 export type ExecutionControlAction = "pause" | "resume" | "abort" | "clear";
@@ -41,6 +46,14 @@ import {
 
 interface ExecutionStatusBarProps {
   execution: GraphWorkflowExecution;
+  /**
+   * The execution's event history. The bar itself only ever shows the halt
+   * headline; the details dialog needs the recorded output-schema rejection —
+   * a refused payload lives in the failure record, never on the halt reason.
+   */
+  events?: GraphWorkflowExecutionEvent[];
+  /** Opens the halted context's Config tab from the details dialog. */
+  onEditSchema?: (contextId: string) => void;
   onPause: () => void;
   onResume: (conflictGuidance?: ConflictDecisionInput[]) => void;
   onAbort: () => void;
@@ -103,6 +116,8 @@ const resumableStatuses = new Set(["paused", "halted"]);
 
 export default function ExecutionStatusBar({
   execution,
+  events,
+  onEditSchema,
   onPause,
   onResume,
   onAbort,
@@ -129,6 +144,15 @@ export default function ExecutionStatusBar({
   const haltHeadline = haltReason
     ? formatGraphWorkflowHaltReason(haltReason).headline
     : null;
+  const outputSchemaEvidence = useMemo(
+    () =>
+      deriveOutputSchemaHaltEvidenceByContext({
+        execution,
+        haltReasons: [haltReason, ...secondaryHaltReasons],
+        validationEvents: collectValidationResults(events ?? []),
+      }),
+    [execution, haltReason, secondaryHaltReasons, events],
+  );
 
   return (
     <div className="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2 max-768:flex-wrap max-768:gap-sm">
@@ -285,6 +309,8 @@ export default function ExecutionStatusBar({
           onResume={onResume}
           isMutating={isMutating}
           isResuming={pendingAction === "resume"}
+          outputSchemaEvidence={outputSchemaEvidence}
+          {...(onEditSchema !== undefined ? { onEditSchema } : {})}
         />
       )}
     </div>

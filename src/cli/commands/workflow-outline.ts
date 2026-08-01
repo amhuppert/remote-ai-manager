@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  formatOutputSchemaShape,
+  summarizeOutputSchemaShape,
+  type OutputSchemaShape,
+} from "./workflow-output-schema";
 
 /**
  * CLI-side projections over the `GET /workflows/[workflowId]` response `item`
@@ -32,6 +37,7 @@ const outlineContextSchema = z
     title: z.string(),
     description: z.string().optional(),
     acceptanceCriteria: z.string().optional(),
+    outputSchema: z.record(z.string(), z.unknown()).optional(),
   })
   .loose();
 
@@ -127,6 +133,8 @@ export interface OutlineData {
     deps: string[];
     taskCount: number;
     overrides: string[];
+    /** `null` when the context declares no output contract (free-form). */
+    outputSchema: OutputSchemaShape | null;
   }>;
   tasks: Array<{
     contextId: string;
@@ -180,6 +188,9 @@ export function buildOutlineData(record: OutlineRecord): OutlineData {
       deps: depsFor(context.id),
       taskCount: tasksByContext(context.id).length,
       overrides: presentBlockKeys(context),
+      outputSchema: context.outputSchema
+        ? summarizeOutputSchemaShape(context.outputSchema)
+        : null,
     })),
     tasks: contexts.flatMap((context) =>
       tasksByContext(context.id).map((task) => ({
@@ -229,12 +240,15 @@ export function renderOutline(record: OutlineRecord): string {
   const idWidth = Math.max(0, ...data.contexts.map((c) => c.id.length));
   for (const context of data.contexts) {
     const deps = context.deps.length > 0 ? context.deps.join(",") : "-";
+    const outputSchema = context.outputSchema
+      ? `  ${formatOutputSchemaShape(context.outputSchema)}`
+      : "";
     const overrides =
       context.overrides.length > 0
         ? `  [${context.overrides.join(", ")} override]`
         : "";
     lines.push(
-      `  ${context.id.padEnd(idWidth)}  "${context.title}"  deps=${deps}  tasks=${context.taskCount}${overrides}`,
+      `  ${context.id.padEnd(idWidth)}  "${context.title}"  deps=${deps}  tasks=${context.taskCount}${outputSchema}${overrides}`,
     );
   }
 

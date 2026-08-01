@@ -3,8 +3,10 @@ import {
   LegacyWorkflowSchemaError,
   assertDefinitionRecordSupported,
   assertExecutionSupported,
+  assertNoLegacyWorkflowFields,
 } from "./schema-cutover-guard";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
 
 const timestamp = "2026-04-04T00:00:00.000Z";
 
@@ -243,6 +245,61 @@ describe("assertDefinitionRecordSupported", () => {
       LegacyWorkflowSchemaError,
     );
   });
+
+  // A declared `outputSchema` is an author-supplied document whose property
+  // names are the AGENT'S output vocabulary, not this repo's config vocabulary.
+  // Scanning it for removed CC field names makes an arbitrary word collision
+  // ("taskValidation") an unrecoverable save/reload failure, so the subtree is
+  // opaque to legacy detection.
+  it("accepts a record whose outputSchema declares properties named after removed config fields", () => {
+    const record = makeValidDefinitionRecord();
+    const context = record.definition.executionContexts[0]! as Record<
+      string,
+      unknown
+    >;
+    context.outputSchema = {
+      type: "object",
+      properties: {
+        taskValidation: { type: "string" },
+        contextSoftLimitTokens: { type: "number" },
+        contextValidation: { type: "string" },
+        agent: { type: "string" },
+      },
+      required: ["taskValidation"],
+    };
+
+    const result = assertDefinitionRecordSupported(record);
+    expect(result.definition.executionContexts[0]?.outputSchema).toMatchObject({
+      required: ["taskValidation"],
+    });
+  });
+
+  it("accepts a record whose outputSchema describes a context-shaped or validator-shaped payload", () => {
+    const record = makeValidDefinitionRecord();
+    const context = record.definition.executionContexts[0]! as Record<
+      string,
+      unknown
+    >;
+    // `id` + `title` string values would read as an execution context missing
+    // acceptanceCriteria; `type: "claude"` beside `acceptanceCriteria` would
+    // read as a validator carrying AC. Both are ordinary schema content here.
+    context.outputSchema = {
+      type: "object",
+      properties: {
+        report: {
+          type: "object",
+          id: "report-id",
+          title: "Report",
+          properties: {
+            type: { type: "string", const: "claude" },
+            acceptanceCriteria: { type: "string" },
+          },
+        },
+      },
+    };
+
+    expect(() => assertDefinitionRecordSupported(record)).not.toThrow();
+  });
 });
 
 describe("assertExecutionSupported", () => {
@@ -250,6 +307,74 @@ describe("assertExecutionSupported", () => {
     const execution = makeValidExecution();
     const result = assertExecutionSupported(execution);
     expect(result.id).toBe("exec-1");
+  });
+
+  // A captured `contextOutputs` value is the AGENT'S output in the author's own
+  // vocabulary — the same hazard as a declared `outputSchema`, one step further
+  // removed because nobody hand-writes it. Scanning it for removed CC field
+  // names would make an execution that ran successfully unloadable on the next
+  // read, so the subtree is opaque to legacy detection.
+  it("accepts an execution whose captured contextOutputs value uses removed config field names", () => {
+    const execution = makeValidExecution();
+    // An output only exists for a context that declared a schema, so the
+    // fixture declares one that accepts exactly this payload. Both subtrees are
+    // opaque to the guard, which is the point: the collision survives whether
+    // the word appears in the declaration or in the captured value.
+    const context = execution.workingDefinition.executionContexts[0] as Record<
+      string,
+      unknown
+    >;
+    context.outputSchema = {
+      type: "object",
+      properties: {
+        taskValidation: { type: "string" },
+        contextSoftLimitTokens: { type: "integer" },
+        report: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            type: { type: "string" },
+            acceptanceCriteria: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    };
+    (execution as Record<string, unknown>).contextOutputs = {
+      "ctx-1": {
+        value: {
+          taskValidation: "reviewed",
+          contextSoftLimitTokens: 1000,
+          // `id` + `title` would otherwise read as an execution context missing
+          // acceptanceCriteria; `type: "claude"` beside `acceptanceCriteria`
+          // would read as a validator carrying AC.
+          report: {
+            id: "report-1",
+            title: "Report",
+            type: "claude",
+            acceptanceCriteria: "n/a",
+          },
+        },
+        capturedAt: timestamp,
+        iteration: 2,
+        parse: { source: "native" },
+      },
+    };
+
+    const result = assertExecutionSupported(execution);
+    expect(result.contextOutputs["ctx-1"]?.value).toMatchObject({
+      taskValidation: "reviewed",
+    });
+    // The payload really is one this context would have accepted, so the
+    // fixture models a reachable state rather than an invented one.
+    expect(
+      validateJsonSchemaSubset(
+        context.outputSchema as Record<string, unknown>,
+        result.contextOutputs["ctx-1"]?.value,
+      ),
+    ).toEqual({ valid: true });
   });
 
   it("accepts an execution whose Claude lane carries limitEvaluation metrics_unavailable", () => {
@@ -336,6 +461,28 @@ describe("assertExecutionSupported", () => {
     );
   });
 
+  it("accepts an execution whose outputSchema declares properties named after removed config fields", () => {
+    const execution = makeValidExecution();
+    (
+      execution.workingDefinition.executionContexts[0]! as Record<
+        string,
+        unknown
+      >
+    ).outputSchema = {
+      type: "object",
+      properties: {
+        taskValidation: { type: "string" },
+        contextHardLimitTokens: { type: "number" },
+      },
+      required: ["taskValidation"],
+    };
+
+    const result = assertExecutionSupported(execution);
+    expect(
+      result.workingDefinition.executionContexts[0]?.outputSchema,
+    ).toMatchObject({ required: ["taskValidation"] });
+  });
+
   it("rejects an execution with a task validator lane", () => {
     const execution = makeValidExecution();
     (execution as Record<string, unknown>).laneStates = {
@@ -383,5 +530,35 @@ describe("assertExecutionSupported", () => {
     expect(() => assertExecutionSupported(execution)).toThrow(
       LegacyWorkflowSchemaError,
     );
+  });
+});
+
+// The third entry point: the definition save boundary and the execution-seed
+// boundary both call this directly rather than going through a record/execution
+// parse, so the opacity rule is pinned here too.
+describe("assertNoLegacyWorkflowFields", () => {
+  it("still rejects a removed field on the definition itself", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (
+      definition.executionContexts[0]! as Record<string, unknown>
+    ).taskValidation = { type: "claude", enabled: true };
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).toThrow(LegacyWorkflowSchemaError);
+  });
+
+  it("accepts the same word as a property name inside a declared outputSchema", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (definition.executionContexts[0]! as Record<string, unknown>).outputSchema =
+      {
+        type: "object",
+        properties: { taskValidation: { type: "string" } },
+        required: ["taskValidation"],
+      };
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).not.toThrow();
   });
 });

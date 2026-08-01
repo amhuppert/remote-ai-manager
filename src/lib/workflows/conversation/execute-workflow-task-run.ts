@@ -21,6 +21,7 @@ import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
+import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { TranscriptMessageOrigin } from "@/lib/conversations/schemas";
 import { createLogger, type Logger } from "@/lib/logging";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
@@ -32,6 +33,7 @@ import type {
   ConversationContext,
   PromptActorResult,
   StructuredOutputFormat,
+  StructuredOutputGateRepair,
 } from "./types";
 
 const logger = createLogger("conversation.execute-workflow-task-run");
@@ -94,6 +96,9 @@ export type TaskRunResult =
   | {
       kind: "structured";
       structuredOutput: unknown;
+      /** Where the shared gate found the accepted payload. Absent when the
+       *  backend returned it natively without the gate recording provenance. */
+      parse?: AgentCallStructuredOutputParse;
       /** Joined text blocks emitted alongside the structured payload, when
        *  the runner returned both. May be the empty string. */
       text: string;
@@ -116,6 +121,14 @@ export type TaskRunResult =
       kind: "error";
       error: string;
       aborted: boolean;
+      /** Set when the structured-output gate refused the turn: its per-issue
+       *  validator errors, each prefixed with the failing instance path. */
+      structuredOutputIssues?: string[];
+      /** The gate's own bounded-repair spend and budget for the refused turn,
+       *  when its details reported both. */
+      structuredOutputRepair?: StructuredOutputGateRepair;
+      /** The assistant text the gate refused, when the turn produced one. */
+      text?: string;
       /** Full backend-native turn transcript, when the backend surfaced one. */
       transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
@@ -326,7 +339,28 @@ function waitForTaskRunCompletion(
   });
 }
 
-function mapToTaskRunResult(
+/** Joined assistant text blocks of a turn, or null when the turn produced no
+ *  result at all. */
+function joinTextBlocks(result: PromptActorResult | null): string | null {
+  if (result === null) return null;
+  return result.contentBlocks
+    .filter(
+      (block): block is { type: "text"; text: string } => block.type === "text",
+    )
+    .map((block) => block.text)
+    .join("");
+}
+
+/**
+ * The turn-result projection: `PromptActorResult` (what the conversation actor
+ * returns) → `TaskRunResult` (what every workflow caller branches on).
+ *
+ * Exported because it is the second half of the production capture path and a
+ * test that re-implements it proves nothing about what production does — the
+ * graph-workflow output-capture integration test composes it with the real
+ * `runTaskRunTurnForMachine` so both halves are the real ones.
+ */
+export function mapToTaskRunResult(
   result: PromptActorResult | null,
   error: string | null,
   outputFormat: StructuredOutputFormat | undefined,
@@ -345,12 +379,26 @@ function mapToTaskRunResult(
     result?.continuationDisposition ?? ("retain" as const);
   const transcriptFields =
     result?.transcript !== undefined ? { transcript: result.transcript } : {};
+  // Gate diagnostics ride every error variant: a schema refusal reaches the
+  // caller as an error, and the raw text plus per-issue errors are the only way
+  // it can tell "the model answered badly" from "the turn never ran".
+  const responseText = joinTextBlocks(result);
+  const gateFields = {
+    ...(result?.structuredOutputIssues !== undefined
+      ? { structuredOutputIssues: result.structuredOutputIssues }
+      : {}),
+    ...(result?.structuredOutputRepair !== undefined
+      ? { structuredOutputRepair: result.structuredOutputRepair }
+      : {}),
+    ...(responseText !== null ? { text: responseText } : {}),
+  };
 
   if (error !== null && (result === null || result.error !== null)) {
     return {
       kind: "error",
       error: error ?? result?.error ?? "task_run failed",
       aborted: result?.aborted === true,
+      ...gateFields,
       ...transcriptFields,
       usage,
       backendRef,
@@ -374,6 +422,7 @@ function mapToTaskRunResult(
       kind: "error",
       error: result.error,
       aborted: result.aborted,
+      ...gateFields,
       ...transcriptFields,
       usage,
       backendRef,
@@ -381,17 +430,15 @@ function mapToTaskRunResult(
     };
   }
 
-  const text = result.contentBlocks
-    .filter(
-      (block): block is { type: "text"; text: string } => block.type === "text",
-    )
-    .map((block) => block.text)
-    .join("");
+  const text = responseText ?? "";
 
   if (outputFormat !== undefined && result.structuredOutput !== undefined) {
     return {
       kind: "structured",
       structuredOutput: result.structuredOutput,
+      ...(result.structuredOutputParse !== undefined
+        ? { parse: result.structuredOutputParse }
+        : {}),
       text,
       ...transcriptFields,
       usage,

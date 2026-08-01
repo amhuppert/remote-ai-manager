@@ -22,9 +22,10 @@ import type {
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
-  WorkflowValidatorIssue,
+  GraphWorkflowValidationIssue,
 } from "@/lib/workflow-graph/definition-schemas";
-import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
+import type { GraphWorkflowContextOutputCaptureOutcome } from "@/lib/workflow-graph/context-output-capture";
+import { resolveConsecutiveFailureThreshold } from "./constants";
 import type { ConversationTelemetrySummary } from "./conversation-telemetry";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type {
@@ -38,6 +39,7 @@ import {
   buildFollowUpPrompt,
   type LatestContextValidationFailureFeedback,
 } from "./iteration-prompt";
+import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
 import {
   createGraphWorkflowValidationService,
   type GraphWorkflowValidationService,
@@ -184,6 +186,30 @@ interface IterationOrchestratorScriptValidatorService {
   ): Promise<ScriptValidatorOutcome>;
 }
 
+export interface GraphWorkflowContextOutputCaptureInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  /** The context's lane conversation — the format turn rides it so the payload
+   *  is restated from the work context rather than re-derived. */
+  conversationId: string;
+  outputSchema: Record<string, unknown>;
+  executionTarget?: ExecutionTarget;
+  /** The rejection recorded for this context's previous capture attempt, when
+   *  one exists, so the retry turn sees what the gate refused. */
+  previousRejection?: {
+    summary: string;
+    issues: readonly GraphWorkflowValidationIssue[];
+  };
+}
+
+interface IterationOrchestratorOutputCaptureService {
+  captureContextOutput(
+    input: GraphWorkflowContextOutputCaptureInput,
+  ): Promise<GraphWorkflowContextOutputCaptureOutcome>;
+}
+
 export interface GraphWorkflowIterationOrchestratorDeps {
   executionRepository: GraphWorkflowIterationExecutionRepository;
   /**
@@ -199,7 +225,10 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   createConversation(
     projectPath: string,
     sessionName: string,
-    opts: { role: "iteration" },
+    /** `agentBackend` is not optional decoration: the conversation service
+     *  defaults a new conversation to Claude, so a context configured for any
+     *  other backend must say so or its turns dispatch to the wrong one. */
+    opts: { role: "iteration"; agentBackend?: AgentBackendId },
   ): Promise<GraphWorkflowIterationConversation>;
   createToolServer(
     input: GraphWorkflowIterationToolServerInput,
@@ -213,6 +242,12 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   continuityService?: IterationOrchestratorContinuityService;
   validationService?: GraphWorkflowValidationService;
   scriptValidatorService?: IterationOrchestratorScriptValidatorService;
+  /**
+   * Dispatches the D2 format turn for a context that declares an
+   * `outputSchema`. Absent (or a context without a schema) leaves the exit
+   * evaluator exactly as it was — the context finalizes on validator pass.
+   */
+  outputCaptureService?: IterationOrchestratorOutputCaptureService;
   approvalGateService?: ApprovalGateService;
   /**
    * Gate that owns the `pendingUserInput` lifecycle. The orchestrator calls
@@ -302,14 +337,24 @@ export interface GraphWorkflowIterationResult {
 export class IterationHaltedError extends Error {
   readonly haltReason: GraphWorkflowHaltReason;
   readonly syntheticToolResults?: readonly ToolResultBlock[];
+  /**
+   * Set by a thrower that ALREADY wrote this failure into
+   * `consecutiveFailureCount`. Both iteration loops swallow this error and
+   * finalize, and finalize otherwise counts a swallowed halt as a fresh
+   * failure — which would leave the persisted streak one above the count the
+   * halt reason reports for the very same run.
+   */
+  readonly failureAlreadyCounted: boolean;
 
   constructor(
     haltReason: GraphWorkflowHaltReason,
     syntheticToolResults?: readonly ToolResultBlock[],
+    options: { failureAlreadyCounted?: boolean } = {},
   ) {
     super(`Iteration halted: ${haltReason.type}`);
     this.name = "IterationHaltedError";
     this.haltReason = haltReason;
+    this.failureAlreadyCounted = options.failureAlreadyCounted === true;
     if (syntheticToolResults && syntheticToolResults.length > 0) {
       this.syntheticToolResults = syntheticToolResults;
     }
@@ -477,8 +522,8 @@ function buildLatestContextValidationFailureFeedback(
     title: taskTitles.get(taskId) ?? taskId,
   }));
 
-  const scopedIssues = new Map<string, WorkflowValidatorIssue[]>();
-  const generalIssues: WorkflowValidatorIssue[] = [];
+  const scopedIssues = new Map<string, GraphWorkflowValidationIssue[]>();
+  const generalIssues: GraphWorkflowValidationIssue[] = [];
   for (const issue of latestFailure.issues) {
     if (issue.taskId && taskTitles.has(issue.taskId)) {
       const existing = scopedIssues.get(issue.taskId) ?? [];
@@ -539,10 +584,13 @@ function buildLatestContextValidationFailureFeedback(
 
 function buildTaskFailureMessages(input: {
   summary: string;
-  issues: WorkflowValidatorIssue[];
+  issues: readonly GraphWorkflowValidationIssue[];
   reopenTaskIds: string[];
 }): Record<string, string> {
-  const scopedIssuesByTaskId = new Map<string, WorkflowValidatorIssue[]>();
+  const scopedIssuesByTaskId = new Map<
+    string,
+    GraphWorkflowValidationIssue[]
+  >();
   for (const issue of input.issues) {
     if (!issue.taskId) {
       continue;
@@ -723,10 +771,7 @@ export function createGraphWorkflowIterationOrchestrator(
   function getConsecutiveFailureThreshold(
     contextDef: GraphWorkflowResolvedContext | undefined,
   ): number {
-    return (
-      contextDef?.circuitBreaker.consecutiveFailureThreshold ??
-      DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD
-    );
+    return resolveConsecutiveFailureThreshold(contextDef?.circuitBreaker);
   }
 
   function shouldTripCircuitBreaker(
@@ -1466,7 +1511,15 @@ export function createGraphWorkflowIterationOrchestrator(
             `Execution context "${input.contextId}" does not exist in runtime state`,
           );
         }
-        contextState.consecutiveFailureCount = 0;
+        // A schema-declaring context is NOT done when its validator passes — it
+        // still owes its declared output, and the validator re-runs ahead of
+        // every capture retry. Clearing the counter here would wipe each
+        // capture failure before the breaker could see it, so a context that
+        // can never satisfy its own contract would read 1,1,1… forever instead
+        // of tripping at the threshold (R3, D4).
+        if (!contextOwesOutput(reset, input.contextId)) {
+          contextState.consecutiveFailureCount = 0;
+        }
         reset.machineSnapshot = buildLifecycleSnapshot(reset, {
           hasLiveIteration: true,
         });
@@ -1488,6 +1541,346 @@ export function createGraphWorkflowIterationOrchestrator(
     );
 
     return null;
+  }
+
+  interface GraphWorkflowOutputCaptureRejection {
+    summary: string;
+    issues: readonly GraphWorkflowValidationIssue[];
+  }
+
+  /**
+   * Read back the rejection recorded for this context's last capture attempt,
+   * so a retry turn is told what the gate refused instead of guessing. Returns
+   * undefined when the latest validation event is anything else (a passing
+   * result, or a context-validator verdict).
+   *
+   * MUST be sampled before the context validator runs this iteration: the
+   * lookup resolves the single most recent validation-result row, and a context
+   * whose tasks are all done re-validates on every capture retry, so a passing
+   * context-validator verdict would otherwise bury the rejection that motivated
+   * the retry.
+   */
+  async function resolveLatestOutputSchemaRejection(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): Promise<GraphWorkflowOutputCaptureRejection | undefined> {
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === contextId,
+    );
+    // No schema, no capture service, or an output already banked: nothing can
+    // retry, so skip the read entirely rather than spending it every iteration.
+    if (
+      !deps.outputCaptureService ||
+      contextDef?.outputSchema === undefined ||
+      execution.contextOutputs[contextId] !== undefined
+    ) {
+      return undefined;
+    }
+
+    const latest = await deps.findLatestContextValidationEvent(
+      execution.id,
+      contextId,
+    );
+    const event = latest?.event;
+    if (
+      event === undefined ||
+      event.type !== "graph-workflow-validation-result" ||
+      event.kind !== "output_schema" ||
+      event.pass
+    ) {
+      return undefined;
+    }
+    return { summary: event.summary, issues: event.issues };
+  }
+
+  /**
+   * The D2 exit-evaluator branch (Req 2, 3).
+   *
+   * A context that declares an `outputSchema` and has finished its tasks is NOT
+   * complete until a validated output exists. Instead of finalizing, this
+   * dispatches one format turn on the context's lane conversation and lets the
+   * canonical structured-output gate decide:
+   *
+   *  - accepted → persist into `contextOutputs` and return null, so the caller
+   *    falls through to the normal finalize path and the context completes;
+   *  - refused  → record an `output_schema` validation failure, increment the
+   *    SAME consecutive-failure accounting the agent validator feeds, consume an
+   *    iteration slot, and either trip the breaker or return a keep-going result
+   *    so the next iteration retries the capture.
+   *
+   * Returns null for every context that does not declare a schema, for a
+   * context whose output is already captured (exactly one output per context),
+   * and whenever the capture service is not wired — those paths are byte-for-
+   * byte the pre-D2 behavior.
+   */
+  /**
+   * The conversation the format turn runs on.
+   *
+   * D3 puts the turn on the context's EXISTING implementer lane conversation so
+   * the payload is restated from the work that conversation already did, so the
+   * durable lane record wins. Two fallbacks follow it:
+   *
+   *  - the caller's own conversation, which `runIteration` resolved for this
+   *    turn (authoritative even when no continuity service manages lanes);
+   *  - a freshly created one, for a context that never opened an implementer
+   *    conversation at all — a zero-task schema context reaches capture through
+   *    the validation-only path, whose bookkeeping id is a historical task
+   *    conversation or the literal `validation-only` sentinel. Dispatching onto
+   *    either would hand the actor a conversation that does not exist.
+   *
+   * The created conversation is deliberately NOT written back into
+   * `laneStates`: lane records are the continuity module's to own, and this
+   * degenerate path has no work to carry forward anyway (a retry re-reads its
+   * previous rejection from the recorded validation failure).
+   */
+  async function resolveOutputCaptureConversationId(params: {
+    input: GraphWorkflowIterationInput;
+    execution: GraphWorkflowExecution;
+    laneConversationId: string | undefined;
+    backend: AgentBackendId;
+  }): Promise<string> {
+    const { input, execution, laneConversationId, backend } = params;
+    const durableLaneConversationId =
+      execution.laneStates[input.contextId]?.["implementer"]
+        ?.workflowConversationId;
+    if (durableLaneConversationId) {
+      return durableLaneConversationId;
+    }
+    if (laneConversationId !== undefined) {
+      return laneConversationId;
+    }
+    const conversation = await deps.createConversation(
+      input.projectPath,
+      input.sessionName,
+      // The context's OWN backend: the turn is dispatched with this context's
+      // model, effort, and timeout, and a conversation created on the service
+      // default would run them against a different backend entirely.
+      { role: "iteration", agentBackend: backend },
+    );
+    return conversation.id;
+  }
+
+  async function processContextOutputCapture(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    /** Conversation id carried on the returned iteration result. */
+    conversationId: string;
+    /**
+     * The implementer lane conversation this turn already resolved, when the
+     * caller had one. Undefined makes the capture resolve or create it rather
+     * than inherit the caller's bookkeeping id.
+     */
+    laneConversationId: string | undefined;
+    /** Sampled by the caller before this iteration's validator turn. */
+    previousRejection: GraphWorkflowOutputCaptureRejection | undefined;
+    onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
+  }): Promise<GraphWorkflowIterationResult | null> {
+    const {
+      input,
+      execLogger,
+      conversationId,
+      laneConversationId,
+      previousRejection,
+      onHalt,
+    } = params;
+    if (!deps.outputCaptureService) {
+      return null;
+    }
+
+    const execution = await loadCurrentExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (execution.status !== "running") {
+      return null;
+    }
+
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === input.contextId,
+    );
+    const outputSchema = contextDef?.outputSchema;
+    if (contextDef === undefined || outputSchema === undefined) {
+      return null;
+    }
+    // Exactly one output per context: a captured payload is never re-derived,
+    // so a re-entered validation-only iteration cannot spend another turn.
+    if (execution.contextOutputs[input.contextId] !== undefined) {
+      return null;
+    }
+    if (getIncompleteTasks(execution, input.contextId).length > 0) {
+      return null;
+    }
+
+    const captureConversationId = await resolveOutputCaptureConversationId({
+      input,
+      execution,
+      laneConversationId,
+      backend: contextDef.implementer.backend,
+    });
+
+    execLogger?.iteration(input.contextId, "output_capture.started", {
+      conversationId: captureConversationId,
+      retry: previousRejection !== undefined,
+    });
+
+    const outcome = await deps.outputCaptureService.captureContextOutput({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      execution,
+      contextId: input.contextId,
+      conversationId: captureConversationId,
+      outputSchema,
+      ...(input.executionTarget !== undefined
+        ? { executionTarget: input.executionTarget }
+        : {}),
+      ...(previousRejection !== undefined ? { previousRejection } : {}),
+    });
+
+    if (outcome.kind === "captured") {
+      const capturedAt = getNow(deps);
+      await deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (latest) => {
+          const next = cloneExecution(latest);
+          const contextState = next.contextStates[input.contextId];
+          if (!contextState) {
+            throw new Error(
+              `Execution context "${input.contextId}" does not exist in runtime state`,
+            );
+          }
+          // An accepted capture ends the failure streak. The context-validator
+          // pass could not clear it (the context still owed this output), so
+          // without this a context that recovered from a rejection would carry
+          // those failures into any later work — a rejected human approval
+          // reopens the context, and it would restart part-way to a trip.
+          contextState.consecutiveFailureCount = 0;
+          next.contextOutputs = {
+            ...next.contextOutputs,
+            [input.contextId]: {
+              value: outcome.value,
+              capturedAt,
+              // A capture always happens inside an iteration; the floor keeps
+              // the persisted record valid for a context whose first turn was
+              // a re-entered validation-only pass (no seed increment).
+              iteration: Math.max(1, contextState.iterationCount),
+              parse: outcome.parse,
+            },
+          };
+          return next;
+        },
+      );
+      execLogger?.iteration(input.contextId, "output_capture.captured", {
+        conversationId: captureConversationId,
+        source: outcome.parse.source,
+        repaired: outcome.parse.repaired === true,
+      });
+      logger.info("graph-workflow.output_capture.captured", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        source: outcome.parse.source,
+      });
+      return null;
+    }
+
+    execLogger?.validation(input.contextId, "output_capture.rejected", {
+      conversationId: captureConversationId,
+      issueCount: outcome.issues.length,
+      issuePaths: outcome.issues.map((issue) => issue.path ?? issue.title),
+    });
+    logger.warn("graph-workflow.output_capture.rejected", {
+      executionId: execution.id,
+      contextId: input.contextId,
+      issueCount: outcome.issues.length,
+    });
+
+    let failureCount = 0;
+    let iterationCount = 0;
+    const rejectedExecution = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const contextState = next.contextStates[input.contextId];
+        if (!contextState) {
+          throw new Error(
+            `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
+        // Same accounting the agent-validator failure path feeds, so a context
+        // that cannot satisfy its own output contract trips the breaker on the
+        // configured threshold rather than looping forever.
+        contextState.consecutiveFailureCount =
+          (contextState.consecutiveFailureCount ?? 0) + 1;
+        // A failed capture is a real agent turn, so it consumes an iteration
+        // slot even on the validation-only re-entry path, which seeds none (D4).
+        contextState.iterationCount += 1;
+        failureCount = contextState.consecutiveFailureCount;
+        iterationCount = contextState.iterationCount;
+        next.machineSnapshot = buildLifecycleSnapshot(next, {
+          hasLiveIteration: true,
+        });
+        const delivery = eventPublisher.publishValidationResult({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: next,
+          contextId: input.contextId,
+          validatorType: "context",
+          kind: "output_schema",
+          pass: false,
+          summary: outcome.summary,
+          issues: outcome.issues,
+          reopenTaskIds: [],
+          sessionRef: null,
+          reviewArtifact: null,
+          rejectedOutput: outcome.rejectedText,
+          gateRepair: outcome.gateRepair ?? null,
+          // The contract as it stood when it refused. A live edit may replace
+          // it while the halt is open, so the halt surfaces read the snapshot
+          // rather than the context's current schema (R3.2).
+          rejectedAgainstSchema:
+            next.workingDefinition.executionContexts.find(
+              (entry) => entry.id === input.contextId,
+            )?.outputSchema ?? null,
+        });
+        return { execution: next, ...delivery };
+      },
+    );
+
+    const threshold = getConsecutiveFailureThreshold(contextDef);
+    if (shouldTripCircuitBreaker(failureCount, threshold)) {
+      execLogger?.decision("circuit_breaker.tripped", {
+        contextId: input.contextId,
+        consecutiveFailureCount: failureCount,
+        threshold,
+        condition: "output_schema_validation",
+      });
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "circuit_breaker",
+        contextId: input.contextId,
+        condition: "output_schema_validation",
+        failureCount,
+        summary: outcome.summary,
+      };
+      await onHalt(haltReason);
+      // The rejection above already incremented the streak this halt reports.
+      throw new IterationHaltedError(haltReason, undefined, {
+        failureAlreadyCounted: true,
+      });
+    }
+
+    execLogger?.iteration(input.contextId, "output_capture.retry_scheduled", {
+      conversationId: captureConversationId,
+      consecutiveFailureCount: failureCount,
+      iterationCount,
+    });
+    return {
+      conversationId,
+      execution: rejectedExecution,
+      // The context is NOT done: the next iteration re-enters the exit
+      // evaluator and retries the capture.
+      shouldContinueInContext: true,
+    };
   }
 
   async function finalizeIterationResult(params: {
@@ -1582,6 +1975,25 @@ export function createGraphWorkflowIterationOrchestrator(
               reason: "iteration.finalize_continue",
             },
           );
+        } else if (contextOwesOutput(finalizedExecution, input.contextId)) {
+          // Reaching the finalizer with tasks done, validators passed, and no
+          // captured output means the capture did not succeed — the iteration
+          // was halted (a tripped breaker throws IterationHaltedError, which
+          // both loops swallow and still finalize). Production signal-halt
+          // records a PENDING halt and leaves `execution.status` on "running",
+          // so the guard above does not fire and this branch would otherwise
+          // write `completed` over a halted context that never produced its
+          // declared output (R2). Leave the context wherever the halt put it.
+          execLogger?.iteration(
+            input.contextId,
+            "iteration.finalize_withheld_missing_output",
+            { conversationId },
+          );
+          logger.warn("graph-workflow.iteration.finalize_withheld", {
+            executionId: finalizedExecution.id,
+            contextId: input.contextId,
+            reason: "output_not_captured",
+          });
         } else if (gateEnabled) {
           approvalGateService.enterAwaitingApproval(finalizedExecution, {
             contextId: input.contextId,
@@ -1756,14 +2168,34 @@ export function createGraphWorkflowIterationOrchestrator(
       }
     }
 
+    const conversationId = pickConversationIdForValidationOnlyIteration(
+      initialExecution,
+      input.contextId,
+    );
     let terminalErrorCaught = false;
     let parkedResult: GraphWorkflowIterationResult | null = null;
     try {
+      const previousRejection = await resolveLatestOutputSchemaRejection(
+        initialExecution,
+        input.contextId,
+      );
       parkedResult = await processContextCompletionValidation({
         input,
         execLogger,
         onHalt: signalHaltOnly,
       });
+      if (parkedResult === null) {
+        parkedResult = await processContextOutputCapture({
+          input,
+          execLogger,
+          conversationId,
+          // The validation-only path never resolved an implementer lane, so it
+          // has no lane conversation to offer — capture resolves its own.
+          laneConversationId: undefined,
+          previousRejection,
+          onHalt: signalHaltOnly,
+        });
+      }
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {
         throw error;
@@ -1776,19 +2208,18 @@ export function createGraphWorkflowIterationOrchestrator(
           message: error.message,
         },
       );
-      terminalErrorCaught = true;
+      // A thrower that already banked this failure (the output-capture
+      // rejection) must not be counted a second time by the finalizer.
+      terminalErrorCaught = !error.failureAlreadyCounted;
     }
 
-    // A validator that asked during the re-entry path parks the context; short-
-    // circuit finalize so it stays parked (Req 3.2, 3.3).
+    // A validator that asked during the re-entry path parks the context, and a
+    // refused output capture keeps it running; both short-circuit finalize
+    // (Req 3.2, 3.3).
     if (parkedResult !== null) {
       return parkedResult;
     }
 
-    const conversationId = pickConversationIdForValidationOnlyIteration(
-      initialExecution,
-      input.contextId,
-    );
     return finalizeIterationResult({
       input,
       execLogger,
@@ -2250,6 +2681,12 @@ export function createGraphWorkflowIterationOrchestrator(
               collaborationContinuations,
               resumeUserInput: resumeUserInputPrompt,
               previousConversationHandoff,
+              // What this context receives (D2 Req 5) — the same resolver the
+              // inspector UI and, later, D4 conditional edges read.
+              upstreamInputs: resolveUpstreamInputs(
+                seededExecution,
+                input.contextId,
+              ),
             });
 
       // Log the prompt sent to the agent
@@ -2343,6 +2780,13 @@ export function createGraphWorkflowIterationOrchestrator(
       }
 
       let stoppedForCollaboration = false;
+
+      // Sampled before the validator turn below, which would otherwise bury the
+      // rejection this iteration is retrying (see the resolver's contract).
+      const previousOutputRejection = await resolveLatestOutputSchemaRejection(
+        initialExecution,
+        input.contextId,
+      );
 
       // Per-turn billing (audit telemetry): conversation-grained cost cannot
       // attribute dollars to iterations or turns, so each turn record carries
@@ -2593,6 +3037,19 @@ export function createGraphWorkflowIterationOrchestrator(
           onHalt: haltIteration,
         });
       }
+
+      if (!stoppedForCollaboration && parkedResult === null) {
+        // Last exit gate: a schema-declaring context whose tasks and validators
+        // are done still needs its validated output before it may complete.
+        parkedResult = await processContextOutputCapture({
+          input,
+          execLogger,
+          conversationId: conversation.id,
+          laneConversationId: conversation.id,
+          previousRejection: previousOutputRejection,
+          onHalt: haltIteration,
+        });
+      }
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {
         // Park before failure classification (design "Park detection" ordering).
@@ -2624,7 +3081,9 @@ export function createGraphWorkflowIterationOrchestrator(
             message: error.message,
           },
         );
-        terminalErrorCaught = true;
+        // See the validation-only path: a halt whose thrower already banked the
+        // failure must not be counted again by the finalizer.
+        terminalErrorCaught = !error.failureAlreadyCounted;
       }
     } finally {
       await toolServer.close?.();

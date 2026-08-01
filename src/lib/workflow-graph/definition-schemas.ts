@@ -55,6 +55,21 @@ export const workflowLockedRegionSchema = z.object({
 });
 export type WorkflowLockedRegion = z.infer<typeof workflowLockedRegionSchema>;
 
+/**
+ * A JSON Schema document an execution context's final output must conform to.
+ *
+ * Semantic identity, NOT operational config: per-context only — no workflow- or
+ * global-tier default participates, because a shared output shape across
+ * heterogeneous contexts is meaningless (D1). Opaque here by design: the
+ * supported-keyword subset is enforced fail-closed at accept time
+ * (`validateWorkflowDefinition`), so an author sees a located, actionable
+ * refusal naming the offending keyword instead of an opaque Zod failure.
+ *
+ * Exported so every surface that can set the field — both context schemas and
+ * all four edit operations in `workflows/edit-schemas.ts` — declares it once.
+ */
+export const contextOutputSchemaSchema = z.record(z.string(), z.unknown());
+
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -63,6 +78,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
     z.string().trim().min(1).optional(),
   ),
   acceptanceCriteria: z.string().trim().min(1),
+  outputSchema: contextOutputSchemaSchema.optional(),
   implementer: graphWorkflowAgentConfigSchema.optional(),
   contextValidator: contextValidatorOverrideSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
@@ -283,6 +299,10 @@ export const graphWorkflowResolvedContextSchema = z.object({
   description: z.string().trim().min(1).optional(),
   acceptanceCriteria: z.string().trim().min(1),
   origin: workflowOriginSchema.optional(),
+  // Mirrored verbatim from the authored context — an identity field, not a
+  // cascade result. Absent on contexts whose author declared none, and on every
+  // execution seeded before the field existed.
+  outputSchema: contextOutputSchemaSchema.optional(),
   implementer: graphWorkflowAgentConfigSchema,
   contextValidator: graphWorkflowAgentValidatorConfigSchema.nullable(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.default({
@@ -372,6 +392,25 @@ export const workflowValidatorIssueSchema = z.object({
 });
 export type WorkflowValidatorIssue = z.infer<
   typeof workflowValidatorIssueSchema
+>;
+
+/**
+ * An issue as RECORDED on a validation result, which is a wider surface than
+ * the agent validator's own output contract above.
+ *
+ * `taskId` is optional here because not every validation is task-scoped: an
+ * output-schema rejection (D2) is located by instance path inside the rejected
+ * payload, not by task. `path` carries that location; for a task-scoped issue it
+ * is simply absent. The agent validator's parse contract keeps `taskId`
+ * required, so widening here cannot loosen what a validator may return.
+ */
+export const graphWorkflowValidationIssueSchema =
+  workflowValidatorIssueSchema.extend({
+    taskId: z.string().trim().min(1).optional(),
+    path: z.string().trim().min(1).optional(),
+  });
+export type GraphWorkflowValidationIssue = z.infer<
+  typeof graphWorkflowValidationIssueSchema
 >;
 
 export const workflowAgentValidatorResultSchema = z.object({

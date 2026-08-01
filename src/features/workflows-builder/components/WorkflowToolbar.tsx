@@ -38,6 +38,13 @@ interface WorkflowToolbarProps {
   /** True while the delete-definition mutation is in flight. */
   deleting?: boolean;
   hasValidationErrors: boolean;
+  /**
+   * The draft holds editor text no commit could accept (today: an output schema
+   * outside the engine's supported subset). Saving would persist the last valid
+   * value under fresh red text, so the action is refused rather than silently
+   * dropping the edit.
+   */
+  saveBlocked?: boolean;
   isMobile?: boolean;
 }
 
@@ -55,8 +62,12 @@ export default function WorkflowToolbar({
   saving,
   deleting = false,
   hasValidationErrors,
+  saveBlocked = false,
   isMobile,
 }: WorkflowToolbarProps) {
+  const saveTitle = saveBlocked
+    ? "The output schema is not accepted by the engine"
+    : undefined;
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState(workflowName);
   const [overflowOpen, setOverflowOpen] = useState(false);
@@ -167,7 +178,8 @@ export default function WorkflowToolbar({
               "max-768:min-h-[44px]",
             )}
             onClick={onSave}
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || saveBlocked}
+            title={saveTitle}
             type="button"
           >
             {saving ? "Saving..." : "Save"}
@@ -269,7 +281,8 @@ export default function WorkflowToolbar({
         <button
           className={cn(WB_BTN_BASE, WB_BTN_SM, WB_BTN_PRIMARY)}
           onClick={onSave}
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || saveBlocked}
+          title={saveTitle}
           type="button"
         >
           {saving ? "Saving..." : "Save Draft"}

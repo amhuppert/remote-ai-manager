@@ -40,7 +40,12 @@ import {
   type OutlineRecord,
   type SliceResult,
 } from "./workflow-outline";
-import { liveOutlineSchema, renderLiveOutline } from "./workflow-live-outline";
+import {
+  liveOutlineSchema,
+  liveOutputsSchema,
+  renderLiveOutline,
+  renderLiveOutputs,
+} from "./workflow-live-outline";
 
 /**
  * `cctl workflow validate|create|replace|list|get|status|delete|start|templates`
@@ -1048,8 +1053,10 @@ function remainingTasksHint(remaining: number): string {
  * `?context` / `?task` / `?config=<ctx>` (doc 06 §CLI surface: `--config <id>`
  * returns one context's FULL resolved config); `full` and `charter` (booleans)
  * map to `?full=true` / `?charter=true` (doc 07: the charter selector returns
- * the rendered charter document + amendment log). All are mutually exclusive;
- * the default (no selector) is the compact text outline.
+ * the rendered charter document + amendment log). `outputs` (boolean) maps to
+ * `?outputs=true` — the captured/pending structured output of every
+ * schema-declaring context (R7.2). All are mutually exclusive; the default (no
+ * selector) is the compact text outline.
  */
 const LIVE_GET_SELECTOR_FLAGS = [
   "full",
@@ -1057,6 +1064,7 @@ const LIVE_GET_SELECTOR_FLAGS = [
   "task",
   "config",
   "charter",
+  "outputs",
 ] as const;
 
 const liveEditResponseSchema = z.object({
@@ -1136,6 +1144,7 @@ async function runWorkflowLiveGet(
   const params = new URLSearchParams();
   if (selector === "full") params.set("full", "true");
   else if (selector === "charter") params.set("charter", "true");
+  else if (selector === "outputs") params.set("outputs", "true");
   else if (selector === "context")
     params.set("context", values["context"] ?? "");
   else if (selector === "task") params.set("task", values["task"] ?? "");
@@ -1159,6 +1168,7 @@ async function runWorkflowLiveGet(
 
   // Default (no selector) → the compact text outline; --charter → the rendered
   // charter document itself (markdown is the readable form, not a JSON dump);
+  // --outputs → the capture table with each payload printed beneath its row;
   // any other section selector (--context/--task/--config/--full) → the
   // full-prose/full-config slice as JSON (same discipline as `workflow get`).
   let humanText: string;
@@ -1171,6 +1181,11 @@ async function runWorkflowLiveGet(
     humanText = parsed.success
       ? `${renderLiveOutline(parsed.data)}\n`
       : `${JSON.stringify(body, null, 2)}\n`;
+  } else if (selector === "outputs") {
+    const parsed = liveOutputsSchema.safeParse(body);
+    humanText = parsed.success
+      ? renderLiveOutputs(parsed.data)
+      : `${JSON.stringify(liveOutlineSectionValue(body), null, 2)}\n`;
   } else if (selector === "charter") {
     const section = liveOutlineSectionValue(body);
     const markdown =

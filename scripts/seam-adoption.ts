@@ -853,10 +853,20 @@ export const SEAMS: readonly SeamDefinition[] = [
     reviewedCeiling: 25,
     unit: "const *_JSON_SCHEMA/*_OUTPUT_SCHEMA = { … } declarations + inline object literals flowing into outputSchema / outputFormat.schema",
     corpus:
-      "src/**/*.{ts,tsx} minus tests. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. Empty allowlist by design, so any new hand-written schema literal still fails the ratchet until the reviewed ceiling is intentionally updated.",
-    allowlist: [],
+      "src/**/*.{ts,tsx} minus tests; excludes src/lib/shared/testing/ (fixture modules the `.test.` filename filter misses). Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. The allowlist covers only test-fixture directories, so any new hand-written schema literal in production code still fails the ratchet until the reviewed ceiling is intentionally updated.",
+    allowlist: [
+      {
+        path: "src/lib/shared/testing/",
+        justification:
+          "Test-only fixture modules (never imported by production code). A maximal round-trip fixture must carry a distinctive value for the per-context `outputSchema` field — an opaque author-supplied JSON Schema document with no Zod contract behind it, so the canonical generator can never supply it. Deletion condition: this entry drops if the fixture directory stops needing a literal output-schema document.",
+      },
+    ],
     inCorpus(relPath) {
-      return isTsSource(relPath) && !isTestPath(relPath);
+      return (
+        isTsSource(relPath) &&
+        !isTestPath(relPath) &&
+        !matchesAllowlist(relPath, this.allowlist)
+      );
     },
     count: (source) => countStructuredOutputProjections(source),
   },

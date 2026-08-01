@@ -195,6 +195,19 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: true },
+        // `taskValidation` is a removed CC config field name reused here as an
+        // ordinary output property: the cutover guard runs on every definition
+        // read, so this pins the outputSchema subtree as opaque to it.
+        outputSchema: {
+          type: "object",
+          properties: {
+            verdict: { type: "string", enum: ["pass", "fail"] },
+            taskValidation: { type: "string" },
+            findings: { type: "array", items: { type: "string" } },
+          },
+          required: ["verdict"],
+          additionalProperties: false,
+        },
       },
       // A second context exists only as the edge target so the single
       // representative edge can connect two distinct contexts (a self-loop

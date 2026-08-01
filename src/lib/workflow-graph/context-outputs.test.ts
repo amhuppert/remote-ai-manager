@@ -1,0 +1,342 @@
+import { describe, expect, it } from "vitest";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import {
+  createResolvedWorkflowDefinition,
+  createWorkflowDefinition,
+  createWorkflowExecution,
+} from "@/lib/workflow-graph/test-fixtures";
+import {
+  contextOwesOutput,
+  getContextOutput,
+  resolveDefinitionUpstreamInputs,
+  resolveUpstreamInputs,
+} from "./context-outputs";
+
+const PLAN_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    summary: { type: "string", description: "One-line plan summary" },
+    risks: { type: "array", items: { type: "string" } },
+    confidence: { type: "number" },
+  },
+  required: ["summary", "risks"],
+  additionalProperties: false,
+};
+
+const PLAN_OUTPUT = {
+  summary: "Migrate the store first",
+  risks: ["schema drift"],
+  confidence: 0.8,
+};
+
+/**
+ * The fixture graph is plan → implement → verify. `schemas` declares which
+ * contexts carry an `outputSchema`; `outputs` which of them have banked one.
+ */
+function makeExecution(options: {
+  schemas?: Record<string, Record<string, unknown>>;
+  outputs?: Record<string, Record<string, unknown>>;
+  extraEdges?: Array<{
+    id: string;
+    sourceContextId: string;
+    targetContextId: string;
+  }>;
+}): GraphWorkflowExecution {
+  const definition = createResolvedWorkflowDefinition();
+  const withSchemas = {
+    ...definition,
+    executionContexts: definition.executionContexts.map((context) => {
+      const outputSchema = options.schemas?.[context.id];
+      return outputSchema ? { ...context, outputSchema } : context;
+    }),
+    edges: [...definition.edges, ...(options.extraEdges ?? [])],
+  };
+
+  const base = createWorkflowExecution({ workingDefinition: withSchemas });
+  return {
+    ...base,
+    contextOutputs: Object.fromEntries(
+      Object.entries(options.outputs ?? {}).map(([contextId, value]) => [
+        contextId,
+        {
+          value,
+          capturedAt: "2026-03-27T16:10:00.000Z",
+          iteration: 1,
+          parse: { source: "raw_json" as const },
+        },
+      ]),
+    ),
+  };
+}
+
+describe("getContextOutput", () => {
+  it("returns the captured output for a context that banked one", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+      outputs: { "context-plan": PLAN_OUTPUT },
+    });
+
+    const result = getContextOutput(execution, "context-plan");
+
+    expect(result.kind).toBe("captured");
+    if (result.kind !== "captured") return;
+    expect(result.value).toEqual(PLAN_OUTPUT);
+    expect(result.output.capturedAt).toBe("2026-03-27T16:10:00.000Z");
+    expect(result.output.parse).toEqual({ source: "raw_json" });
+  });
+
+  it("distinguishes a context still owing an output from one that never owed one", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+    });
+
+    // Declares a contract, has not satisfied it yet.
+    expect(getContextOutput(execution, "context-plan")).toEqual({
+      kind: "pending",
+      outputSchema: PLAN_SCHEMA,
+    });
+    // Free-form context: absence is the steady state, not a missing value.
+    expect(getContextOutput(execution, "context-implement")).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("reports an unknown context id as none rather than throwing", () => {
+    const execution = makeExecution({});
+
+    expect(getContextOutput(execution, "context-does-not-exist")).toEqual({
+      kind: "none",
+    });
+  });
+
+  // The declaration is what makes a payload an OUTPUT: one banked against a
+  // contract that no longer exists is evidence about nothing the current
+  // definition promises. It stays readable (the CLI outline still reports it)
+  // but it is not `captured`, so no surface can present it as the contract's
+  // satisfied result.
+  it("reports a banked payload whose schema is no longer declared as orphaned", () => {
+    const execution = makeExecution({
+      outputs: { "context-plan": PLAN_OUTPUT },
+    });
+
+    const lookup = getContextOutput(execution, "context-plan");
+    expect(lookup.kind).toBe("orphaned");
+    if (lookup.kind !== "orphaned") return;
+    expect(lookup.output.value).toEqual(PLAN_OUTPUT);
+    // Nothing owes it and nothing downstream may consume it as an input.
+    expect(contextOwesOutput(execution, "context-plan")).toBe(false);
+    expect(
+      resolveUpstreamInputs(execution, "context-implement")[0]?.output,
+    ).toBeNull();
+  });
+});
+
+describe("resolveUpstreamInputs", () => {
+  it("returns only direct predecessors, in graph order", () => {
+    // plan → implement → verify, plus a direct plan → verify edge, so verify
+    // has two direct predecessors and implement has one.
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+      outputs: { "context-plan": PLAN_OUTPUT },
+      extraEdges: [
+        {
+          id: "edge-plan-verify",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+        },
+      ],
+    });
+
+    expect(
+      resolveUpstreamInputs(execution, "context-verify").map(
+        (entry) => entry.contextId,
+      ),
+      // Declared edge order is implement→verify then plan→verify; graph order
+      // (the context list) puts plan first.
+    ).toEqual(["context-plan", "context-implement"]);
+
+    // A transitive ancestor is NOT an input: only direct predecessors are.
+    expect(
+      resolveUpstreamInputs(execution, "context-implement").map(
+        (entry) => entry.contextId,
+      ),
+    ).toEqual(["context-plan"]);
+    expect(resolveUpstreamInputs(execution, "context-plan")).toEqual([]);
+  });
+
+  it("carries each predecessor's title, declared fields, and captured output", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+      outputs: { "context-plan": PLAN_OUTPUT },
+    });
+
+    const [plan] = resolveUpstreamInputs(execution, "context-implement");
+
+    expect(plan).toMatchObject({
+      contextId: "context-plan",
+      title: "Plan",
+      output: PLAN_OUTPUT,
+    });
+    expect(plan?.schemaFields).toEqual([
+      {
+        name: "summary",
+        type: "string",
+        required: true,
+        description: "One-line plan summary",
+      },
+      { name: "risks", type: "array", required: true, description: null },
+      {
+        name: "confidence",
+        type: "number",
+        required: false,
+        description: null,
+      },
+    ]);
+  });
+
+  it("carries a schema-declaring predecessor that has not produced its output yet", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+    });
+
+    const [plan] = resolveUpstreamInputs(execution, "context-implement");
+
+    expect(plan?.output).toBeNull();
+    expect(plan?.schemaFields).not.toBeNull();
+  });
+
+  it("carries a free-form predecessor with null fields and null output", () => {
+    const execution = makeExecution({});
+
+    const [plan] = resolveUpstreamInputs(execution, "context-implement");
+
+    expect(plan).toEqual({
+      contextId: "context-plan",
+      title: "Plan",
+      declared: false,
+      schemaFields: null,
+      output: null,
+    });
+  });
+
+  it("reports a declared bare-object schema as declared, with no field list to show", () => {
+    // A valid subset declaration: it constrains the payload to an object
+    // without naming properties. `schemaFields` is null because there is no
+    // field list, which is NOT the same as declaring nothing.
+    const execution = makeExecution({
+      schemas: { "context-plan": { type: "object" } },
+      outputs: { "context-plan": PLAN_OUTPUT },
+    });
+
+    const [plan] = resolveUpstreamInputs(execution, "context-implement");
+
+    expect(plan?.declared).toBe(true);
+    expect(plan?.schemaFields).toBeNull();
+    expect(plan?.output).toEqual(PLAN_OUTPUT);
+  });
+
+  it("reports a declared root-oneOf schema as declared", () => {
+    const execution = makeExecution({
+      schemas: {
+        "context-plan": {
+          oneOf: [
+            { type: "object", properties: { ok: { type: "boolean" } } },
+            { type: "object", properties: { error: { type: "string" } } },
+          ],
+        },
+      },
+    });
+
+    const [plan] = resolveUpstreamInputs(execution, "context-implement");
+
+    expect(plan?.declared).toBe(true);
+    expect(plan?.schemaFields).toBeNull();
+  });
+});
+
+describe("resolveDefinitionUpstreamInputs", () => {
+  it("answers Q2 the same way for an authored definition, with no output banked", () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      executionContexts: base.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? { ...context, outputSchema: PLAN_SCHEMA }
+          : context,
+      ),
+      edges: [
+        ...base.edges,
+        {
+          id: "edge-plan-verify",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+        },
+      ],
+    };
+
+    // Direct predecessors only, in graph order — a definition has nowhere to
+    // bank an output, so every row reports `output: null`.
+    expect(
+      resolveDefinitionUpstreamInputs(definition, "context-verify"),
+    ).toEqual([
+      {
+        contextId: "context-plan",
+        title: "Plan",
+        declared: true,
+        schemaFields: [
+          {
+            name: "summary",
+            type: "string",
+            required: true,
+            description: "One-line plan summary",
+          },
+          { name: "risks", type: "array", required: true, description: null },
+          {
+            name: "confidence",
+            type: "number",
+            required: false,
+            description: null,
+          },
+        ],
+        output: null,
+      },
+      {
+        contextId: "context-implement",
+        title: "Implement",
+        declared: false,
+        schemaFields: null,
+        output: null,
+      },
+    ]);
+    expect(resolveDefinitionUpstreamInputs(definition, "context-plan")).toEqual(
+      [],
+    );
+  });
+
+  it("is the single edge-walk behind the execution-side resolver", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+      outputs: { "context-plan": PLAN_OUTPUT },
+      extraEdges: [
+        {
+          id: "edge-plan-verify",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+        },
+      ],
+    });
+
+    // Same rows, same order; the execution-side resolver adds only the banked
+    // payloads, so the Q2 scope answer cannot drift between the two surfaces.
+    expect(
+      resolveUpstreamInputs(execution, "context-verify").map(
+        ({ output: _output, ...row }) => row,
+      ),
+    ).toEqual(
+      resolveDefinitionUpstreamInputs(
+        execution.workingDefinition,
+        "context-verify",
+      ).map(({ output: _output, ...row }) => row),
+    );
+  });
+});

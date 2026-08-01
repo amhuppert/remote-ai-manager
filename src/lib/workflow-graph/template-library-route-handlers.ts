@@ -1,15 +1,11 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type { ApiError } from "@/lib/api/errors";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
-import {
-  graphWorkflowVisualLayoutSchema,
-  workflowSemanticDefinitionSchema,
-} from "@/lib/workflow-graph/definition-schemas";
+import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
 import { resolveWorkflowDefinition } from "./resolve-config";
 import {
   createWorkflowStorageService,
@@ -21,13 +17,6 @@ import {
   type TemplateLibraryItem,
 } from "./template-library-service";
 import { runDefinitionEditRequest } from "@/lib/workflows/definition-edit-handler";
-
-const workflowDefinitionMutationSchema = z.object({
-  name: z.string().trim().min(1),
-  description: z.string().trim().min(1).nullable().optional(),
-  definition: workflowSemanticDefinitionSchema,
-  layout: graphWorkflowVisualLayoutSchema,
-});
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -73,31 +62,20 @@ const defaultDeps: TemplateLibraryRouteDeps = {
     defaultStorage.delete({ kind: "global" }, workflowId),
 };
 
-function parseMutationBody(
-  raw: unknown,
-):
-  | { ok: true; draft: WorkflowDefinitionDraft }
-  | { ok: false; detail: string } {
-  const parsed = workflowDefinitionMutationSchema.safeParse(raw);
-  if (!parsed.success) {
-    const detail = parsed.error.issues
-      .map((i) => `${i.path.join(".")}: ${i.message}`)
-      .join("; ");
-    return {
-      ok: false,
-      detail: detail || "name, definition, and layout are required",
-    };
-  }
-
-  return {
-    ok: true,
-    draft: {
-      name: parsed.data.name,
-      description: parsed.data.description ?? null,
-      definition: parsed.data.definition,
-      layout: parsed.data.layout,
-    },
-  };
+/**
+ * The global tier accepts a plan through the SAME validator as the per-project
+ * create/replace routes (`validateWorkflowPlan`), not a local re-parse. That is
+ * what makes a semantic rejection here carry a JSON-path locator: storage's
+ * accept-time gate can only throw a comma-joined list of error CODES, which
+ * names neither the offending context nor the field inside it.
+ */
+function invalidPlanResponse(
+  issues: ReadonlyArray<{ path: string; message: string }>,
+): Response {
+  return NextResponse.json(
+    { error: "Workflow plan is invalid", issues },
+    { status: 400 },
+  );
 }
 
 export function createTemplateLibraryRouteHandlers(
@@ -127,16 +105,15 @@ export function createTemplateLibraryRouteHandlers(
     request: Request,
     _context: RouteContext,
   ): Promise<Response> {
-    const parsed = parseMutationBody(await request.json().catch(() => null));
-    if (!parsed.ok) {
-      return NextResponse.json(
-        { error: `Invalid request: ${parsed.detail}` } satisfies ApiError,
-        { status: 400 },
-      );
+    const validation = validateWorkflowPlan(
+      await request.json().catch(() => null),
+    );
+    if (!validation.ok) {
+      return invalidPlanResponse(validation.issues);
     }
 
     try {
-      const item = await deps.createGlobal(parsed.draft);
+      const item = await deps.createGlobal(validation.draft);
       return NextResponse.json({ item }, { status: 201 });
     } catch (error) {
       const message =
@@ -167,16 +144,15 @@ export function createTemplateLibraryRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { workflowId = "" } = await context.params;
-    const parsed = parseMutationBody(await request.json().catch(() => null));
-    if (!parsed.ok) {
-      return NextResponse.json(
-        { error: `Invalid request: ${parsed.detail}` } satisfies ApiError,
-        { status: 400 },
-      );
+    const validation = validateWorkflowPlan(
+      await request.json().catch(() => null),
+    );
+    if (!validation.ok) {
+      return invalidPlanResponse(validation.issues);
     }
 
     try {
-      const item = await deps.updateGlobal(workflowId, parsed.draft);
+      const item = await deps.updateGlobal(workflowId, validation.draft);
       return NextResponse.json({ item });
     } catch (error) {
       const message =

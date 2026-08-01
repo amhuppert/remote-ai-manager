@@ -25,6 +25,11 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import {
+  validateJsonSchemaSubset,
+  validateOutputSchemaDeclaration,
+} from "@/lib/workflows/primitives/output-schema-subset";
 
 type Db = InstanceType<typeof Database>;
 
@@ -136,6 +141,139 @@ describe("graph-workflow-executions-repo durability contract", () => {
       },
       reload: () => repo.getActive(PROJECT_PATH, SESSION_NAME),
     });
+  });
+});
+
+describe("graph-workflow-executions-repo captured context outputs", () => {
+  // R4.1: the captured structured output is durable state, not an in-memory
+  // convenience. The real persistence fixture supplies the production DDL and
+  // the real FK-parent repositories, and the reload runs through a repo
+  // instance that never saw the write, so nothing but the SQLite row can
+  // satisfy the assertion.
+  it("round-trips a non-trivial per-context structured output through setActive -> getActive", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+
+      // The maximal fixture's own captured output — one definition of the
+      // payload, shared with the durability harness, so the two cannot drift.
+      const execution = maximalExecution();
+      const captured = execution.contextOutputs["ctx-1"];
+      if (captured === undefined) throw new Error("fixture output missing");
+
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+
+      // A repo instance that never saw the write has no parsed-row cache to
+      // answer from — this is the post-restart read.
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+
+      expect(reloaded?.contextOutputs["ctx-1"]).toEqual(captured);
+      // Spot-check the nested payload survives whole: a dropped array element or
+      // a null coerced to undefined would still satisfy a shallow key check.
+      const value = reloaded?.contextOutputs["ctx-1"]?.value;
+      expect(value).toMatchObject({
+        verdict: "pass",
+        taskValidation: "reviewed",
+        score: 0.94,
+        followUp: null,
+      });
+      expect(value?.["findings"]).toEqual([
+        {
+          id: "f-1",
+          severity: "high",
+          file: "src/lib/foo.ts",
+          line: 42,
+          tags: ["perf", "api"],
+        },
+      ]);
+
+      // The reloaded payload is still an ACCEPTED output for its context — the
+      // round-trip preserved conformance, not just bytes.
+      const authored = execution.workingDefinition.executionContexts.find(
+        (context) => context.id === "ctx-1",
+      )?.outputSchema;
+      if (authored === undefined) throw new Error("ctx-1 outputSchema missing");
+      expect(validateJsonSchemaSubset(authored, value)).toEqual({
+        valid: true,
+      });
+    } finally {
+      fixture.close();
+    }
+  });
+
+  // D5 admits only successfully validated candidates into contextOutputs —
+  // rejected ones live in the validation-failure records. A durability fixture
+  // is evidence about a real persisted state, so an entry its own context's
+  // authored schema would reject proves nothing about a state the engine can
+  // reach. Checked against the canonical validator rather than by eye, and over
+  // EVERY entry, so it keeps holding as fixtures grow.
+  it("only carries context outputs their own context's authored outputSchema accepts", () => {
+    const execution = maximalExecution();
+    const entries = Object.entries(execution.contextOutputs);
+    expect(
+      entries.length,
+      "the maximal fixture must carry at least one captured output",
+    ).toBeGreaterThan(0);
+
+    for (const [contextId, output] of entries) {
+      const authored = execution.workingDefinition.executionContexts.find(
+        (context) => context.id === contextId,
+      )?.outputSchema;
+      expect(
+        authored,
+        `${contextId} has a captured output, so it must declare an outputSchema`,
+      ).toBeDefined();
+      if (authored === undefined) continue;
+      // The declaration itself must be inside the supported subset, or the
+      // acceptance below would be vacuous (unenforced keywords silently pass).
+      expect(
+        validateOutputSchemaDeclaration(authored),
+        `${contextId} outputSchema must be a legal declaration`,
+      ).toEqual([]);
+      expect(
+        validateJsonSchemaSubset(authored, output.value),
+        `${contextId} captured output must be accepted by its authored schema`,
+      ).toEqual({ valid: true });
+    }
+  });
+
+  it("admits a pre-feature row with no contextOutputs via the additive default of {}", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const row = db
+      .prepare(
+        `SELECT runtime_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { runtime_json: string };
+    const runtime = JSON.parse(row.runtime_json) as Record<string, unknown>;
+    expect(
+      Object.keys(runtime.contextOutputs as Record<string, unknown>).length > 0,
+      "fixture must persist a non-default contextOutputs map",
+    ).toBe(true);
+    delete runtime.contextOutputs;
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(runtime), PROJECT_PATH, SESSION_NAME);
+
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    const loaded = freshRepo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.contextOutputs).toEqual({});
   });
 });
 

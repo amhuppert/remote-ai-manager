@@ -351,6 +351,58 @@ function buildMaximalEvent(): GraphWorkflowExecutionEvent {
   });
 }
 
+describe("graph-workflow-events-repo output-schema rejection durability", () => {
+  it("round-trips the refused payload, per-issue paths and gate-repair spend", () => {
+    const rejection = graphWorkflowExecutionEventSchema.parse({
+      occurredAt: "2026-02-15T08:09:10Z",
+      event: {
+        type: "graph-workflow-validation-result",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        contextId: "ctx-1",
+        validatorType: "context",
+        kind: "output_schema",
+        pass: false,
+        summary: "Output rejected",
+        issues: [
+          { title: "/verdict", description: "wrong type", path: "/verdict" },
+        ],
+        reopenTaskIds: [],
+        rejectedOutput: '{ "verdict": 4 }',
+        gateRepairAttempts: 1,
+        gateRepairBudget: 1,
+        rejectedAgainstSchema: {
+          type: "object",
+          properties: { verdict: { type: "string" } },
+        },
+      },
+      preReset: false,
+    });
+    repo.appendMany(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, "2026-02-15Z", [
+      rejection,
+    ]);
+
+    // The halt surfaces read these off the reloaded event, so a field dropped
+    // at the serialization boundary silently degrades the halt to a summary.
+    const reloaded = repo.findByExecution(EXECUTION_ID)[0]?.event;
+    expect(reloaded?.type).toBe("graph-workflow-validation-result");
+    if (reloaded?.type !== "graph-workflow-validation-result") return;
+    expect(reloaded.kind).toBe("output_schema");
+    expect(reloaded.issues[0]?.path).toBe("/verdict");
+    expect(reloaded.rejectedOutput).toBe('{ "verdict": 4 }');
+    expect(reloaded.gateRepairAttempts).toBe(1);
+    expect(reloaded.gateRepairBudget).toBe(1);
+    // The contract that refused is durable evidence too: without it a restart
+    // leaves the halt surfaces captioning the rejection with whatever schema
+    // the context declares by then.
+    expect(reloaded.rejectedAgainstSchema).toEqual({
+      type: "object",
+      properties: { verdict: { type: "string" } },
+    });
+  });
+});
+
 describe("graph-workflow-events-repo durability contract", () => {
   it("round-trips every persisted event key path through the real repo", async () => {
     await assertRoundTripDurability({

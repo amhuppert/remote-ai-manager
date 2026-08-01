@@ -68,6 +68,7 @@ const OUTLINE_BODY = {
         totalTaskCount: 3,
         iterationCount: 2,
         maxIterations: 20,
+        outputSchema: null,
       },
       {
         id: "impl",
@@ -79,6 +80,7 @@ const OUTLINE_BODY = {
         totalTaskCount: 4,
         iterationCount: 3,
         maxIterations: 20,
+        outputSchema: null,
       },
       {
         id: "verify",
@@ -90,6 +92,7 @@ const OUTLINE_BODY = {
         totalTaskCount: 2,
         iterationCount: 0,
         maxIterations: 12,
+        outputSchema: { type: "object", fieldCount: 2 },
       },
     ],
     tasks: [
@@ -248,7 +251,7 @@ describe("cctl workflow live get", () => {
       contexts:
         plan    completed  frozen         deps=-     tasks=3/3  iter=2/20
         impl    running    pause-to-edit  deps=plan  tasks=1/4  iter=3/20
-        verify  pending    editable       deps=impl  tasks=0/2  iter=0/12
+        verify  pending    editable       deps=impl  tasks=0/2  iter=0/12  output schema: object · 2 fields
       tasks:
         impl  1 impl-api    completed  "Wire API"            (812 chars)
               2 impl-ui     running    "Build inspector UI"  (1.8k chars)
@@ -381,6 +384,39 @@ describe("cctl workflow live get", () => {
     expect(host.requests).toHaveLength(0);
   });
 
+  it("keeps rendering the outline when a row's schema summary is unreadable", async () => {
+    const host = makeHost(() =>
+      jsonResponse({
+        ...OUTLINE_BODY,
+        outline: {
+          ...OUTLINE_BODY.outline,
+          contexts: OUTLINE_BODY.outline.contexts.map((context) =>
+            context.id === "verify"
+              ? { ...context, outputSchema: { renamedField: 2 } }
+              : context,
+          ),
+        },
+      }),
+    );
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+    expect(result.exitCode).toBe(0);
+    // The table still renders; only the decoration degrades.
+    expect(result.stdout).toContain("contexts:");
+    expect(result.stdout).toContain("output schema: declared");
+    expect(result.stdout).not.toContain('"executionId"');
+  });
+
+  it("exits 2 when --outputs is combined with another selector", async () => {
+    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs", "--full"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("passes --charter through as ?charter=true and renders the charter markdown", async () => {
     const host = makeHost(() =>
       jsonResponse({
@@ -456,6 +492,113 @@ describe("cctl workflow live get", () => {
     );
     const result = await runCli(["workflow", "live", "get"], baseEnv, host);
     expect(result.exitCode).toBe(2);
+  });
+});
+
+describe("cctl workflow live get --outputs (R7.2)", () => {
+  const OUTPUTS_BODY = {
+    ok: true,
+    section: "outputs",
+    outputs: [
+      {
+        contextId: "plan",
+        title: "Plan",
+        status: "completed",
+        schema: { type: "object", fieldCount: 2 },
+        capture: {
+          kind: "captured",
+          value: { verdict: "pass", notes: "all green" },
+          capturedAt: "2026-07-30T10:00:00.000Z",
+          iteration: 2,
+          parse: { source: "fenced", repaired: true, repairAttempts: 1 },
+        },
+      },
+      {
+        contextId: "verify",
+        title: "Verify",
+        status: "pending",
+        schema: { type: "object", fieldCount: 1 },
+        capture: { kind: "pending" },
+      },
+    ],
+  };
+
+  it("maps --outputs to ?outputs=true", async () => {
+    const host = makeHost(() => jsonResponse(OUTPUTS_BODY));
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    const url = new URL(host.requests[0]?.url ?? "");
+    expect(url.pathname).toBe(
+      "/api/projects/cc/sessions/my-session/graph-workflow/live-outline",
+    );
+    expect(url.searchParams.get("outputs")).toBe("true");
+  });
+
+  it("renders capture status, the payload, and its parse provenance", async () => {
+    const host = makeHost(() => jsonResponse(OUTPUTS_BODY));
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toMatchInlineSnapshot(`
+      "outputs (2):
+        plan    captured  output schema: object · 2 fields  iteration 2  captured 2026-07-30T10:00:00.000Z  parse fenced (repaired ×1)
+          {
+            "verdict": "pass",
+            "notes": "all green"
+          }
+        verify  pending   output schema: object · 1 field
+      "
+    `);
+  });
+
+  it("says so when no context declares an output contract", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ ok: true, section: "outputs", outputs: [] }),
+    );
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("no context declares an outputSchema");
+  });
+
+  it("passes the outputs payload through the --json envelope", async () => {
+    const host = makeHost(() => jsonResponse(OUTPUTS_BODY));
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.section).toBe("outputs");
+    expect(parsed.outputs[0].capture.value).toEqual({
+      verdict: "pass",
+      notes: "all green",
+    });
+  });
+
+  it("falls back to JSON when the payload is not the expected shape", async () => {
+    const host = makeHost(() =>
+      jsonResponse({ ok: true, section: "outputs", outputs: "nope" }),
+    );
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"nope"');
   });
 });
 

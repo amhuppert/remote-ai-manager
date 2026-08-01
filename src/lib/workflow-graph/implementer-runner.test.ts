@@ -292,6 +292,50 @@ describe("graph workflow implementer runner", () => {
     );
   });
 
+  it("never passes an outputFormat, so the implementer turn keeps its streaming markdown body (R2.3)", async () => {
+    // The D2 per-context `outputSchema` is captured by a dedicated format turn,
+    // never by schema-constraining the work turn: an outputFormat here would
+    // suppress the streaming turn body the UI renders. Contexts with and
+    // without a declared schema must dispatch the identical request shape.
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    expect(executePromptStream).toHaveBeenCalledTimes(1);
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Inspect the codebase",
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.not.objectContaining({ outputFormat: expect.anything() }),
+    );
+  });
+
   it("requests background-task waiting deterministically on every implementer turn", async () => {
     const executePromptStream = vi.fn(async () => ({
       conversationId: "conversation-1",

@@ -17,6 +17,12 @@ import {
   type ExecutionEditability,
 } from "./lifecycle-classifier";
 import type { CharterAmendment } from "@/lib/workflows/charter-schemas";
+import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
+import {
+  getContextOutput,
+  summarizeOutputSchemaShape,
+  type GraphWorkflowOutputSchemaShape,
+} from "./context-outputs";
 import { computeCharterHash, renderCharterMarkdown } from "./charter/render";
 
 /**
@@ -106,11 +112,24 @@ export type LiveOutlineResolvedConfig = Pick<
   | "circuitBreaker"
   | "mutability"
   | "planRepair"
+  // Context identity rather than a cascade result, but it belongs to the same
+  // read-back: an agent about to edit a context needs its declared output
+  // contract, and the edit tiers address it here. Optional — absent on contexts
+  // that declare none.
+  | "outputSchema"
 > & {
   contextId: string;
   /** `null` when no resolved collaboration snapshot exists (legacy executions). */
   collaboration: ResolvedCollaborationConfig | null;
 };
+
+/**
+ * The SHAPE of a declared `outputSchema`, never its body (R7.2). The outline
+ * sizes prose rather than inlining it, and a declaration is prose: the row says
+ * a contract exists and how wide it is, and `--config <ctx>` returns the
+ * document itself.
+ */
+export type LiveOutlineOutputSchemaSummary = GraphWorkflowOutputSchemaShape;
 
 export interface LiveOutlineContext {
   id: string;
@@ -123,6 +142,32 @@ export interface LiveOutlineContext {
   totalTaskCount: number;
   iterationCount: number;
   maxIterations: number;
+  /** `null` when the context declares no output contract (free-form). */
+  outputSchema: LiveOutlineOutputSchemaSummary | null;
+}
+
+/**
+ * One context's output contract and what it has produced (R7.2 CLI read path).
+ *
+ * `capture` mirrors the two states {@link getContextOutput} can report for a
+ * context that participates at all; contexts it reports `none` for never appear
+ * here, so "absent" unambiguously means "declares nothing and banked nothing".
+ */
+export interface LiveOutlineContextOutput {
+  contextId: string;
+  title: string;
+  status: GraphWorkflowContextStatus;
+  /** `null` when a live edit cleared the declaration after a capture. */
+  schema: LiveOutlineOutputSchemaSummary | null;
+  capture:
+    | {
+        kind: "captured";
+        value: Record<string, unknown>;
+        capturedAt: string;
+        iteration: number;
+        parse: AgentCallStructuredOutputParse;
+      }
+    | { kind: "pending" };
 }
 
 export interface LiveOutlineTask {
@@ -173,7 +218,8 @@ export type LiveOutlineSelector =
   | { kind: "context"; contextId: string }
   | { kind: "task"; taskId: string }
   | { kind: "config"; contextId: string }
-  | { kind: "charter" };
+  | { kind: "charter" }
+  | { kind: "outputs" };
 
 /**
  * The charter selector's payload (doc 07): the full rendered document (content +
@@ -198,6 +244,7 @@ export type LiveOutlineResult =
   | { ok: true; section: "task"; task: LiveOutlineTaskFull }
   | { ok: true; section: "config"; config: LiveOutlineResolvedConfig }
   | { ok: true; section: "charter"; charter: LiveOutlineCharter }
+  | { ok: true; section: "outputs"; outputs: LiveOutlineContextOutput[] }
   | { ok: false; error: string };
 
 function buildHeader(execution: GraphWorkflowExecution): LiveOutlineHeader {
@@ -320,8 +367,22 @@ function resolveFullConfig(
     circuitBreaker: context.circuitBreaker,
     mutability: context.mutability,
     planRepair: context.planRepair,
+    // Spread conditionally so "declares none" reads as an absent key rather
+    // than an explicit `undefined` in the JSON the CLI/inspector reads back.
+    ...(context.outputSchema !== undefined
+      ? { outputSchema: context.outputSchema }
+      : {}),
     collaboration: context.collaboration ?? null,
   };
+}
+
+/** The outline-tier shape of a declared contract (never the declaration). */
+function summarizeOutputSchema(
+  outputSchema: Record<string, unknown> | undefined,
+): LiveOutlineOutputSchemaSummary | null {
+  return outputSchema === undefined
+    ? null
+    : summarizeOutputSchemaShape(outputSchema);
 }
 
 function contextRow(
@@ -341,7 +402,46 @@ function contextRow(
     totalTaskCount: state?.totalTaskCount ?? 0,
     iterationCount: state?.iterationCount ?? 0,
     maxIterations: context.iterationPolicy.maxIterations,
+    outputSchema: summarizeOutputSchema(context.outputSchema),
   };
+}
+
+/**
+ * Every context that owes or has banked a structured output, in graph order.
+ * Membership and capture state come from {@link getContextOutput} rather than a
+ * second reading of `contextOutputs`, so the CLI read and the engine agree on
+ * what "an output exists" means.
+ */
+function contextOutputRows(
+  execution: GraphWorkflowExecution,
+): LiveOutlineContextOutput[] {
+  const rows: LiveOutlineContextOutput[] = [];
+  for (const context of execution.workingDefinition.executionContexts) {
+    const lookup = getContextOutput(execution, context.id);
+    if (lookup.kind === "none") continue;
+    // `orphaned` — banked, then its declaration cleared — still lists here with
+    // a null `schema`: this is the operator's read path for what a context
+    // produced, and losing the payload because the contract was edited away
+    // would leave nowhere to read it. The display surfaces treat it differently
+    // (R7.6/R7.7 scope themselves to a declared contract).
+    const banked = lookup.kind === "captured" || lookup.kind === "orphaned";
+    rows.push({
+      contextId: context.id,
+      title: context.title,
+      status: execution.contextStates[context.id]?.status ?? "pending",
+      schema: summarizeOutputSchema(context.outputSchema),
+      capture: banked
+        ? {
+            kind: "captured",
+            value: lookup.output.value,
+            capturedAt: lookup.output.capturedAt,
+            iteration: lookup.output.iteration,
+            parse: lookup.output.parse,
+          }
+        : { kind: "pending" },
+    });
+  }
+  return rows;
 }
 
 /** Tasks in (context definition order, then task order) — a stable render order. */
@@ -470,6 +570,14 @@ export function projectLiveOutline(
         amendments: execution.charterAmendments,
         charterHash: computeCharterHash(execution.charter),
       },
+    };
+  }
+
+  if (selector.kind === "outputs") {
+    return {
+      ok: true,
+      section: "outputs",
+      outputs: contextOutputRows(execution),
     };
   }
 

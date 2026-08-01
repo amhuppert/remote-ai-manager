@@ -5,6 +5,7 @@ import { getConfiguredQueryConcurrency as defaultGetMaxConcurrentQueries } from 
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { AgentTurnFailedError, toHaltReason, type DirtyPath } from "./errors";
+import { contextOwesOutput } from "./context-outputs";
 import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
   type CircuitBreakerGateResult,
@@ -435,7 +436,17 @@ type ConversationLockOutcome =
  * or abort raced the application) and the execution was left untouched.
  */
 type ApprovalApplicationOutcome =
-  | { applied: true }
+  | {
+      applied: true;
+      /**
+       * False when an approved decision could NOT complete the context because
+       * it still owes its declared output — a live edit replaced the contract
+       * under the park, taking the payload the approval was given for with it.
+       * The context returns to `running` and the caller re-iterates instead of
+       * committing.
+       */
+      completed: boolean;
+    }
   | {
       applied: false;
       status: Exclude<GraphWorkflowStatus, "running">;
@@ -851,6 +862,9 @@ export function createGraphWorkflowExecutionLoop(
       const appliedBox: { value: AppliedApprovalDecision | null } = {
         value: null,
       };
+      // Boxed for the same reason as `appliedBox`: assigned inside the reducer
+      // callback, read after the mutation resolves.
+      const withheldBox = { value: false };
       execution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
@@ -865,10 +879,35 @@ export function createGraphWorkflowExecutionLoop(
               next,
               contextId,
             );
+            // An approval attests to the work, not to the contract. A live
+            // edit can replace this context's `outputSchema` while it is
+            // parked, and the edit drops the payload banked under the old
+            // contract — completing here would leave a completed context with
+            // no validated output for the schema it now declares (R2, R7.6,
+            // R7.7).
+            //
+            // The context goes back to `ready` instead of `running`: this
+            // mutation is the durable record of the abandoned park, and it
+            // commits before the resolved-event publication and before any
+            // local continuation. `ready` is the scheduler's own eligibility
+            // status, so a pause, a restart, or a failure between here and the
+            // caller leaves work the scheduler picks up again; `running` with
+            // no live runner would be invisible to scheduling, to restart
+            // normalization (which only reaches `activeContextIds`) and to the
+            // parked-status re-entry passes, and the task-based completion
+            // guard cannot see the owed output either.
+            withheldBox.value = contextOwesOutput(next, contextId);
             if (next.contextStates[contextId]) {
-              transitionContextStatus(next, contextId, "completed", {
-                reason: "approval_gate.apply_approved_decision",
-              });
+              transitionContextStatus(
+                next,
+                contextId,
+                withheldBox.value ? "ready" : "completed",
+                {
+                  reason: withheldBox.value
+                    ? "approval_gate.apply_approved_decision_owes_output"
+                    : "approval_gate.apply_approved_decision",
+                },
+              );
             }
           } else {
             appliedBox.value = approvalGateService.applyRejectedDecision(
@@ -913,7 +952,17 @@ export function createGraphWorkflowExecutionLoop(
             : {}),
         });
       }
-      return { applied: true };
+      if (withheldBox.value) {
+        execLogger?.iteration(contextId, "gate.completion_withheld", {
+          reason: "output_not_captured",
+        });
+        logger.warn("graph-workflow.gate.completion_withheld", {
+          executionId: execution.id,
+          contextId,
+          reason: "output_not_captured",
+        });
+      }
+      return { applied: true, completed: !withheldBox.value };
     }
 
     /**
@@ -1423,7 +1472,15 @@ export function createGraphWorkflowExecutionLoop(
                 outcome.decision,
               );
               if (outcome.decision.type === "approved") {
-                await runCommitPhase();
+                if (application.completed) {
+                  await runCommitPhase();
+                }
+                // A withheld approval hands the context back to the scheduler
+                // rather than continuing here: the durable `ready` state is
+                // what re-enters it, so recovery does not depend on this
+                // runner surviving. The scheduler re-seeds it, the
+                // validation-only iteration captures the replacement contract,
+                // and the gate parks again for a fresh decision.
                 return;
               }
             } finally {
@@ -2801,6 +2858,35 @@ export function createGraphWorkflowExecutionLoop(
             await recordHalt({
               type: "recovery_error",
               message: `Refusing to complete: ${incompleteContexts.length} execution context(s) still have uncompleted tasks (${summary}). The scheduler found no eligible work and no remaining join, which would otherwise drop the unfinished work — halting instead. This indicates a scheduling defect.`,
+            });
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
+          // The same refusal for the debt the task-based predicate above
+          // cannot see: a schema-declaring context is not finished when its
+          // tasks are (R2). Its tasks can all be complete while the validated
+          // output the contract demands does not exist — after a live edit
+          // replaced the contract, or after any path left the context
+          // unscheduled — and completing then would report a finished run that
+          // silently violates the exactly-one-validated-output guarantee.
+          const contextsOwingOutput =
+            execution.workingDefinition.executionContexts
+              .map((context) => context.id)
+              .filter((contextId) => contextOwesOutput(execution, contextId));
+          if (contextsOwingOutput.length > 0) {
+            logger.error("graph-workflow.loop.completion_blocked_owed_output", {
+              executionId: execution.id,
+              contextIds: contextsOwingOutput,
+            });
+            execLogger?.lifecycle("loop.completion_blocked_owed_output", {
+              contextIds: contextsOwingOutput,
+            });
+            await recordHalt({
+              type: "recovery_error",
+              message: `Refusing to complete: ${contextsOwingOutput.length} execution context(s) declare an output schema with no validated output (${contextsOwingOutput.join(", ")}). The scheduler found no eligible work, which would otherwise report the run as finished while a declared contract went unsatisfied.`,
             });
             execution = await deps.workflowManager.drainAndHalt({
               projectPath: input.projectPath,

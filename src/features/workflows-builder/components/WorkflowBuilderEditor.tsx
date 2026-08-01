@@ -97,6 +97,12 @@ function WorkflowBuilderEditorInner({
     (s) => s.resetToPersisted,
   );
   const [isSaving, setIsSaving] = useState(false);
+  // The inspector's schema editor holds raw text; text outside the engine's
+  // supported subset never reaches the store, so `dirty` cannot see it. Both
+  // save controls route through THIS component's `handleSave`, so the verdict
+  // has to live here — gating it inside the inspector alone would leave the
+  // toolbar free to persist the last valid schema and mark the draft saved.
+  const [outputSchemaBlocked, setOutputSchemaBlocked] = useState(false);
 
   useEffect(() => {
     loadPersistedDraft({
@@ -112,7 +118,9 @@ function WorkflowBuilderEditorInner({
   ]);
 
   async function handleSave() {
-    if (!onSave || !draftDefinition || !draftLayout) return;
+    if (!onSave || !draftDefinition || !draftLayout || outputSchemaBlocked) {
+      return;
+    }
 
     // Run the SAME accept-time validation the storage choke point applies
     // (parameter shape checks + placeholder/reference lint + structural graph
@@ -197,10 +205,11 @@ function WorkflowBuilderEditorInner({
         onReset={handleReset}
         onRelayout={handleRelayout}
         onOpenWorkflowSettings={onOpenWorkflowSettings}
-        dirty={dirty}
+        dirty={dirty || outputSchemaBlocked}
         saving={isSaving}
         deleting={deleting}
         hasValidationErrors={validationErrors.length > 0}
+        saveBlocked={outputSchemaBlocked}
         isMobile={isMobile}
       />
       {saveError && (
@@ -221,6 +230,7 @@ function WorkflowBuilderEditorInner({
           activeTab={activeTab}
           onTabChange={onTabChange}
           voiceProjectName={voiceProjectName}
+          onOutputSchemaBlockedChange={setOutputSchemaBlocked}
         />
       </div>
     </div>

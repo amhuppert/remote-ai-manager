@@ -38,6 +38,9 @@ import type {
 } from "./lane-continuity";
 import { createGraphLaneContinuity } from "./lane-continuity";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
+import type { GraphWorkflowValidationIssue } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowContextOutputCaptureOutcome } from "@/lib/workflow-graph/context-output-capture";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createUserInputGateService } from "./user-input-gate";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
@@ -373,6 +376,10 @@ function seedFailedContextValidationEvent(
       executionId,
       contextId: "context-plan",
       validatorType: "context",
+      kind: "context_validation",
+      rejectedOutput: null,
+      gateRepairAttempts: null,
+      gateRepairBudget: null,
       pass: false,
       summary:
         overrides.summary ??
@@ -2396,6 +2403,10 @@ describe("task validation event publishing (fix-30388517)", () => {
     expect(validationHistoryEntry?.event).toMatchObject({
       type: "graph-workflow-validation-result",
       validatorType: "context",
+      kind: "context_validation",
+      rejectedOutput: null,
+      gateRepairAttempts: null,
+      gateRepairBudget: null,
       pass: true,
       sessionRef: {
         backend: "claude",
@@ -4144,6 +4155,10 @@ describe("runIteration when all tasks are already completed on entry", () => {
     );
     expect(validationEvent?.event).toMatchObject({
       validatorType: "context",
+      kind: "context_validation",
+      rejectedOutput: null,
+      gateRepairAttempts: null,
+      gateRepairBudget: null,
       pass: true,
       summary: "Context passed on re-validation",
     });
@@ -7024,5 +7039,915 @@ describe("per-turn billing on agent_turn_completed", () => {
       contextWindowMax: 200000,
       occupancyMeasurable: true,
     });
+  });
+});
+
+describe("context output capture (D2)", () => {
+  const NOW = "2026-03-27T16:10:00.000Z";
+
+  const PLAN_OUTPUT_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    properties: {
+      summary: { type: "string" },
+      risks: { type: "array", items: { type: "string" } },
+    },
+    required: ["summary", "risks"],
+    additionalProperties: false,
+  };
+
+  function createExecutionWithOutputSchema(): GraphWorkflowExecution {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!planContext) throw new Error("fixture missing context-plan");
+    planContext.outputSchema = PLAN_OUTPUT_SCHEMA;
+    return execution;
+  }
+
+  function completeBothPlanTasks(repository: {
+    read(): GraphWorkflowExecution;
+    mutateActive(
+      projectPath: string,
+      sessionName: string,
+      fn: (
+        execution: GraphWorkflowExecution,
+      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ): Promise<GraphWorkflowExecution>;
+  }) {
+    return vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      for (const taskId of ["task-plan-1", "task-plan-2"]) {
+        current.taskStates[taskId] = {
+          ...current.taskStates[taskId]!,
+          status: "completed",
+          summary: "Done",
+          completedAt: NOW,
+        };
+      }
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-capture",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+  }
+
+  function passingValidation() {
+    return {
+      validateContextCompletion: vi.fn(async () => ({
+        kind: "pass" as const,
+        summary: "All checks passed",
+        feedback: "Context validation passed.",
+        issues: [] as never[],
+        reopenTaskIds: [],
+        sessionRef: null,
+        reviewArtifact: null,
+      })),
+    };
+  }
+
+  it("captures a schema-declaring context's output before the context transitions to completed", async () => {
+    const repository = createRepository(createExecutionWithOutputSchema());
+
+    let statusDuringCapture: string | null = null;
+    const captureContextOutput = vi.fn(async () => {
+      statusDuringCapture =
+        repository.read().contextStates["context-plan"]?.status ?? null;
+      return {
+        kind: "captured" as const,
+        value: { summary: "Plan is ready", risks: ["schema drift"] },
+        parse: { source: "raw_json" as const },
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(captureContextOutput).toHaveBeenCalledTimes(1);
+    // The exit evaluator treats "all tasks done, no output yet" as not-yet-
+    // complete: the format turn runs while the context is still running.
+    expect(statusDuringCapture).toBe("running");
+
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+    expect(result.shouldContinueInContext).toBe(false);
+
+    const captured = persisted.contextOutputs["context-plan"];
+    expect(captured).toBeDefined();
+    expect(captured?.value).toEqual({
+      summary: "Plan is ready",
+      risks: ["schema drift"],
+    });
+    expect(captured?.parse).toEqual({ source: "raw_json" });
+    expect(captured?.capturedAt).toBe(NOW);
+    expect(captured?.iteration).toBeGreaterThanOrEqual(1);
+    expect(
+      validateJsonSchemaSubset(PLAN_OUTPUT_SCHEMA, captured?.value).valid,
+    ).toBe(true);
+  });
+
+  it("does not dispatch a format turn for a context without an outputSchema", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const captureContextOutput = vi.fn();
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(captureContextOutput).not.toHaveBeenCalled();
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+    expect(persisted.contextOutputs).toEqual({});
+  });
+
+  /** A payload the gate refuses no matter how many times the turn is retried. */
+  function rejectedCapture() {
+    return {
+      kind: "rejected" as const,
+      summary: "Output did not satisfy the declared outputSchema",
+      issues: [
+        {
+          title: "$.risks",
+          description: "expected array, received string",
+          path: "$.risks",
+        },
+        {
+          title: "$.owner",
+          description: "additional property is not allowed",
+          path: "$.owner",
+        },
+      ],
+      rejectedText: '{"summary":"Plan is ready","risks":"drift","owner":"me"}',
+    };
+  }
+
+  /**
+   * Production-shaped halt signal (`graph-workflow-signal-halt.ts`): it records
+   * a PENDING halt reason and marks the context halted, but deliberately leaves
+   * `execution.status` on `"running"` — the loop owner promotes the pending
+   * reason later. A fake that flips the execution to `halted` here would hide
+   * every code path that only guards on execution status.
+   */
+  function haltRecordingSignalHalt(repository: {
+    read(): GraphWorkflowExecution;
+    mutateActive(
+      projectPath: string,
+      sessionName: string,
+      fn: (
+        execution: GraphWorkflowExecution,
+      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ): Promise<GraphWorkflowExecution>;
+  }) {
+    return vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        contextId?: string;
+        reason: unknown;
+      }) => {
+        const reason = input.reason as NonNullable<
+          GraphWorkflowExecution["haltReason"]
+        >;
+        const contextId =
+          input.contextId ??
+          ("contextId" in reason ? (reason.contextId ?? undefined) : undefined);
+        return repository.mutateActive("/repo", "session-1", (latest) => {
+          const next = structuredClone(latest);
+          next.pendingHaltReason = reason;
+          if (contextId) {
+            const contextState = next.contextStates[contextId];
+            if (contextState && contextState.status !== "completed") {
+              contextState.status = "halted";
+            }
+            next.activeContextIds = next.activeContextIds.filter(
+              (activeContextId) => activeContextId !== contextId,
+            );
+          }
+          return next;
+        });
+      },
+    );
+  }
+
+  it("records an output_schema validation failure and leaves the context uncompleted when the gate refuses the format turn (R3.1)", async () => {
+    const repository = createRepository(createExecutionWithOutputSchema());
+    const captureContextOutput = vi.fn(async () => rejectedCapture());
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      signalHalt: haltRecordingSignalHalt(repository),
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const persisted = repository.read();
+    // Tasks are all done and the context validator passed, yet the context is
+    // NOT complete: a schema-declaring context needs a validated output.
+    expect(persisted.contextStates["context-plan"]?.status).not.toBe(
+      "completed",
+    );
+    expect(persisted.contextOutputs).toEqual({});
+    expect(result.shouldContinueInContext).toBe(true);
+    expect(persisted.status).toBe("running");
+
+    const failure = repository.appendedEvents
+      .map((entry) => entry.event)
+      .find(
+        (event) =>
+          event.type === "graph-workflow-validation-result" &&
+          event.kind === "output_schema",
+      );
+    expect(failure).toMatchObject({
+      contextId: "context-plan",
+      kind: "output_schema",
+      pass: false,
+      summary: "Output did not satisfy the declared outputSchema",
+      // Issue titles are instance paths, and each carries the addressable
+      // `path` D4 conditional edges will key off.
+      issues: [
+        {
+          title: "$.risks",
+          description: "expected array, received string",
+          path: "$.risks",
+        },
+        {
+          title: "$.owner",
+          description: "additional property is not allowed",
+          path: "$.owner",
+        },
+      ],
+      // The refused candidate is kept for inspection here and ONLY here.
+      rejectedOutput:
+        '{"summary":"Plan is ready","risks":"drift","owner":"me"}',
+    });
+
+    // Same accounting the agent-validator failure path feeds.
+    expect(
+      persisted.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+    // The seed increment plus the failed capture: a refused format turn is a
+    // real agent turn, so it consumes an iteration slot.
+    expect(persisted.contextStates["context-plan"]?.iterationCount).toBe(2);
+  });
+
+  it("trips the circuit breaker with the output_schema_validation condition when the capture keeps failing (R3.1)", async () => {
+    const execution = createExecutionWithOutputSchema();
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!planContext) throw new Error("fixture missing context-plan");
+    planContext.circuitBreaker = {
+      ...planContext.circuitBreaker,
+      consecutiveFailureThreshold: 1,
+    };
+
+    const repository = createRepository(execution);
+    const captureContextOutput = vi.fn(async () => rejectedCapture());
+    const signalHalt = haltRecordingSignalHalt(repository);
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      signalHalt,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(signalHalt).toHaveBeenCalledTimes(1);
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "output_schema_validation",
+          failureCount: 1,
+          summary: "Output did not satisfy the declared outputSchema",
+        }),
+      }),
+    );
+
+    const persisted = repository.read();
+    // Production signal-halt records a PENDING reason and leaves the execution
+    // `running`, so the halted context must not slip through the finalizer's
+    // completion branch on the way out of the iteration.
+    expect(persisted.pendingHaltReason).toMatchObject({
+      type: "circuit_breaker",
+      condition: "output_schema_validation",
+    });
+    expect(persisted.contextStates["context-plan"]?.status).toBe("halted");
+    expect(persisted.contextOutputs).toEqual({});
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("accumulates capture failures to the DEFAULT breaker threshold even though the context validator passes on every retry (R3.1)", async () => {
+    // No threshold override: the fixture's `circuitBreaker: {}` resolves to
+    // DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD (3). A passing context validator
+    // runs ahead of every capture retry, and if its pass cleared the counter
+    // the run would read 1,1,1 forever and never trip.
+    const repository = createRepository(createExecutionWithOutputSchema());
+    const captureContextOutput = vi.fn(async () => rejectedCapture());
+    const signalHalt = haltRecordingSignalHalt(repository);
+    const validationService = passingValidation();
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService,
+      outputCaptureService: { captureContextOutput },
+      signalHalt,
+      now: () => NOW,
+    });
+
+    const input = {
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    };
+
+    await orchestrator.runIteration(input);
+    expect(
+      repository.read().contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+
+    await orchestrator.runIteration(input);
+    // The validator passed again between the two captures; the counter must
+    // still carry the first failure forward.
+    expect(
+      repository.read().contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(2);
+    expect(signalHalt).not.toHaveBeenCalled();
+
+    await orchestrator.runIteration(input);
+
+    expect(validationService.validateContextCompletion).toHaveBeenCalledTimes(
+      3,
+    );
+    expect(signalHalt).toHaveBeenCalledTimes(1);
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({
+          type: "circuit_breaker",
+          condition: "output_schema_validation",
+          failureCount: 3,
+        }),
+      }),
+    );
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).toBe("halted");
+    expect(persisted.contextOutputs).toEqual({});
+  });
+
+  it("does not complete a schema-declaring context whose capture halted the iteration (R2.1, R3.1)", async () => {
+    const execution = createExecutionWithOutputSchema();
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!planContext) throw new Error("fixture missing context-plan");
+    planContext.circuitBreaker = {
+      ...planContext.circuitBreaker,
+      consecutiveFailureThreshold: 1,
+    };
+
+    const repository = createRepository(execution);
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: {
+        captureContextOutput: vi.fn(async () => rejectedCapture()),
+      },
+      signalHalt: haltRecordingSignalHalt(repository),
+      now: () => NOW,
+    });
+
+    // Every task is complete and the validator passed, so the finalizer's
+    // no-remaining-tasks branch is exactly the path that would otherwise write
+    // `completed` over the halt — with no output ever captured.
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).not.toBe(
+      "completed",
+    );
+    expect(persisted.contextOutputs["context-plan"]).toBeUndefined();
+  });
+
+  it("retries the capture with the previous rejection, and completes once the gate accepts (R3.1)", async () => {
+    const repository = createRepository(createExecutionWithOutputSchema());
+
+    const captureContextOutput = vi
+      .fn<
+        (input: {
+          previousRejection?: {
+            summary: string;
+            issues: readonly GraphWorkflowValidationIssue[];
+          };
+        }) => Promise<GraphWorkflowContextOutputCaptureOutcome>
+      >()
+      .mockImplementationOnce(async () => rejectedCapture())
+      .mockImplementationOnce(async () => ({
+        kind: "captured" as const,
+        value: { summary: "Plan is ready", risks: ["schema drift"] },
+        parse: { source: "raw_json" as const },
+      }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      signalHalt: haltRecordingSignalHalt(repository),
+      now: () => NOW,
+    });
+
+    const input = {
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    };
+    await orchestrator.runIteration(input);
+    const second = await orchestrator.runIteration(input);
+
+    expect(captureContextOutput).toHaveBeenCalledTimes(2);
+    // The retry turn is told what the gate refused rather than guessing.
+    expect(captureContextOutput.mock.calls[1]?.[0]).toMatchObject({
+      previousRejection: {
+        summary: "Output did not satisfy the declared outputSchema",
+        issues: [{ path: "$.risks" }, { path: "$.owner" }],
+      },
+    });
+
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+    expect(persisted.contextOutputs["context-plan"]?.value).toEqual({
+      summary: "Plan is ready",
+      risks: ["schema drift"],
+    });
+    expect(second.shouldContinueInContext).toBe(false);
+  });
+
+  /** Every plan task already finished in a previous iteration, so `runIteration`
+   *  takes the validation-only path and never resolves an implementer lane. */
+  function executionWithAllPlanTasksComplete(): GraphWorkflowExecution {
+    const execution = createExecutionWithOutputSchema();
+    for (const taskId of ["task-plan-1", "task-plan-2"]) {
+      execution.taskStates[taskId] = {
+        ...execution.taskStates[taskId]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: NOW,
+        lastConversationId: "conv-stale-task",
+      };
+    }
+    execution.contextStates["context-plan"] = {
+      ...execution.contextStates["context-plan"]!,
+      completedTaskCount: 2,
+      iterationCount: 1,
+    };
+    return execution;
+  }
+
+  function implementerLaneState(
+    conversationId: string,
+  ): GraphWorkflowAgentSessionState {
+    return {
+      backend: "claude",
+      refKind: "conversation",
+      lane: "implementer",
+      contextId: "context-plan",
+      workflowConversationId: conversationId,
+      sessionRef: { backend: "claude", ref: conversationId },
+      metrics: { rotateBeforeNextTurn: false },
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+  }
+
+  it("dispatches the format turn on the durable implementer lane conversation, not a stale task conversation (R2.1)", async () => {
+    const execution = executionWithAllPlanTasksComplete();
+    execution.laneStates["context-plan"] = {
+      implementer: implementerLaneState("conv-implementer-live"),
+    };
+
+    const repository = createRepository(execution);
+    const captureContextOutput = vi.fn(async () => ({
+      kind: "captured" as const,
+      value: { summary: "Plan is ready", risks: [] },
+      parse: { source: "raw_json" as const },
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conv-should-not-create" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The validation-only path picks a HISTORICAL task conversation (or the
+    // literal "validation-only") for its own bookkeeping. The format turn must
+    // not inherit it: the lane conversation is the one that holds the work, and
+    // a synthetic id would be rejected as a nonexistent conversation.
+    expect(captureContextOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv-implementer-live" }),
+    );
+  });
+
+  it("creates an implementer conversation for the format turn when the context never opened one (R2.1)", async () => {
+    // A zero-task schema context: valid, and it reaches capture with no lane
+    // state at all, so there is no existing conversation to restate work into.
+    const execution = createExecutionWithOutputSchema();
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      tasks: execution.workingDefinition.tasks.filter(
+        (task) => task.contextId !== "context-plan",
+      ),
+    };
+    execution.taskStates = {};
+    execution.contextStates["context-plan"] = {
+      ...execution.contextStates["context-plan"]!,
+      totalTaskCount: 0,
+      completedTaskCount: 0,
+    };
+
+    const repository = createRepository(execution);
+    const captureContextOutput = vi.fn(async () => ({
+      kind: "captured" as const,
+      value: { summary: "Nothing to plan", risks: [] },
+      parse: { source: "raw_json" as const },
+    }));
+    const createConversation = vi.fn(async () => ({ id: "conv-created" }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(createConversation).toHaveBeenCalled();
+    expect(captureContextOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv-created" }),
+    );
+  });
+
+  it("creates that conversation for the context's OWN backend, not the service default (R2.1)", async () => {
+    // The conversation service defaults a new conversation to Claude. A
+    // zero-task context configured for Codex would then run its format turn on
+    // Claude while being handed Codex model/effort/timeout settings — a turn
+    // dispatched to the wrong backend entirely.
+    const execution = createExecutionWithOutputSchema();
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      tasks: execution.workingDefinition.tasks.filter(
+        (task) => task.contextId !== "context-plan",
+      ),
+    };
+    execution.taskStates = {};
+    execution.contextStates["context-plan"] = {
+      ...execution.contextStates["context-plan"]!,
+      totalTaskCount: 0,
+      completedTaskCount: 0,
+    };
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!planContext) throw new Error("fixture missing context-plan");
+    planContext.implementer = {
+      ...planContext.implementer,
+      backend: "codex",
+      model: "gpt-5.4",
+    };
+
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({ id: "conv-created" }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(),
+      validationService: passingValidation(),
+      outputCaptureService: {
+        captureContextOutput: vi.fn(async () => ({
+          kind: "captured" as const,
+          value: { summary: "Nothing to plan", risks: [] },
+          parse: { source: "raw_json" as const },
+        })),
+      },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(createConversation).toHaveBeenCalledWith(
+      "/repo",
+      "session-1",
+      expect.objectContaining({ role: "iteration", agentBackend: "codex" }),
+    );
+  });
+
+  it("persists exactly the failure count the breaker halted on, with no finalize double-count (R3.1)", async () => {
+    // The capture path increments and then throws IterationHaltedError, which
+    // both iteration loops swallow before finalizing. If finalize counts that
+    // swallowed halt as a fresh failure too, the halt reason says 3 while state
+    // says 4 — the operator and the breaker disagree about the same run.
+    const repository = createRepository(createExecutionWithOutputSchema());
+    const signalHalt = haltRecordingSignalHalt(repository);
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: {
+        captureContextOutput: vi.fn(async () => rejectedCapture()),
+      },
+      signalHalt,
+      now: () => NOW,
+    });
+
+    const input = {
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    };
+    await orchestrator.runIteration(input);
+    await orchestrator.runIteration(input);
+    await orchestrator.runIteration(input);
+
+    const haltCall = signalHalt.mock.calls[0]?.[0] as
+      | { reason: { failureCount?: number } }
+      | undefined;
+    expect(haltCall?.reason.failureCount).toBe(3);
+    expect(
+      repository.read().contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(3);
+  });
+
+  it("clears the failure streak once a capture is accepted (R3.1)", async () => {
+    // The streak means "consecutive failures with no success in between". A
+    // capture that the gate accepts IS that success, so a context that later
+    // re-enters work (a rejected approval adds remediation tasks) must not
+    // start out already part-way to a breaker trip.
+    const repository = createRepository(createExecutionWithOutputSchema());
+    const captureContextOutput = vi
+      .fn<() => Promise<GraphWorkflowContextOutputCaptureOutcome>>()
+      .mockImplementationOnce(async () => rejectedCapture())
+      .mockImplementationOnce(async () => ({
+        kind: "captured" as const,
+        value: { summary: "Plan is ready", risks: ["schema drift"] },
+        parse: { source: "raw_json" as const },
+      }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-capture" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeBothPlanTasks(repository),
+      validationService: passingValidation(),
+      outputCaptureService: { captureContextOutput },
+      signalHalt: haltRecordingSignalHalt(repository),
+      now: () => NOW,
+    });
+
+    const input = {
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    };
+    await orchestrator.runIteration(input);
+    expect(
+      repository.read().contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+
+    await orchestrator.runIteration(input);
+
+    const persisted = repository.read();
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+    expect(
+      persisted.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(0);
+  });
+
+  it("injects an upstream context's captured output into the downstream seed prompt (R5.1, R5.2)", async () => {
+    const execution = createExecutionWithOutputSchema();
+    execution.activeContextIds = ["context-implement"];
+    execution.contextStates["context-plan"] = {
+      ...execution.contextStates["context-plan"]!,
+      status: "completed",
+    };
+    execution.contextOutputs = {
+      "context-plan": {
+        value: { summary: "Migrate the store first", risks: ["schema drift"] },
+        capturedAt: NOW,
+        iteration: 1,
+        parse: { source: "raw_json" },
+      },
+    };
+
+    const repository = createRepository(execution);
+    let seedPrompt: string | null = null;
+    const runAgentIteration = vi.fn(async (agentInput: { prompt: string }) => {
+      // Only the FIRST call is the seed; later calls are follow-up prompts.
+      seedPrompt ??= agentInput.prompt;
+      return {
+        conversationId: "conversation-implement",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-implement" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration,
+      validationService: passingValidation(),
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      // Direct successor of context-plan in the fixture graph.
+      contextId: "context-implement",
+    });
+
+    expect(seedPrompt).not.toBeNull();
+    const prompt = seedPrompt ?? "";
+    expect(prompt).toContain("## Inputs from upstream");
+    expect(prompt).toContain("### context-plan — Plan");
+    expect(prompt).toContain('"Migrate the store first"');
+    // Rendered from the declared schema, so the downstream agent can address it.
+    expect(prompt).toContain("`risks`");
+  });
+
+  it("renders no upstream section for a context whose predecessor produced nothing (R5.1)", async () => {
+    const execution = createExecutionWithOutputSchema();
+    execution.activeContextIds = ["context-implement"];
+
+    const repository = createRepository(execution);
+    let seedPrompt: string | null = null;
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-implement" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput: { prompt: string }) => {
+        seedPrompt ??= agentInput.prompt;
+        return {
+          conversationId: "conversation-implement",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      }),
+      validationService: passingValidation(),
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-implement",
+    });
+
+    expect(seedPrompt ?? "").not.toContain("## Inputs from upstream");
   });
 });

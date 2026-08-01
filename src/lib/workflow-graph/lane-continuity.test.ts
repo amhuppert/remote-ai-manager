@@ -79,6 +79,7 @@ function makeExecution(
     liveRevision: 1,
     charterAmendments: [],
     planRepairRounds: [],
+    contextOutputs: {},
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",

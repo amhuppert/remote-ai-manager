@@ -443,6 +443,7 @@ function liveEditTouchedPaths(
           "title",
           "description",
           "acceptanceCriteria",
+          "outputSchema",
           "implementer",
           "contextValidator",
           "scriptValidator",
@@ -956,6 +957,25 @@ function applyUpdateContext(
   } else if (op.description !== undefined) {
     context.description = op.description;
   }
+  // Wholesale replace or clear — a JSON Schema document has no partial merge.
+  //
+  // A banked output is evidence about exactly one contract, so it is dropped
+  // with the contract it was validated against: an unchanged re-statement keeps
+  // it, a clear or a genuine replacement discards it. Without this the read side
+  // would report a payload as "captured" against a schema that never accepted
+  // it (R7.6/R7.7), and a still-running context would skip the capture its new
+  // contract owes.
+  if (op.outputSchema !== undefined) {
+    const previous = context.outputSchema;
+    if (op.outputSchema === null) {
+      delete context.outputSchema;
+    } else {
+      context.outputSchema = op.outputSchema;
+    }
+    if (!isDeepStrictEqual(previous ?? null, op.outputSchema)) {
+      delete next.contextOutputs[op.contextId];
+    }
+  }
   applyLiveConfigBlocks(context, op);
 
   ctx.affectedContextIds.add(op.contextId);
@@ -1379,6 +1399,9 @@ function applyAddContext(
     title: op.title,
     acceptanceCriteria: op.acceptanceCriteria,
     ...(op.description !== undefined ? { description: op.description } : {}),
+    // Never seeded from `configFromContextId`: an output contract is per-context
+    // identity, not inheritable config (D1).
+    ...(op.outputSchema !== undefined ? { outputSchema: op.outputSchema } : {}),
     implementer: op.implementer ?? base.implementer,
     contextValidator:
       op.contextValidator !== undefined

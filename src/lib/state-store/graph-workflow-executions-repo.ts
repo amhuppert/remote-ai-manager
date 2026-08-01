@@ -51,6 +51,7 @@ export const RUNTIME_TIER_KEYS = [
   "activeContextIds",
   "contextStates",
   "taskStates",
+  "contextOutputs",
   "sharedDocuments",
   "laneStates",
   "executionLanes",

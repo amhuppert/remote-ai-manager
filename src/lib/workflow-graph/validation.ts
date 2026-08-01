@@ -12,6 +12,7 @@ import {
   isContextOutputCommittedToLane,
   isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
+import { validateContextOutputSchemas } from "./output-schema-validation";
 import {
   lintParameterReferences,
   validateParameterDeclarations,
@@ -55,10 +56,26 @@ function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
 }
 
+/**
+ * Structural graph validation plus the per-context output-schema declaration
+ * check. The declaration check lives HERE, not alongside in
+ * `validateAuthoredDefinition`, because `outputSchema` is the one authored field
+ * that exists identically on both an authored context and a resolved one: this
+ * is the single function every definition accept path already calls (create /
+ * replace / validate via `validateAuthoredDefinition`, saved-tier edits via
+ * `applyDefinitionEdits`, live-tier edits via the execution frontier, and the
+ * seed-time re-validation of the substituted definition), so wiring it here is
+ * what makes the fail-closed refusal impossible for a path to miss. Unlike the
+ * placeholder lint, it is safe on substituted data: an output schema is an
+ * object, never a `{{...}}` substitution target, so the check is idempotent
+ * across the authored → concrete transition.
+ */
 export function validateWorkflowDefinition(
   definition: ValidatableDefinition,
 ): WorkflowGraphValidationResult {
-  const errors: WorkflowGraphValidationError[] = [];
+  const errors: WorkflowGraphValidationError[] = [
+    ...validateContextOutputSchemas(definition.executionContexts),
+  ];
   const seenContextIds = new Set<string>();
   const seenTaskIds = new Set<string>();
   const contextIds = createContextIdSet(definition);
@@ -212,10 +229,14 @@ export function validateWorkflowDefinition(
  * graph validation, COLLECTING every error from all three (no short-circuit).
  *
  * The grammar lint (`lintParameterReferences`) is attached here ALONGSIDE the
- * structural validator, NEVER folded inside it. `validateWorkflowDefinition`
- * stays purely structural so the seed-time re-validation (a substituted concrete
- * definition) can call it alone without re-applying the grammar lint — a bound
- * launcher value may legitimately contain a literal `{{...}}` (R5.1, R5.5).
+ * structural validator, NEVER folded inside it, so the seed-time re-validation
+ * (a substituted concrete definition) can call `validateWorkflowDefinition`
+ * alone without re-applying the grammar lint — a bound launcher value may
+ * legitimately contain a literal `{{...}}` (R5.1, R5.5). The rule is
+ * substitution-sensitivity, not "structural only": the output-schema declaration
+ * check DOES live inside `validateWorkflowDefinition`, because an output schema
+ * is never a substitution target and the field exists on the resolved shape too,
+ * so the live tier must get the same refusal.
  *
  * Prerequisite shape checks (`validatePrerequisites`) compose here ALONGSIDE the
  * parameter checks — neither owns the other — so both author paths and both

@@ -102,6 +102,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       // --- definition_json tier (near-static, written only when its hash changes) ---
       "workingDefinition.**":
         "bounded: resolved workflow definition (contexts, tasks, edges, per-context charters) sized at resolve time and written on accepted live edits (lane-agent add_task and doc-06 live editing); every mutation is author-shaped content bounded by the same limits as the seeded definition. In graph_workflow_executions.definition_json.",
+      "workingDefinition.executionContexts[].outputSchema.**":
+        "tracked: opaque author-declared JSON Schema document (a record of z.unknown values), validated at definition-accept time against the supported-keyword subset and unschema'd here; sized by one context's authored output shape, written only when the definition tier changes. In graph_workflow_executions.definition_json.",
       "charter.**":
         "bounded: workflow charter — author-shaped at seed, rewritten wholesale by an accepted amend-charter live edit (doc 07); every rewrite is author-shaped content under the same schema limits. In graph_workflow_executions.definition_json.",
       charterAmendments:
@@ -125,6 +127,10 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: keyed by the author-fixed task graph. In graph_workflow_executions.runtime_json.",
       "taskStates.*.failureHistory":
         "pruned: capped to the last 10 entries via appendFailureHistory in iteration-orchestrator. In graph_workflow_executions.runtime_json.",
+      contextOutputs:
+        "bounded: at most one captured structured output per author-fixed execution context, written once when that context settles. In graph_workflow_executions.runtime_json.",
+      "contextOutputs.*.value.**":
+        "tracked: opaque validated agent output (a record of z.unknown values) in the author's own vocabulary, unschema'd here; sized by one context's authored outputSchema and written once per context. Deliberately NOT discharged as the whole `contextOutputs.**` subtree, so a growable field added beside `value` still has to answer to this gate. In graph_workflow_executions.runtime_json.",
       collaborationContinuations:
         "bounded: keyed by execution context. In graph_workflow_executions.runtime_json.",
       "collaborationContinuations.*":

@@ -106,6 +106,12 @@ import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CollapsibleText from "@/components/CollapsibleText";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
+import { deriveOutputSchemaHaltEvidenceByContext } from "@/components/workflow-graph/derive-output-schema-halt";
+import CapturedOutputSection, {
+  resolveCapturedOutputView,
+} from "./CapturedOutputSection";
+import { UpstreamInputsList } from "@/components/workflow-config/UpstreamInputsList";
+import { resolveUpstreamInputs } from "@/lib/workflow-graph/context-outputs";
 import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type {
   GraphWorkflowCircuitBreakerEvent,
@@ -276,6 +282,26 @@ interface ExecutionInspectorPanelProps {
     lane: GraphWorkflowLaneKind,
     contextId: string,
   ) => void;
+  /**
+   * "Edit schema" on an output-schema halt shown in the OVERVIEW: no context is
+   * selected there, so clearing the halt means selecting the refusing context
+   * first. The container owns that navigation; the context view resolves its
+   * own action locally (it is already on the context).
+   */
+  onEditSchema?: (contextId: string) => void;
+  /**
+   * A host's request to open a specific tab for a specific context — the halt
+   * dialog's "Edit schema" deep link. `seq` distinguishes two identical
+   * requests (the operator asking twice) from a re-render of one, so the
+   * inspector honours the second without stealing the tab on every render.
+   */
+  contextTabRequest?: ContextTabRequest | null;
+}
+
+export interface ContextTabRequest {
+  contextId: string;
+  tab: DetailTab;
+  seq: number;
 }
 
 function findContextHaltReason(
@@ -583,9 +609,16 @@ function ValidationCard({
   const hasIssues = event.issues.length > 0;
   const sessionRef = event.sessionRef;
   const reviewArtifact = event.reviewArtifact;
-  const workflowConversationId = sessionRef?.workflowConversationId;
+  // An output-schema rejection is the engine's own verdict on a format turn,
+  // not a lane agent's review: it has no validator lane to badge and no
+  // validator transcript to open, so both affordances are withheld rather than
+  // pointed at the implementer conversation that happened to host the turn.
+  const isOutputSchema = event.kind === "output_schema";
+  const workflowConversationId = isOutputSchema
+    ? undefined
+    : sessionRef?.workflowConversationId;
 
-  const laneBadge = getLaneBadgeLabel(sessionRef?.lane);
+  const laneBadge = isOutputSchema ? "" : getLaneBadgeLabel(sessionRef?.lane);
 
   return (
     <div className="border-b border-border-dim py-[10px] last:border-b-0">
@@ -605,22 +638,29 @@ function ValidationCard({
           {formatTimestamp(event.occurredAt)}
         </span>
       </div>
-      {sessionRef && (
+      {(sessionRef || isOutputSchema) && (
         <div className="mt-[5px] flex flex-wrap items-center gap-[5px] pl-[14px]">
+          {isOutputSchema && (
+            <span className="rounded-[3px] border border-solid border-[var(--cc-red-a25)] bg-red-glow px-[5px] py-px text-[0.64rem] font-bold tracking-[0.06em] text-red uppercase">
+              Output schema
+            </span>
+          )}
           {laneBadge && (
             <span className="rounded-[3px] bg-blue-glow px-[5px] py-px text-[0.64rem] font-bold tracking-[0.06em] text-blue uppercase">
               {laneBadge}
             </span>
           )}
-          <span className="rounded-[3px] bg-bg-raised px-[5px] py-px text-[0.64rem] text-text-tertiary">
-            {sessionRef.backend}
-          </span>
+          {sessionRef && (
+            <span className="rounded-[3px] bg-bg-raised px-[5px] py-px text-[0.64rem] text-text-tertiary">
+              {sessionRef.backend}
+            </span>
+          )}
           {isReusedSession && (
             <span className="text-[0.64rem] text-text-tertiary opacity-80">
               ↺ continued
             </span>
           )}
-          {workflowConversationId && onViewConversation && (
+          {workflowConversationId && sessionRef && onViewConversation && (
             <button
               className={cn(
                 wbBtn,
@@ -654,7 +694,19 @@ function ValidationCard({
             <ul className={wbValidationIssuesList}>
               {event.issues.map((issue, idx) => (
                 <li key={idx} className={wbValidationIssue}>
-                  <div className={wbValidationIssueTitle}>{issue.title}</div>
+                  <div className={wbValidationIssueTitle}>
+                    {/* A path-carrying issue titles itself with a machine
+                        locator; an agent validator's issues are prose. Mono
+                        + amber is the same locator recipe the halt surfaces
+                        use, so one instance path reads alike everywhere. */}
+                    {issue.path !== undefined ? (
+                      <code className="mr-[6px] font-mono text-amber">
+                        {issue.path}
+                      </code>
+                    ) : (
+                      issue.title
+                    )}
+                  </div>
                   <div className={wbValidationIssueDesc}>
                     <CompactMarkdown content={issue.description} />
                   </div>
@@ -690,11 +742,13 @@ function OverviewView({
   execution,
   events,
   onSelectContext,
+  onEditSchema,
   onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
   onSelectContext?: (contextId: string) => void;
+  onEditSchema?: (contextId: string) => void;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
   const totalContexts = execution.workingDefinition.executionContexts.length;
@@ -709,6 +763,18 @@ function OverviewView({
   const mergeCounts = countMerges(execution);
 
   const history = useMemo(() => getHistoryEntries(events), [events]);
+  // The overview is the first halt surface an operator sees, and it renders
+  // every reason on the run — so it derives evidence for all of them, not just
+  // the primary one.
+  const outputSchemaHaltEvidence = useMemo(
+    () =>
+      deriveOutputSchemaHaltEvidenceByContext({
+        execution,
+        haltReasons: [execution.haltReason, ...execution.secondaryHaltReasons],
+        validationEvents: history.validationEvents,
+      }),
+    [execution, history.validationEvents],
+  );
 
   return (
     <aside className={wbInspector}>
@@ -728,6 +794,8 @@ function OverviewView({
           <ContextHaltCard
             primary={execution.haltReason}
             secondary={execution.secondaryHaltReasons}
+            outputSchemaEvidence={outputSchemaHaltEvidence}
+            {...(onEditSchema !== undefined ? { onEditSchema } : {})}
           />
         )}
 
@@ -888,6 +956,7 @@ function DetailView({
   configEditConflict,
   configSaveSucceeded,
   onViewConversation,
+  contextTabRequest,
 }: {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
@@ -915,8 +984,24 @@ function DetailView({
   configEditConflict?: boolean;
   configSaveSucceeded?: boolean;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
+  contextTabRequest?: ContextTabRequest | null;
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>("tasks");
+  // Honour a host's deep link exactly once per request, adjusting state during
+  // render rather than in an effect so the requested tab is the first thing
+  // painted. Keyed on `seq`, so a re-render never re-steals the tab from an
+  // operator who has since switched away, while a repeat request still lands.
+  const [honouredTabRequestSeq, setHonouredTabRequestSeq] = useState<
+    number | null
+  >(null);
+  if (
+    contextTabRequest != null &&
+    contextTabRequest.contextId === contextId &&
+    honouredTabRequestSeq !== contextTabRequest.seq
+  ) {
+    setHonouredTabRequestSeq(contextTabRequest.seq);
+    setActiveTab(contextTabRequest.tab);
+  }
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editInstructions, setEditInstructions] = useState("");
@@ -974,6 +1059,24 @@ function DetailView({
   const contextHaltReason = useMemo(
     () => findContextHaltReason(execution, contextId),
     [execution, contextId],
+  );
+  const capturedOutputView = useMemo(
+    () =>
+      resolveCapturedOutputView(execution, contextId, history.validationEvents),
+    [execution, contextId, history.validationEvents],
+  );
+  const upstreamInputs = useMemo(
+    () => resolveUpstreamInputs(execution, contextId),
+    [execution, contextId],
+  );
+  const outputSchemaHaltEvidence = useMemo(
+    () =>
+      deriveOutputSchemaHaltEvidenceByContext({
+        execution,
+        haltReasons: [contextHaltReason],
+        validationEvents: history.validationEvents,
+      }),
+    [execution, contextHaltReason, history.validationEvents],
   );
 
   if (!context) return null;
@@ -1087,7 +1190,15 @@ function DetailView({
               <AskQuestionPanel {...userInputPanel} compact />
             </section>
           )}
-          {contextHaltReason && <ContextHaltCard primary={contextHaltReason} />}
+          {contextHaltReason && (
+            <ContextHaltCard
+              primary={contextHaltReason}
+              outputSchemaEvidence={outputSchemaHaltEvidence}
+              // Already inside the refusing context: the action only has to
+              // move the operator to the tab that owns the contract.
+              onEditSchema={() => setActiveTab("config")}
+            />
+          )}
 
           <div className={wbOverviewStatGrid}>
             <div className={wbOverviewStat}>
@@ -1144,8 +1255,11 @@ function DetailView({
                     onOpen={() => setSheetField("acceptanceCriteria")}
                   />
                 </div>
+                <UpstreamInputsList inputs={upstreamInputs} />
               </div>
             </section>
+
+            <CapturedOutputSection view={capturedOutputView} />
 
             <section className={wbOverviewSection}>
               <GroupHeader
@@ -1545,6 +1659,8 @@ export default function ExecutionInspectorPanel({
   configEditConflict,
   configSaveSucceeded,
   onViewConversation,
+  onEditSchema,
+  contextTabRequest,
 }: ExecutionInspectorPanelProps) {
   const selectedContext = selectedContextId
     ? execution.workingDefinition.executionContexts.find(
@@ -1558,6 +1674,7 @@ export default function ExecutionInspectorPanel({
         execution={execution}
         events={events}
         onSelectContext={onSelectContext}
+        onEditSchema={onEditSchema}
         onViewConversation={onViewConversation}
       />
     );
@@ -1588,6 +1705,7 @@ export default function ExecutionInspectorPanel({
       configEditConflict={configEditConflict}
       configSaveSucceeded={configSaveSucceeded}
       onViewConversation={onViewConversation}
+      contextTabRequest={contextTabRequest}
     />
   );
 }

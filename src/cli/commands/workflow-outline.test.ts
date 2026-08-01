@@ -45,6 +45,15 @@ const RECORD = {
         id: "impl",
         title: "Implement",
         acceptanceCriteria: "The feature works end to end.",
+        outputSchema: {
+          type: "object",
+          required: ["verdict"],
+          additionalProperties: false,
+          properties: {
+            verdict: { type: "string", enum: ["pass", "fail"] },
+            notes: { type: "string" },
+          },
+        },
       },
     ],
     tasks: [
@@ -105,6 +114,59 @@ describe("workflow outline", () => {
 
   it("returns null for an unrecognizable payload", () => {
     expect(parseOutlineRecord({ nope: true })).toBeNull();
+  });
+
+  it("summarizes a declared outputSchema as a shape, not a body (R7.2)", () => {
+    const record = parseOutlineRecord(RECORD);
+    if (!record) throw new Error("expected a parsable outline record");
+    const data = buildOutlineData(record);
+    expect(data.contexts[0]?.outputSchema).toBeNull();
+    expect(data.contexts[1]?.outputSchema).toEqual({
+      type: "object",
+      fieldCount: 2,
+    });
+
+    const text = renderOutline(record);
+    expect(text).toContain("output schema: object · 2 fields");
+    // The declaration itself stays in the `--context` / `--config` slices.
+    expect(text).not.toContain("additionalProperties");
+    expect(text).not.toContain("verdict");
+    // A context that declares none carries no summary at all.
+    const planRow = text.split("\n").find((line) => line.includes('"Plan the'));
+    expect(planRow).not.toContain("output schema");
+  });
+
+  it("renders a one-field schema in the singular and a bare root as 'declared'", () => {
+    const singular = parseOutlineRecord({
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        executionContexts: [
+          {
+            id: "one",
+            title: "One field",
+            acceptanceCriteria: "x",
+            outputSchema: {
+              type: "object",
+              properties: { verdict: { type: "string" } },
+            },
+          },
+          {
+            id: "bare",
+            title: "No properties",
+            acceptanceCriteria: "x",
+            outputSchema: { type: "object" },
+          },
+        ],
+        tasks: [],
+        edges: [],
+      },
+    });
+    if (!singular) throw new Error("expected a parsable outline record");
+    const text = renderOutline(singular);
+    expect(text).toContain("output schema: object · 1 field");
+    expect(text).toContain("output schema: object");
+    expect(text).not.toContain("0 fields");
   });
 
   it("slices one context with its tasks and full prose", () => {

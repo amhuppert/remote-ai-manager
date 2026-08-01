@@ -17,6 +17,7 @@ import {
   workflowCollaborationConfigOverrideSchema,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
+  contextOutputSchemaSchema,
   parameterDeclarationSchema,
   prerequisiteSchema,
 } from "@/lib/workflow-graph/definition-schemas";
@@ -156,6 +157,10 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       title: z.string().trim().min(1),
       acceptanceCriteria: z.string().trim().min(1),
       description: z.string().trim().min(1).optional(),
+      // Context identity, not a config override — so it sits beside `title`
+      // rather than in the cascade block above, and carries no `null` clear
+      // (an absent field on a brand-new context IS the cleared state).
+      outputSchema: contextOutputSchemaSchema.optional(),
       ...definitionEditAddContextConfigShape,
     }),
     z.object({
@@ -164,6 +169,10 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       title: z.string().trim().min(1).optional(),
       description: z.string().trim().min(1).nullable().optional(),
       acceptanceCriteria: z.string().trim().min(1).optional(),
+      // Present replaces the declaration wholesale (a JSON Schema document has
+      // no meaningful partial merge), `null` drops it and returns the context
+      // to free-form output, absent leaves it untouched.
+      outputSchema: contextOutputSchemaSchema.nullable().optional(),
       ...definitionEditUpdateContextConfigShape,
     }),
     z.object({
@@ -314,6 +323,10 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
       title: z.string().trim().min(1).optional(),
       description: z.string().trim().min(1).nullable().optional(),
       acceptanceCriteria: z.string().trim().min(1).optional(),
+      // Same replace/clear semantics as the saved tier: an output schema is an
+      // authored identity field mirrored onto the resolved context, so it is
+      // one of the few fields whose live vocabulary matches doc 05 exactly.
+      outputSchema: contextOutputSchemaSchema.nullable().optional(),
       ...liveEditContextConfigShape,
     })
     .refine(
@@ -330,8 +343,11 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
     title: z.string().trim().min(1),
     acceptanceCriteria: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
+    outputSchema: contextOutputSchemaSchema.optional(),
     // Seed the new context's resolved config from this context's resolved config
     // when present, else from resolved global defaults; explicit blocks override.
+    // NOT a source for `outputSchema`: copying one context's output contract
+    // onto another is never what an author means (D1 — per-context identity).
     configFromContextId: z.string().trim().min(1).optional(),
     ...liveEditContextConfigShape,
   }),

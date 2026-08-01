@@ -73,21 +73,29 @@ export function coerceGlobalDefaults(
 ): WorkflowDefaults {
   if (!globalDefaults) return SEEDED_WORKFLOW_DEFAULTS;
   return {
-    implementer: globalDefaults.implementer ?? SEEDED_WORKFLOW_DEFAULTS.implementer,
+    implementer:
+      globalDefaults.implementer ?? SEEDED_WORKFLOW_DEFAULTS.implementer,
     contextValidator:
-      globalDefaults.contextValidator ?? SEEDED_WORKFLOW_DEFAULTS.contextValidator,
+      globalDefaults.contextValidator ??
+      SEEDED_WORKFLOW_DEFAULTS.contextValidator,
     scriptValidator:
-      globalDefaults.scriptValidator ?? SEEDED_WORKFLOW_DEFAULTS.scriptValidator,
+      globalDefaults.scriptValidator ??
+      SEEDED_WORKFLOW_DEFAULTS.scriptValidator,
     humanApprovalGate:
-      globalDefaults.humanApprovalGate ?? SEEDED_WORKFLOW_DEFAULTS.humanApprovalGate,
+      globalDefaults.humanApprovalGate ??
+      SEEDED_WORKFLOW_DEFAULTS.humanApprovalGate,
     askUserQuestions:
-      globalDefaults.askUserQuestions ?? SEEDED_WORKFLOW_DEFAULTS.askUserQuestions,
+      globalDefaults.askUserQuestions ??
+      SEEDED_WORKFLOW_DEFAULTS.askUserQuestions,
     iterationPolicy:
-      globalDefaults.iterationPolicy ?? SEEDED_WORKFLOW_DEFAULTS.iterationPolicy,
+      globalDefaults.iterationPolicy ??
+      SEEDED_WORKFLOW_DEFAULTS.iterationPolicy,
     circuitBreaker:
       globalDefaults.circuitBreaker ?? SEEDED_WORKFLOW_DEFAULTS.circuitBreaker,
-    mutability: globalDefaults.mutability ?? SEEDED_WORKFLOW_DEFAULTS.mutability,
-    planRepair: globalDefaults.planRepair ?? SEEDED_WORKFLOW_DEFAULTS.planRepair,
+    mutability:
+      globalDefaults.mutability ?? SEEDED_WORKFLOW_DEFAULTS.mutability,
+    planRepair:
+      globalDefaults.planRepair ?? SEEDED_WORKFLOW_DEFAULTS.planRepair,
     collaboration:
       globalDefaults.collaboration ?? SEEDED_WORKFLOW_DEFAULTS.collaboration,
   };
@@ -193,6 +201,11 @@ export function resolveContext(
       : {}),
     acceptanceCriteria: context.acceptanceCriteria,
     ...(context.origin !== undefined ? { origin: context.origin } : {}),
+    // Identity passthrough: no cascade tier contributes an output schema, so an
+    // undeclared field stays absent rather than resolving to a default shape.
+    ...(context.outputSchema !== undefined
+      ? { outputSchema: context.outputSchema }
+      : {}),
     implementer,
     contextValidator,
     scriptValidator,

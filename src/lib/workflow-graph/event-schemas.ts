@@ -4,13 +4,14 @@ import {
   type AgentBackendId,
 } from "@/lib/shared/schemas";
 import {
+  contextOutputSchemaSchema,
   graphWorkflowContextStatusSchema,
   graphWorkflowSharedDocumentEntrySchema,
   graphWorkflowStatusSchema,
   graphWorkflowTaskSourceSchema,
   graphWorkflowTaskStatusSchema,
+  graphWorkflowValidationIssueSchema,
   graphWorkflowValidatorTypeSchema,
-  workflowValidatorIssueSchema,
 } from "./definition-schemas";
 import { graphWorkflowCircuitBreakerConditionSchema } from "./config-schemas";
 import {
@@ -297,10 +298,49 @@ export const graphWorkflowValidationResultEventSchema = z.object({
   executionId: z.string(),
   contextId: z.string(),
   validatorType: graphWorkflowValidatorTypeSchema,
+  /**
+   * Which check produced this result. `context_validation` is the agent/script
+   * validator verdict this event has always carried; `output_schema` is a D2
+   * format-turn payload the structured-output gate refused. Rows written before
+   * the discriminator existed parse as `context_validation`.
+   */
+  kind: z
+    .enum(["context_validation", "output_schema"])
+    .default("context_validation"),
   pass: z.boolean(),
   summary: z.string(),
   reopenTaskIds: z.array(z.string().trim().min(1)).default([]),
-  issues: z.array(workflowValidatorIssueSchema).default([]),
+  issues: z.array(graphWorkflowValidationIssueSchema).default([]),
+  /**
+   * The payload an `output_schema` result refused, truncated, for inspection.
+   * It is deliberately confined to this failure record — a rejected candidate
+   * never reaches `contextOutputs`, so no downstream reader can mistake it for
+   * a validated output. Null for every other result kind.
+   */
+  rejectedOutput: z.string().nullable().default(null),
+  /**
+   * The structured-output gate's OWN bounded repair on an `output_schema`
+   * refusal: turns spent, and the budget in force. This is the only repair that
+   * ran for this rejection — D1's plan-repair rounds are a different mechanism
+   * answering a different question, so a surface reporting the rejection's
+   * repair provenance reads these and not `execution.planRepairRounds`.
+   * Null for every other result kind and for rows written before the fields.
+   */
+  gateRepairAttempts: z.number().int().min(0).nullable().default(null),
+  gateRepairBudget: z.number().int().min(0).nullable().default(null),
+  /**
+   * The `outputSchema` that refused this payload, snapshotted at rejection
+   * time.
+   *
+   * A rejection outlives the contract it was measured against: the Edit-schema
+   * action on the halt surfaces exists precisely so an operator can replace a
+   * too-tight contract while the halt is live. Reading the context's CURRENT
+   * schema to caption a past rejection would pair a payload with a contract
+   * that never saw it, so the failing contract travels with the failure record
+   * instead. Optional rather than defaulted: rows written before the field
+   * carry no snapshot, and readers fall back to the context's contract.
+   */
+  rejectedAgainstSchema: contextOutputSchemaSchema.nullable().optional(),
   sessionRef: graphWorkflowValidationEventSessionRefSchema
     .nullable()
     .optional(),

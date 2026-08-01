@@ -23,6 +23,7 @@ import {
   moveTaskWithinContext,
   removeTask,
   setContextBlockOverride,
+  setContextOutputSchema,
   setWorkflowConfigOverride,
   updateExecutionContext,
   updateTask,
@@ -75,10 +76,20 @@ import {
   ExpandGlyphIcon,
   GateChip,
   QuestionGlyphIcon,
+  SchemaGlyphIcon,
   ScriptGlyphIcon,
   implementerChipLabel,
   validatorChipLabel,
 } from "@/components/workflow-config/InspectorChips";
+import {
+  OutputSchemaField,
+  lintOutputSchemaText,
+} from "@/components/workflow-config/OutputSchemaField";
+import { UpstreamInputsList } from "@/components/workflow-config/UpstreamInputsList";
+import {
+  resolveDefinitionUpstreamInputs,
+  type GraphWorkflowUpstreamInput,
+} from "@/lib/workflow-graph/context-outputs";
 
 const WB_INSPECTOR_CLASS =
   "flex w-[500px] min-w-[500px] flex-col overflow-hidden border-l border-solid border-border-subtle bg-bg-surface max-1180:w-[420px] max-1180:min-w-[420px] max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-l-0 max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden";
@@ -125,6 +136,14 @@ interface WorkflowInspectorPanelProps {
   activeTab?: InspectorTab;
   onTabChange?: (tab: InspectorTab) => void;
   voiceProjectName?: string | null;
+  /**
+   * Reports whether the context tab holds output-schema text the draft
+   * definition cannot represent. The panel gates its OWN Save on this, but the
+   * toolbar drives the same `onSave` through a different button, so the verdict
+   * has to reach the common save owner too — otherwise that button persists the
+   * last valid schema while the author is still looking at red text.
+   */
+  onOutputSchemaBlockedChange?: (blocked: boolean) => void;
 }
 
 export type InspectorTab = "workflow" | "context";
@@ -277,9 +296,7 @@ function summarizeCollaboration(config: WorkflowCollaborationConfig): string {
 
 function summarizePlanRepair(policy: GraphWorkflowPlanRepairPolicy): string {
   if (!policy.enabled) return "off";
-  const agent = policy.agent
-    ? `${policy.agent.model} agent`
-    : "default agent";
+  const agent = policy.agent ? `${policy.agent.model} agent` : "default agent";
   return `on · ${policy.maxAttemptsPerContext}/context · ${agent}`;
 }
 
@@ -404,6 +421,10 @@ function computeContextCascade(
 
 // Context-level deviations from the cascade (overrides + the disabled
 // validator marker), shown as the resolved-setup strip's override count.
+//
+// `outputSchema` is deliberately absent and must stay absent: it is per-context
+// identity with no workflow- or global-tier value to deviate FROM, so counting
+// it would report an override against nothing.
 function contextOverrideCount(cascade: ResolvedContextCascade): number {
   const sources: InspectorConfigBlockSource[] = [
     cascade.implementer.source,
@@ -424,10 +445,14 @@ function contextOverrideCount(cascade: ResolvedContextCascade): number {
 
 // At-a-glance summary of the selected context's effective configuration:
 // implementer + enabled gates as compact chips, plus the override count.
+// `hasOutputSchema` is passed separately rather than read off the cascade
+// BECAUSE it is not a cascade field — see `contextOverrideCount`.
 function ResolvedSetupStrip({
   cascade,
+  hasOutputSchema,
 }: {
   cascade: ResolvedContextCascade;
+  hasOutputSchema: boolean;
 }): React.JSX.Element {
   const implementer = cascade.implementer.value;
   const validator = cascade.contextValidator;
@@ -461,6 +486,11 @@ function ResolvedSetupStrip({
       {cascade.askUserQuestions.value.enabled ? (
         <GateChip tone="amber" icon={<QuestionGlyphIcon size={13} />}>
           Questions
+        </GateChip>
+      ) : null}
+      {hasOutputSchema ? (
+        <GateChip tone="neutral" icon={<SchemaGlyphIcon size={13} />}>
+          Schema
         </GateChip>
       ) : null}
       <span className="ml-auto font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
@@ -562,6 +592,7 @@ export default function WorkflowInspectorPanel({
   activeTab: controlledActiveTab,
   onTabChange,
   voiceProjectName,
+  onOutputSchemaBlockedChange,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
   const defaults = globalDefaults ?? SEEDED_WORKFLOW_DEFAULTS;
   const draftDefinition = _useGraphWorkflowBuilderStore(
@@ -589,14 +620,30 @@ export default function WorkflowInspectorPanel({
 
   const [internalActiveTab, setInternalActiveTab] =
     useState<InspectorTab>("workflow");
+  // A half-typed or out-of-subset schema cannot be represented in the draft
+  // definition, so the editor holds it as text and reports its verdict here.
+  // The engine refuses such a definition outright, so Save is blocked on it.
+  //
+  // That same text is ALSO unsaved work the store's `dirty` flag structurally
+  // cannot see — nothing committed it — so it drives the Save/Saved label too.
+  const [schemaTextValid, setSchemaTextValid] = useState(true);
+  const handleSchemaTextValidChange = useCallback(
+    (valid: boolean) => {
+      setSchemaTextValid(valid);
+      onOutputSchemaBlockedChange?.(!valid);
+    },
+    [onOutputSchemaBlockedChange],
+  );
   const multilineActions = useMultilinePrimaryActionRegistry();
   const activeTab = controlledActiveTab ?? internalActiveTab;
+  // Unsaved work is the store's dirtiness OR text no commit could accept.
+  const draftDirty = dirty || !schemaTextValid;
   const handleSave = useCallback(
     (force = false) => {
-      if ((!dirty && !force) || saving) return;
+      if ((!dirty && !force) || saving || !schemaTextValid) return;
       void onSave();
     },
-    [dirty, onSave, saving],
+    [dirty, onSave, saving, schemaTextValid],
   );
 
   function setActiveTab(tab: InspectorTab) {
@@ -696,22 +743,33 @@ export default function WorkflowInspectorPanel({
                 WB_BTN_BASE,
                 WB_BTN_SM,
                 "flex-shrink-0",
-                dirty ? WB_BTN_PRIMARY : WB_BTN_DEFAULT,
+                draftDirty ? WB_BTN_PRIMARY : WB_BTN_DEFAULT,
               )}
-              disabled={saving || (!dirty && !multilineActions.voiceBusy)}
+              disabled={
+                saving ||
+                !schemaTextValid ||
+                (!dirty && !multilineActions.voiceBusy)
+              }
               onClick={() => multilineActions.primaryAction(handleSave)}
               title={
-                validationErrors.length > 0
-                  ? `${validationErrors.length} validation issue${validationErrors.length === 1 ? "" : "s"} present`
-                  : undefined
+                !schemaTextValid
+                  ? "The output schema is not accepted by the engine"
+                  : validationErrors.length > 0
+                    ? `${validationErrors.length} validation issue${validationErrors.length === 1 ? "" : "s"} present`
+                    : undefined
               }
               type="button"
             >
-              {saving ? "Saving..." : dirty ? "Save" : "Saved"}
+              {saving ? "Saving..." : draftDirty ? "Save" : "Saved"}
             </button>
           </header>
 
-          {stripCascade ? <ResolvedSetupStrip cascade={stripCascade} /> : null}
+          {stripCascade ? (
+            <ResolvedSetupStrip
+              cascade={stripCascade}
+              hasOutputSchema={selectedContext?.outputSchema !== undefined}
+            />
+          ) : null}
 
           <div className="wb-inspector-body flex-1 overflow-y-auto p-lg">
             <TabsContent value="workflow">
@@ -740,12 +798,31 @@ export default function WorkflowInspectorPanel({
             {selectedContext ? (
               <TabsContent value="context">
                 <ContextTabBody
+                  // Reseed every per-context editor draft (the focus sheet's
+                  // field, the schema editor's raw text) when the selection
+                  // moves — one context's half-typed schema must never appear
+                  // under another's title.
+                  key={selectedContext.id}
                   context={selectedContext}
                   tasks={selectedContextTasks}
+                  upstreamInputs={resolveDefinitionUpstreamInputs(
+                    draftDefinition,
+                    selectedContext.id,
+                  )}
                   validationErrors={validationErrors}
                   workflowConfig={workflowConfig}
                   globalDefaults={defaults}
                   selectedTaskId={selectedTaskId}
+                  onSchemaTextValidChange={handleSchemaTextValidChange}
+                  onSetOutputSchema={(schema) => {
+                    updateDefinition(
+                      setContextOutputSchema(
+                        draftDefinition,
+                        selectedContext.id,
+                        schema,
+                      ),
+                    );
+                  }}
                   onUpdateContext={(updates) => {
                     updateDefinition(
                       updateExecutionContext(
@@ -1083,14 +1160,81 @@ type ContextBlock =
   | "planRepair"
   | "collaboration";
 
+function serializeOutputSchema(
+  schema: Record<string, unknown> | undefined,
+): string {
+  return schema === undefined ? "" : JSON.stringify(schema, null, 2);
+}
+
+/**
+ * Holds the schema editor's RAW TEXT for the builder tier.
+ *
+ * The draft definition can only carry a parsed document, so a half-typed or
+ * out-of-subset schema has nowhere to live there — it stays here, and the panel
+ * blocks Save on it rather than letting the author push a definition the engine
+ * would refuse. Only a fully-enforceable document (or a clear) reaches the
+ * draft.
+ */
+function BuilderOutputSchemaField({
+  outputSchema,
+  onSetOutputSchema,
+  onValidChange,
+}: {
+  outputSchema: Record<string, unknown> | undefined;
+  onSetOutputSchema: (schema: Record<string, unknown> | null) => void;
+  onValidChange: (valid: boolean) => void;
+}): React.JSX.Element {
+  const persisted = serializeOutputSchema(outputSchema);
+  const [text, setText] = useState(persisted);
+  // The serialization this editor last produced. The reseed compares the
+  // incoming `persisted` against THIS rather than against `text`, so an
+  // external change (a draft reload, an undo) reseeds the editor while the
+  // editor's own commit — which re-stringifies canonically — never reformats
+  // the author's text mid-keystroke.
+  const [committed, setCommitted] = useState(persisted);
+  if (persisted !== committed) {
+    setCommitted(persisted);
+    setText(persisted);
+  }
+
+  const valid = lintOutputSchemaText(text).issues.length === 0;
+  useEffect(() => {
+    onValidChange(valid);
+    // The Save gate lives on the panel; a context tab that unmounts (tab flip
+    // or selection change) discards its unparseable text, so it must not leave
+    // the gate stuck on a verdict about text nobody can see any more.
+    return () => onValidChange(true);
+  }, [valid, onValidChange]);
+
+  return (
+    <OutputSchemaField
+      value={text}
+      onChange={(next) => {
+        setText(next);
+        const lint = lintOutputSchemaText(next);
+        if (lint.schema !== null) {
+          setCommitted(serializeOutputSchema(lint.schema));
+          onSetOutputSchema(lint.schema);
+        } else if (lint.stage === "empty") {
+          setCommitted("");
+          onSetOutputSchema(null);
+        }
+      }}
+    />
+  );
+}
+
 function ContextTabBody({
   context,
   tasks,
+  upstreamInputs,
   validationErrors,
   workflowConfig,
   globalDefaults,
   selectedTaskId,
   onUpdateContext,
+  onSetOutputSchema,
+  onSchemaTextValidChange,
   onSetContextOverride,
   onClearContextOverride,
   onDisableValidator,
@@ -1106,6 +1250,8 @@ function ContextTabBody({
 }: {
   context: GraphWorkflowExecutionContextDefinition;
   tasks: GraphWorkflowTaskDefinition[];
+  /** Resolver-provided; the panel never walks the edge list itself. */
+  upstreamInputs: GraphWorkflowUpstreamInput[];
   validationErrors: WorkflowGraphValidationError[];
   workflowConfig: WorkflowConfigOverride;
   globalDefaults: WorkflowDefaults;
@@ -1113,6 +1259,9 @@ function ContextTabBody({
   onUpdateContext: (
     updates: Partial<GraphWorkflowExecutionContextDefinition>,
   ) => void;
+  /** `null` deletes the declaration; a document replaces it wholesale. */
+  onSetOutputSchema: (schema: Record<string, unknown> | null) => void;
+  onSchemaTextValidChange: (valid: boolean) => void;
   onSetContextOverride: <K extends ContextBlock>(
     block: K,
     value: NonNullable<GraphWorkflowExecutionContextDefinition[K]>,
@@ -1217,6 +1366,12 @@ function ContextTabBody({
               ) : null}
             </div>
           </div>
+          <BuilderOutputSchemaField
+            outputSchema={context.outputSchema}
+            onSetOutputSchema={onSetOutputSchema}
+            onValidChange={onSchemaTextValidChange}
+          />
+          <UpstreamInputsList inputs={upstreamInputs} />
         </div>
       </section>
 

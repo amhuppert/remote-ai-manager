@@ -5,7 +5,11 @@ import type {
 } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import { planContextJoin } from "@/lib/workflow-graph/lane-join";
-import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
+import {
+  applyJoinProgress,
+  transitionContextStatus,
+} from "@/lib/workflow-graph/context-transitions";
+import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import type { ParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
@@ -19,6 +23,7 @@ import type {
 } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type {
@@ -107,6 +112,7 @@ function createRunningExecution(
     liveRevision: 1,
     charterAmendments: [],
     planRepairRounds: [],
+    contextOutputs: {},
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -483,6 +489,35 @@ interface BuildHarnessInput {
   acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
   eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
   getMaxConcurrentQueries?: GraphWorkflowExecutionLoopDeps["getMaxConcurrentQueries"];
+}
+
+/**
+ * A scheduler double whose ELIGIBILITY comes from the production predicate
+ * (`getEligibleContextIds`) instead of a bespoke rule, so a test can prove that
+ * a persisted state is one the real scheduler would pick up after a pause or a
+ * restart — not one a hand-written fake happens to accept.
+ */
+async function scheduleFirstEligibleContext(
+  harness: LoopHarness,
+): Promise<ScheduleEligibleContextsResult> {
+  const current = harness.getCurrent();
+  if (current.status !== "running") {
+    return { execution: current, scheduled: { kind: "none" } };
+  }
+  const contextId = getEligibleContextIds(
+    current.workingDefinition,
+    current,
+  )[0];
+  if (contextId === undefined) {
+    return { execution: current, scheduled: { kind: "none" } };
+  }
+  const next = structuredClone(current);
+  next.activeContextIds = [contextId];
+  transitionContextStatus(next, contextId, "running", {
+    reason: "test.schedule_eligible",
+  });
+  harness.setCurrent(next);
+  return { execution: next, scheduled: { kind: "solo", contextId } };
 }
 
 function buildHarness(input: BuildHarnessInput): LoopHarness {
@@ -5458,6 +5493,286 @@ describe("execution loop", () => {
           decision: "approved",
         }),
       );
+    });
+
+    // A live edit may replace a parked context's `outputSchema` while the
+    // execution is quiescent; the edit drops the payload banked under the old
+    // contract. The approval recorded before that edit attests to work the
+    // current contract has no validated output for, so applying it as a
+    // completion would leave a completed context owing an output (R2/R7.6).
+    it("sends a parked context back to work when its output contract was replaced under the park", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const target = definition.executionContexts[0];
+      if (target) {
+        target.outputSchema = {
+          type: "object",
+          properties: { verdict: { type: "string" } },
+          required: ["verdict"],
+        };
+      }
+      const initial = createParkedExecution(definition);
+      initial.contextStates["ctx-1"]!.pendingApproval = {
+        ...structuredClone(pendingApprovalRecord),
+        decision: { type: "approved", decidedAt: "2026-03-27T12:02:00.000Z" },
+      };
+
+      const ordered: string[] = [];
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+      const waitForApprovalProgress = vi.fn(async () => {});
+      // Boxed so the assignment inside the iteration callback survives
+      // control-flow narrowing at the assertions below.
+      const stateAtIteration: {
+        value: GraphWorkflowExecutionContextState | null;
+      } = { value: null };
+      const stateSeenByScheduler: {
+        value: GraphWorkflowExecutionContextState | null;
+      } = { value: null };
+      let iterationCallCount = 0;
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        isConversationBusy: () => false,
+        acquireConversationLock: () => () => {},
+        soloContextCommitter: { commit: soloCommit },
+        // Eligibility comes from the production predicate, not from a bespoke
+        // fake: the point of the fix is that the withheld approval leaves a
+        // state THIS function schedules, with no in-memory continuation.
+        scheduleEligibleContexts: async () => {
+          const observed = harness.getCurrent();
+          if (stateSeenByScheduler.value === null) {
+            const seen = observed.contextStates["ctx-1"];
+            if (seen && seen.status !== "awaiting_approval") {
+              stateSeenByScheduler.value = structuredClone(seen);
+            }
+          }
+          return scheduleFirstEligibleContext(harness);
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            iterationCallCount += 1;
+            stateAtIteration.value = structuredClone(
+              harness.getCurrent().contextStates["ctx-1"]!,
+            );
+            // The re-entered iteration captures the replacement contract's
+            // output and finishes, as the gate-off path would.
+            const next = structuredClone(harness.getCurrent());
+            const cs = next.contextStates["ctx-1"]!;
+            cs.iterationCount += 1;
+            cs.status = "completed";
+            next.contextOutputs = {
+              "ctx-1": {
+                value: { verdict: "pass" },
+                capturedAt: "2026-03-27T12:04:00.000Z",
+                iteration: cs.iterationCount,
+                parse: { source: "native" },
+              },
+            };
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      // The stale approval did not complete the context — it went back to work.
+      expect(iterationCallCount).toBe(1);
+      expect(stateAtIteration.value?.pendingApproval).toBeNull();
+      // The state it was left in is one the SCHEDULER owns: `ready`, the
+      // eligibility predicate's own status. Anything else (notably `running`
+      // with no live runner) survives neither a pause nor a restart — the
+      // scheduler ignores it and nothing re-enters it, so the execution can
+      // finish with the replacement contract never captured.
+      expect(stateSeenByScheduler.value?.status).toBe("ready");
+      expect(stateSeenByScheduler.value?.pendingApproval).toBeNull();
+
+      // …and completion only happened once the replacement contract had a
+      // validated output.
+      expect(result.contextStates["ctx-1"]?.status).toBe("completed");
+      expect(result.contextOutputs["ctx-1"]?.value).toEqual({
+        verdict: "pass",
+      });
+      // The commit phase belongs to the completing iteration, not to the
+      // withheld approval.
+      expect(ordered).toEqual(["commit"]);
+    });
+
+    // Restart safety for the same case. The withheld application commits its
+    // state BEFORE the resolved-event publication and before any local
+    // continuation, so a pause, a crash, or a publication failure at that
+    // instant must lose nothing: a fresh loop over the persisted state has to
+    // re-schedule the context, run the validation-only capture, re-park at the
+    // gate, and complete only on a fresh decision.
+    it("recovers a restarted withheld-approval context through capture and re-approval", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const target = definition.executionContexts[0];
+      if (target) {
+        target.outputSchema = {
+          type: "object",
+          properties: { verdict: { type: "string" } },
+          required: ["verdict"],
+        };
+      }
+      // Exactly what applyApprovalDecision commits when it withholds: park
+      // cleared, tasks already complete, no banked output, contract owed. The
+      // sibling test above asserts the production path really leaves this.
+      const restarted = createParkedExecution(definition);
+      const parked = restarted.contextStates["ctx-1"]!;
+      parked.status = "ready";
+      parked.pendingApproval = null;
+      restarted.activeContextIds = [];
+
+      const ordered: string[] = [];
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+      const secondDecision = {
+        type: "approved" as const,
+        decidedAt: "2026-03-27T12:06:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const pending = next.contextStates["ctx-1"]!.pendingApproval;
+        if (pending && pending.decision === null) {
+          pending.decision = structuredClone(secondDecision);
+          harness.setCurrent(next);
+        }
+      });
+      let iterationCallCount = 0;
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: restarted,
+        waitForApprovalProgress,
+        isConversationBusy: () => false,
+        acquireConversationLock: () => () => {},
+        soloContextCommitter: { commit: soloCommit },
+        scheduleEligibleContexts: async () =>
+          scheduleFirstEligibleContext(harness),
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            iterationCallCount += 1;
+            // The validation-only re-entry: no task is seeded (they are all
+            // complete), the capture banks the replacement contract's payload,
+            // and the gate parks the context for a fresh decision.
+            const next = structuredClone(harness.getCurrent());
+            const cs = next.contextStates["ctx-1"]!;
+            cs.iterationCount += 1;
+            cs.status = "awaiting_approval";
+            cs.pendingApproval = {
+              conversationId: "conv-2",
+              requestedAt: "2026-03-27T12:05:00.000Z",
+              decision: null,
+            };
+            next.contextOutputs = {
+              "ctx-1": {
+                value: { verdict: "pass" },
+                capturedAt: "2026-03-27T12:05:30.000Z",
+                iteration: cs.iterationCount,
+                parse: { source: "native" },
+              },
+            };
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-2",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: restarted,
+      });
+
+      // Recovered by the ordinary scheduler — no parked-status re-entry, no
+      // in-memory continuation from the loop that withheld the approval.
+      expect(iterationCallCount).toBe(1);
+      expect(result.status).toBe("completed");
+      expect(result.contextStates["ctx-1"]?.status).toBe("completed");
+      expect(result.contextStates["ctx-1"]?.pendingApproval).toBeNull();
+      expect(result.contextOutputs["ctx-1"]?.value).toEqual({
+        verdict: "pass",
+      });
+      expect(ordered).toEqual(["commit"]);
+    });
+
+    // The scheduling fix above is the mechanism; this is the invariant. No
+    // arrangement of statuses may let the loop report a finished run while a
+    // context still owes the output its contract declares — the task-based
+    // completion guard cannot see that debt, because the tasks ARE done.
+    it("halts instead of completing while a context still owes its declared output", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const target = definition.executionContexts[0];
+      if (target) {
+        target.outputSchema = {
+          type: "object",
+          properties: { verdict: { type: "string" } },
+          required: ["verdict"],
+        };
+      }
+      const stranded = createParkedExecution(definition);
+      const cs = stranded.contextStates["ctx-1"]!;
+      cs.status = "completed";
+      cs.pendingApproval = null;
+      stranded.activeContextIds = [];
+
+      const runIteration = vi.fn(
+        async (): Promise<GraphWorkflowIterationResult> => {
+          throw new Error("nothing is schedulable in this fixture");
+        },
+      );
+      const harness: LoopHarness = buildHarness({
+        initialExecution: stranded,
+        waitForApprovalProgress: async () => {},
+        scheduleEligibleContexts: async () =>
+          scheduleFirstEligibleContext(harness),
+        soloContextCommitter: {
+          commit: async () => ({ status: "skipped" as const }),
+        },
+        iterationOrchestrator: { runIteration },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: stranded,
+      });
+
+      expect(runIteration).not.toHaveBeenCalled();
+      expect(result.status).toBe("halted");
+      expect(result.haltReason?.type).toBe("recovery_error");
+      expect(
+        result.haltReason?.type === "recovery_error"
+          ? result.haltReason.message
+          : "",
+      ).toContain("ctx-1");
     });
 
     it("applies a rejection recorded while the execution was suspended on the first wait refresh after resume", async () => {

@@ -16,6 +16,7 @@ import {
   laneMetricsSchema,
   laneTurnUsageSchema,
 } from "@/lib/workflows/primitives/lane-vocabulary";
+import { agentCallStructuredOutputParseSchema } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import {
   charterAmendmentSchema,
   workflowCharterSchema,
@@ -26,6 +27,7 @@ import {
   graphWorkflowPendingCollaborationSchema,
 } from "./collaboration-schemas";
 import {
+  contextOutputSchemaSchema,
   graphWorkflowContextStatusSchema,
   graphWorkflowSharedDocumentEntrySchema,
   graphWorkflowStatusSchema,
@@ -547,6 +549,27 @@ export const planRepairRoundSchema = z.object({
 });
 export type PlanRepairRound = z.infer<typeof planRepairRoundSchema>;
 
+/**
+ * One execution context's captured structured output (D2/D5).
+ *
+ * Written once, when a context carrying an authored `outputSchema` finishes and
+ * its final payload clears the structured-output gate. `value` is the accepted
+ * payload — always a JSON object, because the authoring-time subset walker
+ * refuses any declaration whose root does not describe one — and `parse` records
+ * where the gate found it, in the shared extraction vocabulary. Candidates from
+ * a FAILED validation never land here; they stay in the validation-failure
+ * records.
+ */
+export const graphWorkflowContextOutputSchema = z.object({
+  value: contextOutputSchemaSchema,
+  capturedAt: z.string(),
+  iteration: z.number().int().min(1),
+  parse: agentCallStructuredOutputParseSchema,
+});
+export type GraphWorkflowContextOutput = z.infer<
+  typeof graphWorkflowContextOutputSchema
+>;
+
 // fan-out point so restarts make the same call. See
 // `src/lib/workflow-graph/lane-plan.ts`.
 const graphWorkflowLanePlanSchema = z.object({
@@ -603,6 +626,13 @@ export const graphWorkflowExecutionSchema = z.object({
     .record(z.string(), graphWorkflowExecutionContextStateSchema)
     .default({}),
   taskStates: z.record(z.string(), graphWorkflowTaskStateSchema).default({}),
+  // Captured structured outputs keyed by execution-context id (D2/D5) — at most
+  // one entry per context carrying an authored `outputSchema`. Persisted in the
+  // runtime tier; rows written before the field existed parse as `{}`, which is
+  // also the steady state for a workflow whose contexts declare no schema.
+  contextOutputs: z
+    .record(z.string(), graphWorkflowContextOutputSchema)
+    .default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
   laneStates: z
     .record(

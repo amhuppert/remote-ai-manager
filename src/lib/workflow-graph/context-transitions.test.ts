@@ -62,7 +62,10 @@ describe("CONTEXT_STATUS_TRANSITIONS legality table", () => {
       "awaiting_approval",
       "awaiting_user_input",
     ],
-    awaiting_approval: ["running", "completed", "halted"],
+    // `ready` returns an abandoned park to the schedulable set — the approval
+    // that can no longer complete its context (its output contract changed
+    // under the park) leaves no runner behind.
+    awaiting_approval: ["ready", "running", "completed", "halted"],
     awaiting_user_input: ["running", "halted"],
     halted: [
       "ready",

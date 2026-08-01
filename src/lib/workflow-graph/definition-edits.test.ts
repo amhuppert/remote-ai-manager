@@ -844,4 +844,173 @@ describe("applyDefinitionEdits", () => {
       message: "cycle-detected — plan → impl → plan",
     });
   });
+
+  describe("outputSchema through the saved-tier edit surface (R1.1, R1.2)", () => {
+    const VALID_SCHEMA = {
+      type: "object",
+      required: ["verdict"],
+      additionalProperties: false,
+      properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+    };
+    const UNENFORCEABLE_SCHEMA = {
+      type: "object",
+      properties: { verdict: { type: "string", format: "uri" } },
+    };
+
+    function contextOf(
+      result: ReturnType<typeof applyDefinitionEdits>,
+      contextId: string,
+    ) {
+      if (!result.ok) throw new Error("expected the edit batch to be accepted");
+      return result.record.definition.executionContexts.find(
+        (context) => context.id === contextId,
+      );
+    }
+
+    it("sets outputSchema on add-context and carries it into the saved record", () => {
+      const result = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "add-context",
+          id: "context-review",
+          title: "Review",
+          acceptanceCriteria: "Every finding is triaged.",
+          outputSchema: VALID_SCHEMA,
+        }),
+      );
+
+      expect(contextOf(result, "context-review")?.outputSchema).toEqual(
+        VALID_SCHEMA,
+      );
+    });
+
+    it("sets, replaces, and clears outputSchema through update-context", () => {
+      const seeded = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          outputSchema: VALID_SCHEMA,
+        }),
+      );
+      expect(contextOf(seeded, "context-plan")?.outputSchema).toEqual(
+        VALID_SCHEMA,
+      );
+
+      if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
+      const replacement = {
+        type: "object",
+        properties: { summary: { type: "string", minLength: 1 } },
+      };
+      const replaced = applyDefinitionEdits(
+        seeded.record,
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          outputSchema: replacement,
+        }),
+      );
+      expect(contextOf(replaced, "context-plan")?.outputSchema).toEqual(
+        replacement,
+      );
+
+      if (!replaced.ok)
+        throw new Error("expected the replace batch to succeed");
+      const cleared = applyDefinitionEdits(
+        replaced.record,
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          outputSchema: null,
+        }),
+      );
+      expect(contextOf(cleared, "context-plan")).not.toHaveProperty(
+        "outputSchema",
+      );
+    });
+
+    it("leaves an existing outputSchema untouched when update-context omits it", () => {
+      const seeded = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          outputSchema: VALID_SCHEMA,
+        }),
+      );
+      if (!seeded.ok) throw new Error("expected the seeding batch to succeed");
+
+      const renamed = applyDefinitionEdits(
+        seeded.record,
+        ops({
+          type: "update-context",
+          contextId: "context-plan",
+          title: "Plan (renamed)",
+        }),
+      );
+
+      expect(contextOf(renamed, "context-plan")?.outputSchema).toEqual(
+        VALID_SCHEMA,
+      );
+    });
+
+    it.each([
+      [
+        "add-context",
+        {
+          type: "add-context",
+          id: "context-review",
+          title: "Review",
+          acceptanceCriteria: "Every finding is triaged.",
+          outputSchema: UNENFORCEABLE_SCHEMA,
+        },
+        "executionContexts[3].outputSchema.properties.verdict.format",
+      ],
+      [
+        "update-context",
+        {
+          type: "update-context",
+          contextId: "context-plan",
+          outputSchema: UNENFORCEABLE_SCHEMA,
+        },
+        "executionContexts[0].outputSchema.properties.verdict.format",
+      ],
+    ])(
+      "refuses %s fail-closed with a locator naming the context and schema path",
+      (_label, operation, expectedPath) => {
+        const result = applyDefinitionEdits(
+          createWorkflowDefinitionRecord(),
+          ops(operation),
+        );
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(
+          result.issues.map((issue) => formatDefinitionEditIssue(issue).path),
+        ).toContain(expectedPath);
+        expect(result.issues.map((issue) => issue.message).join(" ")).toContain(
+          "format",
+        );
+      },
+    );
+
+    it("reports the offending schema path when the edited definition is a graph of several contexts", () => {
+      const result = applyDefinitionEdits(
+        createWorkflowDefinitionRecord(),
+        ops({
+          type: "update-context",
+          contextId: "context-implement",
+          outputSchema: { type: "object", properties: { a: { $ref: "#/x" } } },
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const issue = result.issues[0];
+      expect(issue?.contextId).toBe("context-implement");
+      expect(formatDefinitionEditIssue(issue!).path).toBe(
+        "executionContexts[1].outputSchema.properties.a.$ref",
+      );
+    });
+  });
 });

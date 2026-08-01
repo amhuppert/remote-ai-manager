@@ -310,6 +310,106 @@ describe("template library route handlers — global-tier CRUD", () => {
     expect(response.status).toBe(400);
   });
 
+  // The global tier is the OTHER create/replace surface. It used to parse a
+  // local copy of the mutation schema and let storage collapse every semantic
+  // rejection into a comma-joined code string, which cannot say WHICH context or
+  // WHICH keyword was wrong. Both tiers now share the plan validator, so an
+  // author gets the same JSON-path locator either way (R1.2).
+  it.each([
+    ["CREATE", "POST"],
+    ["UPDATE", "PUT"],
+  ])(
+    "%s refuses an unsupported outputSchema keyword with a JSON-path locator",
+    async (handlerName, method) => {
+      const handlers = realHandlers();
+      const created = await handlers.CREATE(
+        makeRequest("/api/workflow-templates", "POST", mutationBody("Seed")),
+        makeContext({}),
+      );
+      const { item } = await created.json();
+
+      const definition = createWorkflowDefinition();
+      const [firstContext, ...restContexts] = definition.executionContexts;
+      if (!firstContext) throw new Error("fixture missing context");
+      const body = {
+        name: "Bad Output Schema",
+        description: "bad",
+        definition: {
+          ...definition,
+          executionContexts: [
+            {
+              ...firstContext,
+              outputSchema: {
+                type: "object",
+                properties: { verdict: { type: "string", format: "uri" } },
+              },
+            },
+            ...restContexts,
+          ],
+        },
+        layout: createWorkflowLayout(),
+      };
+
+      const response =
+        handlerName === "CREATE"
+          ? await handlers.CREATE(
+              makeRequest("/api/workflow-templates", method, body),
+              makeContext({}),
+            )
+          : await handlers.UPDATE(
+              makeRequest(`/api/workflow-templates/${item.id}`, method, body),
+              makeContext({ workflowId: item.id }),
+            );
+
+      expect(response.status).toBe(400);
+      const payload = await response.json();
+      expect(payload.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            // Bracket-indexed, matching the `prerequisites[0]` locator the
+            // other semantic validators already emit.
+            path: "definition.executionContexts[0].outputSchema.properties.verdict.format",
+            message: expect.stringContaining('Context "context-plan"'),
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("accepts a global template whose outputSchema stays inside the supported subset", async () => {
+    const handlers = realHandlers();
+    const definition = createWorkflowDefinition();
+    const [firstContext, ...restContexts] = definition.executionContexts;
+    if (!firstContext) throw new Error("fixture missing context");
+    const outputSchema = {
+      type: "object",
+      required: ["verdict"],
+      properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+    };
+
+    const response = await handlers.CREATE(
+      makeRequest("/api/workflow-templates", "POST", {
+        name: "Good Output Schema",
+        description: "good",
+        definition: {
+          ...definition,
+          executionContexts: [
+            { ...firstContext, outputSchema },
+            ...restContexts,
+          ],
+        },
+        layout: createWorkflowLayout(),
+      }),
+      makeContext({}),
+    );
+
+    expect(response.status).toBe(201);
+    const { item } = await response.json();
+    expect(item.definition.executionContexts[0].outputSchema).toEqual(
+      outputSchema,
+    );
+  });
+
   it("returns 400 for an invalid request body", async () => {
     const handlers = realHandlers();
 

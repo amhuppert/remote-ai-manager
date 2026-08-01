@@ -15,6 +15,7 @@ import type {
   PromptActorResult,
   ConversationContext,
   RunTaskRunInput,
+  StructuredOutputGateRepair,
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
@@ -987,6 +988,55 @@ export async function prepareTurnForMachine(
 }
 
 /**
+ * Pull the structured-output gate's per-issue errors out of a normalized
+ * failure's opaque `backendDetails`. Returns undefined when the details carry
+ * no usable issue list, so the caller falls back to the joined `error` message
+ * instead of surfacing a partially-decoded array.
+ */
+function readStructuredOutputGateIssues(
+  backendDetails: unknown,
+): string[] | undefined {
+  if (typeof backendDetails !== "object" || backendDetails === null) {
+    return undefined;
+  }
+  const errors = Reflect.get(backendDetails, "errors");
+  if (!Array.isArray(errors)) return undefined;
+  const issues = errors.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  return issues.length > 0 ? issues : undefined;
+}
+
+/**
+ * Pull the structured-output gate's bounded-repair spend out of the same opaque
+ * `backendDetails`. This is the gate's OWN repair turn — the one
+ * `applyStructuredOutputGate` runs before it refuses — and it is the only
+ * repair provenance a schema refusal has. Returns undefined when the details
+ * carry neither number, so a caller reports no repair rather than an invented
+ * zero.
+ */
+function readStructuredOutputGateRepair(
+  backendDetails: unknown,
+): StructuredOutputGateRepair | undefined {
+  if (typeof backendDetails !== "object" || backendDetails === null) {
+    return undefined;
+  }
+  const attempts = readIntegerField(backendDetails, "repairAttempts");
+  const maxAttempts = readIntegerField(backendDetails, "repairMaxAttempts");
+  if (attempts === undefined || maxAttempts === undefined) {
+    return undefined;
+  }
+  return { attempts, maxAttempts };
+}
+
+function readIntegerField(source: object, key: string): number | undefined {
+  const value = Reflect.get(source, key);
+  return typeof value === "number" && Number.isInteger(value)
+    ? value
+    : undefined;
+}
+
+/**
  * Execute a prompt via a backend-neutral conversation runtime.
  *
  * Orchestrates turn execution using ConversationBackendRuntime:
@@ -1942,6 +1992,21 @@ export async function executePromptForMachine(
   // `failureKind: "schema_validation"`. The actor consumes that result so the
   // conversation_turn and task_run paths share one validation outcome.
   const effectiveStructuredOutput = completedOutcome?.structuredOutput;
+  // The gate's own diagnostics, forwarded so a caller can act per issue rather
+  // than re-parsing `error`. Read defensively: `backendDetails` is `unknown` by
+  // contract, and a backend-supplied failure may carry anything.
+  const structuredOutputIssues =
+    gateSchemaValidationFailure === undefined
+      ? undefined
+      : readStructuredOutputGateIssues(
+          gateSchemaValidationFailure.backendDetails,
+        );
+  const structuredOutputRepair =
+    gateSchemaValidationFailure === undefined
+      ? undefined
+      : readStructuredOutputGateRepair(
+          gateSchemaValidationFailure.backendDetails,
+        );
   // Aborted turns report through `aborted`, never as an error surface.
   const effectiveError =
     failedOutcome !== undefined && !turnAborted
@@ -2064,6 +2129,11 @@ export async function executePromptForMachine(
     cachedInputTokens: callResult.usage.cachedInputTokens ?? null,
     contentBlocks: resultContentBlocks,
     structuredOutput: effectiveStructuredOutput,
+    ...(completedOutcome?.parse !== undefined
+      ? { structuredOutputParse: completedOutcome.parse }
+      : {}),
+    ...(structuredOutputIssues !== undefined ? { structuredOutputIssues } : {}),
+    ...(structuredOutputRepair !== undefined ? { structuredOutputRepair } : {}),
     aborted: turnAborted,
     compacted: callResult.compacted ?? false,
     ...(turnAborted && abortWiring.timeoutFired()
@@ -2315,6 +2385,12 @@ export async function runTaskRunTurnForMachine(
       ...(result.outcome.structuredOutput !== undefined
         ? { structuredOutput: result.outcome.structuredOutput }
         : {}),
+      // Where the gate found the payload it accepted. Without this a caller
+      // that records capture provenance has to assume `native`, which is a
+      // false claim for every payload the gate extracted or repaired.
+      ...(result.outcome.parse !== undefined
+        ? { structuredOutputParse: result.outcome.parse }
+        : {}),
       ...(result.outcome.transcript !== undefined
         ? { transcript: result.outcome.transcript }
         : {}),
@@ -2328,12 +2404,25 @@ export async function runTaskRunTurnForMachine(
   if (result.outcome.kind === "failed") {
     const failureKind = result.outcome.error.failureKind;
     const errorMsg = result.outcome.error.message;
+    // A schema refusal is a verdict about the payload, not a broken turn: the
+    // gate downgraded a COMPLETED outcome and carried the refused content and
+    // its per-issue errors along. Forwarding both is what lets a caller retry
+    // with feedback instead of treating the turn as infrastructure failure.
+    const structuredOutputIssues =
+      failureKind === "schema_validation"
+        ? readStructuredOutputGateIssues(result.outcome.error.backendDetails)
+        : undefined;
+    const structuredOutputRepair =
+      failureKind === "schema_validation"
+        ? readStructuredOutputGateRepair(result.outcome.error.backendDetails)
+        : undefined;
     deps.log.warn("task_run.failed", {
       ...scopeRef,
       backend: input.agentBackend,
       conversationId: input.conversationId,
       failureKind,
       message: errorMsg,
+      issueCount: structuredOutputIssues?.length ?? 0,
     });
     return {
       backendRef,
@@ -2345,7 +2434,16 @@ export async function runTaskRunTurnForMachine(
       inputTokens: usage.inputTokens ?? null,
       outputTokens: usage.outputTokens ?? null,
       cachedInputTokens: usage.cachedInputTokens ?? null,
-      contentBlocks: [],
+      // Partial assistant content the failure was derived from. It is NOT
+      // appended to the transcript (a refused turn persists nothing); it only
+      // travels back to the caller for inspection.
+      contentBlocks: result.outcome.contentBlocks ?? [],
+      ...(structuredOutputIssues !== undefined
+        ? { structuredOutputIssues }
+        : {}),
+      ...(structuredOutputRepair !== undefined
+        ? { structuredOutputRepair }
+        : {}),
       ...(result.outcome.transcript !== undefined
         ? { transcript: result.outcome.transcript }
         : {}),

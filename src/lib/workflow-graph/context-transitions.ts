@@ -70,7 +70,12 @@ export const CONTEXT_STATUS_TRANSITIONS: Readonly<
     "awaiting_approval",
     "awaiting_user_input",
   ],
-  awaiting_approval: ["running", "completed", "halted"],
+  // `awaiting_approval -> ready` returns an ABANDONED park to the schedulable
+  // set: an approval that can no longer complete its context (the context's
+  // output contract changed under the park, so it owes a validated output
+  // again) leaves no runner behind, and only `pending`/`ready` survive a pause
+  // or a restart as work the scheduler will pick up again.
+  awaiting_approval: ["ready", "running", "completed", "halted"],
   awaiting_user_input: ["running", "halted"],
   halted: [
     "ready",

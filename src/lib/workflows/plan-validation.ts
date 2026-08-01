@@ -79,6 +79,12 @@ function structuralIssuePath(
     );
   }
   if (error.contextId !== undefined) {
+    // An error that carries BOTH a context id and a `field` already knows its
+    // full definition-relative locator (an outputSchema declaration issue names
+    // the context index and the offending schema path, e.g.
+    // `executionContexts[1].outputSchema.properties.verdict.format`), which is
+    // strictly richer than the index this branch would derive.
+    if (error.field !== undefined) return `definition.${error.field}`;
     const index = definition.executionContexts.findIndex(
       (c) => c.id === error.contextId,
     );

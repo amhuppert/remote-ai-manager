@@ -342,6 +342,35 @@ export function setContextBlockOverride<K extends ContextOverrideBlock>(
   };
 }
 
+/**
+ * Set or clear a context's declared output schema.
+ *
+ * Separate from `setContextBlockOverride`/`clearContextBlockOverride` because
+ * `outputSchema` is per-context IDENTITY, not a cascade override: there is no
+ * workflow- or global-tier value to inherit or reset to, so "clear" means delete
+ * the key outright. It is also why `updateExecutionContext` cannot express the
+ * clear — that helper drops `undefined` entries so a partial patch never blanks
+ * an untouched field, which leaves it no way to remove one.
+ */
+export function setContextOutputSchema(
+  definition: WorkflowSemanticDefinition,
+  contextId: string,
+  schema: Record<string, unknown> | null,
+): WorkflowSemanticDefinition {
+  return {
+    ...cloneValue(definition),
+    executionContexts: definition.executionContexts.map((context) => {
+      if (context.id !== contextId) return context;
+      if (schema === null) {
+        const cleared = { ...context };
+        delete cleared.outputSchema;
+        return cleared;
+      }
+      return { ...context, outputSchema: cloneValue(schema) };
+    }),
+  };
+}
+
 export function clearContextBlockOverride(
   definition: WorkflowSemanticDefinition,
   contextId: string,

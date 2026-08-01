@@ -15,6 +15,10 @@ import {
   PlanRepairEditor,
   ToggleControl,
 } from "@/components/workflow-config/FieldEditors";
+import {
+  OutputSchemaField,
+  lintOutputSchemaText,
+} from "@/components/workflow-config/OutputSchemaField";
 import { cn } from "@/lib/ui/cn";
 import {
   classifyContextLifecycle,
@@ -102,6 +106,10 @@ interface ConfigDraft {
   title: string;
   description: string;
   acceptanceCriteria: string;
+  /** RAW editor text, never a parsed document: a half-typed schema has to
+   * survive a re-render and an SSE rebase, and only a text draft can hold one.
+   * Parsed to object-or-null at diff time (D8/R7.5). */
+  outputSchema: string;
   implementer: GraphWorkflowAgentConfig;
   contextValidator: GraphWorkflowAgentValidatorConfig | null;
   scriptValidator: boolean;
@@ -117,11 +125,42 @@ interface ConfigDraft {
 type ResolvedContext =
   GraphWorkflowExecution["workingDefinition"]["executionContexts"][number];
 
+/**
+ * An in-flight `outputSchema` submission, held until the server is observed to
+ * agree with it. `text` is the raw editor text that produced the op; `canonical`
+ * is how the stored document will serialize back through `toDraft`;
+ * `atRevision` is the `liveRevision` it was authored against.
+ *
+ * The revision matters because "the server holds my document" is TRUE from the
+ * outset for a formatting-only edit — the document never changed, only its
+ * text. Without a marker that the stored state actually moved, such a
+ * submission would settle the instant it was dispatched.
+ */
+interface SubmittedSchema {
+  text: string;
+  canonical: string;
+  atRevision: number;
+}
+
+/**
+ * The one serialization of a stored schema document into editor text.
+ *
+ * Both the seed (`toDraft`) and the post-submit baseline go through here: the
+ * server keeps a PARSED document, so any text whose formatting differs from
+ * this function's output would re-seed as a permanent diff against itself.
+ */
+function serializeOutputSchemaText(
+  schema: Record<string, unknown> | null | undefined,
+): string {
+  return schema ? JSON.stringify(schema, null, 2) : "";
+}
+
 function toDraft(context: ResolvedContext): ConfigDraft {
   return {
     title: context.title,
     description: context.description ?? "",
     acceptanceCriteria: context.acceptanceCriteria,
+    outputSchema: serializeOutputSchemaText(context.outputSchema),
     implementer: context.implementer,
     contextValidator: context.contextValidator,
     scriptValidator: context.scriptValidator.enabled,
@@ -158,6 +197,19 @@ function diffToUpdateContextOp(
   }
   if (draft.acceptanceCriteria !== base.acceptanceCriteria) {
     changes.acceptanceCriteria = draft.acceptanceCriteria;
+  }
+  // The only text→document conversion in the tier. Dirtiness is a plain string
+  // compare (so reformatting alone still enables Save and re-persists an
+  // equivalent document), but unparseable or unsupported text yields no field
+  // at all — the save bar's validity gate is what stops such a draft from
+  // silently saving everything EXCEPT the schema the author is looking at.
+  if (draft.outputSchema !== base.outputSchema) {
+    const lint = lintOutputSchemaText(draft.outputSchema);
+    if (lint.schema !== null) {
+      changes.outputSchema = lint.schema;
+    } else if (lint.stage === "empty") {
+      changes.outputSchema = null;
+    }
   }
   if (!deepEqualJson(draft.implementer, base.implementer)) {
     changes.implementer = draft.implementer;
@@ -225,6 +277,11 @@ function rebaseDraft(
       draft.acceptanceCriteria,
       seedBase.acceptanceCriteria,
       freshBase.acceptanceCriteria,
+    ),
+    outputSchema: threeWay(
+      draft.outputSchema,
+      seedBase.outputSchema,
+      freshBase.outputSchema,
     ),
     implementer: threeWay(
       draft.implementer,
@@ -316,6 +373,40 @@ const READ_ONLY_REASON_TEXT: Record<
   "halt-not-resumable":
     "This execution halted with a non-resumable reason and can no longer be edited.",
 };
+
+// Why the schema editor is disabled, in the terms of the mode that disabled it.
+// A generic "read-only" would leave the author guessing whether the contract is
+// recoverable; `pause-to-edit` in particular is the one mode with a way out.
+const OUTPUT_SCHEMA_READ_ONLY_HINT: Record<
+  Exclude<ConfigAffordance["mode"], "editable">,
+  string
+> = {
+  frozen:
+    "The output was already captured against this schema — editing it now would not re-validate anything.",
+  "read-only":
+    "This execution is no longer running; its working definition is immutable.",
+  "pause-to-edit":
+    "Pause the execution to change the contract before the next iteration runs.",
+};
+
+function LockIcon(): React.JSX.Element {
+  return (
+    <svg
+      width={12}
+      height={12}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+      className="shrink-0"
+      data-testid="config-frozen-lock"
+    >
+      <rect x="3.2" y="7" width="9.6" height="6.8" rx="1.2" />
+      <path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7" strokeLinecap="round" />
+    </svg>
+  );
+}
 
 function ConfigBlock({
   testId,
@@ -460,6 +551,8 @@ export default function ContextConfigTab({
   // payload — the core lost-update guard.
   const [seedBase, setSeedBase] = useState<ConfigDraft | null>(freshBase);
   const [seededFor, setSeededFor] = useState(contextId);
+  const [submittedSchema, setSubmittedSchema] =
+    useState<SubmittedSchema | null>(null);
 
   if (seededFor !== contextId) {
     // Selection changed — reseed wholesale (the panel keys this component by
@@ -467,19 +560,53 @@ export default function ContextConfigTab({
     setSeededFor(contextId);
     setDraft(freshBase);
     setSeedBase(freshBase);
-  } else if (
-    draft &&
-    seedBase &&
-    freshBase &&
-    !deepEqualJson(freshBase, seedBase)
-  ) {
-    // The execution moved underneath us (a revision-conflict refetch, or a
-    // concurrent add_task/UI edit arriving over SSE). Three-way rebase onto the
-    // fresh baseline: keep the fields the user actually edited, adopt the fresh
-    // value everywhere else, and advance the baseline so only the user's own
-    // edits stay dirty.
-    setDraft(rebaseDraft(draft, seedBase, freshBase));
-    setSeedBase(freshBase);
+    setSubmittedSchema(null);
+  } else if (draft && seedBase && freshBase) {
+    // A schema submission is acknowledged only once the stored state has moved
+    // AND the server's own copy serializes to what we sent — never at dispatch,
+    // when the outcome is still unknown. Normalizing early would make a
+    // formatting-only edit string-equal to `seedBase`, and a rejected save
+    // would then rebase as "untouched": the concurrent schema wins and the
+    // submitted document is lost silently.
+    //
+    // Each conjunct rules out a distinct false settle: `saveSucceeded` is our
+    // own mutation reporting success, so a submission can never settle while
+    // its outcome is unknown — a revision that moved only proves SOME write
+    // landed, and an unrelated concurrent edit supplies that on its own;
+    // `editConflict` is the rejection itself; the revision proves the write is
+    // observable in what we are reading (a formatting-only edit matches the
+    // stored document from the outset, so the document check alone would fire
+    // immediately); the document check proves the write that landed agrees
+    // with ours; and the text check lets a later keystroke revoke it, so text
+    // the user has moved on from never settles.
+    const acknowledged =
+      submittedSchema !== null &&
+      saveSucceeded &&
+      !editConflict &&
+      execution.liveRevision !== submittedSchema.atRevision &&
+      freshBase.outputSchema === submittedSchema.canonical &&
+      draft.outputSchema === submittedSchema.text;
+    // Adopting the canonical serialization is what settles the draft clean:
+    // `toDraft` re-serializes the stored document, so raw text that differs
+    // only in formatting would otherwise stay dirty against itself forever.
+    const reconciled = acknowledged
+      ? { ...draft, outputSchema: submittedSchema.canonical }
+      : draft;
+    if (acknowledged) setSubmittedSchema(null);
+
+    if (!deepEqualJson(freshBase, seedBase)) {
+      // The execution moved underneath us (a revision-conflict refetch, or a
+      // concurrent add_task/UI edit arriving over SSE). Three-way rebase onto
+      // the fresh baseline: keep the fields the user actually edited, adopt the
+      // fresh value everywhere else, and advance the baseline so only the
+      // user's own edits stay dirty.
+      setDraft(rebaseDraft(reconciled, seedBase, freshBase));
+      setSeedBase(freshBase);
+    } else if (reconciled !== draft) {
+      // The document was already what we sent, so no rebase runs — but the raw
+      // text still has to adopt the stored form to settle clean.
+      setDraft(reconciled);
+    }
   }
 
   const affordance = resolveAffordance(execution, contextId);
@@ -493,7 +620,18 @@ export default function ContextConfigTab({
         : null,
     [contextId, draft, seedBase],
   );
-  const dirty = pendingOp !== null;
+  // Dirtiness cannot be `pendingOp !== null` alone any more: text that does not
+  // parse produces no op, yet the author has unmistakably changed something.
+  // Splitting the two lets the save bar say "you have changes AND they are not
+  // saveable" instead of silently pretending the edit never happened.
+  const schemaTextDirty =
+    draft !== null &&
+    seedBase !== null &&
+    draft.outputSchema !== seedBase.outputSchema;
+  const schemaInvalid =
+    draft !== null &&
+    lintOutputSchemaText(draft.outputSchema).issues.length > 0;
+  const dirty = pendingOp !== null || schemaTextDirty;
 
   if (!context || !draft) return null;
 
@@ -505,7 +643,14 @@ export default function ContextConfigTab({
   }
 
   function handleSave(completed?: Partial<ConfigDraft>) {
-    if (!onSaveContextConfig || !draft || !seedBase || isSaving || readOnly) {
+    if (
+      !onSaveContextConfig ||
+      !draft ||
+      !seedBase ||
+      isSaving ||
+      readOnly ||
+      schemaInvalid
+    ) {
       return;
     }
     const submittedDraft = completed ? { ...draft, ...completed } : draft;
@@ -516,6 +661,18 @@ export default function ContextConfigTab({
     );
     if (!submittedOp) return;
     onSaveContextConfig([submittedOp]);
+    // Record what was sent and the form the server will echo back, but leave
+    // the draft alone: the outcome is not known yet, and the reconciliation
+    // above adopts the canonical text only once the stored document matches.
+    // Holding the submitted TEXT too is what lets a later keystroke revoke the
+    // acknowledgement — text the user has moved on from must never settle.
+    if (submittedOp.outputSchema !== undefined) {
+      setSubmittedSchema({
+        text: submittedDraft.outputSchema,
+        canonical: serializeOutputSchemaText(submittedOp.outputSchema),
+        atRevision: execution.liveRevision,
+      });
+    }
   }
 
   const showResume =
@@ -538,7 +695,7 @@ export default function ContextConfigTab({
             className="flex items-center gap-[8px] rounded-md border border-solid border-border-subtle bg-bg-raised px-[12px] py-[8px] text-[0.72rem] text-text-secondary"
             data-testid="config-affordance-frozen"
           >
-            <span aria-hidden="true">🔒</span>
+            <LockIcon />
             <span>
               This context has completed — its configuration is frozen.
             </span>
@@ -634,6 +791,36 @@ export default function ContextConfigTab({
                   }}
                 />
               </div>
+              <OutputSchemaField
+                value={draft.outputSchema}
+                onChange={(outputSchema) => patch({ outputSchema })}
+                readOnly={readOnly}
+                readOnlyHint={
+                  affordance.mode === "editable"
+                    ? undefined
+                    : OUTPUT_SCHEMA_READ_ONLY_HINT[affordance.mode]
+                }
+                footer={
+                  schemaTextDirty && !schemaInvalid && editable ? (
+                    <div
+                      className="mt-[6px] flex items-center gap-[6px] text-[0.7rem] text-cyan"
+                      data-testid="config-output-schema-dirty"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="h-[5px] w-[5px] shrink-0 rounded-full bg-cyan shadow-[0_0_4px_var(--cyan-glow)]"
+                      />
+                      <span>
+                        Unsaved — enters the next{" "}
+                        <code className="rounded-[3px] bg-bg-raised px-[4px] py-[1px] font-mono">
+                          update-context
+                        </code>{" "}
+                        op.
+                      </span>
+                    </div>
+                  ) : null
+                }
+              />
             </div>
           </ConfigBlock>
         </section>
@@ -858,7 +1045,11 @@ export default function ContextConfigTab({
               type="button"
               className={cn(btn, btnPrimary)}
               onClick={() => multilineActions.primaryAction(handleSave)}
-              disabled={isSaving || (!dirty && !multilineActions.voiceBusy)}
+              disabled={
+                isSaving ||
+                schemaInvalid ||
+                (!dirty && !multilineActions.voiceBusy)
+              }
             >
               {isSaving ? "Saving…" : "Save changes"}
             </button>

@@ -334,6 +334,49 @@ function ValidatorPills({
   );
 }
 
+// The output-contract indicator (handoff option B): a glyph beside the status
+// badge rather than a fourth labelled row, because the node is already CC's
+// densest surface and the graph's job is scanning. Hollow while a declared
+// contract is still owed, filled green once the payload is banked, absent when
+// no contract exists. `aria-label` — not just `title` — carries the meaning:
+// a tooltip may not be the only route to it, and the inspector's Output group
+// is the paired visible label.
+const OUTPUT_GLYPH_BASE =
+  "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full border border-solid text-[0.72rem]";
+
+const OUTPUT_GLYPH_TONE = {
+  declared: "border-border-default bg-transparent text-text-tertiary",
+  captured:
+    "border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green",
+} as const;
+
+function OutputSchemaGlyph({
+  outputSchema,
+}: {
+  outputSchema: ExecutionContextNodeData["outputSchema"];
+}) {
+  if (outputSchema === undefined) return null;
+  const captured = outputSchema.captured;
+  const label = captured
+    ? "Output captured against this context's schema"
+    : "Output schema declared — not yet captured";
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      data-testid="node-output-schema-glyph"
+      data-captured={captured ? "true" : "false"}
+      className={cn(
+        OUTPUT_GLYPH_BASE,
+        captured ? OUTPUT_GLYPH_TONE.captured : OUTPUT_GLYPH_TONE.declared,
+      )}
+    >
+      <span aria-hidden="true">{captured ? "◈" : "◇"}</span>
+    </span>
+  );
+}
+
 export default function ExecutionContextNode({
   data,
   selected,
@@ -385,9 +428,12 @@ export default function ExecutionContextNode({
         <span className="text-[0.95rem] leading-[1.2] font-bold text-text-primary">
           {context.title}
         </span>
-        <span className={cn(BADGE_BASE, BADGE_VARIANT[badge.className])}>
-          {badge.label}
-        </span>
+        <div className="flex shrink-0 items-center gap-[4px]">
+          <OutputSchemaGlyph outputSchema={data.outputSchema} />
+          <span className={cn(BADGE_BASE, BADGE_VARIANT[badge.className])}>
+            {badge.label}
+          </span>
+        </div>
       </div>
 
       {context.description && (

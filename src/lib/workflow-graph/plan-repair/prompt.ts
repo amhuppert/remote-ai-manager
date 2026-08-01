@@ -6,6 +6,7 @@
  */
 
 import { renderCharterPromptSection } from "../charter/render";
+import type { GraphWorkflowValidationIssue } from "../definition-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -18,7 +19,10 @@ const VALIDATION_HISTORY_LIMIT = 5;
 export interface PlanRepairValidationVerdict {
   pass: boolean;
   summary: string;
-  issues: { taskId: string; title: string; description: string }[];
+  /** Recorded issues, which may be located by task OR by instance path — an
+   *  `output_schema` rejection (D2) is one of the impossible-contract failures
+   *  this agent exists to repair, and it carries no task. */
+  issues: readonly GraphWorkflowValidationIssue[];
 }
 
 export interface PlanRepairPromptInput {
@@ -85,6 +89,18 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
         "",
         "### Acceptance criteria",
         context.acceptanceCriteria,
+        // Without the declared contract in view, an `output_schema_validation`
+        // trip reads as a work failure and the agent repairs the wrong thing.
+        ...(context.outputSchema
+          ? [
+              "",
+              "### Declared output schema",
+              "The context must end by emitting one payload matching this JSON Schema exactly:",
+              "```json",
+              JSON.stringify(context.outputSchema, null, 2),
+              "```",
+            ]
+          : []),
       ].join("\n"),
     );
   }
@@ -111,7 +127,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
     const rendered = history.map((verdict, index) => {
       const issueLines = verdict.issues.map(
         (issue) =>
-          `    - ${issue.taskId}: ${issue.title} — ${issue.description}`,
+          `    - ${issue.taskId ?? issue.path ?? "context"}: ${issue.title} — ${issue.description}`,
       );
       return [
         `${index + 1}. [${verdict.pass ? "pass" : "fail"}] ${verdict.summary}`,
@@ -156,13 +172,20 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
             "This halt is retry exhaustion by iteration budget: resuming does NOT reset the iteration count, so a repair that neither raises iterationPolicy.maxIterations nor shrinks the remaining work will re-halt immediately and burn a repair attempt.",
           ]
         : []),
+      ...(haltReason.type === "circuit_breaker" &&
+      haltReason.condition === "output_schema_validation"
+        ? [
+            "",
+            "This halt is an output-contract failure, not a work failure: the context finished its tasks and passed validation, then could not emit a payload matching its declared `outputSchema`. Read the refused payloads in the validation history above — when the schema demands something the context's work cannot know, correct it with `outputSchema` (or `null` to return the context to free-form output). Leave the tasks alone unless the schema is right and the work genuinely missed it.",
+          ]
+        : []),
       "",
       "## Allowed repair operations",
       "",
       "Emit live-edit operations from this vocabulary ONLY (plan artifacts; no structural graph changes, no validator/gate/config controls). Every entry in `operations` MUST be a JSON object with a `type` field, using EXACTLY these shapes:",
       "```jsonc",
       '{"type": "amend-charter", "rationale": "<required: why the charter changes>", "mission": "...", "conventions": ["..."], "nonGoals": ["..."], "vocabulary": ["..."], "testStrategy": "...", "knownAmbiguities": ["..."], "invariants": [{"id": "...", "statement": "..."}]}  // include only the charter fields you are changing',
-      '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
+      '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
       '{"type": "add-task", "contextId": "<id>", "title": "...", "instructions": "..."}',
       '{"type": "update-task", "taskId": "<id>", "title": "...", "instructions": "..."}  // include only the fields you are changing',
       '{"type": "remove-task", "taskId": "<id>"}',

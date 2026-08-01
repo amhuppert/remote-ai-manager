@@ -588,6 +588,90 @@ describe("workflow graph validator and request schemas", () => {
     ).toBe(0.0021);
   });
 
+  it("carries per-issue instance paths and the refused payload on an output-schema result (R3.2)", () => {
+    const parsed = graphWorkflowValidationResultEventSchema.parse({
+      type: "graph-workflow-validation-result",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "context-1",
+      validatorType: "context",
+      kind: "output_schema",
+      pass: false,
+      summary: "Output rejected",
+      issues: [
+        {
+          title: "/verdict",
+          description: "not one of the allowed values",
+          path: "/verdict",
+        },
+      ],
+      rejectedOutput: '{ "verdict": "partial" }',
+    });
+
+    expect(parsed.kind).toBe("output_schema");
+    expect(parsed.issues[0]?.path).toBe("/verdict");
+    expect(parsed.rejectedOutput).toBe('{ "verdict": "partial" }');
+  });
+
+  it("carries the structured-output gate's repair spend and budget on an output-schema result (R3.2)", () => {
+    const parsed = graphWorkflowValidationResultEventSchema.parse({
+      type: "graph-workflow-validation-result",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "context-1",
+      validatorType: "context",
+      kind: "output_schema",
+      pass: false,
+      summary: "Output rejected",
+      issues: [{ title: "/verdict", description: "bad", path: "/verdict" }],
+      rejectedOutput: "{}",
+      gateRepairAttempts: 1,
+      gateRepairBudget: 1,
+    });
+
+    expect(parsed.gateRepairAttempts).toBe(1);
+    expect(parsed.gateRepairBudget).toBe(1);
+  });
+
+  it("defaults a result written before the output-schema discriminator to the validator kind, with no path and no payload (R3.2)", () => {
+    const parsed = graphWorkflowValidationResultEventSchema.parse({
+      type: "graph-workflow-validation-result",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "context-1",
+      validatorType: "context",
+      pass: false,
+      summary: "Criterion 1 unmet",
+      issues: [{ title: "Missing job reference", description: "prose" }],
+    });
+
+    expect(parsed.kind).toBe("context_validation");
+    expect(parsed.issues[0]?.path).toBeUndefined();
+    expect(parsed.rejectedOutput).toBeNull();
+    expect(parsed.gateRepairAttempts).toBeNull();
+    expect(parsed.gateRepairBudget).toBeNull();
+  });
+
+  it("rejects an empty instance path rather than recording a locator that points nowhere (R3.2)", () => {
+    expect(
+      graphWorkflowValidationResultEventSchema.safeParse({
+        type: "graph-workflow-validation-result",
+        projectName: "proj",
+        sessionName: "sess",
+        executionId: "exec-1",
+        contextId: "context-1",
+        validatorType: "context",
+        kind: "output_schema",
+        pass: false,
+        summary: "Output rejected",
+        issues: [{ title: "/verdict", description: "bad", path: "" }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("normalizes legacy validation metadata into provider-neutral event contracts", () => {
     expect(
       graphWorkflowValidationEventSessionRefSchema.parse({
@@ -1243,6 +1327,101 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
     if (result.success) {
       expect(result.data.scriptValidator.enabled).toBe(true);
     }
+  });
+});
+
+describe("execution context outputSchema (D2 R1)", () => {
+  const authoredBase = {
+    id: "ctx-1",
+    title: "Context",
+    acceptanceCriteria: "AC",
+  };
+
+  const resolvedBase = {
+    ...authoredBase,
+    implementer: {
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "medium",
+    },
+    contextValidator: null,
+    mutability: { allowAgentTaskAdd: false },
+    circuitBreaker: { consecutiveFailureThreshold: 3 },
+    iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  };
+
+  // A nested object schema with an array and an enum: the persisted value is an
+  // opaque JSON Schema document, so the round trip must preserve nesting and key
+  // order-insensitive structure verbatim rather than a flattened summary.
+  const OUTPUT_SCHEMA = {
+    type: "object",
+    properties: {
+      verdict: { type: "string", enum: ["pass", "fail"] },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: { file: { type: "string" } },
+          required: ["file"],
+        },
+      },
+    },
+    required: ["verdict"],
+    additionalProperties: false,
+  };
+
+  it("accepts an authored context declaring outputSchema and preserves the document verbatim", () => {
+    const result = graphWorkflowExecutionContextDefinitionSchema.safeParse({
+      ...authoredBase,
+      outputSchema: OUTPUT_SCHEMA,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.outputSchema).toEqual(OUTPUT_SCHEMA);
+    }
+  });
+
+  it("leaves outputSchema undefined on an authored context that declares none", () => {
+    const result =
+      graphWorkflowExecutionContextDefinitionSchema.safeParse(authoredBase);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.outputSchema).toBeUndefined();
+    }
+  });
+
+  it("accepts a resolved context carrying outputSchema and preserves the document verbatim", () => {
+    const result = graphWorkflowResolvedContextSchema.safeParse({
+      ...resolvedBase,
+      outputSchema: OUTPUT_SCHEMA,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.outputSchema).toEqual(OUTPUT_SCHEMA);
+    }
+  });
+
+  it("leaves outputSchema undefined on a resolved context with none — no schema-level default", () => {
+    const result = graphWorkflowResolvedContextSchema.safeParse(resolvedBase);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.outputSchema).toBeUndefined();
+    }
+  });
+
+  it("rejects a non-object outputSchema at parse time", () => {
+    expect(
+      graphWorkflowExecutionContextDefinitionSchema.safeParse({
+        ...authoredBase,
+        outputSchema: "type: object",
+      }).success,
+    ).toBe(false);
+    expect(
+      graphWorkflowExecutionContextDefinitionSchema.safeParse({
+        ...authoredBase,
+        outputSchema: [{ type: "object" }],
+      }).success,
+    ).toBe(false);
   });
 });
 

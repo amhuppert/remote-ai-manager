@@ -224,6 +224,17 @@ export function resolveSchedulingHint(
  * images) are deliberately dropped: the repair is an isolated one-shot over
  * the prior output, not a re-run of the original turn.
  */
+/**
+ * Repair turns the structured-output gate spends when a request declares no
+ * `structuredOutputRepair` budget of its own.
+ *
+ * Exported because the budget is otherwise invisible to callers that never set
+ * the field — the graph-workflow output-capture turn is one — and a surface
+ * reporting "1 of ?" repair turns would be reporting a number it cannot
+ * interpret.
+ */
+export const DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS = 1;
+
 export function buildStructuredOutputRepairRequest(input: {
   request: AgentCallRequest;
   prompt: string;
@@ -675,7 +686,9 @@ async function applyStructuredOutputGate(
     candidateSources,
   );
 
-  const maxAttempts = request.structuredOutputRepair?.maxAttempts ?? 1;
+  const maxAttempts =
+    request.structuredOutputRepair?.maxAttempts ??
+    DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS;
   let repairAttempts = 0;
   let failedResult = dispatchResult;
   let latestRepairResult: AgentCallResult | null = null;
@@ -776,6 +789,10 @@ async function applyStructuredOutputGate(
     candidateSources,
     candidateTopLevelKeys: bestCandidateTopLevelKeys,
     repairAttempts,
+    // The budget those attempts were spent against travels with them: a caller
+    // that reports "1 repair turn" cannot say whether that exhausted the gate
+    // or merely opened it without knowing what the bound was.
+    repairMaxAttempts: maxAttempts,
   };
 
   log.warn("agent_call.facade.structured_output_failed", {
@@ -1163,6 +1180,16 @@ function failWithSchemaValidation(
     dispatchResult.outcome.kind === "completed"
       ? dispatchResult.outcome
       : undefined;
+  // The refused reply IS the evidence for a schema failure — a caller can only
+  // report what was wrong, or feed it back to a retry, if it can still see it.
+  // Backends that report a turn as `text` alone (the task-run adapters) carry no
+  // `contentBlocks`, so project the text into the block vocabulary rather than
+  // dropping the payload on the way to `failed`.
+  const refusedContentBlocks =
+    completed?.contentBlocks ??
+    (completed?.text
+      ? [{ type: "text" as const, text: completed.text }]
+      : undefined);
   return {
     ...dispatchResult,
     outcome: {
@@ -1170,8 +1197,8 @@ function failWithSchemaValidation(
       ...(completed?.transcript !== undefined
         ? { transcript: completed.transcript }
         : {}),
-      ...(completed?.contentBlocks !== undefined
-        ? { contentBlocks: completed.contentBlocks }
+      ...(refusedContentBlocks !== undefined
+        ? { contentBlocks: refusedContentBlocks }
         : {}),
       ...(completed?.numTurns !== undefined
         ? { numTurns: completed.numTurns }

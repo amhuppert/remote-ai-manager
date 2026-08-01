@@ -203,6 +203,14 @@ export type ContextValidatorOverride = z.infer<
   typeof contextValidatorOverrideSchema
 >;
 
+/**
+ * What ran out when the breaker tripped. `retry_exhaustion` is the general
+ * validator-failure loop; `output_schema_validation` narrows that to a D2
+ * format turn whose payload the structured-output gate kept refusing, so the
+ * halt card can say what to fix (the context's `outputSchema`) instead of
+ * pointing at the tasks.
+ */
 export const graphWorkflowCircuitBreakerConditionSchema = z.enum([
   "retry_exhaustion",
+  "output_schema_validation",
 ]);

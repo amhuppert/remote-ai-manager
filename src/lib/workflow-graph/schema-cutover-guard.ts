@@ -33,6 +33,32 @@ export class LegacyWorkflowSchemaError extends Error {
   }
 }
 
+/**
+ * Keys whose VALUE is content in a foreign vocabulary, not CC configuration.
+ * These detectors scan by field name across the whole tree, so such a subtree
+ * must be opaque: a declared output schema names the agent's output fields, and
+ * a property legitimately called `taskValidation` (or a nested node carrying
+ * `id` + `title`) is not a pre-cutover definition. Without this, an arbitrary
+ * word collision makes a valid workflow unsavable AND unloadable — the guard
+ * sits on the read path too. `contextOutputs` carries the same hazard one step
+ * further removed: its values are what the agent actually emitted under that
+ * declared schema, so nobody even hand-picked the colliding word.
+ */
+const OPAQUE_CONTENT_KEYS: ReadonlySet<string> = new Set([
+  "outputSchema",
+  "contextOutputs",
+]);
+
+/** Recurse into the members a detector should still inspect. */
+function someNestedValue(
+  obj: Record<string, unknown>,
+  predicate: (value: unknown) => boolean,
+): boolean {
+  return Object.entries(obj).some(
+    ([key, value]) => !OPAQUE_CONTENT_KEYS.has(key) && predicate(value),
+  );
+}
+
 function looksLikeContext(obj: Record<string, unknown>): boolean {
   return typeof obj.id === "string" && typeof obj.title === "string";
 }
@@ -67,7 +93,7 @@ function hasLegacyFields(value: unknown): boolean {
   ) {
     return true;
   }
-  return Object.values(obj).some(hasLegacyFields);
+  return someNestedValue(obj, hasLegacyFields);
 }
 
 function hasValidatorWithAcceptanceCriteria(value: unknown): boolean {
@@ -82,7 +108,7 @@ function hasValidatorWithAcceptanceCriteria(value: unknown): boolean {
   ) {
     return true;
   }
-  return Object.values(obj).some(hasValidatorWithAcceptanceCriteria);
+  return someNestedValue(obj, hasValidatorWithAcceptanceCriteria);
 }
 
 function hasContextMissingAcceptanceCriteria(value: unknown): boolean {
@@ -101,7 +127,7 @@ function hasContextMissingAcceptanceCriteria(value: unknown): boolean {
       return true;
     }
   }
-  return Object.values(obj).some(hasContextMissingAcceptanceCriteria);
+  return someNestedValue(obj, hasContextMissingAcceptanceCriteria);
 }
 
 function detectLegacyShape(value: unknown): string | null {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
@@ -16,7 +16,9 @@ import ExecutionStatusBar, {
   type ExecutionControlAction,
 } from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
-import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+import ExecutionInspectorPanel, {
+  type ContextTabRequest,
+} from "./ExecutionInspectorPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
 import { useUserInputGate } from "@/hooks/use-user-input-gate";
@@ -110,6 +112,26 @@ export default function GraphWorkflowPanel({
     [autoSwitchPanel],
   );
 
+  // "Edit schema" on an output-schema halt: select the refusing context and
+  // open the tab that owns its contract, so the fix is one click from the halt
+  // that named it. The counter makes a repeat request distinguishable from a
+  // re-render of the previous one.
+  const [contextTabRequest, setContextTabRequest] =
+    useState<ContextTabRequest | null>(null);
+  const tabRequestSeq = useRef(0);
+  const handleEditOutputSchema = useCallback(
+    (contextId: string) => {
+      handleSelectContext(contextId);
+      tabRequestSeq.current += 1;
+      setContextTabRequest({
+        contextId,
+        tab: "config",
+        seq: tabRequestSeq.current,
+      });
+    },
+    [handleSelectContext],
+  );
+
   const handleViewTask = useCallback(
     (taskId: string) => {
       setViewingTaskId(taskId);
@@ -192,6 +214,8 @@ export default function GraphWorkflowPanel({
       >
         <ExecutionStatusBar
           execution={execution}
+          events={events}
+          onEditSchema={handleEditOutputSchema}
           onPause={onPause}
           onResume={onResume}
           onAbort={onAbort}
@@ -264,6 +288,8 @@ export default function GraphWorkflowPanel({
                 configEditConflict={configEditConflict}
                 configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
+                onEditSchema={handleEditOutputSchema}
+                contextTabRequest={contextTabRequest}
               />
               {mobilePanel === "log" && (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden">
@@ -348,6 +374,8 @@ export default function GraphWorkflowPanel({
                 configEditConflict={configEditConflict}
                 configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
+                onEditSchema={handleEditOutputSchema}
+                contextTabRequest={contextTabRequest}
               />
             </>
           )}

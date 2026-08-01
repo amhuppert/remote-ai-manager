@@ -147,8 +147,8 @@ only the fields present; absent fields are untouched.
 | `update-workflow` | `name?`, `description?` | record-level metadata |
 | `update-charter` | `mission?`, `conventions?`, `nonGoals?`, `vocabulary?`, `testStrategy?`, `knownAmbiguities?`, `sourcesOfTruth?` | arrays replace wholesale (entries are short; item-level ops are a v2 candidate if audits show friction) |
 | `update-workflow-config` | any of the nine cascade blocks (`implementer`, `contextValidator`, `scriptValidator`, `iterationPolicy`, `circuitBreaker`, `mutability`, `collaboration`, `humanApprovalGate`, `askUserQuestions`) | `null` **clears** an override (restores cascade inheritance) — deleting an override is a first-class need |
-| `add-context` | `id`, `title`, `acceptanceCriteria`, `description?`, + optional per-context config blocks | same shape as a plan.json context |
-| `update-context` | `contextId`, `title?`, `description?`, `acceptanceCriteria?`, + config blocks | `null` clears a per-context override, same as workflow config |
+| `add-context` | `id`, `title`, `acceptanceCriteria`, `description?`, `outputSchema?`, + optional per-context config blocks | same shape as a plan.json context |
+| `update-context` | `contextId`, `title?`, `description?`, `acceptanceCriteria?`, `outputSchema?`, + config blocks | `null` clears a per-context override, same as workflow config; `outputSchema` is not an override — present replaces the declaration wholesale, `null` drops it |
 | `remove-context` | `contextId`, `deleteTasks?` | edges touching the context always cascade; refuses a context that still has tasks unless `deleteTasks: true` (protects prose from silent deletion) |
 | `add-task` | `id`, `contextId`, `title`, `instructions`, `metadata?`, `position?` | `position`: `{"at":"start"\|"end"}` \| `{"after":"<taskId>"}` \| `{"before":"<taskId>"}`; default end |
 | `update-task` | `taskId`, `title?`, `instructions?`, `metadata?` | |

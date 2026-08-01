@@ -205,6 +205,7 @@ describe("booleanFlagNames() over the real registry", () => {
       "include-thinking",
       "multi-select",
       "outline",
+      "outputs",
       "params",
       "skip-warm",
       "summary",

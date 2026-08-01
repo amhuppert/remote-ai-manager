@@ -1,0 +1,408 @@
+/**
+ * R2.1 end-to-end: engine → production capture runner → canonical AgentCall
+ * gate → FAKE AGENT BACKEND.
+ *
+ * Every other D2 test replaces one of those hops with a double, so none of them
+ * can show that a real agent reply becomes a persisted, schema-conformant
+ * output. Here only the backend is faked: it returns raw assistant text, and
+ * the real `executeAgentCall` gate does the extraction fall-through, bounded
+ * repair, and validation (its default validator IS the canonical
+ * `validateJsonSchemaSubset`), the real capture runner translates the verdict,
+ * and the real orchestrator decides whether the context may complete.
+ *
+ * The turn projection is the REAL one too: `runTaskRunTurnForMachine` (the
+ * actor implementation the conversation machine invokes) followed by
+ * `mapToTaskRunResult`. Those two functions decide whether a gate verdict
+ * reaches the engine as a payload, as a schema rejection, or as an
+ * infrastructure failure, so re-implementing them in the test would prove
+ * nothing about production. Only two things are substituted: the backend
+ * runner, and the actor's inert dependency set (no store, no filesystem).
+ * `ensureConversationActor` — the XState wrapper whose single task-run action
+ * delegates straight to `runTaskRunTurnForMachine` — is the one hop skipped.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type {
+  AgentTaskRequest,
+  AgentTaskResult,
+  AgentTaskRunner,
+} from "@/lib/agent-backends/task";
+import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
+import { DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS } from "@/lib/workflows/primitives/agent-call-facade";
+import {
+  mapToTaskRunResult,
+  type ExecuteWorkflowTaskRunInput,
+  type TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import {
+  runTaskRunTurnForMachine,
+  setActorDeps,
+  _resetActorDepsForTesting,
+} from "@/lib/workflows/conversation/actor-implementations";
+import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import { createWorkflowExecution } from "./test-fixtures";
+import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
+import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+
+const NOW = "2026-03-27T16:10:00.000Z";
+
+const PLAN_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    risks: { type: "array", items: { type: "string" } },
+  },
+  required: ["summary", "risks"],
+  additionalProperties: false,
+};
+
+/**
+ * The fake agent backend. It returns assistant TEXT only — never a native
+ * structured payload — so the gate's extraction path is what turns a reply into
+ * a candidate, exactly as a Claude lane behaves.
+ */
+function fakeBackend(
+  replies: readonly string[],
+  capture: { requests: AgentTaskRequest[] },
+): AgentTaskRunner {
+  let index = 0;
+  return {
+    backend: "claude",
+    async run(request) {
+      capture.requests.push(request);
+      const text = replies[Math.min(index, replies.length - 1)] ?? "";
+      index += 1;
+      const result: AgentTaskResult = {
+        backendRef: { backend: "claude", ref: "sess-capture" },
+        text,
+        structuredOutput: undefined,
+        usage: { inputTokens: 10, outputTokens: 20, cachedInputTokens: 0 },
+        error: null,
+        timedOut: false,
+        failure: null,
+        continuationDisposition: "retain",
+      };
+      return result;
+    },
+  };
+}
+
+/**
+ * The production task-run path, with only the backend faked: the real actor
+ * implementation (which runs the real `executeAgentCall` gate) followed by the
+ * real `PromptActorResult` → `TaskRunResult` projection. Every branch the
+ * engine depends on — accepted payload with its provenance, schema rejection
+ * with per-issue errors and the refused text, infrastructure failure — is
+ * decided by production code here, not by this test.
+ */
+function productionTaskRun(
+  runner: AgentTaskRunner,
+): (input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult> {
+  setActorDeps(
+    createActorImplementationDepsFixture({
+      getTaskRunner: vi.fn(() => runner),
+    }),
+  );
+
+  return async (input) => {
+    const actorResult = await runTaskRunTurnForMachine({
+      persistence: "ephemeral",
+      projectPath: input.projectPath,
+      projectName: "repo",
+      sessionName: input.sessionName,
+      worktreePath: input.worktreePath ?? "/repo",
+      conversationId: input.conversationId,
+      agentBackend: "claude",
+      backendRef: null,
+      promptText: input.prompt,
+      modelId: input.modelId ?? null,
+      effort: input.effort ?? null,
+      ...(input.outputFormat !== undefined
+        ? { outputFormat: input.outputFormat }
+        : {}),
+      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+      ...(input.origin !== undefined ? { origin: input.origin } : {}),
+    });
+
+    return mapToTaskRunResult(
+      actorResult,
+      actorResult.error,
+      input.outputFormat,
+    );
+  };
+}
+
+interface Repository {
+  getActive(): Promise<GraphWorkflowExecution | null>;
+  mutateActive(
+    projectPath: string,
+    sessionName: string,
+    fn: (execution: GraphWorkflowExecution) =>
+      | GraphWorkflowExecution
+      | {
+          execution: GraphWorkflowExecution;
+          events: GraphWorkflowExecutionEvent[];
+        }
+      | Promise<
+          | GraphWorkflowExecution
+          | {
+              execution: GraphWorkflowExecution;
+              events: GraphWorkflowExecutionEvent[];
+            }
+        >,
+  ): Promise<GraphWorkflowExecution>;
+  findLatestContextValidationEvent(
+    executionId: string,
+    contextId: string,
+  ): Promise<GraphWorkflowExecutionEvent | null>;
+  read(): GraphWorkflowExecution;
+  appendedEvents: GraphWorkflowExecutionEvent[];
+}
+
+function createRepository(initial: GraphWorkflowExecution): Repository {
+  let active = initial;
+  const appendedEvents: GraphWorkflowExecutionEvent[] = [];
+  return {
+    async getActive() {
+      return active;
+    },
+    async mutateActive(_projectPath, _sessionName, fn) {
+      const result = await fn(structuredClone(active));
+      if ("execution" in result && "events" in result) {
+        active = result.execution;
+        appendedEvents.push(...result.events);
+      } else {
+        active = result;
+      }
+      return active;
+    },
+    async findLatestContextValidationEvent(_executionId, contextId) {
+      for (let i = appendedEvents.length - 1; i >= 0; i -= 1) {
+        const entry = appendedEvents[i]!;
+        if (
+          entry.event.type === "graph-workflow-validation-result" &&
+          "contextId" in entry.event &&
+          entry.event.contextId === contextId
+        ) {
+          return entry;
+        }
+      }
+      return null;
+    },
+    read() {
+      return active;
+    },
+    appendedEvents,
+  };
+}
+
+function executionWithSchema(): GraphWorkflowExecution {
+  const execution = createWorkflowExecution({
+    status: "running",
+    activeContextIds: ["context-plan"],
+  });
+  const planContext = execution.workingDefinition.executionContexts.find(
+    (entry) => entry.id === "context-plan",
+  );
+  if (!planContext) throw new Error("fixture missing context-plan");
+  planContext.outputSchema = PLAN_OUTPUT_SCHEMA;
+  return execution;
+}
+
+/** Marks the context's single task done, the way a lane turn would. */
+function completePlanTask(repository: Repository) {
+  return vi.fn(async () => {
+    const current = structuredClone(repository.read());
+    current.taskStates["task-plan-1"] = {
+      ...current.taskStates["task-plan-1"]!,
+      status: "completed",
+      summary: "Done",
+      completedAt: NOW,
+    };
+    current.contextStates["context-plan"] = {
+      ...current.contextStates["context-plan"]!,
+      completedTaskCount: 1,
+    };
+    await repository.mutateActive("/repo", "session-1", () => current);
+    return {
+      conversationId: "conversation-lane",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    };
+  });
+}
+
+function buildOrchestrator(
+  repository: Repository,
+  runner: AgentTaskRunner,
+  signalHalt?: ReturnType<typeof vi.fn>,
+) {
+  // PRODUCTION capture runner over the production task-run path.
+  const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
+    executeWorkflowTaskRun: productionTaskRun(runner),
+  });
+
+  return createGraphWorkflowIterationOrchestrator({
+    executionRepository: repository,
+    findLatestContextValidationEvent:
+      repository.findLatestContextValidationEvent,
+    createConversation: vi.fn(async () => ({ id: "conversation-lane" })),
+    createToolServer: vi.fn(() => ({ server: {} })),
+    runAgentIteration: completePlanTask(repository),
+    validationService: {
+      validateContextCompletion: vi.fn(async () => ({
+        kind: "pass" as const,
+        summary: "All checks passed",
+        feedback: "Context validation passed.",
+        issues: [] as never[],
+        reopenTaskIds: [],
+        sessionRef: null,
+        reviewArtifact: null,
+      })),
+    },
+    outputCaptureService: outputCaptureRunner,
+    ...(signalHalt ? { signalHalt } : {}),
+    now: () => NOW,
+  });
+}
+
+const ITERATION_INPUT = {
+  projectPath: "/repo",
+  projectName: "repo",
+  sessionName: "session-1",
+  contextId: "context-plan",
+};
+
+describe("context output capture against a fake agent backend (R2.1)", () => {
+  beforeEach(() => {
+    _resetActorDepsForTesting();
+  });
+  afterEach(() => {
+    _resetActorDepsForTesting();
+  });
+
+  it("drives a schema-declaring context to completed and persists a payload that parses against the declared schema", async () => {
+    const repository = createRepository(executionWithSchema());
+    const capture = { requests: [] as AgentTaskRequest[] };
+    // Fenced JSON with prose around it: the gate's extraction fall-through is
+    // what must recover the payload, since the fake backend returns no native
+    // structured output.
+    const runner = fakeBackend(
+      [
+        'Here is the output you asked for:\n\n```json\n{"summary":"Migrate the store first","risks":["schema drift"]}\n```\n',
+      ],
+      capture,
+    );
+
+    const result = await buildOrchestrator(repository, runner).runIteration(
+      ITERATION_INPUT,
+    );
+
+    const persisted = repository.read();
+    const captured = persisted.contextOutputs["context-plan"];
+    expect(captured).toBeDefined();
+    expect(captured?.value).toEqual({
+      summary: "Migrate the store first",
+      risks: ["schema drift"],
+    });
+    // The criterion's own check: the PERSISTED payload parses against the
+    // DECLARED schema, verified by the same validator the gate used.
+    expect(
+      validateJsonSchemaSubset(PLAN_OUTPUT_SCHEMA, captured?.value).valid,
+    ).toBe(true);
+    // Recovered from text, not handed over natively — the gate did the work.
+    expect(captured?.parse.source).toBe("fenced");
+
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+    expect(result.shouldContinueInContext).toBe(false);
+
+    // The declared contract reached the backend verbatim.
+    const captureRequest = capture.requests.at(-1);
+    expect(captureRequest?.outputSchema).toEqual(PLAN_OUTPUT_SCHEMA);
+    expect(captureRequest?.prompt).toContain("Final Output");
+  });
+
+  it("does not complete the context when the backend's payload cannot satisfy the schema, and records the gate's issues", async () => {
+    const repository = createRepository(executionWithSchema());
+    const capture = { requests: [] as AgentTaskRequest[] };
+    // `risks` is a string, not an array of strings — the real subset validator
+    // refuses it, and the bounded repair attempt gets the same reply back.
+    const runner = fakeBackend(
+      ['{"summary":"Migrate the store first","risks":"schema drift"}'],
+      capture,
+    );
+
+    const result = await buildOrchestrator(repository, runner).runIteration(
+      ITERATION_INPUT,
+    );
+
+    const persisted = repository.read();
+    expect(persisted.contextOutputs["context-plan"]).toBeUndefined();
+    expect(persisted.contextStates["context-plan"]?.status).not.toBe(
+      "completed",
+    );
+    expect(result.shouldContinueInContext).toBe(true);
+    expect(
+      persisted.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+
+    const failure = repository.appendedEvents
+      .map((entry) => entry.event)
+      .find(
+        (event) =>
+          event.type === "graph-workflow-validation-result" &&
+          event.kind === "output_schema",
+      );
+    expect(failure).toMatchObject({ pass: false, kind: "output_schema" });
+    // The issues came from the real validator, addressed by instance path.
+    expect(
+      failure?.type === "graph-workflow-validation-result"
+        ? failure.issues.map((issue) => issue.path)
+        : [],
+    ).toContain("$.risks");
+
+    // The gate's bounded repair really ran: more than one backend turn.
+    expect(capture.requests.length).toBeGreaterThan(1);
+    // …and the rejection record says so. This is the halt surfaces' only
+    // honest repair provenance, propagated from the gate that spent it —
+    // through backendDetails, the actor, the task-run result and the capture
+    // outcome — rather than re-derived from D1's unrelated plan-repair rounds.
+    expect(failure).toMatchObject({
+      gateRepairAttempts: capture.requests.length - 1,
+      gateRepairBudget: DEFAULT_STRUCTURED_OUTPUT_REPAIR_ATTEMPTS,
+    });
+    // The contract that refused travels WITH the refusal: the halt surfaces'
+    // Edit-schema action can replace it while the halt is open, and a rejection
+    // captioned by whatever the context declares later is evidence that never
+    // met (R3.2).
+    expect(failure).toMatchObject({
+      rejectedAgainstSchema: PLAN_OUTPUT_SCHEMA,
+    });
+  });
+
+  it("accepts a payload the gate recovers on its repair attempt", async () => {
+    const repository = createRepository(executionWithSchema());
+    const capture = { requests: [] as AgentTaskRequest[] };
+    const runner = fakeBackend(
+      [
+        // First reply is unusable; the gate's repair turn gets a valid one.
+        "I could not produce that.",
+        '{"summary":"Migrate the store first","risks":[]}',
+      ],
+      capture,
+    );
+
+    await buildOrchestrator(repository, runner).runIteration(ITERATION_INPUT);
+
+    const persisted = repository.read();
+    expect(persisted.contextOutputs["context-plan"]?.value).toEqual({
+      summary: "Migrate the store first",
+      risks: [],
+    });
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+    expect(capture.requests.length).toBeGreaterThan(1);
+  });
+});

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   createResolvedWorkflowDefinition,
@@ -572,5 +578,53 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     expect(
       screen.getAllByText("Codex Implement").length,
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("deep-links Edit schema to the halted context's Config tab (R3.2)", async () => {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              outputSchema: { type: "object", properties: {} },
+            }
+          : context,
+    );
+    const execution = createWorkflowExecution({
+      workingDefinition: definition,
+      status: "halted",
+      haltReason: {
+        type: "circuit_breaker",
+        contextId: "context-plan",
+        condition: "output_schema_validation",
+        failureCount: 3,
+        summary: "Output schema not satisfied",
+      },
+    });
+
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={execution}
+        events={[]}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Edit schema" }),
+    );
+
+    // The inspector opens on the halted context with Config selected, so the
+    // refusing contract is one click from the halt that named it.
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
   });
 });

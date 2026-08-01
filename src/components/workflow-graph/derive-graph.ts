@@ -18,6 +18,7 @@ import {
   type ContextWaitState,
 } from "./derive-wait-state";
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
+import { getContextOutput } from "@/lib/workflow-graph/context-outputs";
 
 type DeriveGraphDefinition =
   | WorkflowSemanticDefinition
@@ -32,6 +33,13 @@ export type ExecutionContextNodeData = {
   contextState?: GraphWorkflowExecutionContextState;
   taskStates?: Record<string, GraphWorkflowTaskState>;
   waitState?: ContextWaitState;
+  /**
+   * Present ONLY when the context declares an `outputSchema` — its absence is
+   * how the node knows to draw no contract glyph at all. `captured` is false in
+   * builder mode by construction: nothing has run, so a declared contract is
+   * always still owed.
+   */
+  outputSchema?: { captured: boolean };
 };
 
 export type ContextEdgeData = {
@@ -106,6 +114,17 @@ export function deriveNodes(
       tasks: index.tasksByContext.get(context.id) ?? [],
       mode: execution ? "execution" : "builder",
     };
+
+    if (context.outputSchema !== undefined) {
+      // Read through the D6 accessor rather than `execution.contextOutputs`, so
+      // "captured" means the same thing on the node as it does in the inspector
+      // and in the downstream prompt injection.
+      data.outputSchema = {
+        captured:
+          execution != null &&
+          getContextOutput(execution, context.id).kind === "captured",
+      };
+    }
 
     if (execution) {
       const ctxState = execution.contextStates[context.id];

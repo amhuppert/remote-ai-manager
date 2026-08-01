@@ -213,6 +213,7 @@ function definitionEditTouchedPaths(
           "title",
           "description",
           "acceptanceCriteria",
+          "outputSchema",
           "implementer",
           "contextValidator",
           "scriptValidator",
@@ -395,6 +396,9 @@ function applyOperation(
         ...(operation.description !== undefined
           ? { description: operation.description }
           : {}),
+        ...(operation.outputSchema !== undefined
+          ? { outputSchema: operation.outputSchema }
+          : {}),
         ...(operation.implementer !== undefined
           ? { implementer: operation.implementer }
           : {}),
@@ -444,6 +448,7 @@ function applyOperation(
         context.acceptanceCriteria = operation.acceptanceCriteria;
       }
       applyOptionalBlock(context, "description", operation.description);
+      applyOptionalBlock(context, "outputSchema", operation.outputSchema);
       applyOptionalBlock(context, "implementer", operation.implementer);
       applyOptionalBlock(
         context,

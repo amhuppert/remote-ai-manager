@@ -13,6 +13,7 @@ import type {
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
 
 function makeCharter(
   overrides: Partial<WorkflowCharter> = {},
@@ -768,6 +769,121 @@ describe("buildIterationPrompt", () => {
       expect(prompt).not.toContain(name);
     }
     expect(prompt).toContain("cctl workflow task complete");
+  });
+
+  describe("upstream structured inputs (D2 R5.1)", () => {
+    const planInput: GraphWorkflowUpstreamInput = {
+      contextId: "context-plan",
+      title: "Plan",
+      declared: true,
+      schemaFields: [
+        {
+          name: "summary",
+          type: "string",
+          required: true,
+          description: "One-line plan summary",
+        },
+        { name: "risks", type: "array", required: true, description: null },
+      ],
+      output: {
+        summary: "Migrate the store first",
+        risks: ["schema drift"],
+      },
+    };
+
+    it("renders each upstream output as schema-conformant JSON before the context's own brief", () => {
+      const prompt = buildIterationPrompt({
+        context: makeContext(),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments: [],
+        allowAgentTaskAdd: false,
+        upstreamInputs: [planInput],
+      });
+
+      expect(prompt).toContain("## Inputs from upstream");
+      expect(prompt).toContain("### context-plan — Plan");
+      // The payload must round-trip as JSON: the downstream agent is told to
+      // treat it as data, so a prose paraphrase would break the contract.
+      const fenced = prompt.split("```json")[1]?.split("```")[0] ?? "";
+      expect(JSON.parse(fenced)).toEqual(planInput.output);
+      // Before the brief: inputs are read first, like a function's arguments.
+      expect(prompt.indexOf("## Inputs from upstream")).toBeLessThan(
+        prompt.indexOf("## Tasks (work through them in order)"),
+      );
+    });
+
+    it("names the declared fields so the agent can address the payload", () => {
+      const prompt = buildIterationPrompt({
+        context: makeContext(),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments: [],
+        allowAgentTaskAdd: false,
+        upstreamInputs: [planInput],
+      });
+
+      expect(prompt).toContain("summary");
+      expect(prompt).toContain("One-line plan summary");
+    });
+
+    it("renders no section when no upstream produced an output", () => {
+      const pendingUpstream: GraphWorkflowUpstreamInput = {
+        contextId: "context-plan",
+        title: "Plan",
+        declared: true,
+        schemaFields: planInput.schemaFields,
+        output: null,
+      };
+      const freeFormUpstream: GraphWorkflowUpstreamInput = {
+        contextId: "context-design",
+        title: "Design",
+        declared: false,
+        schemaFields: null,
+        output: null,
+      };
+
+      for (const upstreamInputs of [
+        undefined,
+        [],
+        [pendingUpstream],
+        [freeFormUpstream, pendingUpstream],
+      ]) {
+        const prompt = buildIterationPrompt({
+          context: makeContext(),
+          tasks: [makeTask()],
+          taskStates: {},
+          sharedDocuments: [],
+          allowAgentTaskAdd: false,
+          ...(upstreamInputs !== undefined ? { upstreamInputs } : {}),
+        });
+
+        expect(prompt).not.toContain("## Inputs from upstream");
+      }
+    });
+
+    it("omits upstreams that produced nothing while rendering the ones that did", () => {
+      const prompt = buildIterationPrompt({
+        context: makeContext(),
+        tasks: [makeTask()],
+        taskStates: {},
+        sharedDocuments: [],
+        allowAgentTaskAdd: false,
+        upstreamInputs: [
+          {
+            contextId: "context-design",
+            title: "Design",
+            declared: false,
+            schemaFields: null,
+            output: null,
+          },
+          planInput,
+        ],
+      });
+
+      expect(prompt).toContain("### context-plan — Plan");
+      expect(prompt).not.toContain("### context-design — Design");
+    });
   });
 });
 

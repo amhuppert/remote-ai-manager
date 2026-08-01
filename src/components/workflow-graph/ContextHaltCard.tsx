@@ -3,6 +3,13 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
+import { StatusChip } from "@/components/ui/StatusChip";
+import {
+  outputSchemaEvidenceForReason,
+  type OutputSchemaHaltEvidence,
+  type OutputSchemaHaltEvidenceByContext,
+  type OutputSchemaHaltIssue,
+} from "./derive-output-schema-halt";
 import { cn } from "@/lib/ui/cn";
 
 const haltCardBase =
@@ -57,6 +64,110 @@ export interface FormatHaltReasonOptions {
    *  that render their own richer conflict presentation (the halt-details
    *  dialog's recovery form). */
   omitConflictFiles?: boolean;
+  /**
+   * Evidence an `output_schema_validation` trip cannot carry on the halt reason
+   * itself — the refused payload and its path-keyed issues live in the
+   * validation-failure record, the contract lives on the context. Evidence for
+   * THIS reason: hosts derive the whole halt's record with
+   * `deriveOutputSchemaHaltEvidenceByContext` and pick per reason with
+   * `outputSchemaEvidenceForReason`.
+   */
+  outputSchemaEvidence?: OutputSchemaHaltEvidence;
+  /**
+   * Render the full evidence body — refused payload beside the declared
+   * contract, plus the budget chips. The one-line and card surfaces stay
+   * compact (issue list only); the halt-details dialog asks for this.
+   */
+  expandOutputSchemaEvidence?: boolean;
+}
+
+// The instance-path issue list. Same recipe as `merge_precondition_failed`'s
+// dirty-path list — an amber `<code>` locator followed by prose — so a machine
+// locator reads the same wherever a halt reports one.
+function renderOutputSchemaIssues(
+  issues: ReadonlyArray<OutputSchemaHaltIssue>,
+): ReactNode {
+  return (
+    <ul className={haltPathsClass}>
+      {issues.map((issue, index) => (
+        <li key={`${issue.path ?? issue.title}-${index}`}>
+          <code>{issue.path ?? issue.title}</code>
+          {issue.description ?? (issue.path !== undefined ? issue.title : "")}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const haltEvidenceLabelClass =
+  "mb-[4px] text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase";
+
+function OutputSchemaEvidenceBody({
+  evidence,
+}: {
+  evidence: OutputSchemaHaltEvidence;
+}) {
+  const chips: string[] = [];
+  // Named for the gate's own repair turn so it cannot be read as a D1
+  // plan-repair round — the two bound different things and can both be
+  // non-zero on the same halt.
+  if (evidence.gateRepairAttempts !== null) {
+    chips.push(
+      evidence.gateRepairBudget !== null
+        ? `schema repair turn · ${evidence.gateRepairAttempts} of ${evidence.gateRepairBudget}`
+        : `schema repair turn · ${evidence.gateRepairAttempts}`,
+    );
+  }
+  if (evidence.failureCount !== null) {
+    chips.push(
+      evidence.breakerThreshold !== null
+        ? `circuit breaker · ${evidence.failureCount} of ${evidence.breakerThreshold}`
+        : `circuit breaker · ${evidence.failureCount}`,
+    );
+  }
+  if (evidence.iteration !== null) {
+    chips.push(
+      evidence.maxIterations !== null
+        ? `iteration ${evidence.iteration} of ${evidence.maxIterations}`
+        : `iteration ${evidence.iteration}`,
+    );
+  }
+
+  return (
+    <>
+      {evidence.issues.length > 0 && renderOutputSchemaIssues(evidence.issues)}
+      {evidence.rejectedOutput !== null && (
+        <div>
+          <div className={haltEvidenceLabelClass}>Rejected output</div>
+          <pre className={haltPreClass}>{evidence.rejectedOutput}</pre>
+        </div>
+      )}
+      {evidence.declaredSchema !== null && (
+        <div>
+          <div className={haltEvidenceLabelClass}>
+            {/* The Edit schema action reachable from this very card can replace
+                the contract while the halt stands. The pairing stays with the
+                schema that refused; the label says which schema that is. */}
+            {evidence.schemaEditedSinceRejection
+              ? "Declared schema (at rejection — since edited)"
+              : "Declared schema"}
+          </div>
+          <pre className={haltPreClass}>
+            {JSON.stringify(evidence.declaredSchema, null, 2)}
+          </pre>
+        </div>
+      )}
+      {chips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-[6px]">
+          {chips.map((chip) => (
+            <StatusChip key={chip} tone="neutral">
+              {chip}
+            </StatusChip>
+          ))}
+        </div>
+      )}
+    </>
+  );
 }
 
 export function formatGraphWorkflowHaltReason(
@@ -167,6 +278,29 @@ export function formatGraphWorkflowHaltReason(
       };
     }
     case "circuit_breaker":
+      // A D2 format turn that kept failing the structured-output gate is a
+      // contract problem, not a work problem: the tasks are done and the
+      // validator passed. Naming the schema keeps the operator off the tasks.
+      if (reason.condition === "output_schema_validation") {
+        const evidence = options.outputSchemaEvidence;
+        const hasIssues = evidence !== undefined && evidence.issues.length > 0;
+        return {
+          headline: `Output schema not satisfied in ${reason.contextId}${
+            reason.failureCount ? ` (${reason.failureCount} attempts)` : ""
+          }`,
+          detail:
+            evidence !== undefined &&
+            options.expandOutputSchemaEvidence === true ? (
+              <OutputSchemaEvidenceBody evidence={evidence} />
+            ) : hasIssues ? (
+              renderOutputSchemaIssues(evidence.issues)
+            ) : reason.summary ? (
+              <p>{reason.summary}</p>
+            ) : null,
+          action:
+            "The context finished its work but could not produce an output matching its declared outputSchema. Loosen or correct that schema on the context, then resume.",
+        };
+      }
       return {
         headline: `Circuit breaker tripped in ${reason.contextId}`,
         detail: reason.summary ? <p>{reason.summary}</p> : null,
@@ -215,17 +349,59 @@ export function formatGraphWorkflowHaltReason(
   }
 }
 
+// Small text action, sized to sit inside the card's dense body rather than
+// competing with the halt headline.
+const haltInlineActionClass =
+  "w-fit cursor-pointer appearance-none border-0 bg-transparent p-0 font-[inherit] text-[0.72rem] font-semibold text-cyan hover:underline";
+
+function EditSchemaAction({
+  contextId,
+  onEditSchema,
+}: {
+  contextId: string;
+  onEditSchema(contextId: string): void;
+}) {
+  return (
+    <button
+      type="button"
+      className={haltInlineActionClass}
+      onClick={() => onEditSchema(contextId)}
+    >
+      Edit schema
+    </button>
+  );
+}
+
 export interface ContextHaltCardProps {
   primary: GraphWorkflowHaltReason;
   secondary?: GraphWorkflowHaltReason[];
+  /**
+   * Output-schema evidence keyed by context, covering EVERY reason this card
+   * renders. A record rather than one evidence object because a concurrent
+   * second refusal is stored as a secondary reason, and rendering it without
+   * its own paths and payload is the same halt reported two different ways.
+   */
+  outputSchemaEvidence?: OutputSchemaHaltEvidenceByContext | null;
+  /** Opens the refusing context's Config tab. Omitted → not offered. */
+  onEditSchema?(contextId: string): void;
 }
 
 export default function ContextHaltCard({
   primary,
   secondary = [],
+  outputSchemaEvidence,
+  onEditSchema,
 }: ContextHaltCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const formatted = formatGraphWorkflowHaltReason(primary);
+  const primaryEvidence = outputSchemaEvidenceForReason(
+    outputSchemaEvidence,
+    primary,
+  );
+  const formatted = formatGraphWorkflowHaltReason(primary, {
+    ...(primaryEvidence !== undefined
+      ? { outputSchemaEvidence: primaryEvidence }
+      : {}),
+  });
   const attention = formatted.tone === "attention";
   return (
     <div
@@ -262,6 +438,12 @@ export default function ContextHaltCard({
           Open the merge gate →
         </Link>
       )}
+      {primaryEvidence !== undefined && onEditSchema !== undefined && (
+        <EditSchemaAction
+          contextId={primaryEvidence.contextId}
+          onEditSchema={onEditSchema}
+        />
+      )}
       {secondary.length > 0 && (
         <div className="mt-[2px]">
           <button
@@ -276,11 +458,25 @@ export default function ContextHaltCard({
           {expanded && (
             <ul className="mx-0 mt-[6px] mb-0 flex max-h-[240px] list-none flex-col gap-[8px] overflow-y-auto border-t border-dashed border-[var(--cc-red-a25)] px-0 pt-[8px] pb-0 [&_li]:text-[0.72rem] [&_li]:text-text-secondary [&_strong]:font-semibold [&_strong]:text-text-primary">
               {secondary.map((reason, idx) => {
-                const f = formatGraphWorkflowHaltReason(reason);
+                const evidence = outputSchemaEvidenceForReason(
+                  outputSchemaEvidence,
+                  reason,
+                );
+                const f = formatGraphWorkflowHaltReason(reason, {
+                  ...(evidence !== undefined
+                    ? { outputSchemaEvidence: evidence }
+                    : {}),
+                });
                 return (
                   <li key={`${reason.type}-${idx}`}>
                     <strong>{f.headline}</strong>
                     {f.detail && <div>{f.detail}</div>}
+                    {evidence !== undefined && onEditSchema !== undefined && (
+                      <EditSchemaAction
+                        contextId={evidence.contextId}
+                        onEditSchema={onEditSchema}
+                      />
+                    )}
                   </li>
                 );
               })}

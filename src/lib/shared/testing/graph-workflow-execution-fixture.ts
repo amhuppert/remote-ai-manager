@@ -118,6 +118,45 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               reasoningEffort: "high",
             },
           },
+          // An author-declared output contract. `taskValidation` is a removed CC
+          // config field name deliberately reused here as an ordinary property:
+          // the legacy-schema cutover guard scans by field name, so this proves
+          // the outputSchema subtree stays opaque to it across a real save and
+          // reload rather than making a word collision unpersistable.
+          //
+          // It is also the contract `contextOutputs["ctx-1"].value` below is
+          // required to satisfy — D5 admits only accepted candidates into
+          // contextOutputs, so a fixture output that its own context's schema
+          // would reject models a state the engine must never persist. The
+          // executions-repo contract test enforces that with the canonical
+          // validator, so this schema and that payload cannot drift apart.
+          outputSchema: {
+            type: "object",
+            properties: {
+              verdict: { type: "string", enum: ["pass", "fail"] },
+              taskValidation: { type: "string" },
+              score: { type: "number", minimum: 0, maximum: 1 },
+              followUp: { type: ["string", "null"] },
+              findings: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    severity: { type: "string", enum: ["low", "high"] },
+                    file: { type: "string" },
+                    line: { type: "integer" },
+                    tags: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["id", "severity"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["verdict"],
+            additionalProperties: false,
+          },
           collaboration: {
             enabled: { value: true, source: "per-node" },
             secondAgent: {
@@ -249,6 +288,34 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             timestamp: "2026-01-02T00:30:00Z",
           },
         ],
+      },
+    },
+    contextOutputs: {
+      "ctx-1": {
+        // An ACCEPTED output for ctx-1: every key and element type is admitted
+        // by that context's authored outputSchema above (D5 keeps rejected
+        // candidates out of contextOutputs entirely). Deliberately deep within
+        // those bounds — nested objects, a nested array, and an explicit null —
+        // because a shallow copy or a round-trip that coerced null to undefined
+        // would still satisfy a flat key check.
+        value: {
+          verdict: "pass",
+          taskValidation: "reviewed",
+          score: 0.94,
+          findings: [
+            {
+              id: "f-1",
+              severity: "high",
+              file: "src/lib/foo.ts",
+              line: 42,
+              tags: ["perf", "api"],
+            },
+          ],
+          followUp: null,
+        },
+        capturedAt: "2026-01-02T05:00:00.000Z",
+        iteration: 3,
+        parse: { source: "fenced", repaired: true, repairAttempts: 2 },
       },
     },
     sharedDocuments: [

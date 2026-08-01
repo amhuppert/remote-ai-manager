@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "../test-fixtures";
 import type { GraphWorkflowExecution } from "../schemas";
-import {
-  buildPlanRepairPrompt,
-  type PlanRepairPromptInput,
-} from "./prompt";
+import { buildPlanRepairPrompt, type PlanRepairPromptInput } from "./prompt";
 
 function makeInput(
   overrides: Partial<PlanRepairPromptInput> = {},
@@ -86,6 +83,63 @@ describe("buildPlanRepairPrompt", () => {
     expect(prompt).toContain('"type": "amend-charter"');
     expect(prompt).toContain('"type": "update-context"');
     expect(prompt).toContain('"type": "update-task"');
+  });
+
+  // The op vocabulary is the agent's ONLY view of what it may change: a field
+  // absent from these shapes is a capability it never uses. An
+  // `output_schema_validation` breaker trip is unrepairable without it.
+  it("offers outputSchema on update-context so a too-tight output contract is repairable", () => {
+    const prompt = buildPlanRepairPrompt(makeInput());
+
+    expect(prompt).toContain('"outputSchema"');
+    const updateContextShape = prompt
+      .split("\n")
+      .find((line) => line.includes('"type": "update-context"'));
+    expect(updateContextShape).toBeDefined();
+    expect(updateContextShape).toContain('"outputSchema"');
+    // `null` is the only way to return a context to free-form output.
+    expect(updateContextShape).toContain("null");
+  });
+
+  it("frames an output_schema_validation trip as a contract failure and shows the declared schema", () => {
+    const base = makeInput();
+    const outputSchema = {
+      type: "object",
+      properties: { migrationId: { type: "string" } },
+      required: ["migrationId"],
+      additionalProperties: false,
+    };
+    const contexts = base.execution.workingDefinition.executionContexts.map(
+      (context) =>
+        context.id === "context-implement"
+          ? { ...context, outputSchema }
+          : context,
+    );
+    const haltReason = {
+      type: "circuit_breaker" as const,
+      contextId: "context-implement",
+      condition: "output_schema_validation" as const,
+      failureCount: 3,
+      summary: "$.migrationId: required property is missing",
+    };
+    const execution: GraphWorkflowExecution = {
+      ...base.execution,
+      haltReason,
+      workingDefinition: {
+        ...base.execution.workingDefinition,
+        executionContexts: contexts,
+      },
+    };
+
+    const prompt = buildPlanRepairPrompt({ ...base, execution, haltReason });
+
+    expect(prompt).toContain("### Declared output schema");
+    expect(prompt).toContain('"migrationId"');
+    expect(prompt).toContain("output-contract failure, not a work failure");
+    // A retry_exhaustion trip must not pick up the contract framing.
+    expect(buildPlanRepairPrompt(makeInput())).not.toContain(
+      "output-contract failure",
+    );
   });
 
   it("caps the validation history at the five most recent verdicts", () => {

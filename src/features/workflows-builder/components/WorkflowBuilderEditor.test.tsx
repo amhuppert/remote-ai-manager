@@ -7,6 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -293,5 +294,148 @@ describe("WorkflowBuilderEditor", () => {
         "contextHardLimitTokens",
       );
     }
+  });
+});
+
+// R7.4's save gate belongs to the SAVE OWNER, not to one button. The inspector
+// header and the toolbar's "Save Draft" are two controls over one `handleSave`,
+// and invalid schema text never reaches the store — so a gate that lives only
+// in the inspector lets the toolbar persist the LAST VALID schema while the
+// author is still looking at red text, and report the draft as saved.
+describe("WorkflowBuilderEditor — output schema save gate", () => {
+  const VALID_SCHEMA = { type: "object", properties: {} };
+
+  function recordWithSchema() {
+    const definition = createWorkflowDefinition();
+    const [first, ...rest] = definition.executionContexts;
+    if (!first) throw new Error("fixture has no execution context");
+    return {
+      record: createWorkflowDefinitionRecord({
+        definition: {
+          ...definition,
+          executionContexts: [
+            { ...first, outputSchema: VALID_SCHEMA },
+            ...rest,
+          ],
+        },
+      }),
+      contextId: first.id,
+    };
+  }
+
+  function schemaTextarea(): HTMLTextAreaElement {
+    const element = screen.getByLabelText("Output schema JSON");
+    if (!(element instanceof HTMLTextAreaElement)) {
+      throw new Error("The output schema editor is not a textarea");
+    }
+    return element;
+  }
+
+  function renderWithSelectedContext(onSave: ReturnType<typeof vi.fn>) {
+    resetStore();
+    const { record, contextId } = recordWithSchema();
+    // The inspector's Context tab pulls voice state through React Query.
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <WorkflowBuilderEditor
+          record={record}
+          {...defaultHeaderProps}
+          onSave={onSave}
+        />
+      </QueryClientProvider>,
+    );
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ selectedContextId: contextId });
+    });
+    return view;
+  }
+
+  it("blocks BOTH save controls while the schema text is invalid", async () => {
+    const onSave = vi.fn();
+    renderWithSelectedContext(onSave);
+
+    fireEvent.change(schemaTextarea(), { target: { value: '{ "type": ' } });
+
+    const toolbarSave = screen.getByRole("button", { name: /Save Draft/i });
+    expect(toolbarSave).toBeDisabled();
+    fireEvent.click(toolbarSave);
+
+    const inspectorSave = screen.getByRole("button", { name: /^Save$/ });
+    expect(inspectorSave).toBeDisabled();
+    fireEvent.click(inspectorSave);
+
+    await waitFor(() => expect(onSave).not.toHaveBeenCalled());
+  });
+
+  it("reports uncommittable schema text as unsaved work on both controls", () => {
+    renderWithSelectedContext(vi.fn());
+
+    expect(screen.getByText("All changes saved")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Saved$/ })).toBeInTheDocument();
+
+    // An invalid-only edit leaves the STORE clean — the label must not claim
+    // the draft is saved while the editor holds text nothing has persisted.
+    fireEvent.change(schemaTextarea(), { target: { value: "{{{" } });
+
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Saved$/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("re-enables both save controls once the text is valid again and persists it", async () => {
+    const onSave = vi.fn();
+    renderWithSelectedContext(onSave);
+
+    fireEvent.change(schemaTextarea(), { target: { value: "{{{" } });
+    expect(screen.getByRole("button", { name: /Save Draft/i })).toBeDisabled();
+
+    const repaired = {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+    };
+    fireEvent.change(schemaTextarea(), {
+      target: { value: JSON.stringify(repaired, null, 2) },
+    });
+
+    const toolbarSave = screen.getByRole("button", { name: /Save Draft/i });
+    expect(toolbarSave).not.toBeDisabled();
+    fireEvent.click(toolbarSave);
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    // The persisted schema is the repaired one — never the stale last-valid.
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: expect.objectContaining({
+          executionContexts: expect.arrayContaining([
+            expect.objectContaining({ outputSchema: repaired }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("unblocks the toolbar when the context tab unmounts with invalid text", () => {
+    renderWithSelectedContext(vi.fn());
+
+    fireEvent.change(schemaTextarea(), { target: { value: "{{{" } });
+    expect(screen.getByRole("button", { name: /Save Draft/i })).toBeDisabled();
+
+    // Flipping to the Workflow tab discards the unparseable text, so the gate
+    // must not stay stuck on a verdict about text nobody can see any more.
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ selectedContextId: null });
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Workflow" }));
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+    expect(
+      screen.getByRole("button", { name: /Save Draft/i }),
+    ).not.toBeDisabled();
   });
 });

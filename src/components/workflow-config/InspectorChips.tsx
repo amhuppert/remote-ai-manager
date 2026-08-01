@@ -92,6 +92,24 @@ export function QuestionGlyphIcon({ size = 14 }: IconProps): React.JSX.Element {
   );
 }
 
+/** The output-contract glyph: a diamond outline, distinct from the filled
+ * backend diamond so a Schema chip never reads as an agent identity. */
+export function SchemaGlyphIcon({ size = 13 }: IconProps): React.JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      aria-hidden="true"
+    >
+      <path d="M8 2.2 13.8 8 8 13.8 2.2 8Z" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function EditGlyphIcon({ size = 14 }: IconProps): React.JSX.Element {
   return (
     <svg

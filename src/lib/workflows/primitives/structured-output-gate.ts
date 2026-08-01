@@ -13,6 +13,12 @@
  * Output is a shared `GateResult` from the gate vocabulary so workflow
  * authors can treat structured-output validation identically to other
  * gate kinds (script validation, change-set, convergence, etc.).
+ *
+ * The subset the default validator implements — and the authoring-time
+ * descriptor and walker that describe it — live in `output-schema-subset.ts`,
+ * which stays dependency-free so the schema editor's client-side lint can
+ * import the same source this gate runs on. They are re-exported here because
+ * this is the module server callers already reach for.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -24,6 +30,17 @@ import {
   type GatePassResult,
 } from "./gate-vocabulary";
 
+export {
+  OUTPUT_SCHEMA_ANNOTATION_KEYWORDS,
+  OUTPUT_SCHEMA_SUPPORTED_KEYWORDS,
+  OUTPUT_SCHEMA_SUPPORTED_TYPES,
+  UNSUPPORTED_OUTPUT_SCHEMA_KEYWORDS,
+  outputSchemaKeywordGuidance,
+  validateJsonSchemaSubset,
+  validateOutputSchemaDeclaration,
+  type OutputSchemaDeclarationIssue,
+} from "./output-schema-subset";
+
 const logger = createLogger("workflows.primitives.structured-output-gate");
 
 export interface StructuredOutputValidator {
@@ -34,15 +51,6 @@ export interface StructuredOutputValidator {
 }
 
 export type StructuredOutputGateResult = GatePassResult | GateFailResult;
-
-export function validateJsonSchemaSubset(
-  schema: Record<string, unknown>,
-  value: unknown,
-): { valid: boolean; errors?: string[] } {
-  const errors: string[] = [];
-  validateAgainstSchema(schema, value, "$", errors);
-  return errors.length > 0 ? { valid: false, errors } : { valid: true };
-}
 
 export function runStructuredOutputGate(
   schema: Record<string, unknown>,
@@ -74,216 +82,4 @@ export function runStructuredOutputGate(
     reason,
     details: { errors },
   });
-}
-
-function validateAgainstSchema(
-  schema: Record<string, unknown>,
-  value: unknown,
-  path: string,
-  errors: string[],
-): void {
-  if (Array.isArray(schema["oneOf"])) {
-    const branches = schema["oneOf"] as Array<Record<string, unknown>>;
-    const branchErrors: string[][] = [];
-    let matches = 0;
-    for (const branch of branches) {
-      const local: string[] = [];
-      validateAgainstSchema(branch, value, path, local);
-      if (local.length === 0) matches += 1;
-      branchErrors.push(local);
-    }
-    if (matches !== 1) {
-      errors.push(
-        `${path} must match exactly one schema in oneOf (matched ${matches})`,
-      );
-      // Surface the first branch's diagnostics so callers see actionable detail.
-      const first = branchErrors[0];
-      if (first) errors.push(...first);
-    }
-    return;
-  }
-
-  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-    errors.push(`${path} must be one of ${schema.enum.map(String).join(", ")}`);
-    return;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(schema, "const")) {
-    if (value !== schema.const) {
-      errors.push(`${path} must equal ${String(schema.const)}`);
-    }
-    return;
-  }
-
-  const type = schema.type;
-  if (type !== undefined && !matchesJsonSchemaType(value, type)) {
-    errors.push(`${path} must be ${describeJsonSchemaType(type)}`);
-    return;
-  }
-
-  if (type === "object" || hasObjectShape(schema)) {
-    validateObjectSchema(schema, value, path, errors);
-    return;
-  }
-
-  if (type === "array") {
-    validateArraySchema(schema, value, path, errors);
-    return;
-  }
-
-  if (type === "string") {
-    validateStringSchema(schema, value, path, errors);
-    return;
-  }
-
-  if (type === "number" || type === "integer") {
-    validateNumberSchema(schema, value, path, errors);
-  }
-}
-
-function hasObjectShape(schema: Record<string, unknown>): boolean {
-  return (
-    typeof schema.properties === "object" ||
-    Array.isArray(schema.required) ||
-    schema.additionalProperties === false
-  );
-}
-
-function matchesJsonSchemaType(value: unknown, type: unknown): boolean {
-  if (Array.isArray(type))
-    return type.some((t) => matchesJsonSchemaType(value, t));
-  switch (type) {
-    case "object":
-      return (
-        typeof value === "object" && value !== null && !Array.isArray(value)
-      );
-    case "array":
-      return Array.isArray(value);
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "integer":
-      return Number.isInteger(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "null":
-      return value === null;
-    default:
-      return true;
-  }
-}
-
-function describeJsonSchemaType(type: unknown): string {
-  return Array.isArray(type) ? type.map(String).join(" or ") : String(type);
-}
-
-function validateObjectSchema(
-  schema: Record<string, unknown>,
-  value: unknown,
-  path: string,
-  errors: string[],
-): void {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    errors.push(`${path} must be object`);
-    return;
-  }
-
-  const objectValue = value as Record<string, unknown>;
-  const required = Array.isArray(schema.required) ? schema.required : [];
-  for (const key of required) {
-    if (typeof key === "string" && !(key in objectValue)) {
-      errors.push(`${path}.${key} is required`);
-    }
-  }
-
-  const properties =
-    typeof schema.properties === "object" && schema.properties !== null
-      ? (schema.properties as Record<string, unknown>)
-      : {};
-
-  if (schema.additionalProperties === false) {
-    const allowed = new Set(Object.keys(properties));
-    for (const key of Object.keys(objectValue)) {
-      if (!allowed.has(key)) {
-        errors.push(`${path}.${key} is not allowed`);
-      }
-    }
-  }
-
-  for (const [key, childSchema] of Object.entries(properties)) {
-    if (!(key in objectValue)) continue;
-    if (typeof childSchema !== "object" || childSchema === null) continue;
-    validateAgainstSchema(
-      childSchema as Record<string, unknown>,
-      objectValue[key],
-      `${path}.${key}`,
-      errors,
-    );
-  }
-}
-
-function validateArraySchema(
-  schema: Record<string, unknown>,
-  value: unknown,
-  path: string,
-  errors: string[],
-): void {
-  if (!Array.isArray(value)) {
-    errors.push(`${path} must be array`);
-    return;
-  }
-
-  if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-    errors.push(`${path} must contain at least ${schema.minItems} items`);
-  }
-  if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-    errors.push(`${path} must contain at most ${schema.maxItems} items`);
-  }
-
-  if (typeof schema.items !== "object" || schema.items === null) return;
-  for (let i = 0; i < value.length; i += 1) {
-    validateAgainstSchema(
-      schema.items as Record<string, unknown>,
-      value[i],
-      `${path}[${i}]`,
-      errors,
-    );
-  }
-}
-
-function validateStringSchema(
-  schema: Record<string, unknown>,
-  value: unknown,
-  path: string,
-  errors: string[],
-): void {
-  if (typeof value !== "string") return;
-  if (typeof schema.minLength === "number" && value.length < schema.minLength) {
-    errors.push(`${path} must be at least ${schema.minLength} characters`);
-  }
-  if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-    errors.push(`${path} must be at most ${schema.maxLength} characters`);
-  }
-  if (typeof schema.pattern === "string") {
-    const pattern = new RegExp(schema.pattern);
-    if (!pattern.test(value)) {
-      errors.push(`${path} must match pattern ${schema.pattern}`);
-    }
-  }
-}
-
-function validateNumberSchema(
-  schema: Record<string, unknown>,
-  value: unknown,
-  path: string,
-  errors: string[],
-): void {
-  if (typeof value !== "number") return;
-  if (typeof schema.minimum === "number" && value < schema.minimum) {
-    errors.push(`${path} must be >= ${schema.minimum}`);
-  }
-  if (typeof schema.maximum === "number" && value > schema.maximum) {
-    errors.push(`${path} must be <= ${schema.maximum}`);
-  }
 }

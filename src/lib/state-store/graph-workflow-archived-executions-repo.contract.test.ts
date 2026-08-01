@@ -25,6 +25,10 @@ import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import {
+  validateJsonSchemaSubset,
+  validateOutputSchemaDeclaration,
+} from "@/lib/workflows/primitives/output-schema-subset";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -326,6 +330,39 @@ function buildMaximalExecution(): unknown {
               reasoningEffort: "high",
             },
           },
+          // `taskValidation` is a removed CC config field name reused here as an
+          // ordinary output property: the cutover guard scans by field name, so
+          // this pins the outputSchema subtree as opaque to it across archival.
+          // Also the contract the archived contextOutputs entry below satisfies:
+          // D5 admits only accepted candidates, so an archived output its own
+          // context's schema would reject models an impossible state.
+          outputSchema: {
+            type: "object",
+            properties: {
+              verdict: { type: "string", enum: ["pass", "fail"] },
+              taskValidation: { type: "string" },
+              score: { type: "number", minimum: 0, maximum: 1 },
+              followUp: { type: ["string", "null"] },
+              findings: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    severity: { type: "string", enum: ["low", "high"] },
+                    file: { type: "string" },
+                    line: { type: "integer" },
+                    tags: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["id", "severity"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["verdict"],
+            additionalProperties: false,
+          },
           collaboration: {
             enabled: { value: true, source: "per-node" },
             secondAgent: {
@@ -454,6 +491,29 @@ function buildMaximalExecution(): unknown {
             timestamp: "2026-01-02T00:30:00Z",
           },
         ],
+      },
+    },
+    contextOutputs: {
+      "ctx-1": {
+        // Accepted under ctx-1's authored outputSchema above (D5).
+        value: {
+          verdict: "pass",
+          taskValidation: "reviewed",
+          score: 0.94,
+          findings: [
+            {
+              id: "f-1",
+              severity: "high",
+              file: "src/lib/foo.ts",
+              line: 42,
+              tags: ["perf", "api"],
+            },
+          ],
+          followUp: null,
+        },
+        capturedAt: "2026-01-02T05:00:00.000Z",
+        iteration: 3,
+        parse: { source: "fenced", repaired: true, repairAttempts: 2 },
       },
     },
     sharedDocuments: [
@@ -680,5 +740,36 @@ describe("graph-workflow-archived-executions-repo durability contract", () => {
       reload: (expected) =>
         repo.findByExecution(PROJECT_PATH, SESSION_NAME, expected.id),
     });
+  });
+
+  // This file keeps its own copy of the maximal execution, so it needs the same
+  // D5 guard the active-executions contract test applies: an archived output
+  // its own context's authored schema would reject is not a state the engine
+  // can reach, and evidence drawn from it proves nothing.
+  it("only carries context outputs their own context's authored outputSchema accepts", () => {
+    const execution = graphWorkflowExecutionSchema.parse(
+      buildMaximalExecution(),
+    );
+    const entries = Object.entries(execution.contextOutputs);
+    expect(entries.length).toBeGreaterThan(0);
+
+    for (const [contextId, output] of entries) {
+      const authored = execution.workingDefinition.executionContexts.find(
+        (context) => context.id === contextId,
+      )?.outputSchema;
+      expect(
+        authored,
+        `${contextId} must declare an outputSchema`,
+      ).toBeDefined();
+      if (authored === undefined) continue;
+      expect(
+        validateOutputSchemaDeclaration(authored),
+        `${contextId} outputSchema must be a legal declaration`,
+      ).toEqual([]);
+      expect(
+        validateJsonSchemaSubset(authored, output.value),
+        `${contextId} archived output must be accepted by its authored schema`,
+      ).toEqual({ valid: true });
+    }
   });
 });

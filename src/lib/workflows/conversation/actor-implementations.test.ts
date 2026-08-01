@@ -76,6 +76,10 @@ import { _createTestDb } from "@/lib/state-store/state-db";
 import { createTicketsRepo } from "@/lib/state-store/tickets-repo";
 import { createWriteQueue } from "@/lib/state-store/write-queue";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
+import {
+  createActorImplementationDepsFixture,
+  createMockBackendRuntime as createMockBackendRuntimeFixture,
+} from "@/lib/workflows/conversation/testing/actor-deps-fixture";
 import { createLockManager } from "@/lib/prompt/single-flight";
 import { markPromptNotDelivered } from "@/lib/agent-backends/errors";
 import type { TranscriptBroadcastMeta } from "@/lib/prompt/transcript";
@@ -86,33 +90,28 @@ import type { TranscriptBroadcastMeta } from "@/lib/prompt/transcript";
 
 const mockSendTurn = vi.fn();
 
+/**
+ * This file's own runtime double. It keeps two things the shared fixture's
+ * default deliberately does not: the module-level `mockSendTurn` spy that the
+ * turn-level assertions read, and a backend-derived default model, which many
+ * tests here rely on to construct a Codex runtime without restating the model.
+ */
 function createMockBackendRuntime(
   overrides: Partial<ConversationBackendRuntime> = {},
 ): ConversationBackendRuntime {
   const backend = overrides.backend ?? "claude";
   return {
-    backend,
-    status: "alive",
+    ...createMockBackendRuntimeFixture({ backend }),
     modelId: backend === "codex" ? "gpt-5.4" : "opus",
-    reasoningEffort: "high",
-    outputFormat: undefined,
-    capabilities: {
-      queueWhileRunning: false,
-      askUserQuestion: true,
-      preciseFork: false,
-      portableMcpAtStart: false,
-      portableMcpBetweenTurns: false,
-      contextWindowMetrics: true,
-    },
     sendTurn: mockSendTurn,
-    close: vi.fn(),
     ...overrides,
-  } as unknown as ConversationBackendRuntime;
+  } as ConversationBackendRuntime;
 }
 
 const mockBackendRuntime = createMockBackendRuntime();
 
 const mockFactory = {
+  backend: "claude" as const,
   createRuntime: vi.fn(async () => mockBackendRuntime),
   validateModelAndEffort: vi.fn(),
 };
@@ -124,121 +123,12 @@ const mockFactory = {
 function createMockDeps(
   overrides: Partial<ActorImplementationDeps> = {},
 ): ActorImplementationDeps {
-  return {
-    acquireConversationLock: vi.fn(() => vi.fn()),
-    acquireQuerySlot: vi.fn(async () => vi.fn()),
-    getTranscriptPath: vi.fn(async (id: string) => `/transcripts/${id}.jsonl`),
-    readConfig: vi.fn(async () => ({
-      agentBackends: {
-        claude: {
-          model: "opus",
-          reasoningEffort: "high",
-          timeoutMs: 300_000,
-        },
-        codex: {
-          model: "gpt-5.4",
-          reasoningEffort: "high",
-          timeoutMs: null,
-        },
-      },
-      maxTurns: 50,
-      idleQuerySessionTtlMs: 300_000,
-    })),
-    getProjectDisplayName: vi.fn((p: string) => p.split("/").pop() ?? p),
-    getDebugLogUrl: vi.fn(
-      (id: string) =>
-        `http://localhost:3000/api/debug-logs?conversationId=${id}`,
-    ),
-    safeAppendTranscriptEntry: vi.fn(async () => {}),
-    saveTranscriptImage: vi.fn(
-      async (
-        _id: string,
-        index: number,
-        mediaType: string,
-      ): Promise<string> => {
-        const ext = mediaType.split("/")[1] ?? "bin";
-        return `/persisted/${index}.${ext}`;
-      },
-    ),
-    getNextImageIndex: vi.fn(async () => 1),
+  // Shared fixture, with this file's own backend-runtime factory kept in place:
+  // many tests here assert against `mockFactory` / `mockSendTurn` directly.
+  return createActorImplementationDepsFixture({
     getConversationBackendFactory: vi.fn(() => mockFactory),
-    getConversationCapabilities: vi.fn(() => ({
-      queue: {
-        acceptsWhileRunning: true,
-        deliveryTiming: "in_turn" as const,
-      },
-      continuationStrength: "precise_session" as const,
-      fork: "native" as const,
-      structuredOutput: "backend_native" as const,
-      contextWindowMetrics: true,
-      nativeMidTurnAskUser: true,
-      externalTurns: true,
-      capabilityKinds: [
-        { kind: "skills" as const, applyTiming: "idle_live" as const },
-        { kind: "plugins" as const, applyTiming: "idle_live" as const },
-        {
-          kind: "agents" as const,
-          applyTiming: "next_conversation" as const,
-        },
-      ],
-    })),
-    registerBackendRuntime: vi.fn(),
-    unregisterBackendRuntime: vi.fn(),
-    buildChildEnv: vi.fn(() => ({ HOME: "/home/test" })),
-    resolvePluginPaths: vi.fn(async () => []),
-    getCodexToolPromptHint: vi.fn(() => ""),
-    mutateConversation: vi.fn(async () => {}),
-    getConversation: vi.fn(async () => null),
-    getSessionState: vi.fn(async () => null),
-    getActiveAlignmentInjection: vi.fn(async () => null),
-    getActiveAlignmentVersion: vi.fn(async () => null),
-    getLiveTicketBlock: vi.fn(async () => null),
-    createReferenceDocument: vi.fn(async () => ({})),
-    getReferenceDocuments: vi.fn(async () => []),
-    readConversationMessages: vi.fn(async () => []),
-    fileExists: vi.fn(() => false),
-    registerAbortController: vi.fn(),
-    unregisterAbortController: vi.fn(),
-    applyMcpAtTurnStart: vi.fn(
-      async (_input: {
-        projectPath: string;
-        sessionName: string;
-        conversationId: string;
-        backend: "claude" | "codex";
-      }) => ({
-        conversationId: "conv-1",
-        backend: "claude" as const,
-        disposition: "applied_now" as const,
-        effectiveConfigHash: "hash-1",
-      }),
-    ),
-    applyCapabilityAtTurnStart: vi.fn(async () => ({})),
-    applyCapabilityWhenIdle: vi.fn(async () => ({})),
-    composeCapabilityConfigForConversation: vi.fn(async () => undefined),
-    composeCapabilityConfigForProjectConversation: vi.fn(async () => undefined),
-    composePortableMcpForConversation: vi.fn(
-      async (args: {
-        projectName: string;
-        sessionName: string;
-        transientPortableMcp?: { servers: Array<Record<string, unknown>> };
-      }) => ({
-        servers: [
-          {
-            id: "gateway-alpha",
-            transport: "streamable-http" as const,
-            url: `http://localhost:3000/api/projects/${args.projectName}/sessions/${args.sessionName}/mcp`,
-          },
-          ...(args.transientPortableMcp?.servers ?? []),
-        ],
-      }),
-    ),
-    executeAgentCall: defaultExecuteAgentCall,
-    markQueuedDelivered: vi.fn(async () => {}),
-    markQueuedPending: vi.fn(async () => {}),
-    markQueuedFailed: vi.fn(async () => {}),
-    log: createCapturingLogger(),
     ...overrides,
-  } as ActorImplementationDeps;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -5407,6 +5297,92 @@ describe("runTaskRunTurnForMachine", () => {
     ]);
     expect(result.error).toBeNull();
     expect(result.aborted).toBe(false);
+  });
+
+  // The gate's provenance is the only way a caller can tell a natively-emitted
+  // payload from one the gate had to dig out of a fenced reply. A projection
+  // that drops it forces every consumer to assume `native`, so a workflow that
+  // persists capture provenance (graph-workflow context outputs) records a
+  // claim about the backend that is simply false.
+  it("task_run WITH outputFormat: forwards the gate's parse provenance for a fenced reply", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: 'Here is the result:\n```json\n{"result":"ok"}\n```',
+      usage: null,
+      error: null,
+      timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { result: { type: "string" } },
+            required: ["result"],
+          },
+        },
+      }),
+    );
+
+    expect(result.structuredOutput).toEqual({ result: "ok" });
+    expect(result.structuredOutputParse).toBeDefined();
+    expect(result.structuredOutputParse?.source).toBe("fenced");
+  });
+
+  // A schema refusal is a VERDICT about the payload, not an infrastructure
+  // failure. Dropping the gate's per-issue errors and the refused text leaves
+  // the caller with one opaque sentence, so it cannot tell "the model answered
+  // badly" (retry with feedback) from "the turn never ran" (fail the turn).
+  it("task_run WITH outputFormat: surfaces the gate's per-issue errors and the refused text when validation fails", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: '{"result":42}',
+      usage: null,
+      error: null,
+      timedOut: false,
+      failure: null,
+      continuationDisposition: "retain",
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(
+      makeRunTaskRunInput({
+        outputFormat: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: { result: { type: "string" } },
+            required: ["result"],
+          },
+        },
+      }),
+    );
+
+    expect(result.error).not.toBeNull();
+    expect(result.aborted).toBe(false);
+    expect(result.structuredOutputIssues).toBeDefined();
+    expect(result.structuredOutputIssues?.length ?? 0).toBeGreaterThan(0);
+    // Instance-path prefixed, so a caller can key an issue to a field.
+    expect(result.structuredOutputIssues?.[0]).toContain("$.result");
+    // The refused candidate reaches the caller for inspection / retry feedback.
+    expect(result.contentBlocks).toEqual([
+      { type: "text", text: '{"result":42}' },
+    ]);
   });
 
   it("presents a configured structured-output string field while preserving the full payload", async () => {

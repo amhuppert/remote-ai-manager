@@ -40,6 +40,29 @@ function asInteger(value: unknown, fallback: number): number {
 }
 
 /**
+ * Copy the tier's keys off the raw record, skipping any the blob does not have.
+ *
+ * Skipping rather than copying `undefined` is load-bearing: `stableStringify`
+ * emits a present-but-undefined key as `"key":null`, and the execution schema's
+ * additive fields are `.default(…)`, which fires on `undefined` only. Writing
+ * null would therefore make a blob that predates any additive key fail
+ * validation on the very next read — the first boot after upgrade — and
+ * `getActive` throws `PersistenceError(validation)` rather than degrading. An
+ * omitted key lets the default fill it in, which is what "migrates a blob of
+ * any prior shape" has to mean.
+ */
+function pickPresent(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const tier: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key in record) tier[key] = record[key];
+  }
+  return tier;
+}
+
+/**
  * Split one persisted execution blob into the definition/runtime tier JSON plus
  * the denormalized projection columns. Reads every field positionally off the
  * raw parsed record — never the live Zod schema — so a blob from any prior or
@@ -59,14 +82,8 @@ function splitRawExecution(rawJson: string): SplitRawExecution | null {
   const executionId = asString(record.id, "");
   if (executionId === "") return null;
 
-  const definitionTier: Record<string, unknown> = {};
-  for (const key of DEFINITION_TIER_KEYS) {
-    definitionTier[key] = record[key];
-  }
-  const runtimeTier: Record<string, unknown> = {};
-  for (const key of RUNTIME_TIER_KEYS) {
-    runtimeTier[key] = record[key];
-  }
+  const definitionTier = pickPresent(record, DEFINITION_TIER_KEYS);
+  const runtimeTier = pickPresent(record, RUNTIME_TIER_KEYS);
 
   return {
     executionId,

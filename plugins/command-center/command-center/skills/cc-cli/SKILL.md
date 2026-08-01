@@ -304,7 +304,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl workflow collab` — request a second opinion from another agent
   - `cctl workflow collab request --brief "<question with context>"`
 - `cctl workflow live get` — print the live outline of the active execution
-  - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --full] [--json]`
+  - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --outputs | --full] [--json]`
 - `cctl workflow live edit` — apply live edits to the running execution's working copy
   - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
 - `cctl workflow live pause` — pause the active execution to unlock started contexts

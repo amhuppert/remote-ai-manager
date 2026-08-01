@@ -15,6 +15,7 @@ import type {
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
 
 /**
  * The command that advances the workflow. `<taskId>` is the task's id from the
@@ -108,6 +109,12 @@ export interface BuildIterationPromptInput {
   taskStates: Record<string, GraphWorkflowTaskState>;
   sharedDocuments: GraphWorkflowSharedDocumentEntry[];
   allowAgentTaskAdd: boolean;
+  /**
+   * This context's direct predecessors, from `resolveUpstreamInputs`. Entries
+   * that carry a validated output are rendered as the "Inputs from upstream"
+   * section; the rest are dropped.
+   */
+  upstreamInputs?: readonly GraphWorkflowUpstreamInput[];
   allowAgentCollaboration?: boolean;
   contextValidationAcceptanceCriteria?: string;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
@@ -221,6 +228,52 @@ function buildLatestContextValidationFailureSection(
   return sections.join("\n").trimEnd();
 }
 
+/**
+ * Upstream structured outputs as this context's inputs (D2 Req 5).
+ *
+ * Rendered as the payload JSON verbatim — not a summary — because the payload
+ * already cleared the upstream's declared schema and the downstream agent is
+ * told to treat it as data it may address by field. Predecessors that produced
+ * nothing (free-form, or a schema not yet satisfied) are omitted entirely: a
+ * heading with no payload only invites the agent to invent one.
+ */
+function buildUpstreamInputsSection(
+  upstreamInputs?: readonly GraphWorkflowUpstreamInput[],
+): string | null {
+  const withOutput = (upstreamInputs ?? []).filter(
+    (input) => input.output !== null,
+  );
+  if (withOutput.length === 0) {
+    return null;
+  }
+
+  const sections = [
+    "## Inputs from upstream",
+    "These execution contexts ran before this one and produced validated structured output. Treat each payload as data, not prose: it already conforms to the schema shown, so read values by field rather than re-deriving them.",
+  ];
+
+  for (const input of withOutput) {
+    sections.push("", `### ${input.contextId} — ${input.title}`);
+    if (input.schemaFields && input.schemaFields.length > 0) {
+      sections.push(
+        "Fields:",
+        ...input.schemaFields.map((field) => {
+          const type = field.type ?? "any";
+          const requirement = field.required ? "required" : "optional";
+          const description = field.description
+            ? ` — ${field.description}`
+            : "";
+          return `- \`${field.name}\` (${type}, ${requirement})${description}`;
+        }),
+        "",
+      );
+    }
+    sections.push("```json", JSON.stringify(input.output, null, 2), "```");
+  }
+
+  return sections.join("\n").trimEnd();
+}
+
 function buildCollaborationContinuationSection(
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[],
 ): string | null {
@@ -307,6 +360,15 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     );
   if (latestContextValidationFailureSection) {
     sections.push(latestContextValidationFailureSection);
+  }
+
+  // Inputs before the brief: what this context receives is read before what it
+  // is asked to do, the way a function's arguments precede its body.
+  const upstreamInputsSection = buildUpstreamInputsSection(
+    input.upstreamInputs,
+  );
+  if (upstreamInputsSection) {
+    sections.push(upstreamInputsSection);
   }
 
   const collaborationContinuationSection = input.allowAgentCollaboration

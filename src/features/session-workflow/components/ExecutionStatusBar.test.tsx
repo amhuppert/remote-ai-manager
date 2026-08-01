@@ -368,3 +368,120 @@ describe("ExecutionStatusBar halt display", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ExecutionStatusBar output-schema halt (R3.2)", () => {
+  const haltReason: GraphWorkflowHaltReason = {
+    type: "circuit_breaker",
+    contextId: "context-plan",
+    condition: "output_schema_validation",
+    failureCount: 3,
+    summary: "Output schema not satisfied",
+  };
+
+  function schemaExecution(): GraphWorkflowExecution {
+    const execution = makeExecution({ haltReason });
+    return {
+      ...execution,
+      workingDefinition: {
+        ...execution.workingDefinition,
+        executionContexts: execution.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan"
+              ? {
+                  ...context,
+                  outputSchema: {
+                    type: "object",
+                    properties: { verdict: { type: "string" } },
+                  },
+                }
+              : context,
+        ),
+      },
+    };
+  }
+
+  const rejectionEvents = [
+    {
+      occurredAt: "2026-03-27T09:41:00.000Z",
+      preReset: false,
+      event: {
+        type: "graph-workflow-validation-result" as const,
+        projectName: "project",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        contextId: "context-plan",
+        validatorType: "context" as const,
+        kind: "output_schema" as const,
+        pass: false,
+        summary: "Output rejected",
+        reopenTaskIds: [],
+        issues: [
+          {
+            title: "/verdict",
+            description: "not one of the allowed values",
+            path: "/verdict",
+          },
+        ],
+        rejectedOutput: '{ "verdict": "partial" }',
+        gateRepairAttempts: null,
+        gateRepairBudget: null,
+      },
+    },
+  ];
+
+  it("keeps the one-line headline in the bar itself", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={schemaExecution()}
+        events={rejectionEvents}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Output schema not satisfied in context-plan/,
+    );
+    // The evidence belongs behind Details — the bar's height must never depend
+    // on the size of the failure.
+    expect(screen.queryByText("Rejected output")).not.toBeInTheDocument();
+  });
+
+  it("shows the refused payload, contract and issue paths in the details dialog", async () => {
+    const user = userEvent.setup();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={schemaExecution()}
+        events={rejectionEvents}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+
+    expect(within(dialog).getByText("/verdict")).toBeInTheDocument();
+    expect(within(dialog).getByText("Rejected output")).toBeInTheDocument();
+    expect(within(dialog).getByText("Declared schema")).toBeInTheDocument();
+  });
+
+  it("routes the Edit schema action to the halted context's config", async () => {
+    const user = userEvent.setup();
+    const onEditSchema = vi.fn();
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={schemaExecution()}
+        events={rejectionEvents}
+        onEditSchema={onEditSchema}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Edit schema" }),
+    );
+
+    expect(onEditSchema).toHaveBeenCalledWith("context-plan");
+  });
+});

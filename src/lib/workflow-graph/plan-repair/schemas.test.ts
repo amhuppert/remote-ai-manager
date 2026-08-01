@@ -93,11 +93,23 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
   });
 
   it.each([
-    ["add-context", { type: "add-context", id: "x", title: "t", acceptanceCriteria: "a" }],
+    [
+      "add-context",
+      { type: "add-context", id: "x", title: "t", acceptanceCriteria: "a" },
+    ],
     ["remove-context", { type: "remove-context", contextId: "ctx-1" }],
-    ["add-edge", { type: "add-edge", sourceContextId: "a", targetContextId: "b" }],
-    ["remove-edge", { type: "remove-edge", sourceContextId: "a", targetContextId: "b" }],
-    ["move-task", { type: "move-task", taskId: "task-1", targetContextId: "b" }],
+    [
+      "add-edge",
+      { type: "add-edge", sourceContextId: "a", targetContextId: "b" },
+    ],
+    [
+      "remove-edge",
+      { type: "remove-edge", sourceContextId: "a", targetContextId: "b" },
+    ],
+    [
+      "move-task",
+      { type: "move-task", taskId: "task-1", targetContextId: "b" },
+    ],
   ])("rejects structural op type %s", (_label, op) => {
     const result = validatePlanRepairOperations([op]);
     expect(result.ok).toBe(false);
@@ -152,6 +164,39 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues[0]?.message).toContain(block);
+  });
+
+  // D2/D4: a too-tight `outputSchema` is exactly the impossible-contract class
+  // plan repair exists for, so the repair agent may rewrite or drop it. It is a
+  // plan artifact, NOT one of the controls the split fences off.
+  it("accepts an update-context that rewrites a too-tight outputSchema", () => {
+    const outputSchema = {
+      type: "object",
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+      additionalProperties: false,
+    };
+    const result = validatePlanRepairOperations([
+      { type: "update-context", contextId: "ctx-1", outputSchema },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.operations[0]).toMatchObject({
+      type: "update-context",
+      contextId: "ctx-1",
+      outputSchema,
+    });
+  });
+
+  it("accepts an update-context that drops the outputSchema entirely", () => {
+    const result = validatePlanRepairOperations([
+      { type: "update-context", contextId: "ctx-1", outputSchema: null },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.operations[0]).toMatchObject({ outputSchema: null });
   });
 
   it("rejects a schema-invalid op with the underlying issue", () => {

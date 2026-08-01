@@ -17,11 +17,13 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { WorkflowDefinitionApprovalRequiredError } from "@/lib/workflow-graph/workflow-manager";
 import type { SessionState } from "@/lib/sessions/schemas";
 import {
+  createResolvedWorkflowDefinition,
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
+import { createGraphWorkflowLiveOutlineRouteHandlers } from "@/lib/workflow-graph/live-outline-route-handlers";
 import { runCli } from "../core";
 import type { CliEnv, CliHost } from "../shared";
 
@@ -86,6 +88,37 @@ const templateStorage: TemplateLibraryStorage = {
 
 function notUsed(): never {
   throw new Error("route not exercised in this contract test");
+}
+
+/** A supported-subset declaration: an object root with two named properties. */
+const OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["verdict"],
+  additionalProperties: false,
+  properties: {
+    verdict: { type: "string", enum: ["pass", "fail"] },
+    notes: { type: "string" },
+  },
+};
+
+/**
+ * The `wf-1` record `get` reads, with an output contract on `context-verify`
+ * only — so one outline row must carry the shape summary and the others must
+ * not.
+ */
+function definitionRecordWithOutputSchema() {
+  const record = createWorkflowDefinitionRecord({ id: "wf-1", revision: 3 });
+  return {
+    ...record,
+    definition: {
+      ...record.definition,
+      executionContexts: record.definition.executionContexts.map((context) =>
+        context.id === "context-verify"
+          ? { ...context, outputSchema: OUTPUT_SCHEMA }
+          : context,
+      ),
+    },
+  };
 }
 
 function makeExecutionDeps(
@@ -168,6 +201,11 @@ function routeHost(
       },
     }),
   );
+  const liveOutlineHandlers = createGraphWorkflowLiveOutlineRouteHandlers({
+    resolveProjectPath: async () => PROJECT_PATH,
+    getSession: async () => makeSession(),
+    getActiveExecution: async () => execution,
+  });
 
   return {
     async fetch(url, init) {
@@ -209,9 +247,7 @@ function routeHost(
         // this returns the real GET response shape directly.
         if (init.method === "GET" && workflowId) {
           const record =
-            workflowId === "wf-1"
-              ? createWorkflowDefinitionRecord({ id: "wf-1", revision: 3 })
-              : null;
+            workflowId === "wf-1" ? definitionRecordWithOutputSchema() : null;
           if (!record) {
             return new Response(
               JSON.stringify({ error: "Workflow not found" }),
@@ -250,6 +286,11 @@ function routeHost(
         }
         if (action === "validate") {
           return validateHandlers.POST(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
+        if (action === "live-outline") {
+          return liveOutlineHandlers.GET(request, {
             params: Promise.resolve({ name, session }),
           });
         }
@@ -627,5 +668,140 @@ describe("cctl workflow author flow against the real create-path validation", ()
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("revision: 4");
     expect(result.stdout).not.toContain("hint:");
+  });
+});
+
+/**
+ * R7.2: the CLI read paths for per-context structured output, driven end to end
+ * — the real saved-definition GET and the real live-outline projection, with the
+ * three states a reader must be able to tell apart (captured / pending /
+ * declares none).
+ */
+describe("cctl workflow output-schema read paths (R7.2)", () => {
+  /**
+   * `context-plan` declared a contract and CAPTURED one; `context-implement`
+   * declares one and still owes it; `context-verify` declares none.
+   */
+  function executionWithOutputs(): GraphWorkflowExecution {
+    const base = createResolvedWorkflowDefinition();
+    return createWorkflowExecution({
+      status: "running",
+      workingDefinition: {
+        ...base,
+        executionContexts: base.executionContexts.map((context) =>
+          context.id === "context-plan" || context.id === "context-implement"
+            ? { ...context, outputSchema: OUTPUT_SCHEMA }
+            : context,
+        ),
+      },
+      contextOutputs: {
+        "context-plan": {
+          value: { verdict: "pass", notes: "all green" },
+          capturedAt: "2026-07-30T10:00:00.000Z",
+          iteration: 2,
+          parse: { source: "fenced", repaired: true, repairAttempts: 1 },
+        },
+      },
+    });
+  }
+
+  it("workflow get summarizes a declared outputSchema without printing it", async () => {
+    const result = await runCli(
+      ["workflow", "get", "wf-1"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    const rows = result.stdout.split("\n");
+    expect(rows.find((row) => row.includes("context-verify"))).toContain(
+      "output schema: object · 2 fields",
+    );
+    expect(rows.find((row) => row.includes("context-plan  "))).not.toContain(
+      "output schema",
+    );
+    // The declaration itself belongs to the `--context` slice, not the outline.
+    expect(result.stdout).not.toContain("additionalProperties");
+  });
+
+  it("workflow live get summarizes it on the live outline rows too", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(executionWithOutputs()),
+    );
+    expect(result.exitCode).toBe(0);
+    const rows = result.stdout.split("\n");
+    expect(rows.find((row) => row.startsWith("  context-plan "))).toContain(
+      "output schema: object · 2 fields",
+    );
+    expect(
+      rows.find((row) => row.startsWith("  context-verify ")),
+    ).not.toContain("output schema");
+    expect(result.stdout).not.toContain("additionalProperties");
+  });
+
+  it("workflow live get --outputs returns a captured payload with provenance", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      env,
+      routeHost(executionWithOutputs()),
+    );
+    expect(result.exitCode).toBe(0);
+    const capturedRow = result.stdout
+      .split("\n")
+      .find((row) => row.trimStart().startsWith("context-plan "));
+    expect(capturedRow).toContain("captured");
+    expect(result.stdout).toContain('"verdict": "pass"');
+    expect(result.stdout).toContain('"notes": "all green"');
+    expect(result.stdout).toContain("iteration 2");
+    expect(result.stdout).toContain("captured 2026-07-30T10:00:00.000Z");
+    expect(result.stdout).toContain("parse fenced (repaired ×1)");
+  });
+
+  it("workflow live get --outputs reports a declared-but-unproduced context as pending", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs", "--json"],
+      env,
+      routeHost(executionWithOutputs()),
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    const pending = envelope.outputs.find(
+      (entry: { contextId: string }) => entry.contextId === "context-implement",
+    );
+    expect(pending.capture).toEqual({ kind: "pending" });
+    expect(pending.schema).toEqual({ type: "object", fieldCount: 2 });
+  });
+
+  it("workflow live get --outputs omits contexts that declare no schema", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs", "--json"],
+      env,
+      routeHost(executionWithOutputs()),
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(
+      envelope.outputs.map((entry: { contextId: string }) => entry.contextId),
+    ).toEqual(["context-plan", "context-implement"]);
+  });
+
+  it("workflow live get --outputs says so when nothing declares a schema", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      env,
+      routeHost(createWorkflowExecution({ status: "running" })),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("no context declares an outputSchema");
+  });
+
+  it("workflow live get --outputs exits 2 with no active execution", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get", "--outputs"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(2);
   });
 });

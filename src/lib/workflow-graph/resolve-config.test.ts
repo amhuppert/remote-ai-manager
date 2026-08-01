@@ -535,7 +535,9 @@ describe("planRepair cascade (D1)", () => {
 
   it("snapshots the resolved planRepair block into the working definition at seed time", () => {
     const definition = makeDefinition({
-      workflowConfig: { planRepair: { enabled: false, maxAttemptsPerContext: 1 } },
+      workflowConfig: {
+        planRepair: { enabled: false, maxAttemptsPerContext: 1 },
+      },
     });
 
     const resolved = resolveWorkflowDefinition(makeGlobalConfig(), definition);
@@ -544,6 +546,47 @@ describe("planRepair cascade (D1)", () => {
       enabled: false,
       maxAttemptsPerContext: 1,
     });
+  });
+});
+
+describe("outputSchema identity passthrough (D2 R1)", () => {
+  const OUTPUT_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    properties: {
+      verdict: { type: "string", enum: ["pass", "fail"] },
+      findings: { type: "array", items: { type: "string" } },
+    },
+    required: ["verdict"],
+  };
+
+  it("mirrors an authored context outputSchema onto the resolved context verbatim", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {},
+      makeContext({ outputSchema: OUTPUT_SCHEMA }),
+    );
+
+    expect(resolved.outputSchema).toEqual(OUTPUT_SCHEMA);
+  });
+
+  it("omits outputSchema entirely when the author declared none — no cascade tier supplies a default", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect("outputSchema" in resolved).toBe(false);
+  });
+
+  it("carries per-context outputSchema through resolveWorkflowDefinition, leaving sibling contexts untouched", () => {
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({ id: "ctx-1", outputSchema: OUTPUT_SCHEMA }),
+        makeContext({ id: "ctx-2" }),
+      ],
+    });
+
+    const resolved = resolveWorkflowDefinition(makeGlobalConfig(), definition);
+
+    expect(resolved.executionContexts[0]?.outputSchema).toEqual(OUTPUT_SCHEMA);
+    expect(resolved.executionContexts[1]?.outputSchema).toBeUndefined();
   });
 });
 

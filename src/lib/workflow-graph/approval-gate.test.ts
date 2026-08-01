@@ -274,6 +274,38 @@ describe("createApprovalGateService.applyRejectedDecision", () => {
     expect(contextState?.iterationCount).toBe(0);
   });
 
+  it("drops a captured structured output so remediation work must satisfy the contract again (D2 R2)", () => {
+    const service = buildDraftService();
+    const execution = buildExecutionWithDecision({
+      type: "rejected",
+      message: REJECTION_MESSAGE,
+      decidedAt: NOW,
+    });
+    execution.contextOutputs = {
+      [GATED_CONTEXT_ID]: {
+        value: { summary: "the work the human just rejected" },
+        capturedAt: NOW,
+        iteration: 1,
+        parse: { source: "raw_json" },
+      },
+      "context-other": {
+        value: { summary: "an unrelated context's output" },
+        capturedAt: NOW,
+        iteration: 1,
+        parse: { source: "raw_json" },
+      },
+    };
+
+    service.applyRejectedDecision(execution, GATED_CONTEXT_ID);
+
+    // The banked payload described work a human refused. Capture is skipped
+    // whenever an output already exists, so leaving it would let the context
+    // re-complete after remediation carrying the PRE-rejection output.
+    expect(execution.contextOutputs[GATED_CONTEXT_ID]).toBeUndefined();
+    // Scoped to the rejected context only.
+    expect(execution.contextOutputs["context-other"]).toBeDefined();
+  });
+
   it("never touches the consecutive-failure count, across repeated rejections", () => {
     const service = buildDraftService();
     const execution = buildExecutionWithDecision({

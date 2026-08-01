@@ -45,13 +45,22 @@ session branch; the F6 live proof ran 2026-07-30 — full autonomous trip → re
 complete loop verified against a real execution, and doc 07's `amend-charter` seam was
 live-exercised in the same pass).
 
-### D2 — Structured output for execution contexts
+### D2 — Structured output for execution contexts (implemented and live-proven)
 
 An `outputSchema` on an execution context; the implementer's final output is validated
 through the existing structured-output gate and persisted where downstream contexts
 (and later, conditional edges) can consume it. Small: the gate, candidate extraction,
 and the approved ticket #18 (Option B) design already exist. This is the data plane
 that Classify-And-Act, Generate-And-Filter, and Tournament verdicts all require.
+Spec and status: native CC spec `context-structured-output` (requirements, design, and
+plan all human-admitted; 22 criteria, 14 tasks). Implemented 2026-07-31 by graph
+execution `f022775b` — 8 lanes, 14/14 tasks, published to the session branch — during
+which D1 fired organically for the first time and autonomously repaired a breaker trip.
+Live-proven 2026-08-01 against a real two-context execution: fail-closed authoring
+refusal, single-source editor lint, real capture (`parse raw_json`), SQLite-durable
+`contextOutputs`, downstream "Inputs from upstream" injection read by a real LLM,
+captured-output UI, node indicator states, and the CLI `--outputs` view. The spec's
+delivery gate lands with the session's delivering merge.
 
 ### D3 — Specialist validators and implementors
 

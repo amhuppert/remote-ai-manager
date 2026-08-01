@@ -26,6 +26,7 @@ import type {
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { DebugCommand } from "@/lib/workflows/debug/commands";
+import type { AgentCallStructuredOutputParse } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { DebugCleanupResultOutput } from "./debug-schemas";
 
 // ============================================================
@@ -271,6 +272,18 @@ export interface PrepareTurnOutput {
   transcriptPath: string;
 }
 
+/**
+ * The structured-output gate's bounded-repair spend on a refused turn.
+ *
+ * `attempts` is repair turns actually run (0 when the gate refused the first
+ * answer outright); `maxAttempts` is the budget in force for that call, which
+ * is the facade default unless the request declared its own.
+ */
+export interface StructuredOutputGateRepair {
+  attempts: number;
+  maxAttempts: number;
+}
+
 /** Output from the executePrompt actor. */
 export interface PromptActorResult {
   backendRef: AgentSessionRef | null;
@@ -287,6 +300,29 @@ export interface PromptActorResult {
   cachedInputTokens: number | null;
   contentBlocks: MessageContentBlock[];
   structuredOutput?: unknown;
+  /**
+   * Where the shared structured-output gate found the payload it accepted.
+   * Present only when the gate ran AND passed; forwarded verbatim from the
+   * AgentCall outcome so callers that persist an output can record its
+   * provenance without re-deriving it.
+   */
+  structuredOutputParse?: AgentCallStructuredOutputParse;
+  /**
+   * The gate's per-issue validator errors when it REFUSED the turn (each
+   * prefixed with the failing instance path). Present only for a
+   * `schema_validation` failure — `error` carries the same information as one
+   * joined sentence, which callers that need to address individual issues
+   * cannot use.
+   */
+  structuredOutputIssues?: string[];
+  /**
+   * What the gate's own bounded repair spent before refusing, and the budget it
+   * was spent against. Present only for a `schema_validation` failure whose
+   * details carried both. A caller reporting why an output was refused needs
+   * this to distinguish "the model missed once" from "the gate re-asked and the
+   * model missed again".
+   */
+  structuredOutputRepair?: StructuredOutputGateRepair;
   /**
    * Full backend-native turn transcript, forwarded from the AgentCall result.
    * Present only for completed `task_run` turns whose backend surfaced

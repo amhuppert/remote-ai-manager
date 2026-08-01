@@ -111,6 +111,7 @@ import { toHaltReason } from "@/lib/workflow-graph/errors";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
+import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import { createSharedDocumentStore } from "./shared-document-store";
 import { createWorkflowDocumentMaterializer } from "./document-materialization";
@@ -271,6 +272,12 @@ const validatorRunner = createValidatorRunner({
   executionRepository: workflowManager,
 });
 const implementerRunner = createGraphWorkflowImplementerRunner();
+const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
+  async resolveTimeoutMs(backend) {
+    const config = await readConfig();
+    return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
+  },
+});
 const validationService = createGraphWorkflowValidationService({
   runContextValidator: validatorRunner.runContextValidator,
 });
@@ -394,6 +401,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   },
   validationService,
   scriptValidatorService,
+  outputCaptureService: outputCaptureRunner,
   readConversationTelemetry: (conversationId) =>
     readConversationTelemetry(conversationId),
 });

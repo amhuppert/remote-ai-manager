@@ -13,6 +13,10 @@ import { IconButton } from "@/components/ui/IconButton";
 import { CloseIcon } from "@/components/icons";
 import Link from "next/link";
 import { formatGraphWorkflowHaltReason } from "@/components/workflow-graph/ContextHaltCard";
+import {
+  outputSchemaEvidenceForReason,
+  type OutputSchemaHaltEvidenceByContext,
+} from "@/components/workflow-graph/derive-output-schema-halt";
 import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";
 import type { GraphWorkflowHaltReason } from "@/lib/workflow-graph/schemas";
 import type { ConflictDecisionInput, ConflictEntry } from "@/lib/jobs/schemas";
@@ -35,6 +39,19 @@ export interface HaltDetailsDialogProps {
   onResume(conflictGuidance?: ConflictDecisionInput[]): void;
   isMutating: boolean;
   isResuming: boolean;
+  /**
+   * Output-schema evidence keyed by context, covering the primary reason AND
+   * every secondary one — a second context can refuse its contract in the same
+   * halt, and this is the full read view, so it must not degrade that failure
+   * to a paths-less headline.
+   */
+  outputSchemaEvidence?: OutputSchemaHaltEvidenceByContext | null;
+  /**
+   * Opens the halted context's Config tab, where the refusing `outputSchema`
+   * is edited. Omitted by a host that cannot navigate there, in which case the
+   * action is not offered rather than offered dead.
+   */
+  onEditSchema?(contextId: string): void;
 }
 
 export default function HaltDetailsDialog({
@@ -47,14 +64,32 @@ export default function HaltDetailsDialog({
   onResume,
   isMutating,
   isResuming,
+  outputSchemaEvidence,
+  onEditSchema,
 }: HaltDetailsDialogProps): React.JSX.Element {
   const hasConflictRecovery =
     primary.type === "join_failure" && primary.conflictFiles.length > 0;
   // The recovery form below is the canonical conflict-file presentation here;
   // omit the formatter's plain list so each file appears once.
+  // This is the full read view, so it is the surface that asks the formatter to
+  // expand an output-schema trip into payload + contract + budget chips.
+  const primaryEvidence = outputSchemaEvidenceForReason(
+    outputSchemaEvidence,
+    primary,
+  );
   const formatted = formatGraphWorkflowHaltReason(primary, {
     omitConflictFiles: hasConflictRecovery,
+    ...(primaryEvidence !== undefined
+      ? {
+          outputSchemaEvidence: primaryEvidence,
+          expandOutputSchemaEvidence: true,
+        }
+      : {}),
   });
+  const editSchemaContextId =
+    primaryEvidence !== undefined && onEditSchema !== undefined
+      ? primaryEvidence.contextId
+      : null;
   // "attention" = the run waits on a human act (delivery approval); the read
   // view keeps its structure but must not present the wait as a failure.
   const attention = formatted.tone === "attention";
@@ -122,16 +157,39 @@ export default function HaltDetailsDialog({
               </span>
               <ul className="m-0 flex list-none flex-col gap-md p-0">
                 {secondary.map((reason, idx) => {
-                  const f = formatGraphWorkflowHaltReason(reason);
+                  const evidence = outputSchemaEvidenceForReason(
+                    outputSchemaEvidence,
+                    reason,
+                  );
+                  const f = formatGraphWorkflowHaltReason(reason, {
+                    ...(evidence !== undefined
+                      ? {
+                          outputSchemaEvidence: evidence,
+                          expandOutputSchemaEvidence: true,
+                        }
+                      : {}),
+                  });
                   return (
                     <li
                       key={`${reason.type}-${idx}`}
+                      data-testid="halt-secondary-reason"
                       className="flex flex-col gap-xs text-[0.74rem] leading-[1.5] text-text-secondary [&_p]:m-0"
                     >
                       <strong className="font-semibold text-text-primary">
                         {f.headline}
                       </strong>
                       {f.detail}
+                      {evidence !== undefined && onEditSchema !== undefined && (
+                        <DialogClose asChild>
+                          <Button
+                            size="sm"
+                            layoutClassName="w-fit"
+                            onClick={() => onEditSchema(evidence.contextId)}
+                          >
+                            Edit schema
+                          </Button>
+                        </DialogClose>
+                      )}
                     </li>
                   );
                 })}
@@ -143,6 +201,13 @@ export default function HaltDetailsDialog({
           <DialogClose asChild>
             <Button>Close</Button>
           </DialogClose>
+          {editSchemaContextId !== null && (
+            <DialogClose asChild>
+              <Button onClick={() => onEditSchema?.(editSchemaContextId)}>
+                Edit schema
+              </Button>
+            </DialogClose>
+          )}
           {canResume && !hasConflictRecovery && (
             <Button
               variant="primary"

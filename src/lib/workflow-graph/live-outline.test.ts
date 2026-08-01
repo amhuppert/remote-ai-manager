@@ -512,6 +512,227 @@ describe("projectLiveOutline — section selectors", () => {
   });
 });
 
+describe("projectLiveOutline — outputSchema in the resolved config (R6.2)", () => {
+  const OUTPUT_SCHEMA = {
+    type: "object",
+    required: ["verdict"],
+    additionalProperties: false,
+    properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+  };
+
+  /** The doc-06 fixture with a declared output contract on `verify` only. */
+  function executionWithOutputSchema(): GraphWorkflowExecution {
+    const base = buildExecution();
+    return graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "verify"
+              ? { ...context, outputSchema: OUTPUT_SCHEMA }
+              : context,
+        ),
+      }),
+    });
+  }
+
+  it("config: returns a declared outputSchema verbatim", () => {
+    const result = projectLiveOutline(executionWithOutputSchema(), {
+      kind: "config",
+      contextId: "verify",
+    });
+    if (!result.ok || result.section !== "config")
+      throw new Error("expected config");
+    expect(result.config.outputSchema).toEqual(OUTPUT_SCHEMA);
+  });
+
+  it("context and full selectors carry the same declaration", () => {
+    const execution = executionWithOutputSchema();
+
+    const context = projectLiveOutline(execution, {
+      kind: "context",
+      contextId: "verify",
+    });
+    if (!context.ok || context.section !== "context")
+      throw new Error("expected context");
+    expect(context.context.config.outputSchema).toEqual(OUTPUT_SCHEMA);
+
+    const full = projectLiveOutline(execution, { kind: "full" });
+    if (!full.ok || full.section !== "full") throw new Error("expected full");
+    expect(
+      full.contexts.find((entry) => entry.id === "verify")?.config.outputSchema,
+    ).toEqual(OUTPUT_SCHEMA);
+  });
+
+  it("omits the key entirely on a context that declares none", () => {
+    const result = projectLiveOutline(executionWithOutputSchema(), {
+      kind: "config",
+      contextId: "impl",
+    });
+    if (!result.ok || result.section !== "config")
+      throw new Error("expected config");
+    expect(result.config).not.toHaveProperty("outputSchema");
+  });
+
+  it("outline rows carry a presence SUMMARY (shape), never the declaration", () => {
+    const result = projectLiveOutline(executionWithOutputSchema(), {
+      kind: "outline",
+    });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    const verify = result.outline.contexts.find((c) => c.id === "verify");
+    const impl = result.outline.contexts.find((c) => c.id === "impl");
+    if (!verify || !impl) throw new Error("expected verify and impl rows");
+    expect(verify.outputSchema).toEqual({ type: "object", fieldCount: 1 });
+    expect(impl.outputSchema).toBeNull();
+    // The row sizes the contract; the body stays section-tier only.
+    expect(JSON.stringify(verify)).not.toContain("additionalProperties");
+  });
+
+  it("reports a null fieldCount for a root that declares no properties", () => {
+    const base = buildExecution();
+    const execution = graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "verify"
+              ? { ...context, outputSchema: { type: "object" } }
+              : context,
+        ),
+      }),
+    });
+    const result = projectLiveOutline(execution, { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    expect(
+      result.outline.contexts.find((c) => c.id === "verify")?.outputSchema,
+    ).toEqual({ type: "object", fieldCount: null });
+  });
+});
+
+describe("projectLiveOutline — outputs selector (R7.2)", () => {
+  const OUTPUT_SCHEMA = {
+    type: "object",
+    required: ["verdict"],
+    properties: {
+      verdict: { type: "string", enum: ["pass", "fail"] },
+      notes: { type: "string" },
+    },
+  };
+
+  /**
+   * `plan` declared a contract and CAPTURED it; `verify` declares one and still
+   * owes it; `impl` declares none at all — the three states the outputs read
+   * must keep distinct.
+   */
+  function executionWithOutputs(): GraphWorkflowExecution {
+    const base = buildExecution();
+    return graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "plan" || context.id === "verify"
+              ? { ...context, outputSchema: OUTPUT_SCHEMA }
+              : context,
+        ),
+      }),
+      contextOutputs: {
+        plan: {
+          value: { verdict: "pass", notes: "all green" },
+          capturedAt: "2026-07-30T10:00:00.000Z",
+          iteration: 2,
+          parse: { source: "fenced", repaired: true, repairAttempts: 1 },
+        },
+      },
+    });
+  }
+
+  it("returns the captured payload with its parse provenance", () => {
+    const result = projectLiveOutline(executionWithOutputs(), {
+      kind: "outputs",
+    });
+    if (!result.ok || result.section !== "outputs")
+      throw new Error("expected outputs");
+    const plan = result.outputs.find((entry) => entry.contextId === "plan");
+    expect(plan).toEqual({
+      contextId: "plan",
+      title: "Plan the work",
+      status: "completed",
+      schema: { type: "object", fieldCount: 2 },
+      capture: {
+        kind: "captured",
+        value: { verdict: "pass", notes: "all green" },
+        capturedAt: "2026-07-30T10:00:00.000Z",
+        iteration: 2,
+        parse: { source: "fenced", repaired: true, repairAttempts: 1 },
+      },
+    });
+  });
+
+  it("reports a declared-but-unproduced context as pending", () => {
+    const result = projectLiveOutline(executionWithOutputs(), {
+      kind: "outputs",
+    });
+    if (!result.ok || result.section !== "outputs")
+      throw new Error("expected outputs");
+    const verify = result.outputs.find((entry) => entry.contextId === "verify");
+    expect(verify).toEqual({
+      contextId: "verify",
+      title: "Verify",
+      status: "pending",
+      schema: { type: "object", fieldCount: 2 },
+      capture: { kind: "pending" },
+    });
+  });
+
+  it("omits contexts that declare no outputSchema and banked nothing", () => {
+    const result = projectLiveOutline(executionWithOutputs(), {
+      kind: "outputs",
+    });
+    if (!result.ok || result.section !== "outputs")
+      throw new Error("expected outputs");
+    expect(result.outputs.map((entry) => entry.contextId)).toEqual([
+      "plan",
+      "verify",
+    ]);
+  });
+
+  it("still surfaces a banked output after its declaration was cleared", () => {
+    const base = executionWithOutputs();
+    const cleared = graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) => {
+            if (context.id !== "plan") return context;
+            const { outputSchema: _dropped, ...rest } = context;
+            return rest;
+          },
+        ),
+      }),
+    });
+    const result = projectLiveOutline(cleared, { kind: "outputs" });
+    if (!result.ok || result.section !== "outputs")
+      throw new Error("expected outputs");
+    const plan = result.outputs.find((entry) => entry.contextId === "plan");
+    expect(plan?.schema).toBeNull();
+    expect(plan?.capture.kind).toBe("captured");
+  });
+
+  it("returns an empty list when no context declares an outputSchema", () => {
+    const result = projectLiveOutline(buildExecution(), { kind: "outputs" });
+    if (!result.ok || result.section !== "outputs")
+      throw new Error("expected outputs");
+    expect(result.outputs).toEqual([]);
+  });
+});
+
 describe("projectLiveOutline — charter selector (doc 07)", () => {
   const amendments = [
     {

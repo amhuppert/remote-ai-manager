@@ -175,7 +175,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print a definition's outline (or one section, or the full JSON)",
     description:
-      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace`. At most one selector per invocation. An unknown id exits 2. No hint.",
+      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, declared output-schema shapes (e.g. `output schema: object · 4 fields`), and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace`. At most one selector per invocation. An unknown id exits 2. No hint.",
     usage: [
       "cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]",
     ],
@@ -461,9 +461,9 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print the live outline of the active execution",
     description:
-      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count, plan-repair round count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress), per-task rows (id, order, status, title, instruction SIZE — never inlined), and a one-line config summary per context. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, plan repair, collaboration), --charter (the current charter document rendered with its amendment log), --full (every context expanded). At most one selector. No active execution exits 2.",
+      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count, plan-repair round count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress, and — when the context declares an outputSchema — its shape, e.g. `output schema: object · 4 fields`), per-task rows (id, order, status, title, instruction SIZE — never inlined), and a one-line config summary per context. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, plan repair, collaboration, and the outputSchema declaration itself), --charter (the current charter document rendered with its amendment log), --outputs (every schema-declaring context's capture status, plus the captured payload and its parse provenance), --full (every context expanded). At most one selector. No active execution exits 2.",
     usage: [
-      "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --full] [--json]",
+      "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --outputs | --full] [--json]",
     ],
     flags: [
       {
@@ -476,6 +476,12 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         kind: "boolean",
         description:
           "the current charter document (markdown) with its live amendment log",
+      },
+      {
+        name: "outputs",
+        kind: "boolean",
+        description:
+          "each schema-declaring context's structured output: captured or pending, with the payload + parse provenance",
       },
       {
         name: "context",
@@ -507,6 +513,11 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         invocation: "cctl workflow live get --context impl",
         explanation:
           "pulls one context's full prose + resolved config before a targeted `cctl workflow live edit`",
+      },
+      {
+        invocation: "cctl workflow live get --outputs",
+        explanation:
+          "reads what upstream contexts actually produced — the outline only says a context DECLARES an outputSchema; this returns the validated payload",
       },
     ],
     related: [

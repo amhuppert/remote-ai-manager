@@ -5,12 +5,14 @@ import {
   fireEvent,
   render as rtlRender,
   screen,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createWorkflowDefinition,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
+import { OUTPUT_SCHEMA_TEMPLATE } from "@/components/workflow-config/OutputSchemaField";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
 
@@ -546,7 +548,10 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     // The override snapshots the effective (inherited) policy.
-    expect(ctx?.planRepair).toEqual({ enabled: true, maxAttemptsPerContext: 2 });
+    expect(ctx?.planRepair).toEqual({
+      enabled: true,
+      maxAttemptsPerContext: 2,
+    });
 
     const blockAfter = findBlockByLabel(container, "Plan repair")!;
     fireEvent.click(
@@ -736,5 +741,326 @@ describe("WorkflowInspectorPanel — validator three-state footer", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.contextValidator).toBeUndefined();
+  });
+});
+
+// A context carrying nothing the cascade resolves — so the resolved-setup
+// strip's override count is 0 and any drift caused by outputSchema is visible.
+function bareContextDefinition(
+  outputSchema?: Record<string, unknown>,
+): ReturnType<typeof createWorkflowDefinition> {
+  const base = createWorkflowDefinition();
+  return {
+    ...base,
+    executionContexts: [
+      {
+        id: "context-plan",
+        title: "Plan",
+        acceptanceCriteria: "Plan is documented",
+        ...(outputSchema ? { outputSchema } : {}),
+      },
+    ],
+    tasks: base.tasks.filter((task) => task.contextId === "context-plan"),
+    edges: [],
+  };
+}
+
+function schemaTextarea(): HTMLTextAreaElement {
+  const element = screen.getByLabelText("Output schema JSON");
+  if (!(element instanceof HTMLTextAreaElement)) {
+    throw new Error("The output schema editor is not a textarea");
+  }
+  return element;
+}
+
+// The resolved-setup strip carries no role or accessible name of its own, so it
+// is addressed by section marker and narrowed rather than asserted.
+function resolvedSetupStrip(container: HTMLElement): HTMLElement {
+  const strip = container.querySelector('[data-section="resolved-setup"]');
+  if (!(strip instanceof HTMLElement)) {
+    throw new Error("No resolved-setup strip rendered");
+  }
+  return strip;
+}
+
+function planContext() {
+  return _useGraphWorkflowBuilderStore
+    .getState()
+    .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+}
+
+describe("WorkflowInspectorPanel — context output schema", () => {
+  // R7.4: identity content in the Brief group — no cascade chrome at all.
+  it("renders the field inside the Brief group with no config-block chrome", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition({ type: "object" }),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const field = screen.getByTestId("output-schema-field");
+    const brief = container.querySelector('[data-section="header"]');
+    if (!(brief instanceof HTMLElement)) {
+      throw new Error("No Brief group rendered");
+    }
+    expect(brief.contains(field)).toBe(true);
+    // InspectorConfigBlock marks itself with data-source (the provenance
+    // badge/cascade switch host); the schema field must not sit inside one.
+    expect(field.closest("[data-source]")).toBeNull();
+    expect(within(field).queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  // R7.1: the field flattens to and diffs into the saved-tier context update.
+  it("writes a valid edited schema into the draft definition", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition({ type: "object" }),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.change(schemaTextarea(), {
+      target: {
+        value:
+          '{ "type": "object", "properties": { "verdict": { "type": "string" } } }',
+      },
+    });
+
+    expect(planContext()?.outputSchema).toEqual({
+      type: "object",
+      properties: { verdict: { type: "string" } },
+    });
+  });
+
+  it("seeds a template from the empty state and clears the key again", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition(),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(planContext()?.outputSchema).toBeUndefined();
+    fireEvent.click(screen.getByRole("button", { name: "+ Add schema" }));
+    expect(planContext()?.outputSchema).toEqual(
+      JSON.parse(OUTPUT_SCHEMA_TEMPLATE),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect("outputSchema" in (planContext() ?? {})).toBe(false);
+  });
+
+  it("leaves the draft definition untouched while the text is invalid", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition({ type: "object" }),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.change(schemaTextarea(), { target: { value: '{ "type": ' } });
+
+    expect(planContext()?.outputSchema).toEqual({ type: "object" });
+    expect(screen.getByTestId("output-schema-field")).toHaveAttribute(
+      "data-stage",
+      "invalid-json",
+    );
+  });
+
+  // R7.4: the header Save is blocked while the schema text cannot be accepted.
+  it("disables the header Save while the schema text is invalid", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition({ type: "object" }),
+    });
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+
+    fireEvent.change(schemaTextarea(), { target: { value: "{ oops" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.change(schemaTextarea(), {
+      target: { value: '{ "type": "object" }' },
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("re-enables Save when an unsupported keyword is removed", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition({ type: "object" }),
+    });
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.change(schemaTextarea(), {
+      target: {
+        value:
+          '{ "type": "object", "properties": { "d": { "type": "string", "format": "date" } } }',
+      },
+    });
+    expect(screen.getByTestId("output-schema-field")).toHaveAttribute(
+      "data-stage",
+      "unsupported",
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.change(schemaTextarea(), {
+      target: {
+        value:
+          '{ "type": "object", "properties": { "d": { "type": "string" } } }',
+      },
+    });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  // R7.4: neutral Schema chip in the resolved-setup strip, only when set.
+  it("shows the Schema chip in the resolved-setup strip only when a schema is set", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition(),
+    });
+    const { container, rerender } = render(
+      <WorkflowInspectorPanel {...defaultProps} />,
+    );
+
+    const strip = () => resolvedSetupStrip(container);
+    expect(within(strip()).queryByText("Schema")).not.toBeInTheDocument();
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        draftDefinition: bareContextDefinition({ type: "object" }),
+      });
+    });
+    rerender(<WorkflowInspectorPanel {...defaultProps} />);
+    expect(within(strip()).getByText("Schema")).toBeInTheDocument();
+  });
+
+  // R7.4: outputSchema is identity, not a cascade source — it must never move
+  // the override readout.
+  it("excludes outputSchema from the context override count", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: bareContextDefinition({ type: "object" }),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(
+      within(resolvedSetupStrip(container)).getByText("0 overrides"),
+    ).toBeInTheDocument();
+  });
+});
+
+// R7.8: the builder's rows are DEFINITION-derived — the author sees what the
+// context will receive before anything runs.
+describe("WorkflowInspectorPanel — upstream inputs", () => {
+  function definitionWithPlanSchema() {
+    const base = createWorkflowDefinition();
+    return {
+      ...base,
+      executionContexts: base.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              outputSchema: {
+                type: "object",
+                properties: {
+                  summary: { type: "string" },
+                  risks: { type: "array", items: { type: "string" } },
+                },
+                required: ["summary"],
+              },
+            }
+          : context,
+      ),
+    };
+  }
+
+  it("lists the selected context's direct predecessors in the Brief group", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-implement",
+      definition: definitionWithPlanSchema(),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = screen.getByTestId("upstream-inputs");
+    const brief = container.querySelector('[data-section="header"]');
+    if (!(brief instanceof HTMLElement)) {
+      throw new Error("No Brief group rendered");
+    }
+    expect(brief.contains(block)).toBe(true);
+
+    const rows = within(block).getAllByTestId("upstream-input-row");
+    expect(rows.map((row) => row.dataset.contextId)).toEqual(["context-plan"]);
+    expect(
+      within(rows[0]!)
+        .getAllByTestId("upstream-input-field")
+        .map((chip) => chip.textContent),
+    ).toEqual(["summary", "risks"]);
+    // Nothing has run, so no definition-tier row can claim a captured output.
+    expect(rows[0]!.dataset.captured).toBe("false");
+  });
+
+  it("omits the block entirely for a root context", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanSchema(),
+    });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(screen.queryByTestId("upstream-inputs")).toBeNull();
+  });
+
+  it("follows the graph as edges change, without a component change", () => {
+    resetStore();
+    const definition = definitionWithPlanSchema();
+    setupStore({
+      selectedContextId: "context-verify",
+      definition,
+    });
+    const { rerender } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(
+      screen
+        .getAllByTestId("upstream-input-row")
+        .map((row) => row.dataset.contextId),
+    ).toEqual(["context-implement"]);
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        draftDefinition: {
+          ...definition,
+          edges: [
+            ...definition.edges,
+            {
+              id: "edge-plan-verify",
+              sourceContextId: "context-plan",
+              targetContextId: "context-verify",
+            },
+          ],
+        },
+      });
+    });
+    rerender(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(
+      screen
+        .getAllByTestId("upstream-input-row")
+        .map((row) => row.dataset.contextId),
+    ).toEqual(["context-plan", "context-implement"]);
   });
 });

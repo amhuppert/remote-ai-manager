@@ -138,4 +138,104 @@ describe("validateWorkflowPlan", () => {
       expect(issue?.message).toMatch(/acyclic/i);
     }
   });
+
+  describe("outputSchema declaration refusal (D2 R1.2)", () => {
+    // `validateWorkflowPlan` takes the raw request body, so the declaration is
+    // supplied exactly as an author would send it — no cast injects state past
+    // the parse the production path performs.
+    function withContextOutputSchema(outputSchema: unknown) {
+      const definition = createWorkflowDefinition();
+      return {
+        ...makePlan(definition),
+        definition: {
+          ...definition,
+          executionContexts: definition.executionContexts.map(
+            (context, index) =>
+              index === 1 ? { ...context, outputSchema } : context,
+          ),
+        },
+      };
+    }
+
+    it("accepts a context declaring an outputSchema inside the supported subset", () => {
+      const result = validateWorkflowPlan(
+        withContextOutputSchema({
+          type: "object",
+          additionalProperties: false,
+          required: ["verdict"],
+          properties: {
+            verdict: { type: "string", enum: ["pass", "fail"] },
+            findings: { type: "array", items: { type: "string" } },
+          },
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+    });
+
+    it("refuses an unsupported keyword with a locator naming the context and the schema path", () => {
+      const result = validateWorkflowPlan(
+        withContextOutputSchema({
+          type: "object",
+          properties: { verdict: { type: "string", format: "uri" } },
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const issue = result.issues.find((candidate) =>
+        candidate.path.includes("outputSchema"),
+      );
+      // Index 1 is `context-implement` — the context the declaration is on.
+      expect(issue?.path).toBe(
+        "definition.executionContexts[1].outputSchema.properties.verdict.format",
+      );
+      expect(issue?.message).toMatch(/format/);
+    });
+
+    it("refuses an outputSchema that is not an object schema at all", () => {
+      const result = validateWorkflowPlan(
+        withContextOutputSchema({ type: "string" }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.path)).toContain(
+        "definition.executionContexts[1].outputSchema",
+      );
+    });
+
+    it("brackets a property name containing a dot so the locator stays unambiguous", () => {
+      // A dot-joined locator would read
+      // `…outputSchema.properties.http.status.format`, which describes a nesting
+      // the author never wrote and no reader can invert.
+      const result = validateWorkflowPlan(
+        withContextOutputSchema({
+          type: "object",
+          properties: { "http.status": { type: "string", format: "uri" } },
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.path)).toContain(
+        'definition.executionContexts[1].outputSchema.properties["http.status"].format',
+      );
+    });
+
+    it("accepts a declaration whose property names collide with Object.prototype", () => {
+      const result = validateWorkflowPlan(
+        withContextOutputSchema({
+          type: "object",
+          required: ["constructor"],
+          properties: {
+            constructor: { type: "string" },
+            toString: { type: "string" },
+          },
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+    });
+  });
 });

@@ -145,6 +145,43 @@ describe("graph workflow live-outline route handlers", () => {
     expect(body.contexts).toHaveLength(3);
   });
 
+  it("returns the outputs section for ?outputs=true", async () => {
+    const handlers = createGraphWorkflowLiveOutlineRouteHandlers(
+      buildDeps(createWorkflowExecution({ status: "running" })),
+    );
+    const response = await handlers.GET(
+      makeRequest("?outputs=true"),
+      routeParams,
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.section).toBe("outputs");
+    expect(body.outputs).toEqual([]);
+  });
+
+  it("treats ?outputs=false as absent (the default outline)", async () => {
+    const handlers = createGraphWorkflowLiveOutlineRouteHandlers(
+      buildDeps(createWorkflowExecution({ status: "running" })),
+    );
+    const response = await handlers.GET(
+      makeRequest("?outputs=false"),
+      routeParams,
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).section).toBe("outline");
+  });
+
+  it("returns 400 when outputs is combined with another selector", async () => {
+    const handlers = createGraphWorkflowLiveOutlineRouteHandlers(
+      buildDeps(createWorkflowExecution({ status: "running" })),
+    );
+    const response = await handlers.GET(
+      makeRequest("?outputs=true&full=true"),
+      routeParams,
+    );
+    expect(response.status).toBe(400);
+  });
+
   it("returns 404 for an unknown context selector", async () => {
     const handlers = createGraphWorkflowLiveOutlineRouteHandlers(
       buildDeps(createWorkflowExecution({ status: "running" })),

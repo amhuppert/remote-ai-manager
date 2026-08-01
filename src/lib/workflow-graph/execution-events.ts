@@ -39,8 +39,8 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type {
+  GraphWorkflowValidationIssue,
   GraphWorkflowValidatorType,
-  WorkflowValidatorIssue,
 } from "@/lib/workflow-graph/definition-schemas";
 
 const logger = createLogger("workflow.live-edit");
@@ -93,10 +93,21 @@ interface PublishValidationResultInput {
   execution: GraphWorkflowExecution;
   contextId: string;
   validatorType: GraphWorkflowValidatorType;
+  /** Defaults to the agent/script validator verdict this event has always
+   *  carried; `output_schema` marks a D2 format-turn rejection. */
+  kind?: GraphWorkflowValidationResultEvent["kind"];
   pass: boolean;
   summary: string;
-  issues?: WorkflowValidatorIssue[];
+  issues?: readonly GraphWorkflowValidationIssue[];
   reopenTaskIds?: string[];
+  /** The refused payload, for an `output_schema` failure only. */
+  rejectedOutput?: string | null;
+  /** The structured-output gate's bounded-repair spend and budget, for an
+   *  `output_schema` failure only. */
+  gateRepair?: { attempts: number; maxAttempts: number } | null;
+  /** The contract that refused the payload, snapshotted so a later schema edit
+   *  cannot re-caption this rejection. `output_schema` failures only. */
+  rejectedAgainstSchema?: Record<string, unknown> | null;
   sessionRef?: GraphWorkflowValidationEventSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
@@ -917,10 +928,15 @@ export function createGraphWorkflowExecutionEventPublisher(
       executionId: input.execution.id,
       contextId: input.contextId,
       validatorType: input.validatorType,
+      kind: input.kind ?? "context_validation",
       pass: input.pass,
       summary: input.summary,
-      issues: input.issues ?? [],
+      issues: [...(input.issues ?? [])],
       reopenTaskIds: input.reopenTaskIds ?? [],
+      rejectedOutput: input.rejectedOutput ?? null,
+      gateRepairAttempts: input.gateRepair?.attempts ?? null,
+      gateRepairBudget: input.gateRepair?.maxAttempts ?? null,
+      rejectedAgainstSchema: input.rejectedAgainstSchema ?? null,
       sessionRef: input.sessionRef ?? null,
       reviewArtifact: input.reviewArtifact ?? null,
     };
