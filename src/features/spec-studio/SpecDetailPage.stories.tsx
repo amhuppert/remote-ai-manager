@@ -1,6 +1,7 @@
 import { useState, type ComponentProps, type ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { expect, userEvent, within } from "storybook/test";
 
 import {
   specDetailViewSchema,
@@ -11,6 +12,7 @@ import { elementHandleInSnapshot } from "@/lib/specs/review-state";
 import type {
   SpecAuthoringStage,
   SpecRevision,
+  SpecRevisionElement,
   SpecRevisionSnapshot,
   SpecRevisionState,
 } from "@/lib/specs/schemas";
@@ -346,6 +348,101 @@ function withQuestionsAndAssumptions(detail: SpecDetailView): SpecDetailView {
   });
 }
 
+function withOverflowingStructureRail(detail: SpecDetailView): SpecDetailView {
+  const snapshot = detail.currentRevision;
+  if (snapshot === null) {
+    throw new Error("Overflowing rail story requires a current revision");
+  }
+  const criterionTemplate = snapshot.elements.find(
+    (entry) => entry.version.payload.kind === "criterion",
+  );
+  if (
+    criterionTemplate === undefined ||
+    criterionTemplate.version.payload.kind !== "criterion"
+  ) {
+    throw new Error("Overflowing rail story requires a criterion template");
+  }
+
+  const additionalCriteria: SpecRevisionElement[] = Array.from(
+    { length: 14 },
+    (_, index) => {
+      const number = index + 2;
+      return {
+        element: {
+          ...criterionTemplate.element,
+          id: `criterion-${number}`,
+          number,
+        },
+        version: {
+          ...criterionTemplate.version,
+          elementId: `criterion-${number}`,
+          position: snapshot.elements.length + index,
+          payload: {
+            ...criterionTemplate.version.payload,
+            text: `Acceptance criterion ${number} remains fully readable when every structure item is expanded inside the bounded rail.`,
+          },
+          payloadHash: `criterion-${number}-hash`,
+        },
+      };
+    },
+  );
+  const decision: SpecRevisionElement = {
+    element: {
+      id: "decision-1",
+      specId: detail.spec.id,
+      kind: "decision",
+      number: 1,
+      parentElementId: null,
+      createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+    },
+    version: {
+      revisionId: snapshot.revision.id,
+      elementId: "decision-1",
+      position: snapshot.elements.length + additionalCriteria.length,
+      payload: {
+        kind: "decision",
+        title: "Keep expanded structure content reachable",
+        chosenApproach:
+          "The structure rail owns overflow while each group retains its content height.",
+        rejectedAlternatives: [
+          {
+            label: "Clip expanded groups",
+            reason:
+              "Clipping makes acceptance criteria and later groups unreachable.",
+          },
+        ],
+        reason:
+          "A single scroll owner preserves every expanded requirement, decision, question, and task.",
+        tracedRequirementElementIds: ["requirement-1"],
+      },
+      payloadHash: "decision-1-hash",
+      elementVersion: 1,
+      createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+      updatedAt: SPEC_CONTROLS_FIXTURE_NOW,
+    },
+  };
+  const elements = [...snapshot.elements, ...additionalCriteria, decision];
+
+  return parsedDetail({
+    ...detail,
+    currentRevision: { ...snapshot, elements },
+    currentApprovedRevision:
+      detail.currentApprovedRevision === null
+        ? null
+        : { ...detail.currentApprovedRevision, elements },
+    executionRevisionSnapshots: detail.executionRevisionSnapshots.map(
+      (executionSnapshot) =>
+        executionSnapshot.revision.id === snapshot.revision.id
+          ? { ...executionSnapshot, elements }
+          : executionSnapshot,
+    ),
+    status: {
+      ...detail.status,
+      coverage: { coveredCriteria: 1, totalCriteria: 15, percentage: 7 },
+    },
+  });
+}
+
 function detailFor(
   phase: SpecDetailView["status"]["phase"]["primary"],
 ): SpecDetailView {
@@ -427,6 +524,68 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Approved: Story = {};
+
+export const ExpandedStructureRail: Story = {
+  args: {
+    detail: withOverflowingStructureRail(
+      withQuestionsAndAssumptions(detailFor("approved")),
+    ),
+  },
+  parameters: {
+    viewport: {
+      defaultViewport: "structure-rail-desktop",
+      viewports: {
+        "structure-rail-desktop": {
+          name: "Structure rail desktop",
+          styles: { width: "1440px", height: "900px" },
+          type: "desktop",
+        },
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const rail = canvas.getByRole("complementary", {
+      name: "Spec structure",
+    });
+    await userEvent.click(
+      within(rail).getByRole("button", {
+        name: "Expand all structure items",
+      }),
+    );
+
+    await expect(
+      within(rail).getByRole("button", {
+        name: "Collapse all structure items",
+      }),
+    ).toBeVisible();
+    await expect(rail.scrollHeight).toBeGreaterThan(rail.clientHeight);
+
+    const groups = [
+      "Requirements",
+      "Decisions",
+      "Questions & assumptions",
+      "Tasks",
+    ].map((name) => within(rail).getByRole("region", { name }));
+    for (const group of groups) {
+      await expect(group.scrollHeight).toBeLessThanOrEqual(
+        group.clientHeight + 1,
+      );
+    }
+
+    rail.scrollTop = rail.scrollHeight;
+    await expect(rail.scrollTop).toBeGreaterThan(0);
+    const railRect = rail.getBoundingClientRect();
+    const finalGroupRect = groups.at(-1)?.getBoundingClientRect();
+    if (finalGroupRect === undefined) {
+      throw new Error("Structure rail story requires a final group");
+    }
+    await expect(finalGroupRect.bottom).toBeLessThanOrEqual(
+      railRect.bottom + 1,
+    );
+    await expect(finalGroupRect.bottom).toBeGreaterThan(railRect.top);
+  },
+};
 
 export const InReview: Story = {
   args: { detail: detailFor("in_review") },

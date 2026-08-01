@@ -1316,7 +1316,7 @@ function SpecStructureRail({
         <section
           key={group.id}
           aria-labelledby={`spec-rail-${group.id}`}
-          className="overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface"
+          className="shrink-0 overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface"
         >
           <div className="flex items-center justify-between gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
             <h3

@@ -211,6 +211,24 @@ describe("Spec detail prototype structure", () => {
     ).toBeVisible();
   });
 
+  it("keeps structure groups full-height within the rail scroll container", () => {
+    renderPrototypeDetail();
+
+    const rail = screen.getByRole("complementary", { name: "Spec structure" });
+    expect(rail).toHaveClass("overflow-y-auto");
+
+    for (const group of [
+      "Requirements",
+      "Decisions",
+      "Questions & assumptions",
+      "Tasks",
+    ]) {
+      expect(within(rail).getByRole("region", { name: group })).toHaveClass(
+        "shrink-0",
+      );
+    }
+  });
+
   it("does not reserve comment gutters or render empty comment placeholders", () => {
     renderPrototypeDetail();
 
