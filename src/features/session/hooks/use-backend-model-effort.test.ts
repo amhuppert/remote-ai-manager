@@ -5,6 +5,7 @@ import {
   pickPreferredEffort,
   useBackendModelEffort,
 } from "./use-backend-model-effort";
+import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import type { ConversationState } from "@/lib/conversations/schemas";
 
 function makeConversation(
@@ -117,6 +118,61 @@ describe("useBackendModelEffort", () => {
     );
 
     expect(result.current.selectedModel).toBe("custom-codex-model");
+    expect(result.current.selectedEffort).toBe("ultra");
+  });
+
+  it("hydrates controls from a running Codex conversation", () => {
+    const initialProps: {
+      activeConversation: ConversationState | undefined;
+      lastUsedModelId: string | undefined;
+      lastUsedEffort: string | undefined;
+    } = {
+      activeConversation: undefined,
+      lastUsedModelId: undefined,
+      lastUsedEffort: undefined,
+    };
+    const backendDefaults: BackendSelectionDefaultsById = {
+      claude: { modelId: "fable", effort: "high" },
+      codex: { modelId: "gpt-5.4", effort: "high" },
+    };
+    const { result, rerender } = renderHook(
+      ({ activeConversation, lastUsedModelId, lastUsedEffort }) =>
+        useBackendModelEffort({
+          conversationId: "c1",
+          activeConversation,
+          backendDefaults,
+          lastUsedModelId,
+          lastUsedEffort,
+        }),
+      { initialProps },
+    );
+
+    expect(result.current.selectedBackend).toBe("claude");
+
+    rerender({
+      activeConversation: makeConversation({
+        agentBackend: "codex",
+        promptCount: 0,
+        status: "running",
+      }),
+      lastUsedModelId: undefined,
+      lastUsedEffort: undefined,
+    });
+
+    expect(result.current.selectedBackend).toBe("codex");
+    expect(result.current.backendLocked).toBe(true);
+
+    rerender({
+      activeConversation: makeConversation({
+        agentBackend: "codex",
+        promptCount: 0,
+        status: "running",
+      }),
+      lastUsedModelId: "gpt-5.6-sol",
+      lastUsedEffort: "ultra",
+    });
+
+    expect(result.current.selectedModel).toBe("gpt-5.6-sol");
     expect(result.current.selectedEffort).toBe("ultra");
   });
 

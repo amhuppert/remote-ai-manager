@@ -131,19 +131,24 @@ export function useBackendModelEffort({
     () => initialSelection.effort,
   );
 
-  const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
+  const backendLocked =
+    (activeConversation?.promptCount ?? 0) > 0 ||
+    activeConversation?.status === "running";
 
-  // Sync backend/model/effort when switching conversations or when the
-  // server backend changes on a locked conversation (promptCount > 0).
+  // Sync backend/model/effort when the active conversation first loads,
+  // when switching conversations, or when settings change after backend lock.
   // When the backend isn't locked yet, the user's local toggle is
   // authoritative — server refetches must not overwrite it.
   // Uses the "store previous render's value" pattern to detect changes
   // without an effect — see https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const activeBackend = activeConversation?.agentBackend;
-  const [prevConversationId, setPrevConversationId] = useState(conversationId);
+  const [prevConversationId, setPrevConversationId] = useState(
+    activeConversation?.id,
+  );
   const rememberedSettingsKey = JSON.stringify([
     conversationId,
     activeBackend,
+    backendLocked,
     backendDefaults,
     lastUsedModelId,
     lastUsedEffort,
@@ -158,8 +163,7 @@ export function useBackendModelEffort({
     const isConversationSwitch = prevConversationId !== conversationId;
     setPrevConversationId(conversationId);
     setPrevRememberedSettingsKey(rememberedSettingsKey);
-    const shouldApplyRememberedSettings =
-      isConversationSwitch || (activeConversation.promptCount ?? 0) > 0;
+    const shouldApplyRememberedSettings = isConversationSwitch || backendLocked;
     if (shouldApplyRememberedSettings) {
       const backend = activeConversation.agentBackend ?? "claude";
       const nextSelection = resolveModelEffortSelection({
