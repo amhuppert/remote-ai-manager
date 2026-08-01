@@ -208,6 +208,7 @@ const codexDescriptor = createCodexBackendDescriptor({
   }),
   runtimeConfig: createCodexRuntimeConfigAdapter(),
   taskRunner: new CodexTaskRunner(codexTaskPort.deps),
+  prepareManagedSkillsCheckout: async () => undefined,
   mcp: codexMcpCapabilities,
   failureClassifier: createCodexFailureClassifier(),
 });

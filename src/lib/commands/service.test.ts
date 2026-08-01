@@ -162,6 +162,80 @@ Claude skill body.`,
     );
   });
 
+  it("preserves the managed bundle namespace for nested Codex skills", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+    const worktreePath = await mkdtemp(
+      path.join(tmpdir(), "commands-worktree-"),
+    );
+    const bundlePath = await mkdtemp(path.join(tmpdir(), "commands-bundle-"));
+    cleanupPaths.push(homeDir, worktreePath, bundlePath);
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    for (const skillName of ["agent-context", "cc-cli"]) {
+      const skillPath = path.join(bundlePath, "skills", skillName);
+      await mkdir(skillPath, { recursive: true });
+      await writeFile(
+        path.join(skillPath, "SKILL.md"),
+        `---\ndescription: ${skillName} managed skill\n---\nBody.`,
+      );
+    }
+    const projectSkillsPath = path.join(worktreePath, ".agents", "skills");
+    await mkdir(projectSkillsPath, { recursive: true });
+    await symlink(
+      path.join(bundlePath, "skills"),
+      path.join(projectSkillsPath, "command-center"),
+      "dir",
+    );
+    const flatCcCliPath = path.join(projectSkillsPath, "cc-cli");
+    await mkdir(flatCcCliPath, { recursive: true });
+    await writeFile(
+      path.join(flatCcCliPath, "SKILL.md"),
+      "---\ndescription: Project-local cc-cli\n---\nBody.",
+    );
+    const nestedSkillPath = path.join(
+      projectSkillsPath,
+      "ordinary-container",
+      "nested-skill",
+    );
+    await mkdir(nestedSkillPath, { recursive: true });
+    await writeFile(
+      path.join(nestedSkillPath, "SKILL.md"),
+      "---\ndescription: Ordinary nested skill\n---\nBody.",
+    );
+    const flatSkillPath = path.join(bundlePath, "flat-target");
+    await mkdir(flatSkillPath, { recursive: true });
+    await writeFile(
+      path.join(flatSkillPath, "SKILL.md"),
+      "---\ndescription: Flat linked skill\n---\nBody.",
+    );
+    await symlink(
+      flatSkillPath,
+      path.join(projectSkillsPath, "flat-link"),
+      "dir",
+    );
+
+    const items = await discoverCommands(worktreePath, "codex");
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "$command-center:agent-context",
+          source: "project",
+        }),
+        expect.objectContaining({
+          name: "$command-center:cc-cli",
+          source: "project",
+        }),
+        expect.objectContaining({ name: "$flat-link", source: "project" }),
+        expect.objectContaining({ name: "$cc-cli", source: "project" }),
+        expect.objectContaining({ name: "$nested-skill", source: "project" }),
+      ]),
+    );
+    expect(items.map((item) => item.name)).not.toContain(
+      "$ordinary-container:nested-skill",
+    );
+  });
+
   it("uses directory basename for skill id, ignoring frontmatter name with spaces", async () => {
     const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
     const worktreePath = await mkdtemp(

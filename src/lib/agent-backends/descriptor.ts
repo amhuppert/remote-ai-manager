@@ -60,6 +60,12 @@ export interface AgentBackendManagedSkills {
    * contract regardless of this value.
    */
   tasks: ManagedSkillsDelivery;
+  /**
+   * Materialize adapter-owned discovery state in a checkout before it is
+   * exposed to agent launch and command discovery. Backends whose native
+   * transport attaches managed skills do not need this hook.
+   */
+  prepareCheckout?(checkoutPath: string): Promise<void>;
 }
 
 export const continuationStrengthSchema = z.enum([

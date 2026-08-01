@@ -119,6 +119,7 @@ export interface CodexDescriptorDeps {
    * adapter is server-only while this module's literals are client-imported. */
   runtimeConfig: BackendRuntimeConfigAdapter;
   taskRunner: AgentTaskRunner;
+  prepareManagedSkillsCheckout(checkoutPath: string): Promise<void>;
   /** `codexMcpCapabilities` in production; injected because the MCP registry
    * module is server-only while this module's literals are client-imported. */
   mcp: McpBackendCapabilities;
@@ -143,7 +144,11 @@ export function createCodexBackendDescriptor(
       structuredOutput: "backend_native",
       transcript: codexTaskTranscriptProjection,
     },
-    managedSkills: { conversations: "bundled", tasks: "bundled" },
+    managedSkills: {
+      conversations: "bundled",
+      tasks: "bundled",
+      prepareCheckout: deps.prepareManagedSkillsCheckout,
+    },
     mcp: deps.mcp,
     errors: deps.failureClassifier,
   };

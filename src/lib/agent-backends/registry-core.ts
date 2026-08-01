@@ -14,6 +14,7 @@ import {
 import { effortLevelSchema } from "./schemas";
 import type { ConversationBackendFactory } from "./conversation";
 import type { AgentTaskRunner } from "./task";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("agent-backends:registry");
 
@@ -235,6 +236,30 @@ export function getBackendDescriptor(
 /** Registration order. */
 export function listBackends(): readonly AgentBackendDescriptor[] {
   return [...descriptors.values()];
+}
+
+/**
+ * Gives every registered backend a chance to materialize its managed-skill
+ * discovery state in a checkout. One adapter failure must not prevent the
+ * remaining adapters from preparing the same checkout.
+ */
+export async function prepareManagedSkillsCheckout(
+  checkoutPath: string,
+): Promise<void> {
+  for (const descriptor of listBackends()) {
+    const prepareCheckout = descriptor.managedSkills.prepareCheckout;
+    if (!prepareCheckout) continue;
+
+    try {
+      await prepareCheckout(checkoutPath);
+    } catch (err) {
+      logger.warn("registry.managed_skills_checkout_prepare_failed", {
+        backend: descriptor.id,
+        checkoutPath,
+        error: getErrorMessage(err),
+      });
+    }
+  }
 }
 
 export function getConversationBackendFactory(

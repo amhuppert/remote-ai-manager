@@ -16,6 +16,8 @@
  * explicitly authorized) and hidden behind an exact-path `info/exclude`
  * entry so it can never reach `git status` or an auto-commit. Exclusion is
  * a hard precondition: if it cannot be established, no link is created.
+ * New session checkouts are reconciled during provisioning; launch-time
+ * reconciliation remains the self-healing path for every other checkout.
  *
  * Delete this module when the Codex backend gains native runtime skill-root
  * injection; see the managed-skills design in memory-bank/collaboration.
@@ -173,4 +175,11 @@ export async function ensureCodexManagedSkillsBridgeForLaunch(
     });
     return { status: "skipped", reason: "exclude_unavailable", detail };
   }
+}
+
+/** Checkout-provisioning adapter for the backend registry's neutral hook. */
+export async function prepareCodexManagedSkillsCheckout(
+  checkoutPath: string,
+): Promise<void> {
+  await ensureCodexManagedSkillsBridgeForLaunch(checkoutPath);
 }

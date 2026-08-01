@@ -232,11 +232,9 @@ export class CodexConversationRuntime
     try {
       const promptInput = this.buildPromptInput(input);
 
-      // Reconcile the managed skill bundle link before the turn so codex
-      // discovers `command-center:*` skills. Launch-time (not provisioning-
-      // time) so resumed sessions, lane worktrees, and project-scoped
-      // conversations all self-heal; a conflict degrades to skill-less and
-      // never blocks the turn.
+      // Reconcile the managed skill bundle link before every turn so resumed
+      // sessions, lane worktrees, and project-scoped conversations self-heal.
+      // A conflict degrades to skill-less and never blocks the turn.
       const bridgeResult = await this.deps.ensureManagedSkillsBridge(
         this.worktreePath,
       );

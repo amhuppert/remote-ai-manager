@@ -5,12 +5,13 @@
  * explicitly resettable, and `bootstrapBackends()` is idempotent.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   backendConversationCapabilitiesIntegritySchema,
   backendMetadataIntegritySchema,
   getBackendDescriptor,
   listBackends,
+  prepareManagedSkillsCheckout,
   registerBackend,
   _registerBackendForTesting,
   _resetBackendRegistryForTesting,
@@ -195,6 +196,56 @@ describe("registry-core backend registration policy", () => {
     expect(ids).toEqual(["claude", "codex"]);
     expect(getBackendDescriptor("claude").conversation).toBeDefined();
     expect(getBackendDescriptor("codex").tasks).toBeDefined();
+  });
+
+  it("dispatches checkout preparation through registered backend facets", async () => {
+    const prepareCheckout = vi.fn(async (_checkoutPath: string) => undefined);
+    const fake = createTestFakeBackend();
+    const descriptor = {
+      ...fake.descriptor,
+      managedSkills: {
+        conversations: "bundled" as const,
+        tasks: "bundled" as const,
+        prepareCheckout,
+      },
+    };
+    _registerBackendForTesting(descriptor);
+
+    await prepareManagedSkillsCheckout("/repo/.worktrees/session");
+
+    expect(prepareCheckout).toHaveBeenCalledWith("/repo/.worktrees/session");
+  });
+
+  it("registers Codex checkout preparation without leaking it into Claude", () => {
+    bootstrapBackends();
+
+    expect(
+      getBackendDescriptor("codex").managedSkills.prepareCheckout,
+    ).toBeTypeOf("function");
+    expect(
+      getBackendDescriptor("claude").managedSkills.prepareCheckout,
+    ).toBeUndefined();
+  });
+
+  it("isolates checkout preparation failures between backend adapters", async () => {
+    bootstrapBackends();
+    const claudePrepare = vi.fn(async () => {
+      throw new Error("claude preparation failed");
+    });
+    const codexPrepare = vi.fn(async () => undefined);
+    getBackendDescriptor("claude").managedSkills.prepareCheckout =
+      claudePrepare;
+    getBackendDescriptor("codex").managedSkills.prepareCheckout = codexPrepare;
+
+    await expect(
+      prepareManagedSkillsCheckout("/repo/.worktrees/session"),
+    ).resolves.toBeUndefined();
+
+    expect(claudePrepare).toHaveBeenCalledOnce();
+    expect(codexPrepare).toHaveBeenCalledOnce();
+    expect(claudePrepare.mock.invocationCallOrder[0]).toBeLessThan(
+      codexPrepare.mock.invocationCallOrder[0]!,
+    );
   });
 });
 

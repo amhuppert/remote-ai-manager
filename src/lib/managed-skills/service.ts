@@ -3,35 +3,38 @@ import path from "node:path";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { getGlobalValue, setGlobalValue } from "@/lib/shared/global-singleton";
 
 import { publishManagedSkillBundle } from "./publisher";
 import type { ManagedSkillBundle } from "./schemas";
 
 const logger = createLogger("managed-skills");
+const PUBLISHED_BUNDLE_KEY = "__cc_published_managed_skill_bundle";
 
 /**
  * Process-local record of the bundle this server published at startup.
- * Launch paths (Claude plugin attachment, Codex skills bridge) read it
+ * Delivery paths (Claude plugin attachment, Codex skills bridge) read it
  * synchronously; `null` means "no managed skills this process" and every
- * consumer degrades to attaching nothing. Mirrors the server-url pattern:
- * startup writes once, launches read.
+ * consumer degrades to attaching nothing. Next.js evaluates instrumentation
+ * and route handlers in separate module graphs, so the record lives on
+ * globalThis rather than in module-local state.
  */
-let publishedBundle: ManagedSkillBundle | null = null;
-
 export function getPublishedManagedSkillBundle(): ManagedSkillBundle | null {
-  return publishedBundle;
+  return (
+    getGlobalValue<ManagedSkillBundle | null>(PUBLISHED_BUNDLE_KEY) ?? null
+  );
 }
 
 export function setPublishedManagedSkillBundle(
   bundle: ManagedSkillBundle | null,
 ): void {
-  publishedBundle = bundle;
+  setGlobalValue(PUBLISHED_BUNDLE_KEY, bundle);
 }
 
 /**
  * Startup step: publish this server's own plugin source (same
  * server-owns-the-asset invariant as the cctl install) and record the result
- * for launch paths. Non-fatal by design — a failed publish leaves sessions
+ * for delivery paths. Non-fatal by design — a failed publish leaves sessions
  * without managed skills, never without a server.
  */
 export async function publishManagedSkillBundleAtStartup(): Promise<ManagedSkillBundle | null> {
@@ -46,16 +49,16 @@ export async function publishManagedSkillBundleAtStartup(): Promise<ManagedSkill
       configDir: getConfigDirPath(),
     });
     if (!result.published) {
-      publishedBundle = null;
+      setPublishedManagedSkillBundle(null);
       return null;
     }
-    publishedBundle = result.bundle;
+    setPublishedManagedSkillBundle(result.bundle);
     return result.bundle;
   } catch (err) {
     logger.error("managed_skills.startup_publish_failed", {
       error: getErrorMessage(err),
     });
-    publishedBundle = null;
+    setPublishedManagedSkillBundle(null);
     return null;
   }
 }

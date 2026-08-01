@@ -3,6 +3,7 @@ export {
   getTaskRunner,
   getBackendDescriptor,
   listBackends,
+  prepareManagedSkillsCheckout,
 } from "./registry-core";
 
 import { hasBackendDescriptor, registerBackend } from "./registry-core";
@@ -22,6 +23,7 @@ import {
 } from "@/lib/mcp/backend-capabilities";
 import { createClaudeFailureClassifier } from "./claude/failure-classifier";
 import { createCodexFailureClassifier } from "./codex/failure-classifier";
+import { prepareCodexManagedSkillsCheckout } from "./codex/managed-skills-bridge";
 
 /**
  * Idempotent production registration of the supported backends. Called on
@@ -49,6 +51,7 @@ export function bootstrapBackends(): void {
         continuity: createCodexContinuityAdapter(),
         runtimeConfig: createCodexRuntimeConfigAdapter(),
         taskRunner: codexTaskRunner,
+        prepareManagedSkillsCheckout: prepareCodexManagedSkillsCheckout,
         mcp: codexMcpCapabilities,
         failureClassifier: createCodexFailureClassifier(),
       }),

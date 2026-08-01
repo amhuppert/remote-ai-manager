@@ -146,13 +146,20 @@ async function scanSkillsDir(
 
   const items: CommandItem[] = [];
 
-  const walk = async (currentDir: string): Promise<void> => {
+  const walk = async (
+    currentDir: string,
+    activeNamespace?: string,
+    symlinkNamespaceCandidate?: string,
+  ): Promise<void> => {
     const skillFile = path.join(currentDir, "SKILL.md");
     if (existsSync(skillFile)) {
       try {
         const content = await readFile(skillFile, "utf-8");
         const { fields, body } = parseFrontmatter(content);
         const skillId = path.basename(currentDir);
+        const qualifiedSkillId = activeNamespace
+          ? `${activeNamespace}:${skillId}`
+          : skillId;
         const description =
           fields["description"] ??
           body
@@ -162,7 +169,7 @@ async function scanSkillsDir(
           "";
         const name =
           options.itemPrefix === "$"
-            ? `$${skillId}`
+            ? `$${qualifiedSkillId}`
             : options.pluginName
               ? `/${options.pluginName}:${skillId}`
               : `/${skillId}`;
@@ -184,12 +191,20 @@ async function scanSkillsDir(
     }
 
     try {
+      // A symlink can be either one skill or a namespaced container of skills.
+      // Promote its alias only after proving the symlink root has no SKILL.md;
+      // this preserves flat linked skill names while matching Codex's
+      // `container:skill` naming for roots such as `command-center`.
+      const descendantNamespace =
+        options.itemPrefix === "$"
+          ? (symlinkNamespaceCandidate ?? activeNamespace)
+          : undefined;
       const entries = await readdir(currentDir, { withFileTypes: true });
       for (const entry of entries) {
         if (options.ignoreDirNames?.has(entry.name)) continue;
         const entryPath = path.join(currentDir, entry.name);
         if (entry.isDirectory()) {
-          await walk(entryPath);
+          await walk(entryPath, descendantNamespace);
           continue;
         }
         // Skills are commonly installed as symlinks (e.g. ~/.claude/skills/foo
@@ -199,7 +214,9 @@ async function scanSkillsDir(
         if (entry.isSymbolicLink()) {
           try {
             const stats = await stat(entryPath);
-            if (stats.isDirectory()) await walk(entryPath);
+            if (stats.isDirectory()) {
+              await walk(entryPath, descendantNamespace, entry.name);
+            }
           } catch (err) {
             logger.warn("commands.skills_symlink_error", {
               path: entryPath,

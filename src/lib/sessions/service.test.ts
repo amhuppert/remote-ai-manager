@@ -62,6 +62,7 @@ function createTestDeps() {
     .fn()
     .mockResolvedValue(undefined);
   const ensureCcArtifactsExcludedMock = vi.fn().mockResolvedValue(undefined);
+  const prepareManagedSkillsCheckoutMock = vi.fn().mockResolvedValue(undefined);
 
   const deps: SessionDeps = {
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
@@ -69,6 +70,7 @@ function createTestDeps() {
     execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],
     gitClient: { git: gitMock } as unknown as GitClient,
     ensureCcArtifactsExcluded: ensureCcArtifactsExcludedMock,
+    prepareManagedSkillsCheckout: prepareManagedSkillsCheckoutMock,
     fastRemoveWorktree:
       fastRemoveWorktreeMock as unknown as SessionDeps["fastRemoveWorktree"],
     // Focused-read fakes derive their answer from the shared fake state the
@@ -218,7 +220,6 @@ function createTestDeps() {
     sweepLaneWorktrees: sweepLaneWorktreesMock,
     copyAlignmentCharterFromParent: copyAlignmentCharterFromParentMock,
   };
-
   return {
     deps,
     gitMock,
@@ -231,6 +232,7 @@ function createTestDeps() {
     taskRunnerRunMock,
     copyAlignmentCharterFromParentMock,
     ensureCcArtifactsExcludedMock,
+    prepareManagedSkillsCheckoutMock,
   };
 }
 
@@ -343,6 +345,7 @@ let sweepLaneWorktreesMock: Mock;
 let taskRunnerRunMock: Mock;
 let copyAlignmentCharterFromParentMock: Mock;
 let ensureCcArtifactsExcludedMock: Mock;
+let prepareManagedSkillsCheckoutMock: Mock;
 let service: ReturnType<typeof createSessionService>;
 
 /** Make gitMock resolve with { stdout, stderr } */
@@ -387,6 +390,7 @@ beforeEach(() => {
   copyAlignmentCharterFromParentMock =
     testSetup.copyAlignmentCharterFromParentMock;
   ensureCcArtifactsExcludedMock = testSetup.ensureCcArtifactsExcludedMock;
+  prepareManagedSkillsCheckoutMock = testSetup.prepareManagedSkillsCheckoutMock;
   service = createSessionService(deps);
 });
 
@@ -751,6 +755,63 @@ describe("createSessionNormal", () => {
     expect(session.sessionName).toBe("Exclude Fails");
   });
 
+  it("prepares managed skills for every new checkout before returning", async () => {
+    mockGitSuccess();
+    const preparation = deferred();
+    prepareManagedSkillsCheckoutMock.mockImplementationOnce(
+      () => preparation.promise,
+    );
+    let creationSettled = false;
+
+    const creation = service
+      .createSessionNormal("/projects/repo", "Managed Skills Ready")
+      .then((session) => {
+        creationSettled = true;
+        return session;
+      });
+
+    try {
+      await waitForCondition(
+        () => prepareManagedSkillsCheckoutMock.mock.calls.length === 1,
+      );
+      expect(creationSettled).toBe(false);
+    } finally {
+      preparation.resolve();
+    }
+
+    const session = await creation;
+    expect(prepareManagedSkillsCheckoutMock).toHaveBeenCalledWith(
+      session.worktreePath,
+    );
+  });
+
+  it("keeps the session when managed-skill checkout preparation fails", async () => {
+    mockGitSuccess();
+    prepareManagedSkillsCheckoutMock.mockRejectedValueOnce(
+      new Error("managed skill bridge unavailable"),
+    );
+
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "Managed Skills Degraded",
+    );
+
+    expect(session.sessionName).toBe("Managed Skills Degraded");
+    expect(logger.warn).toHaveBeenCalledWith(
+      "session.managed_skills_checkout_prepare_failed",
+      expect.objectContaining({
+        projectName: "/projects/repo",
+        sessionName: "Managed Skills Degraded",
+        worktreePath: session.worktreePath,
+        error: "managed skill bridge unavailable",
+      }),
+    );
+    expect(gitMock).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["worktree", "remove"]),
+      "/projects/repo",
+    );
+  });
+
   it("persists session to state via writeState", async () => {
     mockGitSuccess();
     await service.createSessionNormal("/projects/repo", "Persist Test");
@@ -867,6 +928,9 @@ describe("createSessionNormal", () => {
     expect(opts.env.SESSION_NAME).toBe("With Init");
     expect(opts.env.BRANCH_NAME).toBe(session.branchName);
     expect(opts.timeout).toBeUndefined();
+    expect(execFileAsyncMock.mock.invocationCallOrder[0]).toBeLessThan(
+      prepareManagedSkillsCheckoutMock.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("passes the parent session's worktree as PARENT_WORKTREE_PATH when branched", async () => {

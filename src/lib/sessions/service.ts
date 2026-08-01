@@ -37,7 +37,10 @@ import { getErrorMessage } from "@/lib/shared/errors";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { executeOptimisticWorkflow } from "../shared/optimistic";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
-import { getTaskRunner as registryGetTaskRunner } from "@/lib/agent-backends/registry";
+import {
+  getTaskRunner as registryGetTaskRunner,
+  prepareManagedSkillsCheckout as registryPrepareManagedSkillsCheckout,
+} from "@/lib/agent-backends/registry";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getNotificationsService } from "../notifications/service";
@@ -115,6 +118,11 @@ export interface SessionDeps {
    * provisioning so no auto-commit ever sweeps ephemeral scratch into a branch.
    */
   ensureCcArtifactsExcluded(worktreePath: string): Promise<void>;
+  /**
+   * Materialize backend-owned managed-skill discovery state before the new
+   * checkout is returned to command-discovery consumers.
+   */
+  prepareManagedSkillsCheckout(worktreePath: string): Promise<void>;
   fastRemoveWorktree: typeof defaultFastRemoveWorktree;
   /** Detail-tier read of one session (existence check + full slice). */
   getSession: typeof getSession;
@@ -229,6 +237,7 @@ const defaultSessionDeps: SessionDeps = {
   gitClient: defaultGitClient,
   ensureCcArtifactsExcluded: (worktreePath) =>
     defaultEnsureCcArtifactsExcluded(worktreePath),
+  prepareManagedSkillsCheckout: registryPrepareManagedSkillsCheckout,
   fastRemoveWorktree: defaultFastRemoveWorktree,
   getSession,
   getProjectSessionListItems,
@@ -329,6 +338,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     execFileAsync,
     gitClient,
     ensureCcArtifactsExcluded,
+    prepareManagedSkillsCheckout,
     fastRemoveWorktree,
     getSession,
     getProjectSessionListItems,
@@ -628,6 +638,21 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
 
       throw err;
+    }
+
+    // Init scripts may replace `.agents/`, so managed-skill discovery state is
+    // prepared only after the checkout is otherwise complete. This is
+    // best-effort host tooling: a failure degrades autocomplete but must not
+    // roll back a valid session and worktree.
+    try {
+      await prepareManagedSkillsCheckout(worktreePath);
+    } catch (err) {
+      logger.warn("session.managed_skills_checkout_prepare_failed", {
+        projectName: projectPath,
+        sessionName,
+        worktreePath,
+        error: getErrorMessage(err),
+      });
     }
 
     // Seed a forked normal session with its parent's active alignment charter.
