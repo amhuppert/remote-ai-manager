@@ -61,7 +61,15 @@ describe("EvidenceIngest", () => {
         ["criterion-1", "criterion-2", "criterion-3"].includes(
           criterionElementId,
         )
-          ? { specId, validationStrategy: { kinds: ["validator_verdict"] } }
+          ? {
+              specId,
+              validationStrategy: {
+                kinds:
+                  criterionElementId === "criterion-1"
+                    ? ["commit", "test_run", "validator_verdict"]
+                    : ["validator_verdict"],
+              },
+            }
           : null,
       gitObjectExists: async (ref) =>
         ["commit-abc", "commit-other"].includes(ref.objectId),
@@ -91,6 +99,7 @@ describe("EvidenceIngest", () => {
         contextId: "context-task-1",
         taskElementId: "task-1",
         taskHandle: "native-sdd/T1",
+        touchedPaths: ["src/lib/specs/evidence-ingest.ts"],
         criterionElementIds: ["criterion-1", "criterion-2"],
         criterionHandles: ["native-sdd/R1.1", "native-sdd/R1.2"],
         validationStrategies: {
@@ -108,6 +117,7 @@ describe("EvidenceIngest", () => {
         contextId: "context-task-2",
         taskElementId: "task-2",
         taskHandle: "native-sdd/T2",
+        touchedPaths: ["src/lib/specs/other-context.ts"],
         criterionElementIds: ["criterion-3"],
         criterionHandles: ["native-sdd/R2.1"],
         validationStrategies: {
@@ -124,6 +134,10 @@ describe("EvidenceIngest", () => {
       workflowEvents,
       evidenceService,
       writeQueue,
+      validatedTreeHash: vi.fn(
+        async (_execution, commitSha, relevantPaths) =>
+          `${commitSha}:${relevantPaths.join(",")}`,
+      ),
       loadOriginMap: async () => originMap,
       getWorkflowExecutionStatus: async () => "running",
     };
@@ -145,6 +159,7 @@ describe("EvidenceIngest", () => {
     contextId: string,
     occurredAt: string,
     pass = true,
+    kind: "context_validation" | "output_schema" = "context_validation",
   ): { occurredAt: string; event: Record<string, unknown> } {
     return {
       occurredAt,
@@ -155,6 +170,7 @@ describe("EvidenceIngest", () => {
         executionId: workflowExecutionId,
         contextId,
         validatorType: "context",
+        kind,
         pass,
         summary: pass
           ? "Compiler contract and focused tests pass."
@@ -245,9 +261,19 @@ describe("EvidenceIngest", () => {
     for (const row of afterSecond.filter((entry) => entry.kind !== "commit")) {
       expect(JSON.parse(row.evaluated_state_json)).toEqual({
         commitSha: "commit-abc",
-        relevantPaths: [],
+        relevantPaths: ["src/lib/specs/evidence-ingest.ts"],
+        relevantTreeHash: "commit-abc:src/lib/specs/evidence-ingest.ts",
       });
     }
+    expect(
+      deps.repo.findProofVerdictsByCriterionRevision("criterion-1", revisionId),
+    ).toHaveLength(1);
+    expect(
+      deps.repo.findProofVerdictsByCriterionRevision("criterion-2", revisionId),
+    ).toHaveLength(1);
+    expect(
+      deps.repo.findProofVerdictsByCriterionRevision("criterion-3", revisionId),
+    ).toHaveLength(0);
   });
 
   it("13.7 unions criterion mappings when legal regrouping assigns multiple compiled tasks to one context", async () => {
@@ -310,14 +336,15 @@ describe("EvidenceIngest", () => {
     for (const row of validationRows) {
       expect(JSON.parse(row.evaluated_state_json)).toEqual({
         commitSha: "commit-abc",
-        relevantPaths: [],
+        relevantPaths: ["src/lib/specs/evidence-ingest.ts"],
+        relevantTreeHash: "commit-abc:src/lib/specs/evidence-ingest.ts",
       });
     }
   });
 
   it("F24 materializes a superseded validation unstamped and never restamps it on later runs", async () => {
     appendEvents([
-      validationResult("context-task-1", "2026-07-18T13:57:00.000Z", false),
+      validationResult("context-task-1", "2026-07-18T13:57:00.000Z"),
       validationResult("context-task-1", "2026-07-18T13:58:00.000Z"),
       laneCommit("context-task-1", "commit-abc", "2026-07-18T13:59:00.000Z"),
     ]);
@@ -344,11 +371,49 @@ describe("EvidenceIngest", () => {
     for (const row of sealedRows) {
       expect(JSON.parse(row.evaluated_state_json)).toEqual({
         commitSha: "commit-abc",
-        relevantPaths: [],
+        relevantPaths: ["src/lib/specs/evidence-ingest.ts"],
+        relevantTreeHash: "commit-abc:src/lib/specs/evidence-ingest.ts",
       });
     }
     // Ingest-key dedup: a later run neither rewrites nor restamps rows.
     expect(afterSecond).toEqual(afterFirst);
+    const [verdict] = deps.repo.findProofVerdictsByCriterionRevision(
+      "criterion-1",
+      revisionId,
+    );
+    const citedSourceEvents = (
+      JSON.parse(verdict?.evidence_ids_json ?? "[]") as string[]
+    ).map(
+      (evidenceId) => deps.repo.findEvidenceById(evidenceId)?.source_event_id,
+    );
+    expect(citedSourceEvents).toEqual(expect.arrayContaining([2, 2, 3]));
+    expect(citedSourceEvents).not.toContain(1);
+  });
+
+  it.each([
+    ["failed context validation", "context_validation"],
+    ["output-schema rejection", "output_schema"],
+  ] as const)("never promotes a sealed %s into proof", async (_label, kind) => {
+    appendEvents([
+      validationResult(
+        "context-task-1",
+        "2026-07-18T13:58:00.000Z",
+        false,
+        kind,
+      ),
+      laneCommit("context-task-1", "commit-abc", "2026-07-18T13:59:00.000Z"),
+    ]);
+
+    await createEvidenceIngestService(deps).ingestAuthoritatively(
+      specExecutionId,
+    );
+
+    expect(
+      deps.repo.findProofVerdictsByCriterionRevision("criterion-1", revisionId),
+    ).toEqual([]);
+    expect(
+      deps.repo.findProofVerdictsByCriterionRevision("criterion-2", revisionId),
+    ).toEqual([]);
   });
 
   it("F24 never stamps a validation from another context's commit", async () => {

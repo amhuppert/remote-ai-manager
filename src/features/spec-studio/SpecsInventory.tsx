@@ -509,7 +509,7 @@ function SpecRowActions({
           Copy spec reference
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link href={`${href}?el=execution_start`}>Gate policy</Link>
+          <Link href={`${href}?view=gate`}>Gate policy</Link>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

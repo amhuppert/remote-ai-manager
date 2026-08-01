@@ -355,11 +355,13 @@ export default function AnnotatedMarkdown({
           </div>
         )}
       </MarkdownViewport>
-      <SelectionCommentLayer
-        draft={draft}
-        clear={clear}
-        onCreateComment={onCreateComment}
-      />
+      {onCreateComment ? (
+        <SelectionCommentLayer
+          draft={draft}
+          clear={clear}
+          onCreateComment={onCreateComment}
+        />
+      ) : null}
     </div>
   );
 }

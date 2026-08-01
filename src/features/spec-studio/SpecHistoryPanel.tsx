@@ -261,7 +261,12 @@ export default function SpecHistoryPanel({
                       </Link>
                     )}
                   </div>
-                  <p className="mt-2xs mb-0 max-w-[760px] text-[0.66rem] leading-relaxed text-text-tertiary">
+                  <p
+                    className={cn(
+                      "mt-2xs mb-0 max-w-[760px] text-[0.66rem] leading-relaxed",
+                      heavyweight ? "text-text-primary" : "text-text-tertiary",
+                    )}
+                  >
                     {event.detail}
                   </p>
                   {event.kind === "admission" && (

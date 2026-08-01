@@ -92,6 +92,24 @@ describe("PolicyDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("raises selected preset helper text above tinted-background contrast", () => {
+    render(
+      <PolicyDialog
+        currentPolicy={{ preset: "contract-bearing" }}
+        pending={false}
+        error={null}
+        onChangePolicy={vi.fn()}
+      />,
+    );
+
+    const description = screen.getByText(
+      "Every authoring and delivery transition requires a human gate.",
+    );
+    expect(description.closest('[data-selected="true"]')).toHaveClass(
+      "[&_span[id]]:text-text-primary",
+    );
+  });
+
   it.each(presetDirectionMatrix)(
     "requires human confirmation for the $from → $to preset switch (loosens: $loosens)",
     async ({ from, to, loosens }) => {
@@ -520,6 +538,47 @@ describe("RenameSpecDialog", () => {
 });
 
 describe("ExecutionPanel", () => {
+  it("keeps execution locked until the approved revision reaches Plan", () => {
+    const detail = detailFixture();
+    const approved = detail.currentApprovedRevision;
+    if (approved === null) throw new Error("Approved fixture missing");
+    const requirementsOnly: SpecDetailView = {
+      ...detail,
+      currentRevision: {
+        ...approved,
+        revision: { ...approved.revision, authoringStage: "requirements" },
+      },
+      currentApprovedRevision: {
+        ...approved,
+        revision: { ...approved.revision, authoringStage: "requirements" },
+      },
+    };
+
+    render(
+      <ExecutionPanel
+        detail={requirementsOnly}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Start execution — locked" }),
+    ).toBeVisible();
+    expect(screen.getByText(/requires an approved plan/i)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Start execution" }),
+    ).toBeNull();
+  });
+
   it("renders the prototype workflow header and validates explicit scope exclusions", async () => {
     const detail = denseExecutionFixture("none");
     const onStart = vi.fn();
@@ -543,7 +602,7 @@ describe("ExecutionPanel", () => {
     const surface = screen.getByRole("region", {
       name: "Execution and merge",
     });
-    expect(surface).toHaveClass("max-w-[1080px]");
+    expect(surface).toHaveClass("max-w-[1000px]");
     expect(
       within(surface).getByRole("heading", {
         name: "Execution — inside the workflow surface",
@@ -634,9 +693,11 @@ describe("ExecutionPanel", () => {
   it("presents definition review as a provenance-locked workflow approval", async () => {
     const onApproveExecutionStart = vi.fn();
     const user = userEvent.setup();
+    const detail = denseExecutionFixture("definition_review");
+    detail.spec = { ...detail.spec, slug: "browser-proof-spec" };
     render(
       <ExecutionPanel
-        detail={denseExecutionFixture("definition_review")}
+        detail={detail}
         projectName="command-center"
         pendingAction={null}
         error={null}
@@ -655,11 +716,14 @@ describe("ExecutionPanel", () => {
     expect(
       within(banner).getByText("Definition awaiting approval"),
     ).toBeVisible();
+    expect(banner).toHaveTextContent(
+      "Generated from browser-proof-spec revision 1.",
+    );
     expect(
       within(banner).getByRole("region", {
         name: "Contract-derived — provenance-locked",
       }),
-    ).toHaveTextContent("read-only · owned by native-sdd rev 1");
+    ).toHaveTextContent("read-only · owned by browser-proof-spec rev 1");
     const settings = within(banner).getByRole("region", {
       name: "Execution-only — editable",
     });
@@ -668,7 +732,7 @@ describe("ExecutionPanel", () => {
     expect(settings).toHaveTextContent("Budgets");
     expect(
       within(banner).getByRole("link", { name: "Request changes" }),
-    ).toHaveAttribute("href", "/specs/command-center/native-sdd");
+    ).toHaveAttribute("href", "/specs/command-center/browser-proof-spec");
 
     await user.click(
       within(banner).getByRole("button", {
@@ -703,6 +767,19 @@ describe("ExecutionPanel", () => {
     const mergeGate = screen.getByRole("region", {
       name: "Merge gate for execution-1",
     });
+    expect(
+      screen.getByText(
+        "Contract provenance is locked for this running execution.",
+      ),
+    ).toHaveClass("text-text-primary");
+    expect(
+      within(mergeGate).getByText(
+        /Scoped only to promised criteria; exclusions remain visible/,
+      ),
+    ).toHaveClass("text-text-secondary");
+    expect(within(mergeGate).getByText("revision 1 pinned")).toHaveClass(
+      "text-text-secondary",
+    );
     expect(within(mergeGate).getByText("R1.1")).toBeInTheDocument();
     expect(within(mergeGate).getByText("R1.2")).toBeInTheDocument();
     expect(within(mergeGate).getAllByText("Waived").length).toBeGreaterThan(0);
@@ -725,6 +802,58 @@ describe("ExecutionPanel", () => {
       executionId: "execution-1",
       revisionId: "revision-1",
     });
+  });
+
+  it("presents a completed workflow as ready for the session delivery merge", () => {
+    const detail = denseExecutionFixture("running");
+    const execution = detail.executions[0];
+    const statusExecution = detail.status.executions[0];
+    if (execution === undefined || statusExecution === undefined) {
+      throw new Error("Running execution fixture missing");
+    }
+    execution.workflowExecutionId = "workflow-execution-1";
+    detail.status.executions = [
+      {
+        ...statusExecution,
+        workflowExecutionId: "workflow-execution-1",
+        workflowStatus: "completed",
+      },
+    ];
+
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Ready to merge")).toBeVisible();
+    expect(
+      screen.getByText("Workflow complete — ready to merge"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Merge session native-sdd-run into its delivery target/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Open session to merge" }),
+    ).toHaveAttribute("href", "/projects/command-center/native-sdd-run");
+    expect(
+      screen.queryByRole("heading", { name: "Capture discovered work" }),
+    ).toBeNull();
+    expect(
+      screen.queryByText(
+        "Contract provenance is locked for this running execution.",
+      ),
+    ).toBeNull();
   });
 
   it("renders the server-computed proof projection: row chips, kind chips, and the split counter", () => {
@@ -1968,7 +2097,11 @@ describe("SpecControlsPanel policy impact", () => {
     const user = userEvent.setup();
 
     renderWithQuery(
-      <SpecControlsPanel detail={detail} projectName="command-center" />,
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="gate"
+      />,
     );
 
     await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
@@ -2033,7 +2166,11 @@ describe("SpecControlsPanel gate policy change", () => {
     const user = userEvent.setup();
 
     renderWithQuery(
-      <SpecControlsPanel detail={detail} projectName="command-center" />,
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="gate"
+      />,
     );
 
     await user.click(screen.getByRole("radio", { name: /Exploratory/ }));
@@ -2095,7 +2232,11 @@ describe("SpecControlsPanel execution-start refusal", () => {
     const user = userEvent.setup();
 
     renderWithQuery(
-      <SpecControlsPanel detail={detail} projectName="command-center" />,
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="execution"
+      />,
     );
 
     const banner = screen.getByTestId("definition-review-banner");
@@ -2140,7 +2281,11 @@ describe("SpecControlsPanel execution-start refusal", () => {
     api.reply("POST", startPath, { status: 202, json: {} });
 
     renderWithQuery(
-      <SpecControlsPanel detail={detail} projectName="command-center" />,
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="execution"
+      />,
     );
 
     await userEvent.click(
@@ -2170,6 +2315,47 @@ describe("SpecControlsPanel whole-spec abandonment", () => {
     api.restore();
   });
 
+  it.each(["execution", "gate"] as const)(
+    "makes the %s surface terminal once the spec is abandoned",
+    (surface) => {
+      const detail = detailFixture();
+      detail.spec = {
+        ...detail.spec,
+        abandonedAt: NOW,
+        abandonedReason: "Superseded by the ticket-native rewrite.",
+      };
+      detail.status.phase = {
+        primary: "abandoned",
+        authoringStage: "plan",
+      };
+
+      renderWithQuery(
+        <SpecControlsPanel
+          detail={detail}
+          projectName="command-center"
+          surface={surface}
+        />,
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "Abandoned spec — read-only" }),
+      ).toBeVisible();
+      expect(screen.getByText(/ticket-native rewrite/)).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "Start execution" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("radiogroup", { name: "Gate policy preset" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Rename spec" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Abandon whole spec" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   // The CLI path is refused as human-only, so this surface is the only place
   // the whole-spec action can be reached: the control must be wired into the
   // composed panel, not merely exported.
@@ -2188,7 +2374,11 @@ describe("SpecControlsPanel whole-spec abandonment", () => {
     const user = userEvent.setup();
 
     renderWithQuery(
-      <SpecControlsPanel detail={detail} projectName="command-center" />,
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="execution"
+      />,
     );
 
     await user.click(
@@ -2231,7 +2421,11 @@ describe("SpecControlsPanel whole-spec abandonment", () => {
     const user = userEvent.setup();
 
     renderWithQuery(
-      <SpecControlsPanel detail={detail} projectName="command-center" />,
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="gate"
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: "Rename" }));

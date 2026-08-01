@@ -75,6 +75,7 @@ export interface CompiledOriginMapEntry {
   contextId: string;
   taskElementId: string;
   taskHandle: string;
+  touchedPaths: string[];
   criterionElementIds: string[];
   criterionHandles: string[];
   validationStrategies: Record<string, ValidationStrategy>;
@@ -555,6 +556,10 @@ export function readCompiledOriginMap(
       contextId: task.contextId,
       taskElementId: requiredMetadata(metadata, metadataKeys.taskElementId),
       taskHandle: requiredMetadata(metadata, metadataKeys.taskHandle),
+      touchedPaths:
+        metadata[metadataKeys.touchedPaths] === undefined
+          ? []
+          : parseMetadataJson<string[]>(metadata, metadataKeys.touchedPaths),
       criterionElementIds: parseMetadataJson<string[]>(
         metadata,
         metadataKeys.criterionElementIds,

@@ -61,7 +61,7 @@ describe("SpecRevisionBanner approvals summary", () => {
 
     expect(
       screen.getByRole("link", {
-        name: "Delivery approval pending — approve in Controls",
+        name: "Delivery approval pending — open Execution",
       }),
     ).toHaveAttribute("href", `${DETAIL_HREF}?el=delivery`);
   });
@@ -78,7 +78,7 @@ describe("SpecRevisionBanner approvals summary", () => {
     ).toHaveAttribute("href", `${DETAIL_HREF}?view=review`);
   });
 
-  it("routes a pending execution_start approval to controls", () => {
+  it("routes a pending execution_start approval to Execution", () => {
     renderBanner(
       bannerDetail([
         {
@@ -92,7 +92,7 @@ describe("SpecRevisionBanner approvals summary", () => {
 
     expect(
       screen.getByRole("link", { name: "2 pending approvals — review" }),
-    ).toHaveAttribute("href", `${DETAIL_HREF}?view=controls`);
+    ).toHaveAttribute("href", `${DETAIL_HREF}?view=execution`);
   });
 
   it("keeps static text when no approval is pending", () => {
@@ -122,7 +122,7 @@ describe("delivery deep-link cold load", () => {
     window.history.replaceState({}, "", "/");
   });
 
-  it("opens Controls and focuses the merge gate only after the detail resolves", async () => {
+  it("opens Execution and focuses the merge gate only after the detail resolves", async () => {
     let releaseDetail!: () => void;
     const detailGate = new Promise<void>((resolve) => {
       releaseDetail = resolve;

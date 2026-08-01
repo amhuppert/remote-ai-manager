@@ -796,7 +796,7 @@ describe("Spec Studio routes and inventory", () => {
     );
     expect(screen.getByRole("link", { name: "Gate policy" })).toHaveAttribute(
       "href",
-      "/specs/command-center/native-sdd?view=controls#gate-policy",
+      "/specs/command-center/native-sdd?view=gate#gate-policy",
     );
     const linkedTickets = screen.getByRole("region", {
       name: "Linked tickets",
@@ -818,10 +818,11 @@ describe("Spec Studio routes and inventory", () => {
     expect(within(rail).getByText("R1")).toBeInTheDocument();
     expect(within(rail).getByText("D1")).toBeInTheDocument();
     expect(within(rail).getByText("T1")).toBeInTheDocument();
+    await userEvent.click(
+      within(rail).getByRole("button", { name: "Expand R1" }),
+    );
     expect(
-      within(rail).getByLabelText(
-        "R1.1: Old links resolve through aliases.; Covered",
-      ),
+      within(rail).getByText("Old links resolve through aliases."),
     ).toBeInTheDocument();
     expect(
       within(rail).getByRole("img", { name: "Approved" }),
@@ -851,10 +852,11 @@ describe("Spec Studio routes and inventory", () => {
       name: "Spec structure",
     });
     expect(within(rail).getByText("R1")).toBeInTheDocument();
+    await userEvent.click(
+      within(rail).getByRole("button", { name: "Expand R1" }),
+    );
     expect(
-      within(rail).getByLabelText(
-        "R1.1: Old links resolve through aliases.; Covered",
-      ),
+      within(rail).getByText("Old links resolve through aliases."),
     ).toBeInTheDocument();
     expect(within(rail).getByText("T1")).toBeInTheDocument();
     expect(screen.getByText(/No prose sections authored/)).toBeInTheDocument();
@@ -865,7 +867,7 @@ describe("Spec Studio routes and inventory", () => {
     ).toBeNull();
   });
 
-  it("opens execution-start attention links on the Controls view", async () => {
+  it("opens execution-start attention links on the Execution view", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -882,15 +884,15 @@ describe("Spec Studio routes and inventory", () => {
     renderWithQuery(<SpecDetailPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "Gate policy" }),
+      await screen.findByRole("region", { name: "Execution and merge" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "← native-sdd" })).toHaveAttribute(
-      "href",
-      "/specs/command-center/native-sdd",
+    expect(screen.getByRole("button", { name: "Execution" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
   });
 
-  it("opens the controls view when the gate policy link navigates in place", async () => {
+  it("opens the Gate policy view when its link navigates in place", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState({}, "", "/specs/command-center/native-sdd");
     api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
@@ -907,13 +909,13 @@ describe("Spec Studio routes and inventory", () => {
       await screen.findByRole("link", { name: "Gate policy" }),
     ).toBeInTheDocument();
 
-    // A next/link click to ?view=controls#gate-policy keeps the page mounted:
+    // A next/link click to ?view=gate#gate-policy keeps the page mounted:
     // only the URL (and therefore useSearchParams) changes.
     act(() => {
       window.history.pushState(
         {},
         "",
-        "/specs/command-center/native-sdd?view=controls#gate-policy",
+        "/specs/command-center/native-sdd?view=gate#gate-policy",
       );
     });
     detailView.rerender(
@@ -1002,7 +1004,7 @@ describe("Spec Studio routes and inventory", () => {
     ).toBeInTheDocument();
   });
 
-  it("opens a history subject whose surface is the one the reader is already on", async () => {
+  it("opens a history requirement subject in the full reader", async () => {
     const user = userEvent.setup();
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState({}, "", "/specs/command-center/native-sdd");
@@ -1010,15 +1012,15 @@ describe("Spec Studio routes and inventory", () => {
 
     renderWithQuery(<SpecDetailPage />);
 
-    await user.click(await screen.findByRole("tab", { name: "History" }));
+    await user.click(await screen.findByRole("button", { name: "History" }));
     await user.click(historySubjectLink("R1 approved"));
 
     expect(
-      await screen.findByRole("region", { name: "Spec narrative" }),
+      await screen.findByRole("heading", { name: "Requirements" }),
     ).toBeVisible();
   });
 
-  it("opens an inspected trace node on the overview it belongs to", async () => {
+  it("opens an inspected trace node in the full Requirements reader", async () => {
     const user = userEvent.setup();
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
@@ -1040,7 +1042,7 @@ describe("Spec Studio routes and inventory", () => {
     await user.click(screen.getByRole("link", { name: "Open R1" }));
 
     expect(
-      await screen.findByRole("region", { name: "Spec narrative" }),
+      await screen.findByRole("heading", { name: "Requirements" }),
     ).toBeVisible();
   });
 
@@ -1061,17 +1063,18 @@ describe("Spec Studio routes and inventory", () => {
     renderWithQuery(<SpecDetailPage />);
 
     expect(
-      await screen.findByRole("heading", { name: "Questions and assumptions" }),
+      await screen.findByRole("heading", {
+        name: "Questions & assumptions",
+      }),
     ).toBeVisible();
 
-    await user.click(
-      screen.getByRole("button", { name: "Back to native-sdd" }),
-    );
-    await user.click(await screen.findByRole("tab", { name: "History" }));
+    await user.click(await screen.findByRole("button", { name: "History" }));
     await user.click(historySubjectLink("Q2 opened"));
 
     expect(
-      await screen.findByRole("heading", { name: "Questions and assumptions" }),
+      await screen.findByRole("heading", {
+        name: "Questions & assumptions",
+      }),
     ).toBeVisible();
     expect(screen.getByText("Open question 2")).toBeVisible();
   });
@@ -1143,22 +1146,22 @@ describe("Spec Studio routes and inventory", () => {
     renderWithQuery(<SpecDetailPage />);
 
     expect(
-      await screen.findByRole("region", { name: "Deterministic lint view" }),
+      await screen.findByRole("region", { name: "Deterministic lint" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("R1.1 has no covering task."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Back to native-sdd" }),
-    ).toBeInTheDocument();
+      screen.getByRole("navigation", { name: "Spec views" }),
+    ).toBeVisible();
   });
 
-  it("verifies immutable revision hashes and surfaces mismatches in controls", async () => {
+  it("verifies immutable revision hashes on the dedicated Integrity surface", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
       "",
-      "/specs/command-center/native-sdd?view=controls",
+      "/specs/command-center/native-sdd?view=integrity",
     );
     api.json("GET", "/api/specs/command-center/native-sdd", detailPayload());
     api.json("POST", "/api/specs/command-center/native-sdd/actions/verify", {
@@ -1262,10 +1265,11 @@ describe("Spec Studio routes and inventory", () => {
     const requirementRow = requirement.closest<HTMLElement>(
       "[data-spec-element]",
     )!;
+    await userEvent.click(
+      within(requirementRow).getByRole("button", { name: "Expand R1" }),
+    );
     expect(
-      within(requirementRow).getByLabelText(
-        "R1.1: Old links resolve through aliases.; Covered",
-      ),
+      within(requirementRow).getByText("Old links resolve through aliases."),
     ).toBeInTheDocument();
     expect(
       within(requirementRow).getByText("Proven; Approved"),
@@ -1402,7 +1406,7 @@ describe("Spec Studio routes and inventory", () => {
     expect(await screen.findByText("All delivery waived")).toBeInTheDocument();
   });
 
-  it("renders a semantic review change list with side-by-side re-approval and raw diff secondary", async () => {
+  it("renders inline semantic review changes with re-approval and raw diff secondary", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -1439,10 +1443,10 @@ describe("Spec Studio routes and inventory", () => {
     ).toBeInTheDocument();
     const change = screen.getByTestId("review-change-requirement-1");
     expect(
-      within(change).getByText("Every spec used a session-bound address."),
+      within(change).getByText("used a session-bound", { selector: "del" }),
     ).toBeInTheDocument();
     expect(
-      within(change).getByText("Every spec has a stable address."),
+      within(change).getByText("has a stable", { selector: "ins" }),
     ).toBeInTheDocument();
     expect(within(change).getByText("Approval stale")).toBeInTheDocument();
     expect(within(change).getByRole("link", { name: "R1" })).toHaveAttribute(
@@ -1489,7 +1493,7 @@ describe("Spec Studio routes and inventory", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/initial proposal/i)).toBeInTheDocument();
     const requirement = screen.getByTestId("review-change-requirement-1");
-    expect(within(requirement).getByText("Added")).toBeInTheDocument();
+    expect(within(requirement).getAllByText("Added")).not.toHaveLength(0);
     // The fixture carries a valid approval for this requirement, so the card
     // offers withdrawal instead of a second approve.
     expect(
@@ -1734,7 +1738,7 @@ describe("Spec Studio routes and inventory", () => {
     );
   });
 
-  it("bulk-approves requirements and remaining review subjects through per-element records", async () => {
+  it("bulk-approves every remaining review subject through per-element records", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -1766,7 +1770,9 @@ describe("Spec Studio routes and inventory", () => {
     renderWithQuery(<SpecDetailPage />);
 
     await user.click(
-      await screen.findByRole("button", { name: "Approve all requirements" }),
+      await screen.findByRole("button", {
+        name: /Approve all remaining \(\d+\)/,
+      }),
     );
     await waitFor(() =>
       expect(
@@ -1774,21 +1780,6 @@ describe("Spec Studio routes and inventory", () => {
           "POST",
           "/api/specs/command-center/native-sdd/actions/bulk-approve",
         )[0]?.jsonBody,
-      ).toEqual({
-        revisionId: detailRevision.id,
-        subjects: [{ subjectKind: "requirement", elementId: "requirement-1" }],
-      }),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Approve all remaining" }),
-    );
-    await waitFor(() =>
-      expect(
-        api.requestsTo(
-          "POST",
-          "/api/specs/command-center/native-sdd/actions/bulk-approve",
-        )[1]?.jsonBody,
       ).toEqual({
         revisionId: detailRevision.id,
         subjects: [

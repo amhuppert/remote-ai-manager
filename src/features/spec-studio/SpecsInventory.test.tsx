@@ -196,9 +196,6 @@ describe("SpecsInventory", () => {
     ).toBeInTheDocument();
     expect(
       within(menu).getByRole("menuitem", { name: "Gate policy" }),
-    ).toHaveAttribute(
-      "href",
-      "/specs/command-center/native-sdd?el=execution_start",
-    );
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=gate");
   });
 });

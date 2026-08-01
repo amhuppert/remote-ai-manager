@@ -14,6 +14,26 @@ import {
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
 
+function completedWorkflowDetail() {
+  const detail = denseSpecControlsDetailFixture("running");
+  const execution = detail.executions[0];
+  const statusExecution = detail.status.executions[0];
+  if (execution === undefined || statusExecution === undefined) {
+    throw new Error(
+      "Completed workflow story fixture is missing its execution",
+    );
+  }
+  execution.workflowExecutionId = "workflow-execution-1";
+  detail.status.executions = [
+    {
+      ...statusExecution,
+      workflowExecutionId: "workflow-execution-1",
+      workflowStatus: "completed",
+    },
+  ];
+  return detail;
+}
+
 const meta = {
   title: "Specs/Studio/PolicyAndExecutionControls",
   component: PolicyDialog,
@@ -117,6 +137,26 @@ export const RunningExecution: Story = {
   render: () => (
     <ExecutionPanel
       detail={denseSpecControlsDetailFixture("running")}
+      projectName="command-center"
+      pendingAction={null}
+      error={null}
+      onStart={fn()}
+      onGrantWaiver={fn()}
+      onSetDisposition={fn()}
+      onGrantGateApproval={fn()}
+      onApproveExecutionStart={fn()}
+      onCaptureScopeAmendment={fn()}
+      onAbandonExecution={fn()}
+    />
+  ),
+};
+
+/** The graph workflow has published into its session, so delivery now moves
+ *  through the separate session-to-target merge. */
+export const ReadyToMerge: Story = {
+  render: () => (
+    <ExecutionPanel
+      detail={completedWorkflowDetail()}
       projectName="command-center"
       pendingAction={null}
       error={null}

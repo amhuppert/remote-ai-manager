@@ -91,8 +91,25 @@ export function createProductionSpecWorkflowComposition(
         }
         return evidenceService.attachEvidence(input);
       },
+      recordProofVerdict(input) {
+        const evidenceService = evidenceServiceRef.current;
+        if (evidenceService === undefined) {
+          throw new Error("Spec evidence service is not initialized");
+        }
+        return evidenceService.recordProofVerdict(input);
+      },
     },
     writeQueue,
+    async validatedTreeHash(execution, commitSha, relevantPaths) {
+      const spec = await specsRepo.findById(execution.spec_id);
+      if (spec === null) {
+        throw new Error(`Spec ${execution.spec_id} was not found`);
+      }
+      return gitProbesForProject(spec.projectPath).relevantTreeHash(
+        commitSha,
+        relevantPaths,
+      );
+    },
     async loadOriginMap(workflowDefinitionId, execution) {
       const spec = await specsRepo.findById(execution.spec_id);
       if (spec === null) return [];

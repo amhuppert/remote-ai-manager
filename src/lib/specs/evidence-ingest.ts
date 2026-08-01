@@ -9,6 +9,7 @@ import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schema
 import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   type EvidenceKind,
+  type ValidationStrategy,
 } from "./schemas";
 import type { SpecExecutionRow } from "./schemas";
 import type { CompiledOriginMapEntry } from "./compiler";
@@ -22,8 +23,16 @@ export interface EvidenceIngestDeps {
     GraphWorkflowEventsRepo,
     "findRecordsByExecution" | "findRecordById"
   >;
-  evidenceService: Pick<EvidenceService, "attachEvidence">;
+  evidenceService: Pick<
+    EvidenceService,
+    "attachEvidence" | "recordProofVerdict"
+  >;
   writeQueue: WriteQueue;
+  validatedTreeHash(
+    execution: SpecExecutionRow,
+    commitSha: string,
+    relevantPaths: readonly string[],
+  ): Promise<string>;
   loadOriginMap(
     workflowDefinitionId: string,
     execution: SpecExecutionRow,
@@ -65,6 +74,19 @@ interface EvidenceCandidate {
   contextId: string;
   eventRecord: GraphWorkflowEventRecord;
   commitSha?: string;
+  relevantPaths: string[];
+}
+
+interface ProofCandidate {
+  criterionElementId: string;
+  strategy: ValidationStrategy;
+  validationRecord: GraphWorkflowEventRecord;
+  sealingCommitRecord: GraphWorkflowEventRecord;
+}
+
+interface IngestCandidates {
+  evidence: EvidenceCandidate[];
+  proof: ProofCandidate[];
 }
 
 export function createEvidenceIngestService(
@@ -90,7 +112,7 @@ export function createEvidenceIngestService(
     const workflowStatus = await deps.getWorkflowExecutionStatus(
       execution.workflow_execution_id,
     );
-    const candidates = collectEvidenceCandidates(
+    const candidates = collectIngestCandidates(
       records,
       originsByContext,
       // Terminality witnesses that no further same-context lane-commit can
@@ -109,8 +131,9 @@ export function createEvidenceIngestService(
     );
     let materializedEvidenceCount = 0;
     let existingEvidenceCount = 0;
+    const treeHashes = new Map<string, Promise<string>>();
 
-    for (const candidate of candidates) {
+    for (const candidate of candidates.evidence) {
       const existing = deps.repo.findEvidenceByIngestKey(
         candidate.eventRecord.id,
         candidate.criterionElementId,
@@ -119,6 +142,24 @@ export function createEvidenceIngestService(
       if (existing !== null) {
         existingEvidenceCount += 1;
         continue;
+      }
+
+      let relevantTreeHash: string | undefined;
+      if (candidate.kind !== "commit" && candidate.commitSha !== undefined) {
+        const treeHashKey = JSON.stringify([
+          candidate.commitSha,
+          candidate.relevantPaths,
+        ]);
+        let pending = treeHashes.get(treeHashKey);
+        if (pending === undefined) {
+          pending = deps.validatedTreeHash(
+            execution,
+            candidate.commitSha,
+            candidate.relevantPaths,
+          );
+          treeHashes.set(treeHashKey, pending);
+        }
+        relevantTreeHash = await pending;
       }
 
       const attached = await deps.evidenceService.attachEvidence({
@@ -139,7 +180,8 @@ export function createEvidenceIngestService(
           ...(candidate.commitSha === undefined
             ? {}
             : { commitSha: candidate.commitSha }),
-          relevantPaths: [],
+          relevantPaths: candidate.relevantPaths,
+          ...(relevantTreeHash === undefined ? {} : { relevantTreeHash }),
         },
         producer: producerForEvent(candidate.eventRecord),
         executionId: execution.id,
@@ -153,11 +195,15 @@ export function createEvidenceIngestService(
       materializedEvidenceCount += 1;
     }
 
+    await materializeProofVerdicts(deps, execution, candidates.proof);
+
     const summary = {
       scannedEventCount: records.length,
       ignoredEventCount:
         records.length -
-        new Set(candidates.map((candidate) => candidate.eventRecord.id)).size,
+        new Set(
+          candidates.evidence.map((candidate) => candidate.eventRecord.id),
+        ).size,
       materializedEvidenceCount,
       existingEvidenceCount,
     };
@@ -200,12 +246,13 @@ export function createEvidenceIngestService(
   };
 }
 
-function collectEvidenceCandidates(
+function collectIngestCandidates(
   records: readonly GraphWorkflowEventRecord[],
   originsByContext: ReadonlyMap<string, readonly CompiledOriginMapEntry[]>,
   executionIsTerminal: boolean,
-): EvidenceCandidate[] {
-  const candidates: EvidenceCandidate[] = [];
+): IngestCandidates {
+  const evidence: EvidenceCandidate[] = [];
+  const proof: ProofCandidate[] = [];
   for (const [index, record] of records.entries()) {
     const event = record.event;
     if (
@@ -220,12 +267,13 @@ function collectEvidenceCandidates(
 
     if (event.type === "graph-workflow-lane-commit") {
       for (const { criterionElementId } of criteria) {
-        candidates.push({
+        evidence.push({
           kind: "commit",
           criterionElementId,
           contextId: event.contextId,
           eventRecord: record,
           commitSha: event.sha,
+          relevantPaths: [],
         });
       }
       continue;
@@ -244,26 +292,44 @@ function collectEvidenceCandidates(
       // re-runs at every claim/gate/status touchpoint.
       continue;
     }
-    for (const { criterionElementId, strategy } of criteria) {
+    for (const { criterionElementId, strategy, relevantPaths } of criteria) {
+      if (
+        event.kind === "context_validation" &&
+        event.pass &&
+        strategy !== undefined &&
+        sealing.outcome === "sealed"
+      ) {
+        proof.push({
+          criterionElementId,
+          strategy,
+          validationRecord: record,
+          sealingCommitRecord: sealing.record,
+        });
+      }
       const kinds: EvidenceKind[] = strategy?.kinds.includes("test_run")
         ? [...MACHINE_VALIDATION_EVIDENCE_KINDS]
         : ["validator_verdict"];
       for (const kind of kinds) {
-        candidates.push({
+        evidence.push({
           kind,
           criterionElementId,
           contextId: event.contextId,
           eventRecord: record,
           ...(sealing.outcome === "sealed" ? { commitSha: sealing.sha } : {}),
+          relevantPaths: sealing.outcome === "sealed" ? relevantPaths : [],
         });
       }
     }
   }
-  return candidates;
+  return { evidence, proof };
 }
 
 type ValidationSealingOutcome =
-  | { outcome: "sealed"; sha: string }
+  | {
+      outcome: "sealed";
+      sha: string;
+      record: GraphWorkflowEventRecord;
+    }
   | { outcome: "superseded" }
   | { outcome: "undecided" };
 
@@ -278,7 +344,7 @@ function nextSameContextOutcome(
       event.type === "graph-workflow-lane-commit" &&
       event.contextId === contextId
     ) {
-      return { outcome: "sealed", sha: event.sha };
+      return { outcome: "sealed", sha: event.sha, record };
     }
     if (
       event.type === "graph-workflow-validation-result" &&
@@ -288,6 +354,105 @@ function nextSameContextOutcome(
     }
   }
   return { outcome: "undecided" };
+}
+
+async function materializeProofVerdicts(
+  deps: EvidenceIngestDeps,
+  execution: SpecExecutionRow,
+  candidates: readonly ProofCandidate[],
+): Promise<void> {
+  for (const candidate of candidates) {
+    const evidenceIds: string[] = [];
+    for (const kind of [...new Set(candidate.strategy.kinds)]) {
+      const sourceEventId =
+        kind === "commit"
+          ? candidate.sealingCommitRecord.id
+          : candidate.validationRecord.id;
+      const evidence = deps.repo.findEvidenceByIngestKey(
+        sourceEventId,
+        candidate.criterionElementId,
+        kind,
+      );
+      if (evidence === null) {
+        throw new Error(
+          `Proof evidence ${sourceEventId}:${candidate.criterionElementId}:${kind} was not materialized.`,
+        );
+      }
+      evidenceIds.push(evidence.id);
+    }
+
+    if (
+      verdictAlreadyCitesEvidence(
+        deps.repo,
+        execution,
+        candidate.criterionElementId,
+        evidenceIds,
+      )
+    ) {
+      continue;
+    }
+
+    const recorded = await deps.evidenceService.recordProofVerdict({
+      specId: execution.spec_id,
+      criterionElementId: candidate.criterionElementId,
+      revisionId: execution.revision_id,
+      executionId: execution.id,
+      verdictKind: "agent_validator",
+      origin: "execution_ingest",
+      actor: producerForEvent(candidate.validationRecord),
+      evidenceIds,
+      validationStrategy: candidate.strategy,
+      strategyAssessment: { adequate: true },
+    });
+    if (!recorded.ok) {
+      throw new Error(
+        `Workflow proof event ${candidate.validationRecord.id} was refused: ${recorded.refusal.code}.`,
+      );
+    }
+  }
+}
+
+function verdictAlreadyCitesEvidence(
+  repo: SpecDeliveryRepo,
+  execution: SpecExecutionRow,
+  criterionElementId: string,
+  evidenceIds: readonly string[],
+): boolean {
+  const expected = [...new Set(evidenceIds)].sort();
+  return repo
+    .findProofVerdictsByCriterionRevision(
+      criterionElementId,
+      execution.revision_id,
+    )
+    .some((verdict) => {
+      if (
+        verdict.execution_id !== execution.id ||
+        verdict.verdict_kind !== "agent_validator"
+      ) {
+        return false;
+      }
+      const actual = parseEvidenceIds(verdict.evidence_ids_json);
+      return (
+        actual !== null &&
+        actual.length === expected.length &&
+        actual.every((id, index) => id === expected[index])
+      );
+    });
+}
+
+function parseEvidenceIds(value: string): string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      !parsed.every((entry): entry is string => typeof entry === "string")
+    ) {
+      return null;
+    }
+    return [...new Set(parsed)].sort();
+  } catch {
+    return null;
+  }
 }
 
 function groupOriginsByContext(
@@ -305,23 +470,42 @@ function groupOriginsByContext(
 function contextCriteria(origins: readonly CompiledOriginMapEntry[]): Array<{
   criterionElementId: string;
   strategy: CompiledOriginMapEntry["validationStrategies"][string] | undefined;
+  relevantPaths: string[];
 }> {
   const criteria = new Map<
     string,
-    CompiledOriginMapEntry["validationStrategies"][string] | undefined
+    {
+      strategy:
+        | CompiledOriginMapEntry["validationStrategies"][string]
+        | undefined;
+      relevantPaths: Set<string>;
+      fullTree: boolean;
+    }
   >();
   for (const origin of origins) {
     for (const criterionElementId of origin.criterionElementIds) {
-      if (criteria.has(criterionElementId)) continue;
-      criteria.set(
-        criterionElementId,
-        origin.validationStrategies[criterionElementId],
-      );
+      const existing = criteria.get(criterionElementId);
+      if (existing === undefined) {
+        criteria.set(criterionElementId, {
+          strategy: origin.validationStrategies[criterionElementId],
+          relevantPaths: new Set(origin.touchedPaths),
+          fullTree: origin.touchedPaths.length === 0,
+        });
+        continue;
+      }
+      if (existing.fullTree) continue;
+      if (origin.touchedPaths.length === 0) {
+        existing.fullTree = true;
+        existing.relevantPaths.clear();
+        continue;
+      }
+      for (const path of origin.touchedPaths) existing.relevantPaths.add(path);
     }
   }
-  return [...criteria].map(([criterionElementId, strategy]) => ({
+  return [...criteria].map(([criterionElementId, value]) => ({
     criterionElementId,
-    strategy,
+    strategy: value.strategy,
+    relevantPaths: value.fullTree ? [] : [...value.relevantPaths].sort(),
   }));
 }
 

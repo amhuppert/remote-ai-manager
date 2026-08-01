@@ -331,6 +331,19 @@ describe("AnnotatedMarkdown composition", () => {
     expect(screen.getByRole("button", { name: "Comment" })).toBeInTheDocument();
   });
 
+  it("keeps selection commenting unavailable when no create handler is provided", async () => {
+    const { container } = renderAnnotated({ onCreateComment: undefined });
+    await findSourceRoot(container);
+    stubSelectionOverPassage(container, "agent-produced markdown");
+
+    act(() => {
+      fireEvent.pointerUp(document);
+    });
+
+    expect(screen.queryByRole("button", { name: "Comment" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Comment note" })).toBeNull();
+  });
+
   it("offers the comment affordance after a keyboard-completed selection", async () => {
     const { container } = renderAnnotated();
     await findSourceRoot(container);

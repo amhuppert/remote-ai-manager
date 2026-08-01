@@ -119,9 +119,9 @@ describe("SpecQuestionsAssumptions", () => {
       throw new Error("Expected bare-handle DOM ids for Q/A records");
     }
 
-    expect(
-      within(q1).getByText("Which retention window applies?"),
-    ).toBeInTheDocument();
+    expect(within(q1).getByText("Which retention window applies?")).toHaveClass(
+      "text-[0.875rem]",
+    );
     expect(within(q1).getByText("Open")).toBeInTheDocument();
     expect(within(q2).getByText("Answered")).toBeInTheDocument();
     expect(
@@ -140,10 +140,10 @@ describe("SpecQuestionsAssumptions", () => {
     const user = userEvent.setup();
     const { onDisposeAssumption } = renderStudio();
 
-    await user.click(
-      screen.getByRole("combobox", { name: "Disposition for A1" }),
-    );
-    await user.click(screen.getByRole("option", { name: "Rejected" }));
+    expect(
+      screen.queryByRole("combobox", { name: "Disposition for A1" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Reject A1" }));
     await user.click(
       screen.getByRole("button", { name: "Save disposition for A1" }),
     );
@@ -197,6 +197,43 @@ describe("SpecQuestionsAssumptionsPanel", () => {
     };
   }
 
+  it("keeps abandoned Q/A readable without exposing mutation controls", () => {
+    const detail = panelDetail();
+    detail.spec = {
+      ...detail.spec,
+      abandonedAt: NOW,
+      abandonedReason: "The product direction was withdrawn.",
+    };
+    detail.status.phase = {
+      primary: "abandoned",
+      authoringStage: "plan",
+    };
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SpecQuestionsAssumptionsPanel
+          detail={detail}
+          projectName="command-center"
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Abandoned spec — read-only" }),
+    ).toBeVisible();
+    expect(screen.getByText("Which retention window applies?")).toBeVisible();
+    expect(screen.getByText("Retention defaults to 30 days.")).toBeVisible();
+    expect(
+      screen.queryByRole("textbox", { name: "Answer for Q1" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Confirm A1" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save disposition for A1" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("posts dispose-assumption through the spec action route", async () => {
     const fetchSpy = vi.fn(async (_input: string, _init?: RequestInit) =>
       Response.json({
@@ -226,10 +263,7 @@ describe("SpecQuestionsAssumptionsPanel", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(
-      screen.getByRole("combobox", { name: "Disposition for A1" }),
-    );
-    await user.click(screen.getByRole("option", { name: "Confirmed" }));
+    await user.click(screen.getByRole("button", { name: "Confirm A1" }));
     await user.click(
       screen.getByRole("button", { name: "Save disposition for A1" }),
     );
@@ -271,10 +305,7 @@ describe("SpecQuestionsAssumptionsPanel", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(
-      screen.getByRole("combobox", { name: "Disposition for A1" }),
-    );
-    await user.click(screen.getByRole("option", { name: "Rejected" }));
+    await user.click(screen.getByRole("button", { name: "Reject A1" }));
     await user.click(
       screen.getByRole("button", { name: "Save disposition for A1" }),
     );
@@ -325,7 +356,7 @@ describe("Spec detail questions and assumptions rail", () => {
     expect(
       within(questionsSection).getByText("Retention defaults to 30 days."),
     ).toBeInTheDocument();
-    expect(within(questionsSection).getByText("Open")).toBeInTheDocument();
+    expect(within(questionsSection).getAllByText("Open")).not.toHaveLength(0);
     expect(within(questionsSection).getByText("Proposed")).toBeInTheDocument();
     expect(
       within(questionsSection).getByRole("button", { name: "Confirm A1" }),
@@ -334,6 +365,35 @@ describe("Spec detail questions and assumptions rail", () => {
       screen.queryByRole("button", {
         name: "Open questions and assumptions",
       }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes overview disposition controls after abandonment", () => {
+    const detail: SpecDetailView = {
+      ...detailFixture(),
+      spec: {
+        ...detailFixture().spec,
+        abandonedAt: NOW,
+        abandonedReason: "The product direction was withdrawn.",
+      },
+      questions: [questionFixture()],
+      assumptions: [assumptionFixture()],
+    };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SpecDetailContent
+          detail={detail}
+          projectName="command-center"
+          requestedSlug="native-sdd"
+          view="overview"
+          onViewChange={() => undefined}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Retention defaults to 30 days.")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Confirm A1" }),
     ).not.toBeInTheDocument();
   });
 });

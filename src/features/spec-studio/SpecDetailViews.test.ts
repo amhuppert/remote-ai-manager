@@ -17,11 +17,17 @@ describe("initialDetailViewForDeepLink", () => {
     );
   });
 
-  it("keeps element handles on overview and execution_start on controls", () => {
-    expect(initialDetailViewForDeepLink("R1", "native-sdd")).toBe("overview");
-    expect(initialDetailViewForDeepLink("R1.2", "native-sdd")).toBe("overview");
+  it("opens dedicated readers for structural handles and Execution for execution_start", () => {
+    expect(initialDetailViewForDeepLink("R1", "native-sdd")).toBe(
+      "requirements",
+    );
+    expect(initialDetailViewForDeepLink("R1.2", "native-sdd")).toBe(
+      "requirements",
+    );
+    expect(initialDetailViewForDeepLink("D1", "native-sdd")).toBe("decisions");
+    expect(initialDetailViewForDeepLink("T1", "native-sdd")).toBe("tasks");
     expect(initialDetailViewForDeepLink("execution_start", "native-sdd")).toBe(
-      "controls",
+      "execution",
     );
     expect(initialDetailViewForDeepLink(null, "native-sdd")).toBe("overview");
     expect(initialDetailViewForDeepLink("Q1", undefined)).toBe("overview");
@@ -30,9 +36,9 @@ describe("initialDetailViewForDeepLink", () => {
     );
   });
 
-  it("routes the delivery gate deep link to controls so the merge gate mounts", () => {
+  it("routes the delivery gate deep link to Execution so the merge gate mounts", () => {
     expect(initialDetailViewForDeepLink("delivery", "native-sdd")).toBe(
-      "controls",
+      "execution",
     );
   });
 });

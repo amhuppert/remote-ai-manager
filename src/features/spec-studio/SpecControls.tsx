@@ -77,6 +77,7 @@ import {
   type SpecWaiverRow,
   type TaskElementPayload,
 } from "@/lib/specs/schemas";
+import { cn } from "@/lib/ui/cn";
 import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
 import {
   useStartGraphWorkflowMutation,
@@ -90,6 +91,7 @@ import {
   PolicyImpactPreview,
   type PolicyImpactDraft,
 } from "./SpecPolicyImpact";
+import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-controls");
 const GATES: readonly SpecGate[] = [
@@ -391,7 +393,10 @@ function PolicyEditor({
               <div
                 key={value}
                 data-selected={preset === value}
-                className="rounded-md border border-solid border-border-subtle bg-bg-base px-[13px] py-[11px] transition-colors hover:border-border-strong data-[selected=true]:border-cyan-dim data-[selected=true]:bg-cyan-glow"
+                className={cn(
+                  "rounded-md border border-solid border-border-subtle bg-bg-base px-[13px] py-[11px] transition-colors hover:border-border-strong data-[selected=true]:border-cyan-dim data-[selected=true]:bg-cyan-glow",
+                  preset === value && "[&_span[id]]:text-text-primary",
+                )}
               >
                 <RadioGroupOption
                   value={value}
@@ -688,6 +693,13 @@ export function ExecutionPanel({
     (execution) =>
       execution.state === "definition_review" || execution.state === "running",
   );
+  const workflowCompleted =
+    activeExecution?.state === "running" &&
+    detail.status.executions.some(
+      (execution) =>
+        execution.id === activeExecution.id &&
+        execution.workflowStatus === "completed",
+    );
   const deliveryRequiresGateApproval =
     resolveDial(detail.spec.gatePolicy, "delivery") === "gate";
   const executionStartRequiresGateApproval =
@@ -704,11 +716,12 @@ export function ExecutionPanel({
   return (
     <section
       aria-label="Execution and merge"
-      className="mx-auto max-w-[1080px] pb-[48px]"
+      className="mx-auto max-w-[1000px] pb-[48px]"
     >
       <ExecutionWorkflowHeader
         specSlug={detail.spec.slug}
         execution={activeExecution}
+        readyToMerge={workflowCompleted}
       />
 
       {activeExecution !== undefined ? (
@@ -742,16 +755,23 @@ export function ExecutionPanel({
                 />
                 <div>
                   <p className="m-0 font-mono text-[0.72rem] font-bold tracking-[0.05em] text-green uppercase">
-                    Definition approved
+                    {workflowCompleted
+                      ? "Workflow complete — ready to merge"
+                      : "Definition approved"}
                   </p>
-                  <p className="mt-[2px] mb-0 font-mono text-[0.66rem] text-text-tertiary">
-                    Contract provenance is locked for this running execution.
+                  <p className="mt-[2px] mb-0 font-mono text-[0.66rem] text-text-primary">
+                    {workflowCompleted
+                      ? activeExecution.sessionName === null
+                        ? "Merge the execution session into its delivery target to mark this execution Delivered."
+                        : `Merge session ${activeExecution.sessionName} into its delivery target to mark this execution Delivered.`
+                      : "Contract provenance is locked for this running execution."}
                   </p>
                 </div>
               </div>
               <ExecutionLinks
                 projectName={projectName}
                 execution={activeExecution}
+                readyToMerge={workflowCompleted}
               />
             </div>
           )}
@@ -762,6 +782,7 @@ export function ExecutionPanel({
             snapshot={snapshotForExecution(detail, activeExecution)}
             deliveryRequiresGateApproval={deliveryRequiresGateApproval}
             deliveryAdmitted={deliveryAdmitted(activeExecution)}
+            workflowCompleted={workflowCompleted}
             pendingAction={pendingAction}
             error={error}
             onGrantWaiver={onGrantWaiver}
@@ -771,7 +792,7 @@ export function ExecutionPanel({
 
           {/* The service refuses capture for any non-running execution, so the
               control renders only for the state the server accepts. */}
-          {activeExecution.state === "running" && (
+          {activeExecution.state === "running" && !workflowCompleted && (
             <CaptureDiscoveredWorkForm
               executionId={activeExecution.id}
               pending={pendingAction === "capture-scope-amendment"}
@@ -792,10 +813,11 @@ export function ExecutionPanel({
       ) : approvedSnapshot === null ? (
         <section className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg">
           <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-            Start execution — scope selection
+            Start execution — locked
           </h2>
           <p className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
-            Approve a revision before selecting an execution scope.
+            Execution requires an approved Plan. Complete and approve the Plan
+            stage before selecting an execution scope.
           </p>
         </section>
       ) : (
@@ -814,9 +836,11 @@ export function ExecutionPanel({
 function ExecutionWorkflowHeader({
   specSlug,
   execution,
+  readyToMerge,
 }: {
   specSlug: string;
   execution: SpecExecutionView | undefined;
+  readyToMerge: boolean;
 }): React.JSX.Element {
   return (
     <header className="mb-md border-x-0 border-t-0 border-b border-solid border-border-dim pt-[10px] pb-[12px]">
@@ -836,9 +860,17 @@ function ExecutionWorkflowHeader({
         </div>
         {execution !== undefined && (
           <StatusChip
-            tone={execution.state === "definition_review" ? "amber" : "cyan"}
+            tone={
+              execution.state === "definition_review"
+                ? "amber"
+                : readyToMerge
+                  ? "green"
+                  : "cyan"
+            }
           >
-            {executionStateLabel(execution.state)}
+            {readyToMerge
+              ? "Ready to merge"
+              : executionStateLabel(execution.state)}
           </StatusChip>
         )}
       </div>
@@ -849,9 +881,11 @@ function ExecutionWorkflowHeader({
 function ExecutionLinks({
   projectName,
   execution,
+  readyToMerge,
 }: {
   projectName: string;
   execution: SpecExecutionView;
+  readyToMerge: boolean;
 }): React.JSX.Element {
   return (
     <div className="flex flex-wrap gap-md">
@@ -861,6 +895,14 @@ function ExecutionLinks({
       >
         Open workflow definition
       </Link>
+      {readyToMerge && execution.sessionName !== null && (
+        <Link
+          href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(execution.sessionName)}`}
+          className="font-mono text-[0.68rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+        >
+          Open session to merge
+        </Link>
+      )}
       {execution.workflowExecutionId !== null &&
         execution.sessionName !== null && (
           <Link
@@ -946,8 +988,9 @@ function DefinitionReviewPanel({
                 : "Definition ready to start"}
             </h3>
             <p className="mt-[3px] mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-              Generated from native-sdd revision {revisionNumber}. Contract
-              content is pinned; only execution settings remain adjustable.
+              Generated from {detail.spec.slug} revision {revisionNumber}.
+              Contract content is pinned; only execution settings remain
+              adjustable.
             </p>
           </div>
         </div>
@@ -1064,7 +1107,11 @@ function DefinitionReviewPanel({
             ))}
           </dl>
           <div className="mt-sm">
-            <ExecutionLinks projectName={projectName} execution={execution} />
+            <ExecutionLinks
+              projectName={projectName}
+              execution={execution}
+              readyToMerge={false}
+            />
           </div>
         </section>
       </div>
@@ -1434,6 +1481,7 @@ function MergeGatePanel({
   snapshot,
   deliveryRequiresGateApproval,
   deliveryAdmitted,
+  workflowCompleted,
   pendingAction,
   error,
   onGrantWaiver,
@@ -1445,6 +1493,7 @@ function MergeGatePanel({
   snapshot: SpecRevisionSnapshot | null;
   deliveryRequiresGateApproval: boolean;
   deliveryAdmitted: boolean;
+  workflowCompleted: boolean;
   pendingAction: string | null;
   error: string | null;
   onGrantWaiver(input: GrantWaiverInput): void;
@@ -1498,12 +1547,12 @@ function MergeGatePanel({
           <h3 className="m-0 font-mono text-[0.76rem] font-bold tracking-[0.05em] text-text-primary uppercase">
             Merge gate — {execution.id} → main
           </h3>
-          <p className="mt-[3px] mb-0 font-mono text-[0.65rem] text-text-tertiary">
+          <p className="mt-[3px] mb-0 font-mono text-[0.65rem] text-text-secondary">
             Scoped only to promised criteria; exclusions remain visible but do
             not block this delivery.
           </p>
         </div>
-        <span className="font-mono text-[0.64rem] text-text-tertiary">
+        <span className="font-mono text-[0.64rem] text-text-secondary">
           revision {snapshot?.revision.number ?? "?"} pinned
         </span>
       </header>
@@ -1602,8 +1651,9 @@ function MergeGatePanel({
             <div className="flex max-w-[520px] flex-wrap items-center justify-end gap-sm">
               <StatusChip tone="green">Delivery approved</StatusChip>
               <p className="m-0 font-mono text-[0.63rem] text-text-tertiary">
-                The merge still needs valid proof or a waiver for every in-scope
-                criterion before the gate admits it.
+                {workflowCompleted
+                  ? "Proof and approval are ready. Merge the session to its delivery target to complete delivery."
+                  : "The merge still needs valid proof or a waiver for every in-scope criterion before the gate admits it."}
               </p>
             </div>
           ) : (
@@ -2292,9 +2342,11 @@ const captureScopeAmendmentResponseSchema = z
 export default function SpecControlsPanel({
   detail,
   projectName,
+  surface,
 }: {
   detail: SpecDetailView;
   projectName: string;
+  surface: "gate" | "execution";
 }): React.JSX.Element {
   const [actionFailure, setActionFailure] = useState<{
     action: string;
@@ -2437,186 +2489,221 @@ export default function SpecControlsPanel({
                     ? "abandon-execution"
                     : null;
 
-  return (
-    <div>
-      <SpecIntegrityPanel detail={detail} projectName={projectName} />
-      <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
-      <section
-        aria-labelledby="spec-identity-heading"
-        className="mb-xl flex items-baseline justify-between gap-md"
+  if (detail.spec.abandonedAt !== null) {
+    const context =
+      surface === "gate"
+        ? `Recorded gate preset: ${presetLabels[detail.spec.gatePolicy.preset]}.`
+        : `${detail.executions.length} execution ${detail.executions.length === 1 ? "record remains" : "records remain"} available in History.`;
+
+    return (
+      <div
+        className={cn(
+          "mx-auto",
+          surface === "gate" ? "max-w-[900px]" : "max-w-[1000px]",
+        )}
       >
-        <div>
-          <h2
-            id="spec-identity-heading"
-            className="m-0 font-display text-[0.95rem] font-extrabold text-text-primary"
-          >
-            Identity
-          </h2>
-          <p className="mt-[2px] mb-0 font-mono text-[0.72rem] text-text-tertiary">
-            {detail.spec.slug}
-          </p>
-        </div>
-        <RenameSpecDialog
-          currentSlug={detail.spec.slug}
-          currentName={detail.spec.name}
-          pending={renameSpec.isPending}
-          error={
-            actionFailure?.action === "rename" ? actionFailure.message : null
-          }
-          onRename={(input) =>
-            renameSpec.mutate(input, mutationCallbacks("rename"))
-          }
-        />
-      </section>
-      <div id="gate-policy" className="mb-xl scroll-mt-lg">
-        <PolicyDialog
-          currentPolicy={detail.spec.gatePolicy}
-          pending={changePolicy.isPending}
-          error={
-            actionFailure?.action === "change-policy"
-              ? actionFailure.message
-              : null
-          }
-          onChangePolicy={(input) =>
-            changePolicy.mutate(input, mutationCallbacks("change-policy"))
-          }
-          specSlug={detail.spec.slug}
-          backHref={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`}
-          openDraft={openDraftForPolicyImpact(detail)}
+        <SpecReadOnlyNotice
+          reason={detail.spec.abandonedReason}
+          context={context}
         />
       </div>
-      <ExecutionPanel
-        detail={detail}
-        projectName={projectName}
-        pendingAction={pendingAction}
-        definitionReviewError={
-          actionFailure?.action === "approve-execution-start"
-            ? actionFailure.message
-            : null
-        }
-        preparedWorkflowStartPending={startPreparedWorkflow.isPending}
-        preparedWorkflowStartError={
-          actionFailure?.action === "start-prepared-workflow" &&
-          actionFailure.executionId === preparedExecutionId
-            ? actionFailure.message
-            : null
-        }
-        preparedWorkflowStartResult={startPreparedWorkflow.data ?? null}
-        error={
-          actionFailure !== null &&
-          actionFailure.action !== "change-policy" &&
-          actionFailure.action !== "abandon-spec" &&
-          actionFailure.action !== "rename" &&
-          actionFailure.action !== "approve-execution-start" &&
-          actionFailure.action !== "start-prepared-workflow"
-            ? actionFailure.message
-            : null
-        }
-        onStart={(input) =>
-          startExecution.mutate(input, mutationCallbacks("start-execution"))
-        }
-        onGrantWaiver={(input) =>
-          grantWaiver.mutate(input, mutationCallbacks("grant-waiver"))
-        }
-        onSetDisposition={(input) =>
-          setDisposition.mutate(input, mutationCallbacks("set-disposition"))
-        }
-        onGrantGateApproval={(input) =>
-          grantGateApproval.mutate(
-            { ...input, gate: "delivery" },
-            mutationCallbacks("grant-gate-approval"),
-          )
-        }
-        onApproveExecutionStart={(input) =>
-          approveExecutionStart.mutate(
-            input,
-            mutationCallbacks("approve-execution-start"),
-          )
-        }
-        onStartPreparedWorkflow={(input) => {
-          if (input.sessionName !== preparedSessionName) {
-            const message =
-              "The prepared execution changed before its workflow could start.";
-            setActionFailure({
-              action: "start-prepared-workflow",
-              message,
-              executionId: preparedExecutionId,
-            });
-            logger.warn("spec_studio.prepared_workflow.identity_mismatch", {
-              specId: detail.spec.id,
-              executionId: preparedExecutionId,
-              expectedSessionName: preparedSessionName,
-              receivedSessionName: input.sessionName,
-            });
-            return;
-          }
-          logger.info("spec_studio.prepared_workflow.start_requested", {
-            specId: detail.spec.id,
-            executionId: preparedExecutionId,
-            sessionName: input.sessionName,
-            definitionId: input.definitionId,
-            definitionRevision: input.definitionRevision,
-          });
-          startPreparedWorkflow.mutate(
-            {
-              definitionId: input.definitionId,
-              definitionRevision: input.definitionRevision,
-              tier: "project",
-            },
-            {
-              onSuccess: (result) => {
-                setActionFailure(null);
-                logger.info("spec_studio.prepared_workflow.start_completed", {
-                  specId: detail.spec.id,
-                  executionId: preparedExecutionId,
-                  sessionName: input.sessionName,
-                  definitionId: input.definitionId,
-                  definitionRevision: input.definitionRevision,
-                  outcome: result.kind,
-                });
-              },
-              onError: (mutationError) => {
+    );
+  }
+
+  return (
+    <div>
+      {surface === "gate" ? (
+        <div className="mx-auto max-w-[900px]">
+          <PolicyAdmissionNotices admissions={detail.gateAdmissions} />
+          <section
+            aria-labelledby="spec-identity-heading"
+            className="mb-xl flex items-baseline justify-between gap-md"
+          >
+            <div>
+              <h2
+                id="spec-identity-heading"
+                className="m-0 font-display text-[0.95rem] font-extrabold text-text-primary"
+              >
+                Identity
+              </h2>
+              <p className="mt-[2px] mb-0 font-mono text-[0.72rem] text-text-tertiary">
+                {detail.spec.slug}
+              </p>
+            </div>
+            <RenameSpecDialog
+              currentSlug={detail.spec.slug}
+              currentName={detail.spec.name}
+              pending={renameSpec.isPending}
+              error={
+                actionFailure?.action === "rename"
+                  ? actionFailure.message
+                  : null
+              }
+              onRename={(input) =>
+                renameSpec.mutate(input, mutationCallbacks("rename"))
+              }
+            />
+          </section>
+          <div id="gate-policy" className="mb-xl scroll-mt-lg">
+            <PolicyDialog
+              currentPolicy={detail.spec.gatePolicy}
+              pending={changePolicy.isPending}
+              error={
+                actionFailure?.action === "change-policy"
+                  ? actionFailure.message
+                  : null
+              }
+              onChangePolicy={(input) =>
+                changePolicy.mutate(input, mutationCallbacks("change-policy"))
+              }
+              openDraft={openDraftForPolicyImpact(detail)}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          <ExecutionPanel
+            detail={detail}
+            projectName={projectName}
+            pendingAction={pendingAction}
+            definitionReviewError={
+              actionFailure?.action === "approve-execution-start"
+                ? actionFailure.message
+                : null
+            }
+            preparedWorkflowStartPending={startPreparedWorkflow.isPending}
+            preparedWorkflowStartError={
+              actionFailure?.action === "start-prepared-workflow" &&
+              actionFailure.executionId === preparedExecutionId
+                ? actionFailure.message
+                : null
+            }
+            preparedWorkflowStartResult={startPreparedWorkflow.data ?? null}
+            error={
+              actionFailure !== null &&
+              actionFailure.action !== "change-policy" &&
+              actionFailure.action !== "abandon-spec" &&
+              actionFailure.action !== "rename" &&
+              actionFailure.action !== "approve-execution-start" &&
+              actionFailure.action !== "start-prepared-workflow"
+                ? actionFailure.message
+                : null
+            }
+            onStart={(input) =>
+              startExecution.mutate(input, mutationCallbacks("start-execution"))
+            }
+            onGrantWaiver={(input) =>
+              grantWaiver.mutate(input, mutationCallbacks("grant-waiver"))
+            }
+            onSetDisposition={(input) =>
+              setDisposition.mutate(input, mutationCallbacks("set-disposition"))
+            }
+            onGrantGateApproval={(input) =>
+              grantGateApproval.mutate(
+                { ...input, gate: "delivery" },
+                mutationCallbacks("grant-gate-approval"),
+              )
+            }
+            onApproveExecutionStart={(input) =>
+              approveExecutionStart.mutate(
+                input,
+                mutationCallbacks("approve-execution-start"),
+              )
+            }
+            onStartPreparedWorkflow={(input) => {
+              if (input.sessionName !== preparedSessionName) {
+                const message =
+                  "The prepared execution changed before its workflow could start.";
                 setActionFailure({
                   action: "start-prepared-workflow",
-                  message: mutationError.message,
+                  message,
                   executionId: preparedExecutionId,
                 });
-                logger.warn("spec_studio.prepared_workflow.start_failed", {
+                logger.warn("spec_studio.prepared_workflow.identity_mismatch", {
                   specId: detail.spec.id,
                   executionId: preparedExecutionId,
-                  sessionName: input.sessionName,
+                  expectedSessionName: preparedSessionName,
+                  receivedSessionName: input.sessionName,
+                });
+                return;
+              }
+              logger.info("spec_studio.prepared_workflow.start_requested", {
+                specId: detail.spec.id,
+                executionId: preparedExecutionId,
+                sessionName: input.sessionName,
+                definitionId: input.definitionId,
+                definitionRevision: input.definitionRevision,
+              });
+              startPreparedWorkflow.mutate(
+                {
                   definitionId: input.definitionId,
                   definitionRevision: input.definitionRevision,
-                  error: mutationError.message,
-                });
-              },
-            },
-          );
-        }}
-        onCaptureScopeAmendment={(input) =>
-          captureScopeAmendment.mutate(
-            input,
-            mutationCallbacks("capture-scope-amendment"),
-          )
-        }
-        onAbandonExecution={(input) =>
-          abandonExecution.mutate(input, mutationCallbacks("abandon-execution"))
-        }
-      />
-      <AbandonSpecPanel
-        slug={detail.spec.slug}
-        abandonedAt={detail.spec.abandonedAt}
-        abandonedReason={detail.spec.abandonedReason}
-        pending={abandonSpec.isPending}
-        error={
-          actionFailure?.action === "abandon-spec"
-            ? actionFailure.message
-            : null
-        }
-        onAbandonSpec={(input) =>
-          abandonSpec.mutate(input, mutationCallbacks("abandon-spec"))
-        }
-      />
+                  tier: "project",
+                },
+                {
+                  onSuccess: (result) => {
+                    setActionFailure(null);
+                    logger.info(
+                      "spec_studio.prepared_workflow.start_completed",
+                      {
+                        specId: detail.spec.id,
+                        executionId: preparedExecutionId,
+                        sessionName: input.sessionName,
+                        definitionId: input.definitionId,
+                        definitionRevision: input.definitionRevision,
+                        outcome: result.kind,
+                      },
+                    );
+                  },
+                  onError: (mutationError) => {
+                    setActionFailure({
+                      action: "start-prepared-workflow",
+                      message: mutationError.message,
+                      executionId: preparedExecutionId,
+                    });
+                    logger.warn("spec_studio.prepared_workflow.start_failed", {
+                      specId: detail.spec.id,
+                      executionId: preparedExecutionId,
+                      sessionName: input.sessionName,
+                      definitionId: input.definitionId,
+                      definitionRevision: input.definitionRevision,
+                      error: mutationError.message,
+                    });
+                  },
+                },
+              );
+            }}
+            onCaptureScopeAmendment={(input) =>
+              captureScopeAmendment.mutate(
+                input,
+                mutationCallbacks("capture-scope-amendment"),
+              )
+            }
+            onAbandonExecution={(input) =>
+              abandonExecution.mutate(
+                input,
+                mutationCallbacks("abandon-execution"),
+              )
+            }
+          />
+          <div className="mx-auto max-w-[1000px]">
+            <AbandonSpecPanel
+              slug={detail.spec.slug}
+              abandonedAt={detail.spec.abandonedAt}
+              abandonedReason={detail.spec.abandonedReason}
+              pending={abandonSpec.isPending}
+              error={
+                actionFailure?.action === "abandon-spec"
+                  ? actionFailure.message
+                  : null
+              }
+              onAbandonSpec={(input) =>
+                abandonSpec.mutate(input, mutationCallbacks("abandon-spec"))
+              }
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -2671,7 +2758,8 @@ function gateDialStrength(
 function approvedRevisionSnapshot(
   detail: SpecDetailView,
 ): SpecRevisionSnapshot | null {
-  return detail.currentApprovedRevision?.revision.state === "approved"
+  return detail.currentApprovedRevision?.revision.state === "approved" &&
+    detail.currentApprovedRevision.revision.authoringStage === "plan"
     ? detail.currentApprovedRevision
     : null;
 }

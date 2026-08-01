@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
@@ -125,7 +126,7 @@ describe("Spec detail prototype structure", () => {
   it("orders the underline views before the revision banner", () => {
     renderPrototypeDetail();
 
-    const views = screen.getByRole("tablist");
+    const views = screen.getByRole("navigation", { name: "Spec views" });
     const banner = screen.getByRole("region", { name: "Spec status" });
 
     expect(appearsBefore(views, banner)).toBe(true);
@@ -141,7 +142,7 @@ describe("Spec detail prototype structure", () => {
     expect(screen.getByTestId("spec-prose-body-intent_problem")).toHaveClass(
       "[&_[data-markdown-intent=document]]:px-0",
       "[&_[data-markdown-intent=document]]:py-0",
-      "[&_[data-markdown-intent=document]]:text-[0.82rem]",
+      "[&_[data-markdown-intent=document]]:text-[0.875rem]",
       "[&_[data-markdown-viewport]>div]:pl-0",
     );
   });
@@ -161,6 +162,53 @@ describe("Spec detail prototype structure", () => {
       expect(within(rail).getByRole("region", { name: group })).toBeVisible();
     }
     expect(within(rail).queryByText("Structured contract")).toBeNull();
+  });
+
+  it("expands rail summaries into complete content and links to full readers", async () => {
+    const user = userEvent.setup();
+    renderPrototypeDetail();
+
+    const requirements = screen.getByRole("region", { name: "Requirements" });
+    expect(
+      within(requirements).getByRole("link", { name: "Open Requirements" }),
+    ).toHaveAttribute("href", expect.stringContaining("?view=requirements"));
+    expect(
+      within(requirements).queryByText(
+        "The selected task and criterion are pinned.",
+      ),
+    ).toBeNull();
+
+    await user.click(
+      within(requirements).getByRole("button", { name: "Expand R1" }),
+    );
+
+    expect(
+      within(requirements).getByText(
+        "The selected task and criterion are pinned.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(requirements).getByRole("button", { name: "Collapse R1" }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("offers one expand-all control for the internally scrollable rail", async () => {
+    const user = userEvent.setup();
+    renderPrototypeDetail();
+
+    const rail = screen.getByRole("complementary", { name: "Spec structure" });
+    await user.click(
+      within(rail).getByRole("button", { name: "Expand all structure items" }),
+    );
+
+    expect(
+      within(rail).getByRole("button", {
+        name: "Collapse all structure items",
+      }),
+    ).toBeVisible();
+    expect(
+      within(rail).getByText("The selected task and criterion are pinned."),
+    ).toBeVisible();
   });
 
   it("does not reserve comment gutters or render empty comment placeholders", () => {

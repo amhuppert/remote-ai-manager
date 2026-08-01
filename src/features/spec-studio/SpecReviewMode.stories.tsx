@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { userEvent, within } from "storybook/test";
+import { fn, userEvent, within } from "storybook/test";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
 
@@ -162,25 +162,98 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
         updated_at: NOW,
       },
     ],
-    assumptions: blocked
-      ? [
-          {
-            id: "assumption-1",
-            number: 1,
-            handle: "A1",
-            elementId: "requirement-1",
-            text: "Scope can be reconstructed after a run starts.",
-            disposition: "rejected",
-            disposedAt: NOW,
-            proposedBy: {
-              kind: "agent",
-              conversationId: "conversation-1",
-            },
-            createdAt: NOW,
-            updatedAt: NOW,
-          },
-        ]
-      : [],
+    questions: [
+      {
+        id: "question-1",
+        number: 1,
+        handle: "Q1",
+        elementId: "requirement-1",
+        text: "Which gate owns pinned-scope validation?",
+        status: blocked ? "open" : "answered",
+        answer: blocked ? null : "The execution-start gate.",
+        answeredAt: blocked ? null : NOW,
+        provenance: { kind: "human" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+      {
+        id: "question-2",
+        number: 2,
+        handle: "Q2",
+        elementId: null,
+        text: "Does review retain raw diff access?",
+        status: "answered",
+        answer: "Yes, as a secondary view.",
+        answeredAt: NOW,
+        provenance: { kind: "agent", conversationId: "conversation-1" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ],
+    assumptions: [
+      {
+        id: "assumption-1",
+        number: 1,
+        handle: "A1",
+        elementId: "requirement-1",
+        text: "The gate screen can reuse the pinned scope projection.",
+        disposition: blocked ? "proposed" : "confirmed",
+        disposedAt: blocked ? null : NOW,
+        proposedBy: {
+          kind: "agent",
+          conversationId: "conversation-1",
+        },
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+      {
+        id: "assumption-2",
+        number: 2,
+        handle: "A2",
+        elementId: null,
+        text: "Historical raw diffs use the same formatter.",
+        disposition: "deferred",
+        disposedAt: NOW,
+        proposedBy: { kind: "human" },
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ],
+  };
+}
+
+function fastPathReviewDetailFixture(): SpecDetailView {
+  const detail = reviewDetailFixture();
+  return {
+    ...detail,
+    spec: { ...detail.spec, gatePolicy: { preset: "fast-path" } },
+  };
+}
+
+function deletionReviewDetailFixture(): SpecDetailView {
+  const detail = reviewDetailFixture();
+  if (detail.currentRevision === null) return detail;
+  return {
+    ...detail,
+    currentRevision: {
+      ...detail.currentRevision,
+      elements: detail.currentRevision.elements.map((entry) =>
+        entry.element.id === "requirement-1" &&
+        entry.version.payload.kind === "requirement"
+          ? {
+              ...entry,
+              version: {
+                ...entry.version,
+                payload: {
+                  ...entry.version.payload,
+                  statement: "Every execution.",
+                },
+                payloadHash: "requirement-deletion-hash",
+              },
+            }
+          : entry,
+      ),
+    },
   };
 }
 
@@ -192,7 +265,9 @@ const meta = {
     (Story) => (
       <main className="h-screen overflow-y-auto bg-bg-void text-text-primary">
         <h1 className="sr-only">Spec revision review</h1>
-        <Story />
+        <div className="px-xl max-768:px-md">
+          <Story />
+        </div>
       </main>
     ),
   ],
@@ -200,13 +275,24 @@ const meta = {
     detail: reviewDetailFixture(),
     projectName: "command-center",
     highlightedChangeId: null,
+    onComplete: fn(),
   },
 } satisfies Meta<typeof SpecReviewMode>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const Default: Story = {};
+
 export const SemanticChanges: Story = {};
+
+export const SemanticDeletion: Story = {
+  args: { detail: deletionReviewDetailFixture() },
+};
+
+export const FastPathCombined: Story = {
+  args: { detail: fastPathReviewDetailFixture() },
+};
 
 export const RawDiff: Story = {
   play: async ({ canvasElement }) => {

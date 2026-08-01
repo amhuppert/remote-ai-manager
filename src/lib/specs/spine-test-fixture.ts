@@ -399,8 +399,21 @@ export function createSpecSpineWorld(): SpecSpineWorld {
         }
         return evidenceRef.current.attachEvidence(input);
       },
+      recordProofVerdict(input) {
+        if (evidenceRef.current === undefined) {
+          throw new Error("Spine evidence service is not initialized");
+        }
+        return evidenceRef.current.recordProofVerdict(input);
+      },
     },
     writeQueue,
+    async validatedTreeHash(_execution, commitSha) {
+      const tree = treeByCommit.get(commitSha);
+      if (tree === undefined) {
+        throw new Error(`No relevant tree registered for ${commitSha}`);
+      }
+      return tree;
+    },
     async loadOriginMap(workflowDefinitionId) {
       const record = definitions.findById(workflowDefinitionId);
       return record === null ? [] : readCompiledOriginMap(record.definition);
@@ -1694,6 +1707,7 @@ export async function runSpineWorkflowToEvidence(
     // Each lane commit extends the branch lineage, so downstream candidates
     // that build on the last lane commit contain every earlier one.
     world.linkCommit(sha, index === 0 ? [] : [`commit-${index}`]);
+    world.treeByCommit.set(sha, `tree-${sha}`);
     commitShas.push(sha);
     // Production ordering: the context's passing validation precedes the
     // lane commit that seals its tree, so ingest stamps the validation

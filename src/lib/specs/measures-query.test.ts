@@ -237,6 +237,7 @@ describe("MeasuresQuery", () => {
             contextId: "context-regrouped",
             taskElementId: "task-1",
             taskHandle: "T1",
+            touchedPaths: [],
             criterionElementIds: ["criterion-1"],
             criterionHandles: ["R1.1"],
             validationStrategies: {
@@ -269,6 +270,7 @@ describe("MeasuresQuery", () => {
           contextId: "context-regrouped",
           taskElementId,
           taskHandle: taskElementId === "task-1" ? "T1" : "T2",
+          touchedPaths: [],
           criterionElementIds: ["criterion-1"],
           criterionHandles: ["R1.1"],
           validationStrategies: {

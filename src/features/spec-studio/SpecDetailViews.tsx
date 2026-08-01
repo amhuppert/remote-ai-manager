@@ -3,13 +3,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 
-import { Button } from "@/components/ui/Button";
-import {
-  TabsContent,
-  TabsList,
-  TabsRoot,
-  TabsTrigger,
-} from "@/components/ui/Tabs";
 import { parseElementHandle } from "@/lib/specs/handles";
 import {
   specQueries,
@@ -30,8 +23,10 @@ import {
   type TraceabilityInput,
 } from "./SpecEvidenceLintTrace";
 import SpecControlsPanel, { SpecIntegrityPanel } from "./SpecControls";
+import { SpecElementReader } from "./SpecElementReader";
 import SpecHistoryPanel from "./SpecHistoryPanel";
 import SpecQuestionsAssumptionsPanel from "./SpecQuestionsAssumptions";
+import SpecReviewMode, { reviewAttentionCount } from "./SpecReviewMode";
 
 export type DetailView =
   | "overview"
@@ -41,7 +36,12 @@ export type DetailView =
   | "traceability"
   | "questions"
   | "integrity"
-  | "controls";
+  | "review"
+  | "execution"
+  | "gate"
+  | "requirements"
+  | "decisions"
+  | "tasks";
 
 interface CriterionDescriptor {
   elementId: string;
@@ -60,12 +60,36 @@ export interface EvidenceRevisionTarget {
 }
 
 const detailTabClass =
-  "cursor-pointer border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-0 py-xs font-mono text-[0.7rem] font-semibold text-text-tertiary transition-colors duration-150 ease-[ease] outline-none hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:border-cyan data-[state=active]:text-text-primary max-768:min-h-[44px] max-768:px-sm";
+  "inline-flex cursor-pointer items-center gap-xs whitespace-nowrap border-x-0 border-t-0 border-b-2 border-solid border-transparent bg-transparent px-0 py-xs font-mono text-[0.7rem] font-semibold text-text-tertiary transition-colors duration-150 ease-[ease] outline-none hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 aria-[current=page]:border-cyan aria-[current=page]:text-text-primary max-768:min-h-[44px] max-768:px-sm";
 
-type PrimarySubscreen = "evidence" | "traceability" | "history" | "controls";
+type PrimaryView =
+  | "overview"
+  | "review"
+  | "questions"
+  | "execution"
+  | "gate"
+  | "history";
 
-const primarySubscreenPresentation: Record<
-  PrimarySubscreen,
+const primaryViews: ReadonlyArray<{ view: PrimaryView; label: string }> = [
+  { view: "overview", label: "Overview" },
+  { view: "review", label: "Review" },
+  { view: "questions", label: "Questions & assumptions" },
+  { view: "execution", label: "Execution" },
+  { view: "gate", label: "Gate policy" },
+  { view: "history", label: "History" },
+];
+
+type InspectionView =
+  | "requirements"
+  | "decisions"
+  | "tasks"
+  | "evidence"
+  | "traceability"
+  | "lint"
+  | "integrity";
+
+const inspectionPresentation: Record<
+  Exclude<InspectionView, "requirements" | "decisions" | "tasks">,
   { title: string; description: string; layoutClassName: string }
 > = {
   evidence: {
@@ -79,17 +103,16 @@ const primarySubscreenPresentation: Record<
     description: "Requirement → criteria → tasks",
     layoutClassName: "max-w-[1300px]",
   },
-  history: {
-    title: "History",
-    description:
-      "Human decisions are recorded separately from policy admissions and execution lifecycle events.",
+  lint: {
+    title: "Deterministic lint",
+    description: "Inspect the exact findings that gate proposal and sign-off.",
     layoutClassName: "max-w-[1000px]",
   },
-  controls: {
-    title: "Controls",
+  integrity: {
+    title: "Spec integrity",
     description:
-      "Executions, approvals, gate policy, and the merge gate for this spec.",
-    layoutClassName: "max-w-[1300px]",
+      "Approved revisions are re-hashed and compared with their immutable approval hashes.",
+    layoutClassName: "max-w-[900px]",
   },
 };
 
@@ -100,13 +123,15 @@ export default function SpecDetailViews({
   onViewChange,
   overviewHeader,
   overviewBanner,
+  highlightedChangeId = null,
+  onReviewComplete,
   children,
 }: {
   detail: SpecDetailView;
   projectName: string;
   /**
    * The active surface, owned by the URL. Keeping it a prop rather than local
-   * state is what makes every in-page deep link land: a tab click and an
+   * state is what makes every in-page deep link land: a navigation selection and an
    * `?el=`/`?view=` link are the same operation, so neither can go stale
    * against the other.
    */
@@ -114,6 +139,8 @@ export default function SpecDetailViews({
   onViewChange(view: DetailView): void;
   overviewHeader?: ReactNode;
   overviewBanner?: ReactNode;
+  highlightedChangeId?: string | null;
+  onReviewComplete?(message: string): void;
   children: ReactNode;
 }): React.JSX.Element {
   const evidenceTarget = useMemo(
@@ -155,82 +182,77 @@ export default function SpecDetailViews({
     lintFindings,
   );
 
-  if (isFocusedView(view)) {
-    return (
-      <section className="mt-lg" aria-label={`${focusedViewTitle(view)} view`}>
-        <div className="mb-lg flex flex-wrap items-start justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
-          <div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onViewChange("overview")}
-            >
-              Back to {detail.spec.slug}
-            </Button>
-            <h2 className="mt-sm mb-0 font-display text-[1rem] font-extrabold text-text-primary">
-              {focusedViewTitle(view)}
-            </h2>
-            <p className="mt-xs mb-0 max-w-[680px] font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
-              {focusedViewDescription(view)}
-            </p>
-          </div>
+  return (
+    <>
+      {overviewHeader}
+      <PrimaryViewNavigation
+        detail={detail}
+        view={view}
+        onViewChange={onViewChange}
+      />
+      <InspectionNavigation view={view} onViewChange={onViewChange} />
+
+      {view === "overview" && (
+        <div className="mt-md">
+          {overviewBanner}
+          {children}
         </div>
-        {view === "lint" && (
-          <SpecLintPanel
+      )}
+      {view === "review" && (
+        <div className="mt-lg">
+          <SpecReviewMode
+            detail={detail}
             projectName={projectName}
-            slug={detail.spec.slug}
-            revisionId={lintQuery.data?.revisionId ?? null}
-            findings={lintFindings}
-            isPending={lintQuery.isPending || lintQuery.isFetching}
-            error={
-              lintQuery.error instanceof Error ? lintQuery.error.message : null
-            }
+            highlightedChangeId={highlightedChangeId}
+            onComplete={onReviewComplete}
           />
-        )}
-        {view === "questions" && (
+        </div>
+      )}
+      {view === "questions" && (
+        <div className="mx-auto mt-lg max-w-[1100px]">
+          <SurfaceIntro
+            title="Questions & assumptions"
+            description="Resolve open questions and explicitly confirm, reject, or defer assumptions."
+          />
           <SpecQuestionsAssumptionsPanel
             detail={detail}
             projectName={projectName}
           />
-        )}
-        {view === "integrity" && (
-          <SpecIntegrityPanel detail={detail} projectName={projectName} />
-        )}
-      </section>
-    );
-  }
-
-  return (
-    <TabsRoot
-      value={view}
-      onValueChange={(value) => onViewChange(value as DetailView)}
-    >
-      {view === "overview" ? (
-        <>
-          {overviewHeader}
-          <PrimaryViewNavigation />
-        </>
-      ) : isPrimarySubscreen(view) ? (
-        <PrimarySubscreenHeader
-          view={view}
-          slug={detail.spec.slug}
-          onBack={() => onViewChange("overview")}
-        >
-          <PrimaryViewNavigation />
-        </PrimarySubscreenHeader>
-      ) : null}
-
-      <TabsContent value="overview" layoutClassName="mt-md">
-        {overviewBanner}
-        {children}
-      </TabsContent>
-      {view === "controls" && (
+        </div>
+      )}
+      {view === "execution" && (
         <div className="mt-lg">
-          <SpecControlsPanel detail={detail} projectName={projectName} />
+          <SpecControlsPanel
+            detail={detail}
+            projectName={projectName}
+            surface="execution"
+          />
+        </div>
+      )}
+      {view === "gate" && (
+        <div className="mt-lg">
+          <SpecControlsPanel
+            detail={detail}
+            projectName={projectName}
+            surface="gate"
+          />
+        </div>
+      )}
+      {view === "history" && (
+        <div className="mx-auto mt-lg max-w-[1000px]">
+          <SurfaceIntro
+            title="History"
+            description="Human decisions are recorded separately from policy admissions and execution lifecycle events."
+          />
+          <SpecHistoryPanel
+            detail={detail}
+            projectName={projectName}
+            showHeading={false}
+          />
         </div>
       )}
       {view === "evidence" && (
-        <div className="mt-lg">
+        <InspectionSurface view="evidence">
           <SpecEvidencePanel
             criteria={proofViews}
             dispositions={detail.criterionDispositions.filter(
@@ -250,86 +272,196 @@ export default function SpecDetailViews({
             }
             showHeading={false}
           />
+        </InspectionSurface>
+      )}
+      {view === "traceability" && (
+        <InspectionSurface view="traceability">
+          <TraceabilityGraph input={traceabilityInput} showHeading={false} />
+        </InspectionSurface>
+      )}
+      {view === "lint" && (
+        <InspectionSurface view="lint" hideIntro>
+          <SpecLintPanel
+            projectName={projectName}
+            slug={detail.spec.slug}
+            revisionId={lintQuery.data?.revisionId ?? null}
+            findings={lintFindings}
+            isPending={lintQuery.isPending || lintQuery.isFetching}
+            error={
+              lintQuery.error instanceof Error ? lintQuery.error.message : null
+            }
+          />
+        </InspectionSurface>
+      )}
+      {view === "integrity" && (
+        <InspectionSurface view="integrity">
+          <SpecIntegrityPanel detail={detail} projectName={projectName} />
+        </InspectionSurface>
+      )}
+      {(view === "requirements" ||
+        view === "decisions" ||
+        view === "tasks") && (
+        <div className="mt-lg">
+          <SpecElementReader detail={detail} kind={view} />
         </div>
       )}
-      <TabsContent value="traceability" layoutClassName="mt-lg">
-        <TraceabilityGraph input={traceabilityInput} showHeading={false} />
-      </TabsContent>
-      <TabsContent value="history" layoutClassName="mt-lg">
-        <SpecHistoryPanel
-          detail={detail}
-          projectName={projectName}
-          showHeading={false}
-        />
-      </TabsContent>
-    </TabsRoot>
+    </>
   );
 }
 
-function PrimarySubscreenHeader({
-  view,
-  slug,
-  onBack,
-  children,
+function SurfaceIntro({
+  title,
+  description,
 }: {
-  view: PrimarySubscreen;
-  slug: string;
-  onBack(): void;
-  children: ReactNode;
+  title: string;
+  description: string;
 }): React.JSX.Element {
-  const presentation = primarySubscreenPresentation[view];
   return (
-    <header
-      className={cn(
-        "mx-auto border-x-0 border-t-0 border-b border-solid border-border-dim pt-sm",
-        presentation.layoutClassName,
-      )}
-    >
-      <Button size="sm" variant="ghost" touch onClick={onBack}>
-        Back to {slug}
-      </Button>
-      <div className="mt-2xs flex flex-wrap items-baseline gap-sm">
-        <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
-          {presentation.title}
-        </h1>
-        <p className="m-0 font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
-          {presentation.description}
-        </p>
-      </div>
-      {children}
+    <header className="mb-lg border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
+      <h2 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
+        {title}
+      </h2>
+      <p className="mt-xs mb-0 max-w-[760px] font-mono text-[0.72rem] leading-relaxed text-text-tertiary">
+        {description}
+      </p>
     </header>
   );
 }
 
-function PrimaryViewNavigation(): React.JSX.Element {
+function InspectionSurface({
+  view,
+  hideIntro = false,
+  children,
+}: {
+  view: Exclude<InspectionView, "requirements" | "decisions" | "tasks">;
+  hideIntro?: boolean;
+  children: ReactNode;
+}): React.JSX.Element {
+  const presentation = inspectionPresentation[view];
   return (
-    <TabsList asChild aria-label="Spec views">
-      <div
-        data-appearance="underline"
-        className="flex items-center gap-lg pt-sm max-768:w-full max-768:gap-xs max-768:overflow-x-auto"
-      >
-        <TabsTrigger asChild value="overview">
-          <button type="button" className={detailTabClass}>
-            Overview
+    <section className={cn("mx-auto mt-lg", presentation.layoutClassName)}>
+      {!hideIntro && (
+        <SurfaceIntro
+          title={presentation.title}
+          description={presentation.description}
+        />
+      )}
+      {children}
+    </section>
+  );
+}
+
+function primaryViewFor(view: DetailView): PrimaryView | null {
+  return primaryViews.some((item) => item.view === view)
+    ? (view as PrimaryView)
+    : null;
+}
+
+function questionAttentionCount(detail: SpecDetailView): number {
+  if (detail.spec.abandonedAt !== null) return 0;
+  return (
+    detail.questions.filter((question) => question.status === "open").length +
+    detail.assumptions.filter(
+      (assumption) => assumption.disposition === "proposed",
+    ).length
+  );
+}
+
+function PrimaryViewNavigation({
+  detail,
+  view,
+  onViewChange,
+}: {
+  detail: SpecDetailView;
+  view: DetailView;
+  onViewChange(view: DetailView): void;
+}): React.JSX.Element {
+  const activeView = primaryViewFor(view);
+  const attentionCounts: Partial<Record<PrimaryView, number>> = {
+    review: reviewAttentionCount(detail),
+    questions: questionAttentionCount(detail),
+  };
+
+  return (
+    <nav
+      aria-label="Spec views"
+      data-appearance="underline"
+      className="flex items-center gap-lg pt-sm max-768:w-full max-768:gap-xs max-768:overflow-x-auto"
+    >
+      {primaryViews.map((item) => {
+        const attentionCount = attentionCounts[item.view] ?? 0;
+        const attentionId = `spec-view-${item.view}-attention`;
+        return (
+          <button
+            key={item.view}
+            type="button"
+            aria-label={item.label}
+            aria-describedby={attentionCount > 0 ? attentionId : undefined}
+            aria-current={activeView === item.view ? "page" : undefined}
+            onClick={() => onViewChange(item.view)}
+            className={detailTabClass}
+          >
+            {item.label}
+            {attentionCount > 0 && (
+              <span
+                id={attentionId}
+                className="inline-flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-amber-glow px-2xs text-[0.6rem] font-bold text-amber"
+              >
+                <span aria-hidden="true">{attentionCount}</span>
+                <span className="sr-only">
+                  {attentionCount}{" "}
+                  {attentionCount === 1
+                    ? "item needs attention"
+                    : "items need attention"}
+                </span>
+              </span>
+            )}
           </button>
-        </TabsTrigger>
-        <TabsTrigger asChild value="traceability">
-          <button type="button" className={detailTabClass}>
-            Traceability
-          </button>
-        </TabsTrigger>
-        <TabsTrigger asChild value="history">
-          <button type="button" className={detailTabClass}>
-            History
-          </button>
-        </TabsTrigger>
-        <TabsTrigger asChild value="controls">
-          <button type="button" className={detailTabClass}>
-            Controls
-          </button>
-        </TabsTrigger>
-      </div>
-    </TabsList>
+        );
+      })}
+    </nav>
+  );
+}
+
+const inspectionLinkClass =
+  "min-h-[28px] cursor-pointer rounded-sm border border-solid border-transparent bg-transparent px-sm font-mono text-[0.66rem] font-medium text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 aria-[current=page]:border-border-default aria-[current=page]:bg-bg-raised aria-[current=page]:text-text-primary max-768:min-h-[44px]";
+
+function InspectionNavigation({
+  view,
+  onViewChange,
+}: {
+  view: DetailView;
+  onViewChange(view: DetailView): void;
+}): React.JSX.Element {
+  const items: Array<{ view: InspectionView; label: string }> = [
+    { view: "requirements", label: "Requirements" },
+    { view: "decisions", label: "Decisions" },
+    { view: "tasks", label: "Tasks" },
+    { view: "evidence", label: "Evidence" },
+    { view: "traceability", label: "Traceability" },
+    { view: "lint", label: "Lint" },
+    { view: "integrity", label: "Integrity" },
+  ];
+  return (
+    <nav
+      aria-label="Spec inspection"
+      className="flex items-center gap-xs overflow-x-auto border-x-0 border-t border-b-0 border-solid border-border-dim py-xs"
+    >
+      <span className="shrink-0 px-xs font-mono text-[0.62rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+        Inspect
+      </span>
+      {items.map((item) => (
+        <button
+          key={item.view}
+          type="button"
+          aria-current={view === item.view ? "page" : undefined}
+          className={inspectionLinkClass}
+          onClick={() => onViewChange(item.view)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -339,56 +471,21 @@ export function initialDetailViewForDeepLink(
   rawHandle: string | null,
   slug: string | undefined,
 ): DetailView {
-  if (rawHandle === "execution_start") return "controls";
+  if (rawHandle === "execution_start") return "execution";
   // The delivery-approval deep link (notification rows, halt cards, banner,
-  // phase CTA) must open Controls or its merge-gate target never mounts.
-  if (rawHandle === "delivery") return "controls";
+  // phase CTA) must open Execution or its merge-gate target never mounts.
+  if (rawHandle === "delivery") return "execution";
   if (rawHandle === null || slug === undefined) return "overview";
   try {
     const kind = parseElementHandle(rawHandle, slug).kind;
-    return kind === "question" || kind === "assumption"
-      ? "questions"
-      : "overview";
+    if (kind === "question" || kind === "assumption") return "questions";
+    if (kind === "requirement" || kind === "criterion") return "requirements";
+    if (kind === "decision") return "decisions";
+    if (kind === "task") return "tasks";
+    return "overview";
   } catch {
     return "overview";
   }
-}
-
-type FocusedView = "lint" | "questions" | "integrity";
-
-function isFocusedView(view: DetailView): view is FocusedView {
-  return view === "lint" || view === "questions" || view === "integrity";
-}
-
-function focusedViewTitle(view: FocusedView): string {
-  switch (view) {
-    case "lint":
-      return "Deterministic lint";
-    case "questions":
-      return "Questions and assumptions";
-    case "integrity":
-      return "Spec integrity";
-  }
-}
-
-function focusedViewDescription(view: FocusedView): string {
-  switch (view) {
-    case "lint":
-      return "Inspect the exact findings that gate proposal and sign-off.";
-    case "questions":
-      return "Resolve the human decisions that keep the contract explicit.";
-    case "integrity":
-      return "Approved revisions are re-hashed and compared against the immutable hashes recorded at approval.";
-  }
-}
-
-function isPrimarySubscreen(view: DetailView): view is PrimarySubscreen {
-  return (
-    view === "evidence" ||
-    view === "traceability" ||
-    view === "history" ||
-    view === "controls"
-  );
 }
 
 export function selectEvidenceRevision(

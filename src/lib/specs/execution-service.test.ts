@@ -1024,6 +1024,7 @@ describe("ExecutionService start", () => {
       workflowEvents,
       evidenceService,
       writeQueue: deps.writeQueue,
+      validatedTreeHash: async () => "unused-tree",
       loadOriginMap: async () => originMap,
       getWorkflowExecutionStatus: deps.getWorkflowExecutionStatus,
     });

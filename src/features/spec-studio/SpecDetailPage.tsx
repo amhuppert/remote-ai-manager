@@ -39,6 +39,7 @@ import { formatTicketIdentifier } from "@/lib/tickets/references";
 import type {
   SpecApprovalRow,
   SpecAssumptionDisposition,
+  SpecAuthoringStage,
   SpecCommentRow,
   SpecRevisionElement,
 } from "@/lib/specs/schemas";
@@ -56,7 +57,7 @@ import SpecDetailViews, {
   type DetailView,
 } from "./SpecDetailViews";
 import SpecPhaseFacets from "./SpecPhaseFacets";
-import SpecReviewMode from "./SpecReviewMode";
+import SpecPhaseStepper from "./SpecPhaseStepper";
 
 const logger = createClientLogger("spec-studio-detail");
 
@@ -77,6 +78,7 @@ export interface RailItem {
   approvalTone: StatusChipTone;
   nested: boolean;
   criteria?: RailCriterion[];
+  details?: Array<{ label: string; text: string }>;
 }
 
 export interface RailCriterion {
@@ -114,10 +116,9 @@ function SpecDetailPageInner(): React.JSX.Element {
     [detail?.spec.slug, searchParams],
   );
 
-  // Tab and back-control selections write the URL instead of a local state
-  // slot, so the address bar stays the only description of what is on screen.
-  // `replace` keeps switching surfaces out of the browser's back stack, which
-  // is how the tabs behaved before they became addressable.
+  // Surface selections write the URL instead of a local state slot, so the
+  // address bar stays the only description of what is on screen. `replace`
+  // keeps routine tab changes out of the browser's back stack.
   function selectView(nextView: DetailView): void {
     const detailPath = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(requestedSlug)}`;
     router.replace(
@@ -166,27 +167,18 @@ function SpecDetailPageInner(): React.JSX.Element {
             </EmptyStateDesc>
           </EmptyState>
         ) : (
-          <>
-            {searchParams.get("view") === "review" ? (
-              <SpecReviewMode
-                detail={detail}
-                projectName={projectName}
-                highlightedChangeId={searchParams.get("change")}
-              />
-            ) : (
-              <SpecDetailContent
-                detail={detail}
-                projectName={projectName}
-                requestedSlug={requestedSlug}
-                view={resolveRequestedDetailView(
-                  searchParams.get("view"),
-                  searchParams.get("el"),
-                  detail.spec.slug,
-                )}
-                onViewChange={selectView}
-              />
+          <SpecDetailContent
+            detail={detail}
+            projectName={projectName}
+            requestedSlug={requestedSlug}
+            view={resolveRequestedDetailView(
+              searchParams.get("view"),
+              searchParams.get("el"),
+              detail.spec.slug,
             )}
-          </>
+            highlightedChangeId={searchParams.get("change")}
+            onViewChange={selectView}
+          />
         )}
       </main>
     </div>
@@ -250,15 +242,21 @@ export function SpecDetailContent({
   projectName,
   requestedSlug,
   view,
+  highlightedChangeId = null,
   onViewChange,
 }: {
   detail: SpecDetailView;
   projectName: string;
   requestedSlug: string;
   view: DetailView;
+  highlightedChangeId?: string | null;
   onViewChange(view: DetailView): void;
 }): React.JSX.Element {
+  const [completionMessage, setCompletionMessage] = useState<string | null>(
+    null,
+  );
   const snapshot = detail.currentRevision;
+  const readOnly = detail.spec.abandonedAt !== null;
   const revision = snapshot?.revision.number ?? latestRevisionNumber(detail);
   const sections =
     snapshot?.elements.filter(
@@ -268,9 +266,12 @@ export function SpecDetailContent({
   const statePresentation = detailStatePresentation(
     detail.status.phase.primary,
     detail.status.pendingApprovals,
+    detail.status.phase.authoringStage ??
+      detail.currentRevision?.revision.authoringStage ??
+      detail.currentApprovedRevision?.revision.authoringStage,
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
-  const controlsHref = `${detailHref}?view=controls`;
+  const gateHref = `${detailHref}?view=gate`;
   const reviewHref = `${detailHref}?view=review`;
   const primaryActionHref =
     statePresentation.view === null
@@ -296,159 +297,179 @@ export function SpecDetailContent({
   };
 
   return (
-    <div className="px-xl pt-sm pb-3xl max-768:px-md">
-      <SpecDetailViews
-        detail={detail}
-        projectName={projectName}
-        view={view}
-        onViewChange={onViewChange}
-        overviewHeader={
-          <header className="border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
-            <div className="flex flex-wrap items-start justify-between gap-md">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-sm">
-                  <h1 className="m-0 font-display text-[1.05rem] leading-none font-extrabold text-text-primary">
-                    {detail.spec.name}
-                  </h1>
-                  <SpecReferenceCopyButton
-                    referenceType="spec"
-                    attrs={specReferenceAttrs}
-                    appearance="handle"
-                  />
-                  <SpecPhaseFacets status={detail.status} />
-                  <Link
-                    href={`${controlsHref}#gate-policy`}
-                    aria-label="Open gate policy from preset"
-                    title="Gate preset — open gate policy"
-                    className="inline-flex items-center rounded-full border border-solid border-border-default px-sm py-2xs font-mono text-[0.64rem] font-semibold tracking-[0.06em] text-text-secondary uppercase no-underline hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                  >
-                    {gatePresetLabel(detail.spec.gatePolicy.preset)}
-                  </Link>
-                </div>
-                {requestedSlug !== detail.spec.slug && (
-                  <p className="mt-xs mb-0 font-mono text-[0.68rem] text-text-tertiary">
-                    Opened from alias {requestedSlug}
+    <>
+      <SpecPhaseStepper detail={detail} />
+      <div className="px-xl pt-sm pb-3xl max-768:px-md">
+        <SpecDetailViews
+          detail={detail}
+          projectName={projectName}
+          view={view}
+          onViewChange={onViewChange}
+          highlightedChangeId={highlightedChangeId}
+          onReviewComplete={(message) => {
+            setCompletionMessage(message);
+            onViewChange("overview");
+          }}
+          overviewHeader={
+            <header className="border-x-0 border-t-0 border-b border-solid border-border-dim pb-md">
+              <div className="flex flex-wrap items-start justify-between gap-md">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-sm">
+                    <h1 className="m-0 font-display text-[1.25rem] leading-none font-extrabold text-text-primary">
+                      {detail.spec.name}
+                    </h1>
+                    <SpecReferenceCopyButton
+                      referenceType="spec"
+                      attrs={specReferenceAttrs}
+                      appearance="handle"
+                    />
+                    <SpecPhaseFacets status={detail.status} />
+                    <Link
+                      href={`${gateHref}#gate-policy`}
+                      aria-label="Open gate policy from preset"
+                      title="Gate preset — open gate policy"
+                      className="inline-flex items-center rounded-full border border-solid border-border-default px-sm py-2xs font-mono text-[0.64rem] font-semibold tracking-[0.06em] text-text-secondary uppercase no-underline hover:border-border-strong hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                    >
+                      {gatePresetLabel(detail.spec.gatePolicy.preset)}
+                    </Link>
+                  </div>
+                  {requestedSlug !== detail.spec.slug && (
+                    <p className="mt-xs mb-0 font-mono text-[0.68rem] text-text-tertiary">
+                      Opened from alias {requestedSlug}
+                    </p>
+                  )}
+                  <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
+                    {revisionLine(detail, revision)}
                   </p>
-                )}
-                <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
-                  {revisionLine(detail, revision)}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-sm">
-                <a
-                  href={`/api/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}/export`}
-                  download={`${detail.spec.slug}.spec.json`}
-                  title="Export a portable, tamper-evident representation"
-                  className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                >
-                  Export
-                </a>
-                <Link
-                  href={`${detailHref}?view=integrity`}
-                  title="Verify approved revision integrity"
-                  className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                >
-                  Verify
-                </Link>
-                {showSecondaryReviewLink && (
-                  <Link
-                    href={reviewHref}
-                    title="Review the proposed revision"
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-sm">
+                  <a
+                    href={`/api/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}/export`}
+                    download={`${detail.spec.slug}.spec.json`}
+                    title="Export a portable, tamper-evident representation"
                     className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
                   >
-                    Review revision
+                    Export
+                  </a>
+                  <Link
+                    href={`${detailHref}?view=integrity`}
+                    title="Verify approved revision integrity"
+                    className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                  >
+                    Verify
                   </Link>
-                )}
-                <Link
-                  href={`${controlsHref}#gate-policy`}
-                  className="inline-flex h-[28px] items-center rounded-sm border border-solid border-border-default bg-bg-raised px-md font-mono text-[0.72rem] font-medium text-text-secondary no-underline transition-colors hover:border-border-strong hover:bg-bg-elevated hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
-                >
-                  Gate policy
-                </Link>
-                {primaryActionHref !== null &&
-                  statePresentation.action !== null && (
+                  {showSecondaryReviewLink && (
                     <Link
-                      href={primaryActionHref}
-                      className={cn(
-                        "inline-flex h-[28px] items-center rounded-sm border border-solid px-md font-mono text-[0.72rem] font-semibold no-underline transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
-                        statePresentation.tone === "green"
-                          ? "border-green-dim bg-green-glow text-green hover:border-green"
-                          : statePresentation.tone === "amber"
-                            ? "border-amber-dim bg-amber-glow text-amber hover:border-amber"
-                            : "border-cyan-dim bg-cyan-glow text-cyan hover:border-cyan",
-                      )}
+                      href={reviewHref}
+                      title="Review the proposed revision"
+                      className="inline-flex h-[28px] items-center rounded-sm px-sm font-mono text-[0.72rem] font-medium text-text-tertiary no-underline transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
                     >
-                      {statePresentation.action}
+                      Review revision
                     </Link>
                   )}
-              </div>
-            </div>
-          </header>
-        }
-        overviewBanner={
-          <SpecRevisionBanner
-            detail={detail}
-            presentation={statePresentation}
-            detailHref={detailHref}
-          />
-        }
-      >
-        {snapshot === null ? (
-          <div className="mt-lg rounded-md border border-dashed border-border-default px-lg py-xl font-mono text-[0.72rem] text-text-tertiary">
-            This spec does not have a current revision to display.
-          </div>
-        ) : (
-          <div className="mt-lg grid grid-cols-[minmax(0,1fr)_400px] items-start gap-xl max-1180:grid-cols-1">
-            <section
-              aria-label="Spec narrative"
-              className="min-w-0 overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-base px-lg"
-            >
-              {sections.length === 0 ? (
-                <div className="py-lg">
-                  <NarrativeSectionHeading>Intent</NarrativeSectionHeading>
-                  <p className="mt-sm mb-0 font-mono text-[0.72rem] text-text-tertiary">
-                    No prose sections authored. Structured elements remain
-                    available in the rail.
-                  </p>
-                </div>
-              ) : (
-                sections.map((section) => (
-                  <SpecProseSection
-                    key={section.element.id}
-                    section={section}
-                    comments={detail.comments.filter(
-                      (comment) => comment.element_id === section.element.id,
+                  <Link
+                    href={`${gateHref}#gate-policy`}
+                    className="inline-flex h-[28px] items-center rounded-sm border border-solid border-border-default bg-bg-raised px-md font-mono text-[0.72rem] font-medium text-text-secondary no-underline transition-colors hover:border-border-strong hover:bg-bg-elevated hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                  >
+                    Gate policy
+                  </Link>
+                  {primaryActionHref !== null &&
+                    statePresentation.action !== null && (
+                      <Link
+                        href={primaryActionHref}
+                        className={cn(
+                          "inline-flex h-[28px] items-center rounded-sm border border-solid px-md font-mono text-[0.72rem] font-semibold no-underline transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
+                          statePresentation.tone === "green"
+                            ? "border-green-dim bg-green-glow text-green hover:border-green"
+                            : statePresentation.tone === "amber"
+                              ? "border-amber-dim bg-amber-glow text-amber hover:border-amber"
+                              : "border-cyan-dim bg-cyan-glow text-cyan hover:border-cyan",
+                        )}
+                      >
+                        {statePresentation.action}
+                      </Link>
                     )}
-                    projectName={projectName}
-                    slug={detail.spec.slug}
-                    specId={detail.spec.id}
-                    revisionId={snapshot.revision.id}
-                  />
-                ))
+                </div>
+              </div>
+            </header>
+          }
+          overviewBanner={
+            <>
+              {completionMessage !== null && (
+                <div
+                  role="status"
+                  className="mb-md rounded-md border border-solid border-green-dim bg-green-glow px-lg py-sm font-mono text-[0.72rem] text-green"
+                >
+                  {completionMessage}
+                </div>
               )}
-              <SpecInlineLint
-                findings={lintQuery.data?.findings ?? []}
-                isPending={lintQuery.isPending || lintQuery.isFetching}
-                error={
-                  lintQuery.error instanceof Error
-                    ? lintQuery.error.message
-                    : null
-                }
+              <SpecRevisionBanner
+                detail={detail}
+                presentation={statePresentation}
                 detailHref={detailHref}
               />
-              <SpecLinkedContext detail={detail} />
-            </section>
-            <SpecStructureRail
-              groups={railGroups}
-              specId={detail.spec.id}
-              projectName={projectName}
-              slug={detail.spec.slug}
-              revision={revision}
-            />
-          </div>
-        )}
-      </SpecDetailViews>
-    </div>
+            </>
+          }
+        >
+          {snapshot === null ? (
+            <div className="mt-lg rounded-md border border-dashed border-border-default px-lg py-xl font-mono text-[0.72rem] text-text-tertiary">
+              This spec does not have a current revision to display.
+            </div>
+          ) : (
+            <div className="mt-lg grid grid-cols-2 items-start gap-xl max-1180:grid-cols-1">
+              <section
+                aria-label="Spec narrative"
+                className="min-w-0 overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-base px-lg"
+              >
+                {sections.length === 0 ? (
+                  <div className="py-lg">
+                    <NarrativeSectionHeading>Intent</NarrativeSectionHeading>
+                    <p className="mt-sm mb-0 font-mono text-[0.72rem] text-text-tertiary">
+                      No prose sections authored. Structured elements remain
+                      available in the rail.
+                    </p>
+                  </div>
+                ) : (
+                  sections.map((section) => (
+                    <SpecProseSection
+                      key={section.element.id}
+                      section={section}
+                      comments={detail.comments.filter(
+                        (comment) => comment.element_id === section.element.id,
+                      )}
+                      projectName={projectName}
+                      slug={detail.spec.slug}
+                      specId={detail.spec.id}
+                      revisionId={snapshot.revision.id}
+                      readOnly={readOnly}
+                    />
+                  ))
+                )}
+                <SpecInlineLint
+                  findings={lintQuery.data?.findings ?? []}
+                  isPending={lintQuery.isPending || lintQuery.isFetching}
+                  error={
+                    lintQuery.error instanceof Error
+                      ? lintQuery.error.message
+                      : null
+                  }
+                  detailHref={detailHref}
+                />
+                <SpecLinkedContext detail={detail} />
+              </section>
+              <SpecStructureRail
+                groups={railGroups}
+                specId={detail.spec.id}
+                projectName={projectName}
+                slug={detail.spec.slug}
+                revision={revision}
+                readOnly={readOnly}
+              />
+            </div>
+          )}
+        </SpecDetailViews>
+      </div>
+    </>
   );
 }
 
@@ -457,7 +478,7 @@ export interface DetailStatePresentation {
   banner: string;
   description: string;
   action: string | null;
-  view: "review" | "evidence" | "controls" | null;
+  view: "review" | "evidence" | "execution" | "gate" | null;
   /**
    * Focused deep-link target. When present the CTA navigates with `?el=` —
    * the retrying contract that lands on the focused control after the page
@@ -509,14 +530,14 @@ function BannerApprovalsSummary({
         href={`${detailHref}?el=delivery`}
         className={bannerApprovalsLinkClass}
       >
-        Delivery approval pending — approve in Controls
+        Delivery approval pending — open Execution
       </Link>
     );
   }
   if (pendingApprovals.length > 0) {
     const target =
       pendingApprovals[0]?.gate === "execution_start"
-        ? `${detailHref}?view=controls`
+        ? `${detailHref}?view=execution`
         : `${detailHref}?view=review`;
     return (
       <Link href={target} className={bannerApprovalsLinkClass}>
@@ -919,6 +940,7 @@ function formatDate(timestamp: string): string {
 export function detailStatePresentation(
   phase: SpecPhasePrimary,
   pendingApprovals: SpecDetailView["status"]["pendingApprovals"],
+  authoringStage?: SpecAuthoringStage,
 ): DetailStatePresentation {
   switch (phase) {
     case "draft":
@@ -927,7 +949,7 @@ export function detailStatePresentation(
         banner: "Draft contract",
         description: "Resolve lint and human decisions before proposal.",
         action: "Open gate policy",
-        view: "controls",
+        view: "gate",
       };
     case "in_review":
       return {
@@ -939,12 +961,43 @@ export function detailStatePresentation(
         view: "review",
       };
     case "approved":
+      if (authoringStage === "requirements") {
+        return {
+          tone: "green",
+          banner: "Requirements approved",
+          description:
+            "The requirements are frozen. Design is next; execution stays locked until the Plan is approved.",
+          action: null,
+          view: null,
+        };
+      }
+      if (authoringStage === "design") {
+        return {
+          tone: "green",
+          banner: "Design approved",
+          description:
+            "The design is frozen. Plan is next; execution stays locked until the Plan is approved.",
+          action: null,
+          view: null,
+        };
+      }
+      if (authoringStage !== "plan") {
+        return {
+          tone: "green",
+          banner: "Revision approved",
+          description:
+            "The approved revision is frozen, but execution requires an approved Plan.",
+          action: null,
+          view: null,
+        };
+      }
       return {
         tone: "green",
-        banner: "Revision approved",
-        description: "The approved revision can anchor an execution scope.",
+        banner: "Ready to execute",
+        description:
+          "The approved Plan revision can anchor an execution scope.",
         action: "Start execution",
-        view: "controls",
+        view: "execution",
       };
     case "executing":
       // A run parked on the delivery gate needs its human, not its evidence:
@@ -956,7 +1009,7 @@ export function detailStatePresentation(
           description:
             "The delivery gate is waiting on a human approval; proof continues against the pinned revision.",
           action: "Approve delivery",
-          view: "controls",
+          view: "execution",
           el: "delivery",
         };
       }
@@ -999,7 +1052,12 @@ function resolveRequestedDetailView(
     rawView === "lint" ||
     rawView === "questions" ||
     rawView === "integrity" ||
-    rawView === "controls"
+    rawView === "review" ||
+    rawView === "execution" ||
+    rawView === "gate" ||
+    rawView === "requirements" ||
+    rawView === "decisions" ||
+    rawView === "tasks"
   ) {
     return rawView;
   }
@@ -1026,6 +1084,7 @@ function SpecProseSection({
   slug,
   specId,
   revisionId,
+  readOnly,
 }: {
   section: SpecRevisionElement;
   comments: SpecCommentRow[];
@@ -1033,6 +1092,7 @@ function SpecProseSection({
   slug: string;
   specId: string;
   revisionId: string;
+  readOnly: boolean;
 }): React.JSX.Element | null {
   const [commentFeedback, setCommentFeedback] = useState<string | null>(null);
   const comment = useSpecActionMutation<
@@ -1099,7 +1159,7 @@ function SpecProseSection({
       <NarrativeSectionHeading>{payload.title}</NarrativeSectionHeading>
       <div
         data-testid={`spec-prose-body-${payload.role}`}
-        className="mt-sm min-w-0 overflow-hidden [&_[data-markdown-intent=document]]:px-0 [&_[data-markdown-intent=document]]:py-0 [&_[data-markdown-intent=document]]:text-[0.82rem] [&_[data-markdown-intent=document]]:leading-[1.65] [&_[data-markdown-viewport]>div]:pl-0"
+        className="mt-sm min-w-0 overflow-hidden [&_[data-markdown-intent=document]]:px-0 [&_[data-markdown-intent=document]]:py-0 [&_[data-markdown-intent=document]]:text-[0.875rem] [&_[data-markdown-intent=document]]:leading-[1.65] [&_[data-markdown-viewport]>div]:pl-0"
       >
         <AnnotatedMarkdown
           docRef={{
@@ -1111,7 +1171,7 @@ function SpecProseSection({
           content={payload.body}
           isLoading={false}
           comments={resolvedComments}
-          onCreateComment={createComment}
+          onCreateComment={readOnly ? undefined : createComment}
         />
       </div>
       {(commentFeedback !== null || resolvedComments.length > 0) && (
@@ -1162,14 +1222,24 @@ function SpecStructureRail({
   projectName,
   slug,
   revision,
+  readOnly,
 }: {
   groups: RailGroup[];
   specId: string;
   projectName: string;
   slug: string;
   revision: number;
+  readOnly: boolean;
 }): React.JSX.Element {
   const [dispositionError, setDispositionError] = useState<string | null>(null);
+  const [expandedItems, setExpandedItems] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const itemIds = groups.flatMap((group) =>
+    group.items.map((item) => item.elementId),
+  );
+  const allExpanded =
+    itemIds.length > 0 && itemIds.every((itemId) => expandedItems.has(itemId));
   const disposeAssumption = useSpecActionMutation<
     {
       assumptionId: string;
@@ -1209,11 +1279,39 @@ function SpecStructureRail({
     );
   }
 
+  function toggleItem(itemId: string): void {
+    setExpandedItems((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  }
+
   return (
     <aside
       aria-label="Spec structure"
-      className="sticky top-[calc(var(--topbar-height)+var(--space-lg))] flex max-h-[calc(100vh-var(--topbar-height)-var(--space-xl))] flex-col gap-md overflow-y-auto max-1180:static max-1180:max-h-none"
+      className="sticky top-[calc(var(--topbar-height)+var(--space-lg))] flex max-h-[calc(100vh-var(--topbar-height)-var(--space-xl))] flex-col gap-md overflow-y-auto pr-xs max-1180:static max-1180:max-h-none max-1180:pr-0"
     >
+      <div className="flex items-center justify-between gap-sm px-xs">
+        <span className="font-mono text-[0.64rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+          Structure
+        </span>
+        <button
+          type="button"
+          aria-label={
+            allExpanded
+              ? "Collapse all structure items"
+              : "Expand all structure items"
+          }
+          onClick={() =>
+            setExpandedItems(allExpanded ? new Set() : new Set(itemIds))
+          }
+          className="min-h-[28px] cursor-pointer rounded-sm border border-solid border-border-default bg-bg-base px-sm font-mono text-[0.64rem] text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+        >
+          {allExpanded ? "Collapse all" : "Expand all"}
+        </button>
+      </div>
       {groups.map((group) => (
         <section
           key={group.id}
@@ -1227,9 +1325,18 @@ function SpecStructureRail({
             >
               {group.label}
             </h3>
-            <span className="font-mono text-[0.66rem] text-text-tertiary">
-              {group.items.length}
-            </span>
+            <div className="flex items-center gap-sm">
+              <span className="font-mono text-[0.66rem] text-text-tertiary">
+                {group.items.length}
+              </span>
+              <Link
+                href={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=${railGroupView(group.id)}`}
+                aria-label={`Open ${group.label}`}
+                className="font-mono text-[0.64rem] font-semibold text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+              >
+                Open
+              </Link>
+            </div>
           </div>
           {group.items.length === 0 ? (
             <p className="m-sm rounded-sm border border-dashed border-border-dim px-sm py-sm font-mono text-[0.68rem] text-text-tertiary">
@@ -1245,93 +1352,137 @@ function SpecStructureRail({
                   {dispositionError}
                 </p>
               )}
-              {group.items.map((item) => (
-                <div
-                  key={item.elementId}
-                  id={item.handle}
-                  data-spec-element={item.handle}
-                  tabIndex={-1}
-                  className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-[6px] transition-colors last:border-b-0 hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px] max-768:min-h-[52px] max-768:py-sm"
-                >
-                  <span className="w-[30px] shrink-0 font-mono text-[0.68rem] font-semibold text-text-tertiary">
-                    {item.handle}
-                  </span>
-                  <span
-                    title={item.name}
-                    className="min-w-0 flex-1 truncate font-mono text-[0.7rem] text-text-secondary"
+              {group.items.map((item) => {
+                const expanded = expandedItems.has(item.elementId);
+                return (
+                  <div
+                    key={item.elementId}
+                    id={item.handle}
+                    data-spec-element={item.handle}
+                    tabIndex={-1}
+                    className="flex flex-wrap items-start gap-xs border-x-0 border-t-0 border-b border-solid border-border-dim px-sm py-xs transition-colors last:border-b-0 hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-[-2px] max-768:min-h-[52px] max-768:py-sm"
                   >
-                    {item.name}
-                  </span>
-                  {item.criteria !== undefined && item.criteria.length > 0 && (
-                    <div
-                      role="group"
-                      aria-label={`${item.handle} criteria`}
-                      className="flex shrink-0 items-center gap-xs"
+                    <button
+                      type="button"
+                      aria-label={`${expanded ? "Collapse" : "Expand"} ${item.handle}`}
+                      aria-expanded={expanded}
+                      onClick={() => toggleItem(item.elementId)}
+                      className="flex min-h-[32px] min-w-0 flex-1 cursor-pointer items-start gap-sm rounded-sm border-0 bg-transparent px-xs py-2xs text-left focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
                     >
-                      {item.criteria.map((criterion) => (
-                        <span
-                          key={criterion.elementId}
-                          id={criterion.handle}
-                          data-spec-element={criterion.handle}
-                          tabIndex={-1}
-                          title={`${criterion.handle} · ${criterion.name} · ${criterion.status}`}
-                          aria-label={`${criterion.handle}: ${criterion.name}; ${criterion.status}`}
-                          className={cn(
-                            "h-[6px] w-[6px] rounded-[2px] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
-                            railToneBackgroundClass[criterion.statusTone],
-                          )}
+                      <span className="w-[32px] shrink-0 pt-[1px] font-mono text-[0.68rem] font-semibold text-text-tertiary">
+                        {item.handle}
+                      </span>
+                      <span className="line-clamp-2 min-w-0 flex-1 font-mono text-[0.72rem] leading-relaxed text-text-secondary">
+                        {item.name}
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className="shrink-0 pt-[1px] font-mono text-[0.68rem] text-text-tertiary"
+                      >
+                        {expanded ? "−" : "+"}
+                      </span>
+                    </button>
+                    {(item.kind === "question" ||
+                      item.kind === "assumption" ||
+                      item.kind === "task") && (
+                      <span
+                        className={cn(
+                          "mt-xs shrink-0 font-mono text-[0.62rem] font-semibold tracking-[0.05em] uppercase",
+                          railToneTextClass[item.statusTone],
+                        )}
+                      >
+                        {item.status}
+                      </span>
+                    )}
+                    {item.kind !== "question" && item.kind !== "assumption" && (
+                      <span className="mt-xs">
+                        <RailApprovalIcon
+                          tone={item.approvalTone}
+                          label={item.approval}
                         />
-                      ))}
-                    </div>
-                  )}
-                  {(item.kind === "question" ||
-                    item.kind === "assumption" ||
-                    item.kind === "task") && (
-                    <span
-                      className={cn(
-                        "shrink-0 font-mono text-[0.62rem] font-semibold tracking-[0.05em] uppercase",
-                        railToneTextClass[item.statusTone],
-                      )}
-                    >
-                      {item.status}
-                    </span>
-                  )}
-                  {item.kind !== "question" && item.kind !== "assumption" && (
-                    <RailApprovalIcon
-                      tone={item.approvalTone}
-                      label={item.approval}
-                    />
-                  )}
-                  <span className="sr-only">
-                    {item.status}; {item.approval}
-                  </span>
-                  <SpecReferenceCopyButton
-                    referenceType={referenceType(item.kind)}
-                    attrs={{
-                      projectName,
-                      slug,
-                      handle: item.handle,
-                      name: item.name,
-                      revision: String(revision),
-                      readCommand: buildSpecReadCommand(
+                      </span>
+                    )}
+                    <SpecReferenceCopyButton
+                      referenceType={referenceType(item.kind)}
+                      attrs={{
                         projectName,
                         slug,
-                        item.handle,
-                      ),
-                    }}
-                    appearance="icon"
-                  />
-                  {item.kind === "assumption" && (
-                    <AssumptionDispositionControls
-                      item={item}
-                      pending={disposeAssumption.isPending}
-                      onSelect={(disposition) =>
-                        setAssumptionDisposition(item, disposition)
-                      }
+                        handle: item.handle,
+                        name: item.name,
+                        revision: String(revision),
+                        readCommand: buildSpecReadCommand(
+                          projectName,
+                          slug,
+                          item.handle,
+                        ),
+                      }}
+                      appearance="icon"
                     />
-                  )}
-                </div>
-              ))}
+                    <span className="sr-only">
+                      {item.status}; {item.approval}
+                    </span>
+                    {expanded && (
+                      <div className="basis-full border-x-0 border-t border-b-0 border-solid border-border-dim px-[44px] pt-sm pb-xs">
+                        <p className="m-0 text-[0.875rem] leading-relaxed whitespace-pre-wrap text-text-primary">
+                          {item.name}
+                        </p>
+                        {item.criteria !== undefined &&
+                          item.criteria.length > 0 && (
+                            <div
+                              role="group"
+                              aria-label={`${item.handle} criteria`}
+                              className="mt-sm grid gap-xs"
+                            >
+                              {item.criteria.map((criterion) => (
+                                <div
+                                  key={criterion.elementId}
+                                  id={criterion.handle}
+                                  data-spec-element={criterion.handle}
+                                  tabIndex={-1}
+                                  className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-start gap-sm rounded-sm border border-solid border-border-dim bg-bg-base px-sm py-xs focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                                >
+                                  <span className="font-mono text-[0.64rem] font-semibold text-cyan-dim">
+                                    {criterion.handle}
+                                  </span>
+                                  <span className="text-[0.8125rem] leading-relaxed text-text-secondary">
+                                    {criterion.name}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "font-mono text-[0.6rem] font-semibold tracking-[0.05em] uppercase",
+                                      railToneTextClass[criterion.statusTone],
+                                    )}
+                                  >
+                                    {criterion.status}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        {item.details?.map((detail) => (
+                          <div key={detail.label} className="mt-sm">
+                            <span className="font-mono text-[0.62rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
+                              {detail.label}
+                            </span>
+                            <p className="mt-2xs mb-0 text-[0.8125rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
+                              {detail.text}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {!readOnly && item.kind === "assumption" && (
+                      <AssumptionDispositionControls
+                        item={item}
+                        pending={disposeAssumption.isPending}
+                        onSelect={(disposition) =>
+                          setAssumptionDisposition(item, disposition)
+                        }
+                      />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -1404,15 +1555,6 @@ function AssumptionDispositionControls({
   );
 }
 
-const railToneBackgroundClass: Record<StatusChipTone, string> = {
-  neutral: "bg-text-tertiary",
-  cyan: "bg-cyan",
-  amber: "bg-amber",
-  green: "bg-green",
-  red: "bg-red",
-  violet: "bg-violet",
-};
-
 const railToneTextClass: Record<StatusChipTone, string> = {
   neutral: "text-text-tertiary",
   cyan: "text-cyan",
@@ -1484,6 +1626,10 @@ export function buildRailGroups(detail: SpecDetailView): RailGroup[] {
     approval: question.status === "open" ? "Needs decision" : "Resolved",
     approvalTone: question.status === "open" ? "amber" : "green",
     nested: false,
+    details:
+      question.answer === null
+        ? []
+        : [{ label: "Answer", text: question.answer }],
   }));
   const assumptions: RailItem[] = detail.assumptions.map((assumption) => ({
     elementId: assumption.id,
@@ -1630,6 +1776,14 @@ function buildRailItems(detail: SpecDetailView): RailItem[] {
             detail,
           ),
           nested: false,
+          details: [
+            { label: "Chosen approach", text: payload.chosenApproach },
+            { label: "Rationale", text: payload.reason },
+            ...payload.rejectedAlternatives.map((alternative) => ({
+              label: `Rejected · ${alternative.label}`,
+              text: alternative.reason,
+            })),
+          ],
         },
       ];
     }
@@ -1648,6 +1802,7 @@ function buildRailItems(detail: SpecDetailView): RailItem[] {
         statusTone: taskPresentation.statusTone,
         ...planApprovalPresentation(detail),
         nested: false,
+        details: [{ label: "Instructions", text: payload.instructions }],
       },
     ];
   });
@@ -1810,6 +1965,10 @@ export function resolveDeepLinkId(
 
 function latestRevisionNumber(detail: SpecDetailView): number {
   return Math.max(1, ...detail.revisions.map((revision) => revision.number));
+}
+
+function railGroupView(group: RailGroup["id"]): DetailView {
+  return group === "questions" ? "questions" : group;
 }
 
 function referenceType(

@@ -64,11 +64,11 @@ describe("buildRailGroups", () => {
 
 describe("detailStatePresentation", () => {
   it("derives the phase-specific primary action without inventing a new mutation", () => {
-    expect(detailStatePresentation("approved", [])).toMatchObject({
+    expect(detailStatePresentation("approved", [], "plan")).toMatchObject({
       tone: "green",
-      banner: "Revision approved",
+      banner: "Ready to execute",
       action: "Start execution",
-      view: "controls",
+      view: "execution",
     });
     expect(detailStatePresentation("executing", [])).toMatchObject({
       tone: "cyan",
@@ -86,6 +86,21 @@ describe("detailStatePresentation", () => {
     expect(detailStatePresentation("abandoned", []).action).toBeNull();
   });
 
+  it("keeps execution unavailable until the Plan stage is approved", () => {
+    expect(
+      detailStatePresentation("approved", [], "requirements"),
+    ).toMatchObject({
+      banner: "Requirements approved",
+      action: null,
+      view: null,
+    });
+    expect(detailStatePresentation("approved", [], "design")).toMatchObject({
+      banner: "Design approved",
+      action: null,
+      view: null,
+    });
+  });
+
   it("points the executing CTA at the pending delivery approval when one exists", () => {
     const deliveryPending = [
       { gate: "delivery" as const, subject: "delivery", elementId: null },
@@ -97,7 +112,7 @@ describe("detailStatePresentation", () => {
       description:
         "The delivery gate is waiting on a human approval; proof continues against the pinned revision.",
       action: "Approve delivery",
-      view: "controls",
+      view: "execution",
       el: "delivery",
     });
     // Authoring-gate approvals do not hijack the evidence CTA.

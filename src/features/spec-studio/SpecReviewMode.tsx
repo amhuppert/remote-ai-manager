@@ -60,8 +60,14 @@ import {
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
 import { consultedAuthoringGates } from "@/lib/specs/transitions";
+import { cn } from "@/lib/ui/cn";
 
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
+import {
+  formatInlineReviewDiff,
+  type InlineReviewDiffSegment,
+} from "./SpecReviewDiff";
+import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-review");
 
@@ -84,6 +90,24 @@ const changeTone: Record<SemanticChange["change"], StatusChipTone> = {
   modified: "amber",
   removed: "red",
 };
+
+const criterionTone: Record<
+  RequirementCriterionReview["change"],
+  StatusChipTone
+> = {
+  added: "green",
+  modified: "amber",
+  removed: "red",
+  unchanged: "neutral",
+};
+
+const criterionRailClass: Record<RequirementCriterionReview["change"], string> =
+  {
+    added: "border-green-dim",
+    modified: "border-amber-dim",
+    removed: "border-red-dim",
+    unchanged: "border-border-default",
+  };
 
 const anchorTone: Record<SpecThreadAnchorState["status"], StatusChipTone> = {
   anchored: "green",
@@ -127,7 +151,16 @@ interface ReviewReadiness {
   combined: boolean;
   blockingThreadCount: number;
   rejectedAssumptionCount: number;
+  openQuestionCount: number;
+  undisposedAssumptionCount: number;
   ready: boolean;
+}
+
+interface RequirementCriterionReview {
+  elementId: string;
+  base: ReviewElementView | null;
+  current: ReviewElementView | null;
+  change: SemanticChange["change"] | "unchanged";
 }
 
 const reviewGroupOrder: ReviewChangeGroup["key"][] = [
@@ -144,14 +177,34 @@ const reviewGroupLabel: Record<ReviewChangeGroup["key"], string> = {
   tasks: "Tasks · plan",
 };
 
+const reviewQuestionStatus: Record<
+  SpecDetailView["questions"][number]["status"],
+  { label: string; tone: StatusChipTone }
+> = {
+  open: { label: "Open — blocks sign-off", tone: "amber" },
+  answered: { label: "Answered", tone: "green" },
+};
+
+const reviewAssumptionStatus: Record<
+  SpecDetailView["assumptions"][number]["disposition"],
+  { label: string; tone: StatusChipTone }
+> = {
+  proposed: { label: "Proposed — blocks sign-off", tone: "amber" },
+  confirmed: { label: "Confirmed", tone: "green" },
+  rejected: { label: "Rejected", tone: "red" },
+  deferred: { label: "Deferred", tone: "neutral" },
+};
+
 export default function SpecReviewMode({
   detail,
   projectName,
   highlightedChangeId,
+  onComplete,
 }: {
   detail: SpecDetailView;
   projectName: string;
   highlightedChangeId: string | null;
+  onComplete?(message: string): void;
 }): React.JSX.Element {
   const baseSnapshot = detail.baseRevision;
   const currentSnapshot = detail.currentRevision;
@@ -212,6 +265,14 @@ export default function SpecReviewMode({
     },
   );
 
+  if (detail.spec.abandonedAt !== null) {
+    return (
+      <div className="mx-auto max-w-[1000px]">
+        <SpecReadOnlyNotice reason={detail.spec.abandonedReason} />
+      </div>
+    );
+  }
+
   if (
     currentSnapshot === null ||
     diff === null ||
@@ -219,15 +280,16 @@ export default function SpecReviewMode({
   ) {
     return (
       <EmptyState>
-        <EmptyStateTitle>Review mode unavailable</EmptyStateTitle>
+        <EmptyStateTitle>Nothing awaiting review</EmptyStateTitle>
         <EmptyStateDesc>
-          Review mode requires a proposed revision.
+          There is no proposed revision. Open a draft and propose it when the
+          next change set is ready for review.
         </EmptyStateDesc>
       </EmptyState>
     );
   }
 
-  const reviewPath = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
+  const detailPath = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const currentRevision = currentSnapshot.revision;
   const revisionId = currentRevision.id;
 
@@ -249,13 +311,15 @@ export default function SpecReviewMode({
       { revisionId },
       {
         onSuccess: ({ draft }) => {
-          setFeedback(`Draft revision ${draft.number} opened`);
+          const message = `Draft revision ${draft.number} opened`;
+          setFeedback(message);
           logger.info("spec_studio.review_action.completed", {
             action: "request-changes",
             specId: detail.spec.id,
             revisionId,
             draftRevisionId: draft.id,
           });
+          onComplete?.(message);
         },
         onError: (mutationError) =>
           reportError("request-changes", mutationError),
@@ -270,46 +334,43 @@ export default function SpecReviewMode({
       { revisionId },
       {
         onSuccess: () => {
-          setFeedback(`Revision ${currentRevision.number} signed off`);
+          const message = `Revision ${currentRevision.number} signed off`;
+          setFeedback(message);
           logger.info("spec_studio.review_action.completed", {
             action: "sign-off",
             specId: detail.spec.id,
             revisionId,
           });
+          onComplete?.(message);
         },
         onError: (mutationError) => reportError("sign-off", mutationError),
       },
     );
   }
 
-  function handleBulkApproval(mode: "requirements" | "remaining"): void {
-    const subjects = bulkApprovalSubjects(detail, mode);
+  function handleBulkApproval(): void {
+    const subjects = bulkApprovalSubjects(detail, "remaining");
     if (subjects.length === 0) return;
     setError(null);
-    setFeedback(
-      mode === "requirements"
-        ? "Approving every requirement…"
-        : "Approving every remaining review subject…",
-    );
+    setFeedback("Approving every remaining review subject…");
     bulkApprove.mutate(
       { revisionId, subjects },
       {
         onSuccess: (approvals) => {
           setFeedback(`${approvals.length} approval records written`);
           logger.info("spec_studio.review_action.completed", {
-            action: `bulk-approve-${mode}`,
+            action: "bulk-approve-remaining",
             specId: detail.spec.id,
             revisionId,
             approvalCount: approvals.length,
           });
         },
         onError: (mutationError) =>
-          reportError(`bulk-approve-${mode}`, mutationError),
+          reportError("bulk-approve-remaining", mutationError),
       },
     );
   }
 
-  const requirementSubjects = bulkApprovalSubjects(detail, "requirements");
   const remainingSubjects = bulkApprovalSubjects(detail, "remaining");
   const changeGroups = groupReviewChanges(
     diff.changeList,
@@ -320,343 +381,365 @@ export default function SpecReviewMode({
   const readiness = reviewReadiness(detail);
 
   return (
-    <div className="px-md pt-[10px] pb-lg">
-      <div className="mx-auto max-w-[1080px]">
-        <TabsRoot defaultValue="semantic">
-          <header className="flex items-center justify-between gap-lg border-x-0 border-t-0 border-b border-solid border-border-dim pb-[12px] max-768:flex-col max-768:items-stretch">
-            <div className="min-w-0">
-              <Link
-                href={reviewPath}
-                className="inline-flex min-h-[28px] items-center font-mono text-[0.72rem] font-medium text-text-tertiary no-underline hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
-              >
-                ← {detail.spec.slug}
-              </Link>
-              <div className="flex flex-wrap items-center gap-sm">
-                <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
-                  Review {currentSnapshot.revision.authoringStage}-stage
-                  revision {currentSnapshot.revision.number}
-                </h1>
-                <span className="font-mono text-[0.7rem] text-text-tertiary">
-                  proposed
-                  {currentSnapshot.revision.proposedAt === null
-                    ? ""
-                    : ` ${currentSnapshot.revision.proposedAt.slice(0, 10)}`}{" "}
-                  ·{" "}
-                  {baseSnapshot === null
-                    ? "initial proposal"
-                    : `over revision ${baseSnapshot.revision.number}`}
-                </span>
-              </div>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-sm max-768:justify-between">
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    size="sm"
-                    touch
-                    loading={requestChanges.isPending}
-                    title="Ends this review attempt and opens a draft revision"
-                  >
-                    Request changes
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent size="default">
-                  <AlertDialogTitle>
-                    Request changes — end this review?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This ends the review attempt on revision{" "}
-                    {currentSnapshot.revision.number} and opens a follow-up
-                    draft. It is not a comment — the frozen proposal remains in
-                    history, and approvals recorded so far stay recorded.
-                  </AlertDialogDescription>
-                  <AlertDialogActions>
-                    <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleRequestChanges}>
-                      End review — open draft
-                    </AlertDialogAction>
-                  </AlertDialogActions>
-                </AlertDialogContent>
-              </AlertDialog>
-              <TabsList asChild layoutClassName="max-768:grow">
-                <div className="flex shrink-0 items-center rounded-md border border-solid border-border-subtle bg-bg-surface p-[2px]">
-                  <TabsTrigger
-                    value="semantic"
-                    asChild
-                    layoutClassName="max-768:grow max-768:basis-0"
-                  >
-                    <button
-                      type="button"
-                      className="h-6 cursor-pointer rounded-sm border-0 bg-transparent px-[12px] font-mono text-[0.7rem] font-semibold whitespace-nowrap text-text-tertiary transition-colors outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:bg-bg-elevated data-[state=active]:text-text-primary max-768:h-11"
-                    >
-                      Semantic changes
-                    </button>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="raw"
-                    asChild
-                    layoutClassName="max-768:grow max-768:basis-0"
-                  >
-                    <button
-                      type="button"
-                      className="h-6 cursor-pointer rounded-sm border-0 bg-transparent px-[12px] font-mono text-[0.7rem] font-semibold whitespace-nowrap text-text-tertiary transition-colors outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:bg-bg-elevated data-[state=active]:text-text-primary max-768:h-11"
-                    >
-                      Raw diff
-                    </button>
-                  </TabsTrigger>
-                </div>
-              </TabsList>
-            </div>
-          </header>
-
-          {feedback !== null && (
-            <div
-              aria-live="polite"
-              className="pt-sm font-mono text-[0.7rem] text-cyan"
-            >
-              {feedback}
-            </div>
-          )}
-          {error !== null && (
-            <p
-              role="alert"
-              className="mb-md rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.72rem] text-red"
-            >
-              {error}
-            </p>
-          )}
-
-          <TabsContent value="semantic">
-            <section
-              aria-label="Semantic changes"
-              className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
-            >
-              {diff.changeList.length === 0 ? (
-                <EmptyState>
-                  <EmptyStateTitle>No semantic changes</EmptyStateTitle>
-                  <EmptyStateDesc>
-                    The proposed revision matches its base.
-                  </EmptyStateDesc>
-                </EmptyState>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-stretch">
-                    <div className="min-w-0">
-                      <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
-                        {diff.changeList.length}{" "}
-                        {pluralize(diff.changeList.length, "change")} across{" "}
-                        {changeGroups.length}{" "}
-                        {pluralize(changeGroups.length, "kind")}
-                      </p>
-                      <p className="mt-xs mb-0 truncate font-mono text-[0.7rem] text-text-tertiary">
-                        Approvals on unchanged elements carry forward quietly.
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-sm max-768:grid max-768:grid-cols-2">
-                      <Button
-                        size="sm"
-                        touch
-                        loading={bulkApprove.isPending}
-                        disabled={requirementSubjects.length === 0}
-                        onClick={() => handleBulkApproval("requirements")}
-                      >
-                        Approve all requirements
-                      </Button>
-                      <Button
-                        size="sm"
-                        touch
-                        variant="primary"
-                        loading={bulkApprove.isPending}
-                        disabled={remainingSubjects.length === 0}
-                        onClick={() => handleBulkApproval("remaining")}
-                      >
-                        Approve all remaining
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-[14px] grid gap-[14px]">
-                    {changeGroups.map((group) => (
-                      <section
-                        key={group.key}
-                        aria-labelledby={`review-group-${group.key}`}
-                      >
-                        <div className="mb-sm flex items-center gap-sm">
-                          <h2
-                            id={`review-group-${group.key}`}
-                            className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
-                          >
-                            {group.label}
-                          </h2>
-                          <span className="font-mono text-[0.7rem] text-text-tertiary">
-                            {group.changes.length}{" "}
-                            {pluralize(group.changes.length, "change")}
-                          </span>
-                          <span className="h-px min-w-0 grow bg-border-dim" />
-                        </div>
-                        <div className="grid gap-sm">
-                          {group.changes.map((change) => (
-                            <ReviewChangeCard
-                              key={change.elementId}
-                              change={change}
-                              detail={detail}
-                              projectName={projectName}
-                              baseSnapshot={baseSnapshot}
-                              currentSnapshot={currentSnapshot}
-                              onFeedback={setFeedback}
-                              onError={setError}
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ))}
-                  </div>
-
-                  <UnchangedApprovals views={unchangedViews} />
-                </>
-              )}
-            </section>
-            <div className="h-xl" />
-          </TabsContent>
-
-          <TabsContent value="raw">
-            <section className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base">
-              <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
-                <h2 className="m-0 font-display text-[0.88rem] font-bold text-text-primary">
-                  Raw diff
-                </h2>
-                <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary uppercase">
-                  Secondary view — the semantic change list is the review
-                  contract; use the raw diff for spot checks.
-                </p>
-              </div>
-              <pre className="m-0 max-h-[65vh] overflow-auto p-md font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
-                {formatRawDiff(baseSnapshot, currentSnapshot, diff.changeList)}
-              </pre>
-            </section>
-            <div className="h-xl" />
-          </TabsContent>
-        </TabsRoot>
-
-        <footer
-          data-testid="review-readiness"
-          className="sticky bottom-0 z-[150] flex items-center gap-lg border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-surface px-sm py-md shadow-[0_-12px_32px_var(--color-bg-void)] max-768:flex-col max-768:items-stretch"
-        >
-          <div className="min-w-0 grow">
+    <div
+      data-testid="spec-review-mode"
+      className="min-w-0 bg-bg-base pt-[14px] pb-[96px]"
+    >
+      <TabsRoot defaultValue="semantic">
+        <header className="flex items-center justify-between gap-lg border-x-0 border-t-0 border-b border-solid border-border-dim pb-[12px] max-768:flex-col max-768:items-stretch">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-sm">
-              {readiness.combined ? (
-                <StatusChip tone="green">
-                  Sign-off approves all items
-                </StatusChip>
-              ) : (
-                <>
-                  <span className="font-mono text-[0.78rem] font-bold text-text-primary tabular-nums">
-                    {readiness.approved}/{readiness.total} approved
-                  </span>
-                  <StatusChip
-                    tone={readiness.approvalsReady ? "green" : "amber"}
-                  >
-                    {readiness.approvalsReady
-                      ? "Approvals complete"
-                      : "Approvals incomplete"}
-                  </StatusChip>
-                </>
-              )}
-              <StatusChip
-                tone={readiness.blockingThreadCount === 0 ? "green" : "amber"}
-              >
-                {readiness.blockingThreadCount === 0
-                  ? "Threads resolved"
-                  : `${readiness.blockingThreadCount} blocking ${pluralize(readiness.blockingThreadCount, "thread")}`}
-              </StatusChip>
-              <StatusChip
-                tone={
-                  readiness.rejectedAssumptionCount === 0 ? "green" : "amber"
-                }
-              >
-                {readiness.rejectedAssumptionCount === 0
-                  ? "Assumptions clear"
-                  : `${readiness.rejectedAssumptionCount} rejected ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`}
-              </StatusChip>
+              <h1 className="m-0 font-display text-[1.05rem] font-extrabold text-text-primary">
+                Review {currentSnapshot.revision.authoringStage}-stage revision{" "}
+                {currentSnapshot.revision.number}
+              </h1>
+              <span className="font-mono text-[0.7rem] text-text-tertiary">
+                proposed
+                {currentSnapshot.revision.proposedAt === null
+                  ? ""
+                  : ` ${currentSnapshot.revision.proposedAt.slice(0, 10)}`}{" "}
+                ·{" "}
+                {baseSnapshot === null
+                  ? "initial proposal"
+                  : `over revision ${baseSnapshot.revision.number}`}
+              </span>
             </div>
-            {readiness.total > 0 && (
-              <Progress
-                aria-label="Review approval progress"
-                value={readiness.approved}
-                max={readiness.total}
-                tone={readiness.ready ? "accent" : "warning"}
-                layoutClassName="mt-sm max-w-[420px] max-768:max-w-none"
-              />
-            )}
           </div>
-          <AlertDialog
-            open={signOffDialogOpen}
-            onOpenChange={(open) => {
-              setSignOffDialogOpen(open);
-              if (open) setSignOffAcknowledged(false);
-            }}
-          >
-            <AlertDialogTrigger asChild>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-sm max-768:justify-between">
+            {readiness.combined ? (
+              <StatusChip tone="green">Sign-off approves all items</StatusChip>
+            ) : remainingSubjects.length === 0 ? (
+              <StatusChip tone="green">All approved</StatusChip>
+            ) : (
               <Button
-                variant={readiness.ready ? "primary" : "default"}
+                size="sm"
                 touch
-                loading={signOff.isPending}
-                disabled={!readiness.ready}
-                title={
-                  readiness.ready
-                    ? "Freeze this revision"
-                    : readinessBlockerSummary(readiness)
-                }
+                variant="primary"
+                loading={bulkApprove.isPending}
+                onClick={handleBulkApproval}
               >
-                Sign off revision {currentSnapshot.revision.number}
+                Approve all remaining ({remainingSubjects.length})
               </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent size="default">
-              <AlertDialogTitle>
-                Sign off revision {currentSnapshot.revision.number}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                This explicit human act freezes revision{" "}
-                {currentSnapshot.revision.number} as the approved, immutable
-                content of {detail.spec.slug}. Executions pin it; later changes
-                require a new revision.
-              </AlertDialogDescription>
-              <div className="mb-lg grid gap-sm rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.72rem] text-text-secondary">
-                <span className="flex items-center gap-sm">
-                  <CheckIcon size={12} className="text-green" />
-                  {readiness.combined
-                    ? "Combined approval — this sign-off approves every item"
-                    : `${readiness.approved}/${readiness.total} review approvals recorded`}
-                </span>
-                <span className="flex items-center gap-sm">
-                  <CheckIcon size={12} className="text-green" />
-                  Blocking threads resolved
-                </span>
-                <span className="flex items-center gap-sm">
-                  <CheckIcon size={12} className="text-green" />
-                  No rejected attached assumption remains cited
-                </span>
-              </div>
-              <CheckboxField
-                checked={signOffAcknowledged}
-                onCheckedChange={(checked) =>
-                  setSignOffAcknowledged(checked === true)
-                }
-                label={`I reviewed the semantic change list and approve revision ${currentSnapshot.revision.number} as a whole.`}
-              />
-              <AlertDialogActions layoutClassName="mt-lg">
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  disabled={!signOffAcknowledged}
-                  onClick={handleSignOff}
+            )}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  touch
+                  loading={requestChanges.isPending}
+                  title="Ends this review attempt and opens a draft revision"
                 >
-                  Sign off — freeze revision {currentSnapshot.revision.number}
-                </AlertDialogAction>
-              </AlertDialogActions>
-            </AlertDialogContent>
-          </AlertDialog>
-        </footer>
-      </div>
+                  Request changes
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent size="default">
+                <AlertDialogTitle>
+                  Request changes — end this review?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This ends the review attempt on revision{" "}
+                  {currentSnapshot.revision.number} and opens a follow-up draft.
+                  It is not a comment — the frozen proposal remains in history,
+                  and approvals recorded so far stay recorded.
+                </AlertDialogDescription>
+                <AlertDialogActions>
+                  <AlertDialogCancel>Keep reviewing</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleRequestChanges}>
+                    End review — open draft
+                  </AlertDialogAction>
+                </AlertDialogActions>
+              </AlertDialogContent>
+            </AlertDialog>
+            <TabsList asChild layoutClassName="max-768:grow">
+              <div className="flex shrink-0 items-center rounded-md border border-solid border-border-subtle bg-bg-surface p-[2px]">
+                <TabsTrigger
+                  value="semantic"
+                  asChild
+                  layoutClassName="max-768:grow max-768:basis-0"
+                >
+                  <button
+                    type="button"
+                    className="h-6 cursor-pointer rounded-sm border-0 bg-transparent px-[12px] font-mono text-[0.7rem] font-semibold whitespace-nowrap text-text-tertiary transition-colors outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:bg-bg-elevated data-[state=active]:text-text-primary max-768:h-11"
+                  >
+                    Semantic changes
+                  </button>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="raw"
+                  asChild
+                  layoutClassName="max-768:grow max-768:basis-0"
+                >
+                  <button
+                    type="button"
+                    className="h-6 cursor-pointer rounded-sm border-0 bg-transparent px-[12px] font-mono text-[0.7rem] font-semibold whitespace-nowrap text-text-tertiary transition-colors outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 data-[state=active]:bg-bg-elevated data-[state=active]:text-text-primary max-768:h-11"
+                  >
+                    Raw diff
+                  </button>
+                </TabsTrigger>
+              </div>
+            </TabsList>
+          </div>
+        </header>
+
+        {feedback !== null && (
+          <div
+            aria-live="polite"
+            className="pt-sm font-mono text-[0.7rem] text-cyan"
+          >
+            {feedback}
+          </div>
+        )}
+        {error !== null && (
+          <p
+            role="alert"
+            className="mb-md rounded-md border border-solid border-red-dim bg-red-glow px-md py-sm font-mono text-[0.72rem] text-red"
+          >
+            {error}
+          </p>
+        )}
+
+        <TabsContent value="semantic">
+          <section
+            aria-label="Semantic changes"
+            className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base px-[20px] py-[18px] max-768:px-md max-768:py-md"
+          >
+            {diff.changeList.length === 0 ? (
+              <EmptyState>
+                <EmptyStateTitle>No semantic changes</EmptyStateTitle>
+                <EmptyStateDesc>
+                  The proposed revision matches its base.
+                </EmptyStateDesc>
+              </EmptyState>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-stretch">
+                  <div className="min-w-0">
+                    <p className="m-0 font-mono text-[0.76rem] font-semibold text-text-primary">
+                      {diff.changeList.length}{" "}
+                      {pluralize(diff.changeList.length, "change")} across{" "}
+                      {changeGroups.length}{" "}
+                      {pluralize(changeGroups.length, "kind")}
+                    </p>
+                    <p className="mt-xs mb-0 truncate font-mono text-[0.7rem] text-text-tertiary">
+                      Approvals on unchanged elements carry forward quietly.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-md font-mono text-[0.7rem] text-text-tertiary">
+                    <span className="inline-flex items-center gap-xs">
+                      <span className="h-[10px] w-[10px] rounded-sm border border-solid border-green-dim bg-green-glow" />
+                      Added
+                    </span>
+                    <span className="inline-flex items-center gap-xs">
+                      <span className="h-[10px] w-[10px] rounded-sm border border-solid border-red-dim bg-red-glow" />
+                      Removed
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-[14px] grid gap-[14px]">
+                  {changeGroups.map((group) => (
+                    <section
+                      key={group.key}
+                      aria-labelledby={`review-group-${group.key}`}
+                    >
+                      <div className="mb-sm flex items-center gap-sm">
+                        <h2
+                          id={`review-group-${group.key}`}
+                          className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase"
+                        >
+                          {group.label}
+                        </h2>
+                        <span className="font-mono text-[0.7rem] text-text-tertiary">
+                          {group.changes.length}{" "}
+                          {pluralize(group.changes.length, "change")}
+                        </span>
+                        <span className="h-px min-w-0 grow bg-border-dim" />
+                      </div>
+                      <div className="grid gap-sm">
+                        {group.changes.map((change) => (
+                          <ReviewChangeCard
+                            key={change.elementId}
+                            change={change}
+                            criteria={requirementCriteriaForReview(
+                              change,
+                              diff,
+                              currentSnapshot,
+                              baseSnapshot,
+                            )}
+                            detail={detail}
+                            projectName={projectName}
+                            baseSnapshot={baseSnapshot}
+                            currentSnapshot={currentSnapshot}
+                            combinedApproval={readiness.combined}
+                            onFeedback={setFeedback}
+                            onError={setError}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+
+                <UnchangedApprovals views={unchangedViews} />
+              </>
+            )}
+          </section>
+          <div className="h-xl" />
+        </TabsContent>
+
+        <TabsContent value="raw">
+          <section className="mt-[14px] rounded-lg border border-solid border-border-subtle bg-bg-base">
+            <div className="border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
+              <h2 className="m-0 font-display text-[0.88rem] font-bold text-text-primary">
+                Raw diff
+              </h2>
+              <p className="mt-xs mb-0 font-mono text-[0.7rem] text-text-tertiary uppercase">
+                Secondary view — the semantic change list is the review
+                contract; use the raw diff for spot checks.
+              </p>
+            </div>
+            <pre className="m-0 max-h-[65vh] overflow-auto p-md font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
+              {formatRawDiff(baseSnapshot, currentSnapshot, diff.changeList)}
+            </pre>
+          </section>
+          <div className="h-xl" />
+        </TabsContent>
+      </TabsRoot>
+
+      <ReviewQuestionsPanel detail={detail} detailPath={detailPath} />
+
+      <footer
+        data-testid="review-readiness"
+        className="sticky bottom-0 z-[150] flex items-center gap-lg border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-surface px-sm py-md shadow-[0_-12px_32px_var(--color-bg-void)] max-768:flex-col max-768:items-stretch"
+      >
+        <div className="min-w-0 grow">
+          <div className="flex flex-wrap items-center gap-sm">
+            {readiness.combined ? (
+              <StatusChip tone="green">Sign-off approves all items</StatusChip>
+            ) : (
+              <>
+                <span className="font-mono text-[0.78rem] font-bold text-text-primary tabular-nums">
+                  {readiness.approved}/{readiness.total} approved
+                </span>
+                <StatusChip tone={readiness.approvalsReady ? "green" : "amber"}>
+                  {readiness.approvalsReady
+                    ? "Approvals complete"
+                    : "Approvals incomplete"}
+                </StatusChip>
+              </>
+            )}
+            <StatusChip
+              tone={readiness.blockingThreadCount === 0 ? "green" : "amber"}
+            >
+              {readiness.blockingThreadCount === 0
+                ? "Threads resolved"
+                : `${readiness.blockingThreadCount} blocking ${pluralize(readiness.blockingThreadCount, "thread")}`}
+            </StatusChip>
+            <StatusChip
+              tone={readiness.rejectedAssumptionCount === 0 ? "green" : "amber"}
+            >
+              {readiness.rejectedAssumptionCount === 0
+                ? "Assumptions clear"
+                : `${readiness.rejectedAssumptionCount} rejected ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`}
+            </StatusChip>
+            <StatusChip
+              tone={readiness.openQuestionCount === 0 ? "green" : "amber"}
+            >
+              {readiness.openQuestionCount === 0
+                ? "Questions answered"
+                : `${readiness.openQuestionCount} open ${pluralize(readiness.openQuestionCount, "question")}`}
+            </StatusChip>
+            <StatusChip
+              tone={
+                readiness.undisposedAssumptionCount === 0 ? "green" : "amber"
+              }
+            >
+              {readiness.undisposedAssumptionCount === 0
+                ? "Assumptions disposed"
+                : `${readiness.undisposedAssumptionCount} undisposed ${pluralize(readiness.undisposedAssumptionCount, "assumption")}`}
+            </StatusChip>
+          </div>
+          {readiness.total > 0 && (
+            <Progress
+              aria-label="Review approval progress"
+              value={readiness.approved}
+              max={readiness.total}
+              tone={readiness.ready ? "accent" : "warning"}
+              layoutClassName="mt-sm max-w-[420px] max-768:max-w-none"
+            />
+          )}
+        </div>
+        <AlertDialog
+          open={signOffDialogOpen}
+          onOpenChange={(open) => {
+            setSignOffDialogOpen(open);
+            if (open) setSignOffAcknowledged(false);
+          }}
+        >
+          <AlertDialogTrigger asChild>
+            <Button
+              variant={readiness.ready ? "primary" : "default"}
+              touch
+              loading={signOff.isPending}
+              disabled={!readiness.ready}
+              title={
+                readiness.ready
+                  ? "Freeze this revision"
+                  : readinessBlockerSummary(readiness)
+              }
+            >
+              Sign off revision {currentSnapshot.revision.number}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent size="default">
+            <AlertDialogTitle>
+              Sign off revision {currentSnapshot.revision.number}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This explicit human act freezes revision{" "}
+              {currentSnapshot.revision.number} as the approved, immutable
+              content of {detail.spec.slug}. Executions pin it; later changes
+              require a new revision.
+            </AlertDialogDescription>
+            <div className="mb-lg grid gap-sm rounded-md border border-solid border-border-subtle bg-bg-base px-md py-sm font-mono text-[0.72rem] text-text-secondary">
+              <span className="flex items-center gap-sm">
+                <CheckIcon size={12} className="text-green" />
+                {readiness.combined
+                  ? "Combined approval — this sign-off approves every item"
+                  : `${readiness.approved}/${readiness.total} review approvals recorded`}
+              </span>
+              <span className="flex items-center gap-sm">
+                <CheckIcon size={12} className="text-green" />
+                Blocking threads resolved
+              </span>
+              <span className="flex items-center gap-sm">
+                <CheckIcon size={12} className="text-green" />
+                No rejected attached assumption remains cited
+              </span>
+              <span className="flex items-center gap-sm">
+                <CheckIcon size={12} className="text-green" />
+                All questions answered and all assumptions disposed
+              </span>
+            </div>
+            <CheckboxField
+              checked={signOffAcknowledged}
+              onCheckedChange={(checked) =>
+                setSignOffAcknowledged(checked === true)
+              }
+              label={`I reviewed the semantic change list and approve revision ${currentSnapshot.revision.number} as a whole.`}
+            />
+            <AlertDialogActions layoutClassName="mt-lg">
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!signOffAcknowledged}
+                onClick={handleSignOff}
+              >
+                Sign off — freeze revision {currentSnapshot.revision.number}
+              </AlertDialogAction>
+            </AlertDialogActions>
+          </AlertDialogContent>
+        </AlertDialog>
+      </footer>
     </div>
   );
 }
@@ -683,8 +766,12 @@ function groupReviewChanges(
         label: reviewGroupLabel[key],
         changes:
           key === "requirements"
-            ? orderCriteriaUnderRequirements(
-                group,
+            ? requirementCardChanges(
+                orderCriteriaUnderRequirements(
+                  group,
+                  currentSnapshot,
+                  baseSnapshot,
+                ),
                 currentSnapshot,
                 baseSnapshot,
               )
@@ -692,6 +779,66 @@ function groupReviewChanges(
       },
     ];
   });
+}
+
+function requirementCardChanges(
+  changes: SemanticChange[],
+  currentSnapshot: SpecRevisionSnapshot,
+  baseSnapshot: SpecRevisionSnapshot | null,
+): SemanticChange[] {
+  const requirementIds = new Set(
+    changes
+      .filter((change) => change.kind === "requirement")
+      .map((change) => change.elementId),
+  );
+  return changes.filter((change) => {
+    if (change.kind !== "criterion") return true;
+    const criterion =
+      viewForElement(currentSnapshot, change.elementId) ??
+      viewForElement(baseSnapshot, change.elementId);
+    const parentId = criterion?.entry.element.parentElementId;
+    return parentId === null || parentId === undefined
+      ? true
+      : !requirementIds.has(parentId);
+  });
+}
+
+function requirementCriteriaForReview(
+  change: SemanticChange,
+  diff: RevisionDiffResult,
+  currentSnapshot: SpecRevisionSnapshot,
+  baseSnapshot: SpecRevisionSnapshot | null,
+): RequirementCriterionReview[] {
+  if (change.kind !== "requirement") return [];
+
+  const orderedIds = currentSnapshot.elements.flatMap((entry) =>
+    entry.version.payload.kind === "criterion" &&
+    entry.element.parentElementId === change.elementId
+      ? [entry.element.id]
+      : [],
+  );
+  for (const entry of baseSnapshot?.elements ?? []) {
+    if (
+      entry.version.payload.kind === "criterion" &&
+      entry.element.parentElementId === change.elementId &&
+      !orderedIds.includes(entry.element.id)
+    ) {
+      orderedIds.push(entry.element.id);
+    }
+  }
+
+  const changesById = new Map(
+    diff.changeList.map((criterionChange) => [
+      criterionChange.elementId,
+      criterionChange.change,
+    ]),
+  );
+  return orderedIds.map((elementId) => ({
+    elementId,
+    base: viewForElement(baseSnapshot, elementId),
+    current: viewForElement(currentSnapshot, elementId),
+    change: changesById.get(elementId) ?? "unchanged",
+  }));
 }
 
 // Authoring appends new elements at the end of the snapshot, so the change
@@ -762,7 +909,11 @@ function unchangedElementViews(
   currentSnapshot: SpecRevisionSnapshot,
 ): ReviewElementView[] {
   return diff.classifications.flatMap((classification) => {
-    if (classification.classification !== "unchanged") return [];
+    if (
+      classification.classification !== "unchanged" ||
+      classification.kind === "criterion"
+    )
+      return [];
     const view = viewForElement(currentSnapshot, classification.elementId);
     return view === null ? [] : [view];
   });
@@ -800,6 +951,100 @@ function UnchangedApprovals({
   );
 }
 
+function ReviewQuestionsPanel({
+  detail,
+  detailPath,
+}: {
+  detail: SpecDetailView;
+  detailPath: string;
+}): React.JSX.Element {
+  const unresolvedCount =
+    detail.questions.filter((question) => question.status === "open").length +
+    detail.assumptions.filter(
+      (assumption) => assumption.disposition === "proposed",
+    ).length;
+
+  return (
+    <section
+      aria-label="Questions and assumptions in this revision"
+      className="mt-lg overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface"
+    >
+      <div className="flex flex-wrap items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm">
+        <h2 className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase">
+          Questions &amp; assumptions in this revision
+        </h2>
+        <StatusChip tone={unresolvedCount === 0 ? "green" : "amber"}>
+          {unresolvedCount === 0
+            ? "All resolved"
+            : `${unresolvedCount} unresolved · blocks sign-off`}
+        </StatusChip>
+        <Link
+          href={`${detailPath}?view=questions`}
+          className="ml-auto inline-flex min-h-[28px] items-center font-mono text-[0.7rem] font-semibold text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+        >
+          Resolve on Questions screen
+        </Link>
+      </div>
+
+      {detail.questions.length === 0 && detail.assumptions.length === 0 ? (
+        <p className="m-0 px-md py-lg font-mono text-[0.72rem] text-text-tertiary">
+          No questions or assumptions recorded for this spec.
+        </p>
+      ) : (
+        <div>
+          {detail.questions.map((question) => {
+            const status = reviewQuestionStatus[question.status];
+            return (
+              <div
+                key={question.id}
+                className="flex items-start gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm max-768:flex-wrap"
+              >
+                <span className="w-[34px] shrink-0 font-mono text-[0.72rem] font-bold text-cyan-dim">
+                  {question.handle}
+                </span>
+                <span className="min-w-0 grow font-mono text-[0.76rem] leading-relaxed text-text-secondary">
+                  {question.text}
+                </span>
+                <StatusChip tone={status.tone}>{status.label}</StatusChip>
+              </div>
+            );
+          })}
+          {detail.assumptions.map((assumption) => {
+            const status = reviewAssumptionStatus[assumption.disposition];
+            return (
+              <div
+                key={assumption.id}
+                className="flex items-start gap-sm border-x-0 border-t-0 border-b border-solid border-border-dim px-md py-sm max-768:flex-wrap"
+              >
+                <span className="w-[34px] shrink-0 font-mono text-[0.72rem] font-bold text-cyan-dim">
+                  {assumption.handle}
+                </span>
+                <span className="min-w-0 grow font-mono text-[0.76rem] leading-relaxed text-text-secondary">
+                  {assumption.text}
+                </span>
+                <StatusChip tone={status.tone}>{status.label}</StatusChip>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function reviewAttentionCount(detail: SpecDetailView): number {
+  if (detail.spec.abandonedAt !== null) return 0;
+  if (detail.currentRevision?.revision.state !== "proposed") return 0;
+  const readiness = reviewReadiness(detail);
+  return (
+    (readiness.combined ? 0 : readiness.total - readiness.approved) +
+    readiness.blockingThreadCount +
+    readiness.rejectedAssumptionCount +
+    readiness.openQuestionCount +
+    readiness.undisposedAssumptionCount
+  );
+}
+
 function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
   const snapshot = detail.currentRevision;
   if (snapshot === null) {
@@ -810,6 +1055,8 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
       combined: false,
       blockingThreadCount: 0,
       rejectedAssumptionCount: 0,
+      openQuestionCount: 0,
+      undisposedAssumptionCount: 0,
       ready: false,
     };
   }
@@ -885,6 +1132,12 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
       (snapshot.revision.proposedAt === null ||
         assumption.createdAt <= snapshot.revision.proposedAt),
   ).length;
+  const openQuestionCount = detail.questions.filter(
+    (question) => question.status === "open",
+  ).length;
+  const undisposedAssumptionCount = detail.assumptions.filter(
+    (assumption) => assumption.disposition === "proposed",
+  ).length;
   const approvalsReady = approved === subjects.length;
 
   return {
@@ -894,10 +1147,14 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     combined,
     blockingThreadCount,
     rejectedAssumptionCount,
+    openQuestionCount,
+    undisposedAssumptionCount,
     ready:
       approvalsReady &&
       blockingThreadCount === 0 &&
-      rejectedAssumptionCount === 0,
+      rejectedAssumptionCount === 0 &&
+      openQuestionCount === 0 &&
+      undisposedAssumptionCount === 0,
   };
 }
 
@@ -915,6 +1172,16 @@ function readinessBlockerSummary(readiness: ReviewReadiness): string {
       ? []
       : [
           `${readiness.rejectedAssumptionCount} rejected cited ${pluralize(readiness.rejectedAssumptionCount, "assumption")}`,
+        ]),
+    ...(readiness.openQuestionCount === 0
+      ? []
+      : [
+          `${readiness.openQuestionCount} open ${pluralize(readiness.openQuestionCount, "question")}`,
+        ]),
+    ...(readiness.undisposedAssumptionCount === 0
+      ? []
+      : [
+          `${readiness.undisposedAssumptionCount} undisposed ${pluralize(readiness.undisposedAssumptionCount, "assumption")}`,
         ]),
   ];
   return `Sign-off blocked — ${blockers.join(" · ")}`;
@@ -1010,18 +1277,22 @@ function latestSubjectApproval(
 
 function ReviewChangeCard({
   change,
+  criteria,
   detail,
   projectName,
   baseSnapshot,
   currentSnapshot,
+  combinedApproval,
   onFeedback,
   onError,
 }: {
   change: SemanticChange;
+  criteria: RequirementCriterionReview[];
   detail: SpecDetailView;
   projectName: string;
   baseSnapshot: SpecRevisionSnapshot | null;
   currentSnapshot: SpecRevisionSnapshot;
+  combinedApproval: boolean;
   onFeedback(feedback: string | null): void;
   onError(error: string | null): void;
 }): React.JSX.Element {
@@ -1032,6 +1303,11 @@ function ReviewChangeCard({
   const current = viewForElement(currentSnapshot, change.elementId);
   const display = current ?? base;
   const handle = display?.handle ?? change.elementId;
+  const headlineBefore = reviewHeadline(base);
+  const headlineAfter = reviewHeadline(current);
+  const inlineDiff = formatInlineReviewDiff(headlineBefore, headlineAfter);
+  const expandedBody = current ?? base;
+  const showExpandedBody = shouldShowExpandedBody(expandedBody);
   const approvalTarget = approvalTargetFor(
     current ?? base,
     currentSnapshot,
@@ -1242,11 +1518,12 @@ function ReviewChangeCard({
             <button
               type="button"
               aria-label={change.summary}
-              className="group flex min-h-[32px] min-w-0 cursor-pointer items-center gap-sm border-0 bg-transparent p-0 text-left font-mono text-[0.78rem] text-text-primary hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:col-span-2 max-768:row-start-2 max-768:min-h-[44px]"
+              className="group flex min-h-[32px] min-w-0 cursor-pointer items-start gap-sm border-0 bg-transparent p-0 text-left font-mono text-[0.82rem] leading-relaxed text-text-primary hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:col-span-2 max-768:row-start-2 max-768:min-h-[44px]"
             >
-              <span className="min-w-0 grow truncate max-768:whitespace-normal">
-                {change.summary}
-              </span>
+              <InlineReviewDiff
+                segments={inlineDiff}
+                fallback={change.summary}
+              />
               <ChevronDownIcon
                 size={14}
                 className="shrink-0 text-text-tertiary transition-transform duration-150 group-data-[state=open]:rotate-180"
@@ -1273,7 +1550,14 @@ function ReviewChangeCard({
             >
               Comment
             </Button>
-            {approval?.validity === "valid" ? (
+            {combinedApproval ? (
+              <StatusChip
+                tone="neutral"
+                title="The combined sign-off is the approval act"
+              >
+                Covered by sign-off
+              </StatusChip>
+            ) : approval?.validity === "valid" ? (
               <Button
                 size="sm"
                 touch
@@ -1316,28 +1600,80 @@ function ReviewChangeCard({
             hidden={!expanded}
             className="border-x-0 border-t border-b-0 border-solid border-border-subtle data-[state=closed]:hidden"
           >
-            {change.change === "modified" ? (
-              <div className="grid grid-cols-2 gap-px bg-border-dim max-768:grid-cols-1">
-                <RevisionValue
-                  label={
-                    baseSnapshot === null
-                      ? "Empty baseline"
-                      : `Revision ${baseSnapshot.revision.number}`
-                  }
-                  body={base?.body ?? "Not present"}
-                />
-                <RevisionValue
-                  label={`Revision ${currentSnapshot.revision.number}`}
-                  body={current?.body ?? "Not present"}
-                />
-              </div>
-            ) : (
-              <div className="bg-bg-base px-md py-sm">
-                <CompactMarkdown
-                  content={
-                    (current ?? base)?.body ?? "Element content unavailable"
-                  }
-                />
+            {showExpandedBody && expandedBody !== null && (
+              <RevisionValue
+                label={
+                  current === null && baseSnapshot !== null
+                    ? `Revision ${baseSnapshot.revision.number}`
+                    : `Revision ${currentSnapshot.revision.number}`
+                }
+                body={expandedBody.body}
+              />
+            )}
+            {criteria.length > 0 && (
+              <div className="border-x-0 border-t border-b-0 border-solid border-border-dim bg-bg-base px-lg py-md max-768:px-md">
+                <p className="mt-0 mb-sm font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                  Acceptance criteria — approved together with {handle}
+                </p>
+                <div className="grid gap-sm">
+                  {criteria.map((criterion) => {
+                    const criterionDisplay =
+                      criterion.current ?? criterion.base;
+                    if (criterionDisplay === null) return null;
+                    const criterionThreads = groupThreads(detail).filter(
+                      (thread) =>
+                        thread.comments[0]?.element_id === criterion.elementId,
+                    );
+                    return (
+                      <div
+                        key={criterion.elementId}
+                        id={reviewChangeTargetId(criterion.elementId)}
+                        data-testid={`review-criterion-${criterion.elementId}`}
+                        tabIndex={-1}
+                        className="rounded-sm focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                      >
+                        <div
+                          className={cn(
+                            "flex items-start gap-sm border-t-0 border-r-0 border-b-0 border-l-2 border-solid py-xs pr-0 pl-md max-768:flex-wrap",
+                            criterionRailClass[criterion.change],
+                          )}
+                        >
+                          <Link
+                            href={criterionDeepLink(
+                              projectName,
+                              detail.spec.slug,
+                              criterion,
+                              criterionDisplay.handle,
+                            )}
+                            className="inline-flex min-h-[28px] shrink-0 items-center font-mono text-[0.72rem] font-bold text-cyan-dim no-underline hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]"
+                          >
+                            {criterionDisplay.handle}
+                          </Link>
+                          <InlineReviewDiff
+                            segments={formatInlineReviewDiff(
+                              reviewHeadline(criterion.base),
+                              reviewHeadline(criterion.current),
+                            )}
+                            fallback={criterionDisplay.body}
+                          />
+                          <StatusChip
+                            tone={criterionTone[criterion.change]}
+                            layoutClassName="ml-auto"
+                          >
+                            {capitalize(criterion.change)}
+                          </StatusChip>
+                        </div>
+                        {criterionThreads.length > 0 && (
+                          <ReviewThreads
+                            threads={criterionThreads}
+                            detail={detail}
+                            currentSnapshot={currentSnapshot}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
@@ -1386,6 +1722,67 @@ function ReviewChangeCard({
       </article>
     </Collapsible>
   );
+}
+
+function InlineReviewDiff({
+  segments,
+  fallback,
+}: {
+  segments: InlineReviewDiffSegment[];
+  fallback: string;
+}): React.JSX.Element {
+  return (
+    <span className="min-w-0 grow [overflow-wrap:anywhere] whitespace-pre-wrap">
+      {segments.length === 0
+        ? fallback
+        : segments.map((segment, index) => {
+            if (segment.kind === "added") {
+              return (
+                <ins
+                  key={`${segment.kind}-${index}`}
+                  className="rounded-sm bg-green-glow text-green no-underline"
+                >
+                  {segment.text}
+                </ins>
+              );
+            }
+            if (segment.kind === "removed") {
+              return (
+                <del
+                  key={`${segment.kind}-${index}`}
+                  className="rounded-sm bg-red-glow text-red-text line-through"
+                >
+                  {segment.text}
+                </del>
+              );
+            }
+            return <span key={`${segment.kind}-${index}`}>{segment.text}</span>;
+          })}
+    </span>
+  );
+}
+
+function reviewHeadline(view: ReviewElementView | null): string | null {
+  if (view === null) return null;
+  const payload = view.entry.version.payload;
+  switch (payload.kind) {
+    case "section":
+      return payload.body;
+    case "requirement":
+      return payload.statement;
+    case "criterion":
+      return payload.text;
+    case "decision":
+      return payload.title;
+    case "task":
+      return payload.title;
+  }
+}
+
+function shouldShowExpandedBody(view: ReviewElementView | null): boolean {
+  if (view === null) return false;
+  if (view.body !== reviewHeadline(view)) return true;
+  return /(\*\*|__|`|\[[^\]]+\]\(|^#{1,6}\s|^\s*[-*+]\s)/m.test(view.body);
 }
 
 function RevisionValue({
@@ -1665,7 +2062,7 @@ function changeDeepLink(
   current: ReviewElementView | null,
   handle: string,
 ): string {
-  const detailPath = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}`;
+  const detailPath = detailPathFor(projectName, slug);
   if (
     change.change === "removed" ||
     current?.entry.version.payload.kind === "section"
@@ -1673,6 +2070,22 @@ function changeDeepLink(
     return `${detailPath}?view=review&change=${encodeURIComponent(change.elementId)}`;
   }
   return `${detailPath}?el=${encodeURIComponent(handle)}`;
+}
+
+function detailPathFor(projectName: string, slug: string): string {
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}`;
+}
+
+function criterionDeepLink(
+  projectName: string,
+  slug: string,
+  criterion: RequirementCriterionReview,
+  handle: string,
+): string {
+  const detailPath = detailPathFor(projectName, slug);
+  return criterion.change === "removed"
+    ? `${detailPath}?view=review&change=${encodeURIComponent(criterion.elementId)}`
+    : `${detailPath}?el=${encodeURIComponent(handle)}`;
 }
 
 function reviewChangeTargetId(elementId: string): string {

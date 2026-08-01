@@ -1,9 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Each CC worktree has its own lockfile. Pinning the root prevents Next.js
+  // from selecting the parent checkout when it discovers both lockfiles.
+  turbopack: {
+    root: process.cwd(),
+  },
   // Session worktrees live inside the project root; without this exclude,
-  // Turbopack's output tracing matches ~360k files under .worktrees/ via the
-  // dynamic path.join/existsSync patterns in sessions/workflow-graph/logging.
+  // dynamic filesystem tracing walks the nested worktree tree.
   outputFileTracingExcludes: {
     "*": ["./.worktrees/**"],
   },

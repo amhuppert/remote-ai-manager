@@ -5,13 +5,6 @@ import { useState } from "react";
 import { CopyReferenceControl } from "@/components/references/SpecRefChips";
 import { Button } from "@/components/ui/Button";
 import { FormGroup, FormInput, FormLabel } from "@/components/ui/FormField";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/Select";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { buildSpecReadCommand } from "@/lib/prompt-editor/spec-reference-contract";
@@ -27,6 +20,9 @@ import type {
   ActorProvenance,
   SpecAssumptionDisposition,
 } from "@/lib/specs/schemas";
+import { cn } from "@/lib/ui/cn";
+
+import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-questions");
 
@@ -65,6 +61,15 @@ const dispositionPresentation: Record<
   deferred: { label: "Deferred", tone: "neutral" },
 };
 
+const dispositionChoiceClass: Record<AssumptionDispositionChoice, string> = {
+  confirmed:
+    "border-green-dim text-green hover:border-green hover:bg-green-glow aria-pressed:border-green aria-pressed:bg-green-glow",
+  rejected:
+    "border-red-dim text-red hover:border-red hover:bg-red-glow aria-pressed:border-red aria-pressed:bg-red-glow",
+  deferred:
+    "border-border-default text-text-tertiary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary aria-pressed:border-border-strong aria-pressed:bg-bg-hover aria-pressed:text-text-primary",
+};
+
 function provenanceLabel(provenance: ActorProvenance | null): string | null {
   if (provenance === null) return null;
   return provenance.kind === "agent" ? "Agent" : "Operator";
@@ -81,6 +86,7 @@ export function SpecQuestionsAssumptions({
   error,
   onAnswerQuestion,
   onDisposeAssumption,
+  readOnly = false,
 }: {
   questions: SpecQuestionView[];
   assumptions: SpecAssumptionView[];
@@ -92,6 +98,7 @@ export function SpecQuestionsAssumptions({
   error: string | null;
   onAnswerQuestion(input: AnswerQuestionPanelInput): void;
   onDisposeAssumption(input: DisposeAssumptionPanelInput): void;
+  readOnly?: boolean;
 }): React.JSX.Element {
   return (
     <div className="grid gap-lg">
@@ -132,6 +139,7 @@ export function SpecQuestionsAssumptions({
                 elementHandlesById={elementHandlesById}
                 pendingAction={pendingAction}
                 onAnswerQuestion={onAnswerQuestion}
+                readOnly={readOnly}
               />
             ))
           )}
@@ -166,6 +174,7 @@ export function SpecQuestionsAssumptions({
                 elementHandlesById={elementHandlesById}
                 pendingAction={pendingAction}
                 onDisposeAssumption={onDisposeAssumption}
+                readOnly={readOnly}
               />
             ))
           )}
@@ -203,6 +212,7 @@ function QuestionCard({
   elementHandlesById,
   pendingAction,
   onAnswerQuestion,
+  readOnly,
 }: {
   question: SpecQuestionView;
   projectName: string;
@@ -211,6 +221,7 @@ function QuestionCard({
   elementHandlesById: ReadonlyMap<string, string>;
   pendingAction: QaPendingAction;
   onAnswerQuestion(input: AnswerQuestionPanelInput): void;
+  readOnly: boolean;
 }): React.JSX.Element {
   const [answer, setAnswer] = useState("");
   const status = questionStatusPresentation[question.status];
@@ -240,7 +251,7 @@ function QuestionCard({
               </span>
             )}
           </div>
-          <p className="mt-xs mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
+          <p className="mt-xs mb-0 text-[0.875rem] leading-[1.65] text-text-secondary">
             {question.text}
           </p>
         </div>
@@ -266,10 +277,14 @@ function QuestionCard({
           <span className="font-mono text-[0.64rem] tracking-[0.06em] text-text-tertiary uppercase">
             Answer
           </span>
-          <p className="mt-xs mb-0 text-[0.76rem] leading-relaxed text-text-primary">
+          <p className="mt-xs mb-0 text-[0.875rem] leading-[1.65] text-text-primary">
             {question.answer}
           </p>
         </div>
+      ) : readOnly ? (
+        <p className="mt-md mb-0 rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm text-[0.8125rem] leading-relaxed text-text-secondary">
+          No answer was recorded before this spec was abandoned.
+        </p>
       ) : (
         <div className="mt-md grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm max-768:grid-cols-1">
           <FormGroup layoutClassName="mb-0">
@@ -312,6 +327,7 @@ function AssumptionCard({
   elementHandlesById,
   pendingAction,
   onDisposeAssumption,
+  readOnly,
 }: {
   assumption: SpecAssumptionView;
   projectName: string;
@@ -320,6 +336,7 @@ function AssumptionCard({
   elementHandlesById: ReadonlyMap<string, string>;
   pendingAction: QaPendingAction;
   onDisposeAssumption(input: DisposeAssumptionPanelInput): void;
+  readOnly: boolean;
 }): React.JSX.Element {
   const [selectedDisposition, setSelectedDisposition] = useState<
     "" | AssumptionDispositionChoice
@@ -354,7 +371,7 @@ function AssumptionCard({
               </span>
             )}
           </div>
-          <p className="mt-xs mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
+          <p className="mt-xs mb-0 text-[0.875rem] leading-[1.65] text-text-secondary">
             {assumption.text}
           </p>
         </div>
@@ -375,44 +392,53 @@ function AssumptionCard({
         />
       </div>
 
-      <div className="mt-md grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm max-768:grid-cols-1">
-        <FormGroup layoutClassName="mb-0">
-          <FormLabel>Disposition</FormLabel>
-          <Select
-            value={selectedDisposition}
-            onValueChange={(value) =>
-              setSelectedDisposition(value as AssumptionDispositionChoice)
-            }
+      {!readOnly && (
+        <div className="mt-md grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm max-768:grid-cols-1">
+          <fieldset className="m-0 border-0 p-0">
+            <legend className="mb-sm font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+              Disposition
+            </legend>
+            <div className="flex flex-wrap gap-xs">
+              {(
+                [
+                  ["confirmed", "Confirm"],
+                  ["rejected", "Reject"],
+                  ["deferred", "Defer"],
+                ] as const
+              ).map(([choice, label]) => (
+                <button
+                  key={choice}
+                  type="button"
+                  aria-label={`${label} ${assumption.handle}`}
+                  aria-pressed={selectedDisposition === choice}
+                  onClick={() => setSelectedDisposition(choice)}
+                  className={cn(
+                    "min-h-[32px] cursor-pointer rounded-sm border border-solid bg-transparent px-md font-mono text-[0.7rem] font-semibold transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px]",
+                    dispositionChoiceClass[choice],
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          <Button
+            size="sm"
+            loading={pendingAction === "dispose-assumption"}
+            disabled={!canSave}
+            aria-label={`Save disposition for ${assumption.handle}`}
+            onClick={() => {
+              if (selectedDisposition === "") return;
+              onDisposeAssumption({
+                assumptionId: assumption.id,
+                disposition: selectedDisposition,
+              });
+            }}
           >
-            <SelectTrigger
-              aria-label={`Disposition for ${assumption.handle}`}
-              layoutClassName="w-full"
-            >
-              <SelectValue placeholder="Awaiting human disposition" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="confirmed">Confirmed</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-              <SelectItem value="deferred">Deferred</SelectItem>
-            </SelectContent>
-          </Select>
-        </FormGroup>
-        <Button
-          size="sm"
-          loading={pendingAction === "dispose-assumption"}
-          disabled={!canSave}
-          aria-label={`Save disposition for ${assumption.handle}`}
-          onClick={() => {
-            if (selectedDisposition === "") return;
-            onDisposeAssumption({
-              assumptionId: assumption.id,
-              disposition: selectedDisposition,
-            });
-          }}
-        >
-          Save disposition
-        </Button>
-      </div>
+            Save disposition
+          </Button>
+        </div>
+      )}
     </article>
   );
 }
@@ -514,22 +540,31 @@ export default function SpecQuestionsAssumptionsPanel({
     ...detail.revisions.map((revision) => revision.number),
   );
 
+  const readOnly = detail.spec.abandonedAt !== null;
+
   return (
-    <SpecQuestionsAssumptions
-      questions={detail.questions}
-      assumptions={detail.assumptions}
-      projectName={projectName}
-      slug={detail.spec.slug}
-      revision={revision}
-      elementHandlesById={elementHandleIndex(detail)}
-      pendingAction={pendingAction}
-      error={actionFailure?.message ?? null}
-      onAnswerQuestion={(input) =>
-        answerQuestion.mutate(input, mutationCallbacks("answer-question"))
-      }
-      onDisposeAssumption={(input) =>
-        disposeAssumption.mutate(input, mutationCallbacks("dispose-assumption"))
-      }
-    />
+    <div className="grid gap-lg">
+      {readOnly && <SpecReadOnlyNotice reason={detail.spec.abandonedReason} />}
+      <SpecQuestionsAssumptions
+        questions={detail.questions}
+        assumptions={detail.assumptions}
+        projectName={projectName}
+        slug={detail.spec.slug}
+        revision={revision}
+        elementHandlesById={elementHandleIndex(detail)}
+        pendingAction={pendingAction}
+        error={actionFailure?.message ?? null}
+        onAnswerQuestion={(input) =>
+          answerQuestion.mutate(input, mutationCallbacks("answer-question"))
+        }
+        onDisposeAssumption={(input) =>
+          disposeAssumption.mutate(
+            input,
+            mutationCallbacks("dispose-assumption"),
+          )
+        }
+        readOnly={readOnly}
+      />
+    </div>
   );
 }

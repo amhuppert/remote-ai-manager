@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <style>
+    html, body { overflow: auto !important; height: auto !important; }
+    body { margin: 0; background: #06090f; color: #dce2f0; font-family: var(--font-body, "Manrope", sans-serif); }
+    a { color: #00e5ff; text-decoration: none; }
+    a:hover { color: #00b8cc; }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+    [data-annotate="on"] [data-cc-status="new"] { outline: 1px dashed rgba(0,230,118,0.55); outline-offset: -1px; position: relative; }
+    [data-annotate="on"] [data-cc-status="modified"] { outline: 1px dashed rgba(255,179,0,0.55); outline-offset: -1px; position: relative; }
+    [data-annotate="on"] [data-cc-status="existing"] { outline: 1px dashed rgba(0,229,255,0.25); outline-offset: -1px; position: relative; }
+    [data-annotate="on"] [data-cc-status]::before { content: attr(data-cc-status) " " attr(data-cc-component); position: absolute; top: -1px; right: -1px; z-index: 60; padding: 1px 5px; font-family: monospace; font-size: 9px; letter-spacing: 0.04em; background: #06090f; border: 1px solid rgba(115,134,153,0.5); color: #738699; pointer-events: none; }
+    [data-annotate="on"] [data-cc-status="new"]::before { color: #00e676; border-color: rgba(0,230,118,0.55); }
+    [data-annotate="on"] [data-cc-status="modified"]::before { color: #ffb300; border-color: rgba(255,179,0,0.55); }
+    [data-annotate="on"] [data-cc-status="existing"]::before { color: #00b8cc; border-color: rgba(0,229,255,0.3); }
+  </style>
+</helmet>
+<div data-annotate="{{ annotateAttr }}" style="min-height: 100vh; background: #06090f; color: #dce2f0; font-family: var(--font-body, 'Manrope', sans-serif)">
+
+  <!-- Prototype-only harness: lifecycle state switcher -->
+  <div data-cc-status="prototype-only" data-cc-component="LifecycleSwitcher" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #030509; border-bottom: 1px solid #1a2338; padding: 8px 16px">
+    <span style="font-family: var(--font-mono, monospace); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #738699">Prototype · lifecycle state</span>
+    <div style="display: flex; flex-wrap: wrap; gap: 4px">
+      <sc-for list="{{ lcStates }}" as="lcs" hint-placeholder-count="9">
+        <button onClick="{{ lcs.onClick }}" style="cursor: pointer; height: 24px; border-radius: 4px; border: 1px solid {{ lcs.border }}; background: {{ lcs.bg }}; color: {{ lcs.color }}; padding: 0 9px; font-family: var(--font-mono, monospace); font-size: 10.5px">{{ lcs.label }}</button>
+      </sc-for>
+    </div>
+    <span style="margin-left: auto; font-family: var(--font-mono, monospace); font-size: 10px; color: #4a5a6e">annotations: data-cc-status = new / modified / existing — toggle overlay in Tweaks</span>
+  </div>
+
+  <!-- Topbar (existing, breadcrumb unchanged) -->
+  <header data-cc-status="existing" data-cc-component="Topbar" data-cc-source="src/components/Topbar.tsx" style="display: flex; height: 48px; align-items: center; justify-content: space-between; border-bottom: 1px solid #1a2338; background: rgba(6,9,15,0.75); padding: 0 16px; box-sizing: border-box">
+    <div style="display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1">
+      <span style="flex-shrink: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em; color: #00e5ff; text-shadow: 0 0 20px rgba(0,229,255,0.6)">CC</span>
+      <span style="flex-shrink: 0; height: 20px; width: 1px; background: #243048"></span>
+      <nav style="display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.8rem; color: #7b899f">
+        <span style="flex-shrink: 0">projects</span><span style="color: #738699">/</span>
+        <span style="flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px">command-center <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#738699" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg></span><span style="color: #738699">/</span>
+        <span style="flex-shrink: 0">specs</span><span style="color: #738699">/</span>
+        <span style="color: #dce2f0; min-width: 0; overflow: hidden; text-overflow: ellipsis">context-structured-output</span>
+      </nav>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; flex-shrink: 0">
+      <sc-if value="{{ needsYouShow }}" hint-placeholder-val="{{ true }}">
+        <span style="display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; background: rgba(255,179,0,0.15); border: 1px solid #cc8f00; padding: 4px 10px; font-family: var(--font-mono, monospace); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #ffb300"><span style="height: 6px; width: 6px; border-radius: 99px; background: #ffb300"></span>{{ needsYouLabel }}</span>
+      </sc-if>
+      <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #00e5ff; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #dce2f0">Specs</span>
+      <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #7b899f">Tickets</span>
+      <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #7b899f">Templates</span>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#7b899f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </div>
+  </header>
+
+  <!-- NEW: Phase stepper — contextual workflow position, on every spec screen -->
+  <div data-cc-status="new" data-cc-component="SpecPhaseStepper" data-cc-note="New component. Renders projectSpecPhase() (src/lib/specs/phase.ts) as a persistent workflow stepper with prev/next context." style="border-bottom: 1px solid #141d2e; background: #0b1019; padding: 12px 24px 10px">
+    <div style="display: flex; align-items: stretch">
+        <sc-for list="{{ steps }}" as="st" hint-placeholder-count="5">
+          <div style="flex: 1; min-width: 0; position: relative; margin-left: {{ st.chevMl }}; clip-path: {{ st.chevClip }}; background: {{ st.border }}; padding: 1px">
+          <div style="display: flex; flex-direction: column; justify-content: center; background: {{ st.chevBg }}; clip-path: {{ st.chevClip }}; padding: 7px 20px 7px {{ st.chevPl }}; box-sizing: border-box">
+            <span style="display: flex; align-items: center; gap: 7px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: {{ st.color }}">{{ st.icon }}<span>{{ st.label }}</span></span>
+            <span style="font-family: var(--font-mono, monospace); font-size: 0.64rem; color: {{ st.subColor }}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{ st.sub }}</span>
+          </div>
+          </div>
+        </sc-for>
+      </div>
+    <p style="margin: 8px 0 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #7b899f">{{ stepContext }}</p>
+  </div>
+
+  <!-- Spec header + primary nav (modified: nav exposes every surface, review/questions carry badges) -->
+  <div data-cc-status="modified" data-cc-component="SpecDetailPage header" data-cc-source="src/features/spec-studio/SpecDetailPage.tsx SpecDetailContent" style="padding: 12px 24px 0; background: #0b1019">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px">
+      <div style="min-width: 0">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+          <h1 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.25rem; line-height: 1; font-weight: 800; color: #dce2f0">Structured output for execution contexts</h1>
+          <span style="display: inline-flex; align-items: center; gap: 5px; border-radius: 4px; background: rgba(0,229,255,0.15); padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #00b8cc">context-structured-output <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#00b8cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></span>
+          <span style="display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{ phaseColor }}"><span style="height: 6px; width: 6px; border-radius: 99px; background: {{ phaseColor }}; animation: pulse-dot 1.6s infinite"></span>{{ phaseLabel }}</span>
+        </div>
+        <p style="margin: 5px 0 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #738699">{{ revLine }}</p>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px">
+        <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #738699; cursor: pointer">Export</span>
+        <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #738699; cursor: pointer">Verify</span>
+        <sc-if value="{{ ctaShow }}" hint-placeholder-val="{{ true }}">
+          <button onClick="{{ onCta }}" style="cursor: pointer; display: inline-flex; height: 30px; align-items: center; border-radius: 4px; border: 1px solid {{ ctaBorder }}; background: {{ ctaBg }}; padding: 0 14px; font-family: var(--font-mono, monospace); font-size: 0.74rem; font-weight: 700; color: {{ ctaColor }}">{{ ctaLabel }}</button>
+        </sc-if>
+      </div>
+    </div>
+    <nav data-cc-status="modified" data-cc-note="Every surface is reachable here. Gate policy and Execution are separate destinations (formerly bundled in Controls). Badges surface pending work." style="display: flex; align-items: center; gap: 18px; padding-top: 10px">
+      <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="7">
+        <button onClick="{{ tab.onClick }}" style="cursor: pointer; display: inline-flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid {{ tab.underline }}; background: transparent; padding: 4px 0 7px; font-family: var(--font-mono, monospace); font-size: 0.74rem; font-weight: 600; color: {{ tab.color }}">
+          {{ tab.label }}
+          <sc-if value="{{ tab.badge }}" hint-placeholder-val="{{ false }}">
+            <span style="display: inline-flex; min-width: 15px; height: 15px; align-items: center; justify-content: center; border-radius: 99px; background: {{ tab.badgeBg }}; padding: 0 4px; font-size: 0.6rem; font-weight: 700; color: {{ tab.badgeColor }}">{{ tab.badge }}</span>
+          </sc-if>
+        </button>
+      </sc-for>
+    </nav>
+  </div>
+
+  <!-- Toast after sign-off / start -->
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div data-cc-status="new" data-cc-component="SpecActionToast" data-cc-note="Replaces the blank 'Review mode unavailable' screen after sign-off: the app navigates back to Overview and confirms here." style="display: flex; align-items: center; gap: 10px; margin: 12px 24px 0; border-radius: 6px; border: 1px solid #00b85c; background: rgba(0,230,118,0.15); padding: 8px 14px">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#00e676" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M20 6L9 17l-5-5"></path></svg>
+      <span style="flex: 1; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #00e676">{{ toast }}</span>
+      <button onClick="{{ onDismissToast }}" style="cursor: pointer; display: inline-flex; align-items: center; border: 0; background: transparent; padding: 2px"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#00b85c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg></button>
+    </div>
+  </sc-if>
+
+  <!-- ==================== OVERVIEW ==================== -->
+  <sc-if value="{{ isOverview }}" hint-placeholder-val="{{ true }}">
+    <div style="padding: 12px 24px 64px; background: #0b1019">
+      <!-- status banner: full-width of content, links to the blocking surface -->
+      <section data-cc-status="modified" data-cc-component="SpecRevisionBanner" data-cc-source="src/features/spec-studio/SpecDetailPage.tsx SpecRevisionBanner" style="position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825; padding: 10px 16px; font-family: var(--font-mono, monospace)">
+        <span style="position: absolute; top: 0; right: 0; left: 0; height: 2px; opacity: 0.8; background: linear-gradient(90deg, {{ bannerAccent }}, transparent 65%)"></span>
+        <span style="height: 7px; width: 7px; flex-shrink: 0; border-radius: 99px; background: {{ bannerAccent }}; box-shadow: 0 0 8px {{ bannerAccent }}; animation: pulse-dot 1.6s infinite"></span>
+        <span style="flex-shrink: 0; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: {{ bannerAccent }}">{{ bannerTitle }}</span>
+        <span style="min-width: 220px; flex: 1; font-size: 0.76rem; color: #7b899f">{{ bannerDesc }}</span>
+        <sc-if value="{{ bannerMetaShow }}" hint-placeholder-val="{{ true }}">
+          <button onClick="{{ onBannerMeta }}" style="cursor: pointer; flex-shrink: 0; border: 0; background: transparent; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0; text-decoration: underline; text-underline-offset: 3px">{{ bannerMeta }}</button>
+        </sc-if>
+      </section>
+
+        <div style="display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: start; gap: 24px; margin-top: 16px">
+          <section data-cc-status="modified" data-cc-component="Spec narrative" data-cc-note="Body text raised to 14px (was 0.82rem)" style="min-width: 0; border-radius: 10px; border: 1px solid #1a2338; background: #0b1019; padding: 0 18px">
+            <sc-for list="{{ sections }}" as="sec" hint-placeholder-count="3">
+              <section style="border-bottom: 1px solid #141d2e; padding: 16px 0">
+                <div style="display: flex; align-items: center; gap: 8px">
+                  <h2 style="margin: 0; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">{{ sec.title }}</h2>
+                  <span style="height: 1px; flex: 1; background: #141d2e"></span>
+                </div>
+                <div style="margin-top: 8px; display: grid; gap: 10px">
+                  <sc-for list="{{ sec.paras }}" as="para" hint-placeholder-count="2">
+                    <p style="margin: 0; font-size: 14px; line-height: 1.65; color: #c6cede; text-wrap: pretty">{{ para }}</p>
+                  </sc-for>
+                </div>
+              </section>
+            </sc-for>
+            <sc-if value="{{ sectionsEmpty }}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 24px 0">
+                <p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #738699">Spec initialized — no prose authored yet. The agent proposes the requirements contract next; you'll review it before design begins.</p>
+              </div>
+            </sc-if>
+          </section>
+          <aside data-cc-status="modified" data-cc-component="SpecStructureRail" data-cc-source="src/features/spec-studio/SpecDetailPage.tsx SpecStructureRail" data-cc-note="Scrollable (max-height + overflow-y). Items wrap to 2 lines instead of truncating. Click expands the item inline (full text + acceptance criteria / answer). Group headers link to dedicated surfaces." style="position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 90px); overflow-y: auto; padding-right: 2px">
+            <sc-for list="{{ railGroups }}" as="grp" hint-placeholder-count="4">
+              <section style="border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 8px 12px">
+                  <h3 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7b899f">{{ grp.label }}</h3>
+                  <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #738699">{{ grp.count }}</span>
+                  <sc-if value="{{ grp.toggleAllShow }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ grp.onToggleAll }}" style="cursor: pointer; margin-left: auto; border: 0; background: transparent; font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #7b899f" style-hover="color: #dce2f0">{{ grp.toggleAllLabel }}</button>
+                  </sc-if>
+                  <sc-if value="{{ grp.onOpenAll }}" hint-placeholder-val="{{ false }}">
+                    <button onClick="{{ grp.onOpenAll }}" style="cursor: pointer; border: 0; background: transparent; font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #00b8cc">open screen <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#00b8cc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px"><path d="M7 17L17 7"></path><path d="M7 7h10v10"></path></svg></button>
+                  </sc-if>
+                </div>
+                <sc-if value="{{ grp.empty }}" hint-placeholder-val="{{ false }}">
+                  <p style="margin: 8px; border-radius: 4px; border: 1px dashed #141d2e; padding: 8px; font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #738699">{{ grp.emptyLabel }}</p>
+                </sc-if>
+                <div>
+                  <sc-for list="{{ grp.items }}" as="item" hint-placeholder-count="3">
+                    <div style="border-bottom: 1px solid #141d2e">
+                      <button onClick="{{ item.onOpen }}" title="{{ item.tip }}" style="cursor: pointer; display: flex; width: 100%; box-sizing: border-box; align-items: flex-start; gap: 8px; border: 0; background: transparent; padding: 7px 12px; text-align: left" style-hover="background: #172033">
+                        <span style="width: 34px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 700; color: #00b8cc">{{ item.handle }}</span>
+                        <span style="min-width: 0; flex: 1; font-size: 13px; line-height: 1.5; color: #b9c2d4; display: -webkit-box; -webkit-line-clamp: {{ item.clamp }}; -webkit-box-orient: vertical; overflow: hidden">{{ item.text }}</span>
+                        <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: {{ item.statusColor }}">{{ item.status }}</span>
+                        <span style="flex-shrink: 0; margin-top: 2px">{{ item.chev }}</span>
+                      </button>
+                      <sc-if value="{{ item.expanded }}" hint-placeholder-val="{{ false }}">
+                        <div style="display: grid; gap: 6px; padding: 0 12px 10px 54px">
+                          <sc-if value="{{ item.answer }}" hint-placeholder-val="{{ false }}">
+                            <p style="margin: 0; font-size: 12.5px; line-height: 1.55; color: #9fb0c9"><span style="font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #00e676">Answered · </span>{{ item.answer }}</p>
+                          </sc-if>
+                          <sc-if value="{{ item.hasCriteria }}" hint-placeholder-val="{{ false }}">
+                            <div style="display: grid; gap: 6px">
+                              <sc-for list="{{ item.criteria }}" as="cr" hint-placeholder-count="2">
+                                <div style="display: flex; gap: 8px; border-left: 2px solid #243048; padding-left: 10px">
+                                  <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 700; color: #7b899f; margin-top: 2px">{{ cr.handle }}</span>
+                                  <span style="font-size: 12.5px; line-height: 1.55; color: #9fb0c9">{{ cr.text }}</span>
+                                </div>
+                              </sc-for>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </section>
+            </sc-for>
+          </aside>
+        </div>
+
+          </div>
+  </sc-if>
+
+  <!-- ==================== REVIEW ==================== -->
+  <sc-if value="{{ isReview }}" hint-placeholder-val="{{ false }}">
+    <div data-cc-status="modified" data-cc-component="SpecReviewMode" data-cc-source="src/features/spec-studio/SpecReviewMode.tsx" data-cc-note="Full available width; AC grouped inside requirement cards; one approval per group; colorized semantic diff replaces Raw diff; questions/assumptions join sign-off readiness." style="padding: 14px 24px 96px; background: #0b1019">
+      <sc-if value="{{ reviewUnavailable }}" hint-placeholder-val="{{ false }}">
+        <div style="max-width: 640px; margin: 48px auto; text-align: center">
+          <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1rem; font-weight: 800; color: #dce2f0">Nothing awaits review</h2>
+          <p style="margin: 8px 0 16px; font-family: var(--font-mono, monospace); font-size: 0.76rem; color: #7b899f">{{ reviewUnavailableReason }}</p>
+          <button onClick="{{ goOverview }}" style="cursor: pointer; height: 30px; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 14px; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #dce2f0">Back to overview</button>
+        </div>
+      </sc-if>
+      <sc-if value="{{ reviewAvailable }}" hint-placeholder-val="{{ true }}">
+        <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+          <div style="min-width: 0">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+              <h1 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.1rem; font-weight: 800; color: #dce2f0">{{ reviewTitle }}</h1>
+              <span style="font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #738699">{{ reviewSub }}</span>
+            </div>
+          </div>
+          <div style="display: flex; flex-shrink: 0; align-items: center; gap: 8px">
+            <button onClick="{{ onApproveAll }}" disabled="{{ approveAllDisabled }}" style="cursor: pointer; display: inline-flex; height: 30px; align-items: center; border-radius: 4px; border: 1px solid {{ approveAllBorder }}; background: {{ approveAllBg }}; padding: 0 14px; font-family: var(--font-mono, monospace); font-size: 0.74rem; font-weight: 700; color: {{ approveAllColor }}; opacity: {{ approveAllOpacity }}">{{ approveAllLabel }}</button>
+            <span data-cc-status="modified" data-cc-note="'Request changes' kept; 'Approve all requirements' removed — 'Approve all remaining' is sufficient." style="display: inline-flex; height: 30px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0; cursor: pointer">Request changes</span>
+          </div>
+        </header>
+
+        <div style="display: flex; align-items: center; gap: 14px; padding: 10px 0 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #7b899f">
+          <span>{{ reviewSummary }}</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px"><span style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: rgba(0,230,118,0.35); border: 1px solid #00b85c"></span>added</span>
+          <span style="display: inline-flex; align-items: center; gap: 6px"><span style="display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: rgba(255,61,90,0.3); border: 1px solid #cc3148"></span>removed</span>
+          <span style="color: #738699">Approvals on unchanged elements carry forward quietly.</span>
+        </div>
+
+          <div style="display: grid; gap: 16px; margin-top: 14px">
+            <sc-for list="{{ reviewGroups }}" as="rg" hint-placeholder-count="2">
+              <section>
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
+                  <h2 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #dce2f0">{{ rg.label }}</h2>
+                  <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">{{ rg.meta }}</span>
+                  <span style="height: 1px; min-width: 0; flex: 1; background: #141d2e"></span>
+                </div>
+                <div style="display: grid; gap: 10px">
+                  <sc-for list="{{ rg.cards }}" as="card" hint-placeholder-count="3">
+                    <article style="border-radius: 8px; border: 1px solid {{ card.border }}; background: #111825; overflow: hidden">
+                      <div style="display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px">
+                        <span style="flex-shrink: 0; display: inline-flex; align-items: center; border-radius: 999px; background: {{ card.chipBg }}; border: 1px solid {{ card.chipBorder }}; padding: 2px 9px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; color: {{ card.chipColor }}; margin-top: 2px">{{ card.chip }}</span>
+                        <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 700; color: #00e5ff; margin-top: 1px">{{ card.handle }}</span>
+                        <button onClick="{{ card.onToggle }}" data-cc-status="modified" data-cc-note="Header IS the content (wraps fully) — no truncated duplicate summary, no 'Added requirement:' text prefix." style="cursor: pointer; min-width: 0; flex: 1; border: 0; background: transparent; padding: 0; text-align: left; font-size: 14px; line-height: 1.55; color: #dce2f0">
+                          <sc-for list="{{ card.segs }}" as="seg" hint-placeholder-count="1">
+                            <span style="background: {{ seg.bg }}; color: {{ seg.color }}; text-decoration: {{ seg.deco }}; border-radius: 2px">{{ seg.s }}</span>
+                          </sc-for>
+                        </button>
+                        <div style="flex-shrink: 0; display: flex; align-items: center; gap: 6px">
+                          <button onClick="{{ card.onComment }}" style="cursor: pointer; height: 26px; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #dce2f0">Comment</button>
+                          <sc-if value="{{ card.approvable }}" hint-placeholder-val="{{ true }}">
+                            <button onClick="{{ card.onApprove }}" style="cursor: pointer; height: 26px; border-radius: 4px; border: 1px solid {{ card.apprBorder }}; background: {{ card.apprBg }}; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: {{ card.apprColor }}">{{ card.apprLabel }}</button>
+                          </sc-if>
+                          <sc-if value="{{ card.signoffChip }}" hint-placeholder-val="{{ false }}">
+                            <span title="No independent approval gate — revision sign-off covers it" style="display: inline-flex; height: 26px; align-items: center; border-radius: 999px; border: 1px solid #243048; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; color: #738699">covered by sign-off</span>
+                          </sc-if>
+                          <button onClick="{{ card.onToggle }}" style="cursor: pointer; height: 26px; width: 26px; border-radius: 4px; border: 0; background: transparent; color: #738699; font-size: 11px">{{ card.chev }}</button>
+                        </div>
+                      </div>
+                      <sc-if value="{{ card.expanded }}" hint-placeholder-val="{{ true }}">
+                        <sc-if value="{{ card.body }}" hint-placeholder-val="{{ false }}">
+                          <div style="border-top: 1px solid #1a2338; background: #0b1019; padding: 12px 16px; font-size: 14px; line-height: 1.65; color: #b9c2d4">{{ card.body }}</div>
+                        </sc-if>
+                        <sc-if value="{{ card.hasCriteria }}" hint-placeholder-val="{{ true }}">
+                          <div data-cc-status="modified" data-cc-note="AC nested inside the requirement card; one approval covers the group. Separate per-AC approve buttons removed (approving any AC approved the whole group anyway)." style="border-top: 1px solid #1a2338; background: #0b1019; padding: 10px 16px 12px">
+                            <p style="margin: 0 0 6px; font-family: var(--font-mono, monospace); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Acceptance criteria — approved together with {{ card.handle }}</p>
+                            <div style="display: grid; gap: 6px">
+                              <sc-for list="{{ card.criteria }}" as="cr" hint-placeholder-count="2">
+                                <div style="display: flex; align-items: flex-start; gap: 10px; border-left: 2px solid {{ cr.rail }}; padding: 3px 0 3px 12px">
+                                  <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 700; color: #7b899f; margin-top: 2px">{{ cr.handle }}</span>
+                                  <span style="min-width: 0; flex: 1; font-size: 13.5px; line-height: 1.55; color: #b9c2d4">
+                                    <sc-for list="{{ cr.segs }}" as="seg" hint-placeholder-count="1">
+                                      <span style="background: {{ seg.bg }}; color: {{ seg.color }}; text-decoration: {{ seg.deco }}; border-radius: 2px">{{ seg.s }}</span>
+                                    </sc-for>
+                                  </span>
+                                  <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 600; text-transform: uppercase; color: {{ cr.chipColor }}">{{ cr.chip }}</span>
+                                </div>
+                              </sc-for>
+                            </div>
+                          </div>
+                        </sc-if>
+                        <sc-if value="{{ card.commentOpen }}" hint-placeholder-val="{{ false }}">
+                          <div style="border-top: 1px solid #141d2e; background: #0b1019; padding: 10px 16px">
+                            <textarea placeholder="Leave review context for {{ card.handle }}" style="box-sizing: border-box; width: 100%; min-height: 60px; resize: vertical; border-radius: 6px; border: 1px solid #243048; background: #111825; padding: 9px 12px; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #dce2f0"></textarea>
+                            <div style="display: flex; justify-content: flex-end; margin-top: 8px">
+                              <button onClick="{{ card.onComment }}" style="cursor: pointer; height: 26px; border-radius: 4px; background: #00e5ff; border: 0; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 700; color: #06090f">Record comment</button>
+                            </div>
+                          </div>
+                        </sc-if>
+                      </sc-if>
+                    </article>
+                  </sc-for>
+                </div>
+              </section>
+            </sc-for>
+          </div>
+
+        <!-- Q&A in review scope -->
+        <section data-cc-status="new" data-cc-component="ReviewQuestionsPanel" data-cc-note="Open questions & assumptions now participate in revision sign-off readiness." style="margin-top: 16px; border-radius: 8px; border: 1px solid #1a2338; background: #111825">
+          <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 8px 14px">
+            <h2 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #dce2f0">Questions &amp; assumptions in this revision</h2>
+            <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: {{ qaMetaColor }}">{{ qaMeta }}</span>
+            <button onClick="{{ goQuestions }}" style="cursor: pointer; margin-left: auto; border: 0; background: transparent; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #00b8cc">resolve on Questions screen <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#00b8cc" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px"><path d="M7 17L17 7"></path><path d="M7 7h10v10"></path></svg></button>
+          </div>
+          <div>
+            <sc-for list="{{ reviewQa }}" as="qa" hint-placeholder-count="4">
+              <div style="display: flex; align-items: flex-start; gap: 10px; border-bottom: 1px solid #141d2e; padding: 8px 14px">
+                <span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 700; color: #00b8cc">{{ qa.handle }}</span>
+                <span style="min-width: 0; flex: 1; font-size: 13.5px; line-height: 1.5; color: #b9c2d4">{{ qa.text }}</span>
+                <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: {{ qa.statusColor }}">{{ qa.status }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <!-- Sticky readiness footer -->
+        <footer data-cc-status="modified" data-cc-component="ReviewReadinessFooter" style="position: fixed; bottom: 0; left: 0; right: 0; z-index: 150; display: flex; align-items: center; gap: 16px; border-top: 1px solid #1a2338; background: #111825; padding: 12px 24px; box-shadow: 0 -12px 32px #06090f">
+          <span style="font-family: var(--font-mono, monospace); font-size: 0.8rem; font-weight: 700; color: #dce2f0">{{ readyCount }}</span>
+          <div style="height: 6px; width: 220px; border-radius: 99px; background: #172033; overflow: hidden"><div style="height: 100%; width: {{ readyPct }}; background: {{ readyBarColor }}; transition: width 0.25s"></div></div>
+          <sc-for list="{{ readyChips }}" as="chip" hint-placeholder-count="4">
+            <span style="display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; background: {{ chip.bg }}; border: 1px solid {{ chip.border }}; padding: 2px 9px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: {{ chip.color }}">{{ chip.label }}</span>
+          </sc-for>
+          <span style="flex: 1"></span>
+          <button onClick="{{ onOpenSignOff }}" disabled="{{ signOffDisabled }}" title="{{ signOffTitle }}" style="cursor: pointer; height: 32px; border-radius: 4px; border: 1px solid {{ soBorder }}; background: {{ soBg }}; padding: 0 16px; font-family: var(--font-mono, monospace); font-size: 0.76rem; font-weight: 700; color: {{ soColor }}; opacity: {{ soOpacity }}">{{ signOffLabel }}</button>
+        </footer>
+
+        <!-- Sign-off dialog -->
+        <sc-if value="{{ signOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center; background: rgba(3,5,9,0.72)">
+            <div style="width: 520px; max-width: 90vw; border-radius: 10px; border: 1px solid #243048; background: #111825; padding: 20px 22px; box-shadow: 0 12px 32px rgba(0,0,0,0.5)">
+              <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1rem; font-weight: 800; color: #dce2f0">{{ signOffLabel }}</h2>
+              <p style="margin: 8px 0 12px; font-size: 13.5px; line-height: 1.55; color: #7b899f">This explicit human act freezes the revision as the approved, immutable content of context-structured-output. Executions pin it; later changes require a new revision.</p>
+              <div style="display: grid; gap: 6px; border-radius: 6px; border: 1px solid #1a2338; background: #0b1019; padding: 10px 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #7b899f">
+                <sc-for list="{{ signChecklist }}" as="li" hint-placeholder-count="4">
+                  <span style="display: flex; align-items: center; gap: 8px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#00e676" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><path d="M20 6L9 17l-5-5"></path></svg><span>{{ li }}</span></span>
+                </sc-for>
+              </div>
+              <label style="display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; cursor: pointer; font-size: 13px; line-height: 1.5; color: #b9c2d4">
+                <input type="checkbox" checked="{{ signAck }}" onChange="{{ onToggleAck }}" style="margin-top: 2px; accent-color: #00e5ff">
+                I reviewed the semantic change list and approve this revision as a whole.
+              </label>
+              <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px">
+                <button onClick="{{ onCloseSignOff }}" style="cursor: pointer; height: 30px; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Cancel</button>
+                <button onClick="{{ onConfirmSignOff }}" disabled="{{ confirmDisabled }}" data-cc-status="modified" data-cc-note="After confirm the app navigates to Overview with a confirmation toast (was: blank 'Review mode unavailable')." style="cursor: pointer; height: 30px; border-radius: 4px; border: 0; background: #00e5ff; padding: 0 14px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 700; color: #06090f; opacity: {{ confirmOpacity }}">Sign off — freeze revision</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <!-- ==================== QUESTIONS & ASSUMPTIONS ==================== -->
+  <sc-if value="{{ isQuestions }}" hint-placeholder-val="{{ false }}">
+    <div data-cc-status="modified" data-cc-component="SpecQuestionsAssumptionsPanel" data-cc-source="src/features/spec-studio/SpecQuestionsAssumptions.tsx" data-cc-note="Now a first-class tab (was hidden behind ?view=questions deep links only). Full text, larger type, inline answer flow." style="padding: 16px 24px 64px; background: #0b1019; max-width: 1100px">
+      <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.05rem; font-weight: 800; color: #dce2f0">Questions &amp; assumptions</h2>
+      <p style="margin: 6px 0 0; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #7b899f">Open items block revision sign-off — resolve them here.</p>
+      <div style="display: grid; gap: 10px; margin-top: 16px">
+        <sc-for list="{{ questionCards }}" as="q" hint-placeholder-count="2">
+          <article style="border-radius: 8px; border: 1px solid {{ q.border }}; background: #111825; padding: 12px 16px">
+            <div style="display: flex; align-items: flex-start; gap: 10px">
+              <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 700; color: #00b8cc">{{ q.handle }}</span>
+              <p style="margin: 0; min-width: 0; flex: 1; font-size: 14px; line-height: 1.6; color: #dce2f0">{{ q.text }}</p>
+              <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: {{ q.statusColor }}">{{ q.status }}</span>
+            </div>
+            <sc-if value="{{ q.open }}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; gap: 8px; margin-top: 10px; padding-left: 34px">
+                <input type="text" placeholder="Record the human answer…" style="box-sizing: border-box; flex: 1; height: 32px; border-radius: 6px; border: 1px solid #243048; background: #0b1019; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #dce2f0">
+                <button onClick="{{ q.onAnswer }}" style="cursor: pointer; height: 32px; border-radius: 4px; border: 1px solid #00b85c; background: rgba(0,230,118,0.15); padding: 0 14px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #00e676">Record answer</button>
+              </div>
+            </sc-if>
+            <sc-if value="{{ q.answer }}" hint-placeholder-val="{{ false }}">
+              <p style="margin: 10px 0 0; padding-left: 34px; font-size: 13.5px; line-height: 1.55; color: #7b899f"><span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #00e676">Answered · </span>{{ q.answer }}</p>
+            </sc-if>
+          </article>
+        </sc-for>
+        <sc-for list="{{ assumptionCards }}" as="a" hint-placeholder-count="2">
+          <article style="border-radius: 8px; border: 1px solid {{ a.border }}; background: #111825; padding: 12px 16px">
+            <div style="display: flex; align-items: flex-start; gap: 10px">
+              <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 700; color: #00b8cc">{{ a.handle }}</span>
+              <p style="margin: 0; min-width: 0; flex: 1; font-size: 14px; line-height: 1.6; color: #dce2f0">{{ a.text }}</p>
+              <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: {{ a.statusColor }}">{{ a.status }}</span>
+            </div>
+            <sc-if value="{{ a.open }}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-left: 34px">
+                <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #738699">dispose:</span>
+                <button onClick="{{ a.onConfirm }}" style="cursor: pointer; height: 26px; border-radius: 4px; border: 1px solid #00b85c; background: transparent; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #00e676">confirm</button>
+                <button onClick="{{ a.onReject }}" style="cursor: pointer; height: 26px; border-radius: 4px; border: 1px solid #cc3148; background: transparent; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #ff3d5a">reject</button>
+                <button onClick="{{ a.onDefer }}" style="cursor: pointer; height: 26px; border-radius: 4px; border: 1px solid #243048; background: transparent; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #738699">defer</button>
+              </div>
+            </sc-if>
+          </article>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ==================== GATE POLICY (own screen) ==================== -->
+  <sc-if value="{{ isGate }}" hint-placeholder-val="{{ false }}">
+    <div data-cc-status="modified" data-cc-component="SpecGatePolicyPanel" data-cc-source="src/features/spec-studio/SpecControls.tsx (split out of Controls)" data-cc-note="Gate policy is its own destination, no longer bundled with Execution. Banner and content share one 900px column." style="padding: 16px 24px 64px; background: #0b1019">
+      <div style="max-width: 900px">
+        <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.05rem; font-weight: 800; color: #dce2f0">Gate policy</h2>
+        <p style="margin: 6px 0 0; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #7b899f">Preset: <span style="color: #dce2f0">Contract-bearing</span> — every authoring and delivery transition requires a human gate.</p>
+        <div style="margin-top: 14px; border-radius: 10px; border: 1px solid #1a2338; background: #111825; padding: 4px 16px">
+          <sc-for list="{{ dials }}" as="d" hint-placeholder-count="5">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #141d2e; padding: 12px 0">
+              <div>
+                <p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.8rem; font-weight: 600; color: #dce2f0">{{ d.label }}</p>
+                <p style="margin: 3px 0 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #7b899f">{{ d.desc }}</p>
+                <sc-if value="{{ d.note }}" hint-placeholder-val="{{ false }}">
+                  <p style="margin: 3px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">{{ d.note }}</p>
+                </sc-if>
+              </div>
+              <span style="display: inline-flex; align-items: center; border: 1px solid #243048; border-radius: 4px; overflow: hidden; flex-shrink: 0">
+                <sc-for list="{{ d.options }}" as="opt" hint-placeholder-count="3">
+                  <button onClick="{{ opt.onSelect }}" style="cursor: pointer; height: 26px; border: 0; background: {{ opt.bg }}; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; color: {{ opt.color }}">{{ opt.label }}</button>
+                </sc-for>
+              </span>
+            </div>
+          </sc-for>
+          <div style="padding: 12px 0 14px">
+            <div style="border-radius: 6px; border: 1px solid #141d2e; background: #0b1019; padding: 12px 16px">
+              <p style="margin: 0 0 8px; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Dial values</p>
+              <div style="display: grid; grid-template-columns: 80px 1fr; gap: 4px 16px; font-family: var(--font-mono, monospace); font-size: 0.72rem">
+                <span style="font-weight: 700; color: #dce2f0">Gate</span><span style="color: #7b899f">hard stop — human approval required</span>
+                <span style="font-weight: 700; color: #dce2f0">Notify</span><span style="color: #7b899f">agent proceeds; human notified; recorded as a policy admission</span>
+                <span style="font-weight: 700; color: #dce2f0">Off</span><span style="color: #7b899f">transition free — still recorded as a policy admission</span>
+              </div>
+              <p style="margin: 12px 0 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #ffb300">Floor: executions always pin revision and scope · evidence is always collected · Delivery is never Off · waivers are never grantable by policy</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ==================== EXECUTION (own screen) ==================== -->
+  <sc-if value="{{ isExec }}" hint-placeholder-val="{{ false }}">
+    <div data-cc-status="modified" data-cc-component="SpecExecutionPanel" data-cc-source="src/features/spec-studio/SpecControls.tsx (split out of Controls)" data-cc-note="Execution is its own destination. Start controls stay disabled with an explicit reason until the plan is approved; 'Approve definition & start' wired to the start mutation." style="padding: 16px 24px 64px; background: #0b1019">
+      <div style="max-width: 1000px">
+        <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.05rem; font-weight: 800; color: #dce2f0">Execution</h2>
+        <p style="margin: 6px 0 0; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #7b899f">The approved plan compiles to a graph workflow; scope, provenance, and merge criteria stay visible here.</p>
+
+        <sc-if value="{{ execLocked }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 14px; border-radius: 10px; border: 1px dashed #243048; background: #111825; padding: 18px 20px">
+            <div style="display: flex; align-items: center; gap: 10px">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#738699" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+              <h3 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 0.95rem; font-weight: 700; color: #7b899f">Start execution — locked</h3>
+            </div>
+            <p style="margin: 10px 0 0; font-size: 14px; line-height: 1.6; color: #7b899f">{{ execLockedReason }}</p>
+            <button disabled="{{ true }}" data-cc-status="modified" data-cc-note="Start button hidden/disabled until tasks are planned AND the plan revision is approved (was: enabled too early, and broken)." style="margin-top: 12px; height: 30px; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 14px; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #738699; opacity: 0.55; cursor: not-allowed">Approve definition &amp; start</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ execReady }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 14px; border-radius: 10px; border: 1px solid #1a2338; background: #111825; padding: 18px 20px">
+            <h3 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 0.95rem; font-weight: 700; color: #dce2f0">Start execution — scope selection</h3>
+            <p style="margin: 8px 0 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #7b899f">Execution pins approved revision 4 and the selected scope. Evidence is always collected.</p>
+            <div style="display: grid; gap: 8px; margin-top: 12px">
+              <sc-for list="{{ scopes }}" as="sc" hint-placeholder-count="2">
+                <label style="display: flex; align-items: flex-start; gap: 10px; border-radius: 6px; border: 1px solid {{ sc.border }}; background: {{ sc.bg }}; padding: 10px 14px; cursor: pointer">
+                  <input type="radio" checked="{{ sc.checked }}" onChange="{{ sc.onSelect }}" style="margin-top: 3px; accent-color: #00e5ff">
+                  <span>
+                    <span style="display: block; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 600; color: #dce2f0">{{ sc.label }}</span>
+                    <span style="display: block; margin-top: 2px; font-size: 13px; color: #7b899f">{{ sc.desc }}</span>
+                  </span>
+                </label>
+              </sc-for>
+            </div>
+            <button onClick="{{ onStartExec }}" style="margin-top: 14px; cursor: pointer; height: 32px; border-radius: 4px; border: 0; background: #00e5ff; padding: 0 16px; font-family: var(--font-mono, monospace); font-size: 0.76rem; font-weight: 700; color: #06090f">Approve definition &amp; start execution</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ execRunning }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-top: 14px; border-radius: 10px; border: 1px solid #1a2338; background: #111825; padding: 18px 20px">
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span style="height: 7px; width: 7px; border-radius: 99px; background: #00e5ff; box-shadow: 0 0 8px #00e5ff; animation: pulse-dot 1.2s infinite"></span>
+              <h3 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 0.95rem; font-weight: 700; color: #dce2f0">{{ execRunTitle }}</h3>
+              <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">pinned to revision 4 · full scope</span>
+            </div>
+            <div style="display: grid; gap: 6px; margin-top: 14px">
+              <sc-for list="{{ execTasks }}" as="t" hint-placeholder-count="5">
+                <div style="display: flex; align-items: center; gap: 10px; border-radius: 6px; border: 1px solid #141d2e; background: #0b1019; padding: 8px 14px">
+                  <span style="width: 26px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 700; color: #00b8cc">{{ t.handle }}</span>
+                  <span style="min-width: 0; flex: 1; font-size: 13.5px; color: #c6cede">{{ t.title }}</span>
+                  <span style="flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: {{ t.color }}">{{ t.status }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{ execCanComplete }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ onCompleteExec }}" data-cc-status="prototype-only" style="margin-top: 14px; cursor: pointer; height: 28px; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Prototype: simulate delivery completion <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#7b899f" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -1px"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg></button>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <div style="margin-top: 32px; border: 1px solid #cc3148; border-radius: 10px; padding: 14px 18px; max-width: 1000px; box-sizing: border-box" data-cc-status="existing" data-cc-component="Abandon spec danger zone">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <h3 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 0.9rem; font-weight: 800; color: #ff3d5a">Abandon this spec</h3>
+            <span style="display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #cc3148; background: rgba(255,61,90,0.12); padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; color: #e8506c">Terminal</span>
+          </div>
+          <p style="margin: 8px 0 0; max-width: 640px; font-size: 13px; line-height: 1.5; color: #7b899f">Retires the whole spec, not a run. Revisions stay readable as history. To stop one run and start another, use Abandon execution above.</p>
+          <button style="margin-top: 10px; cursor: pointer; height: 28px; border-radius: 4px; border: 1px solid #cc3148; background: transparent; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #ff3d5a">Abandon whole spec</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ==================== HISTORY ==================== -->
+  <sc-if value="{{ isHistory }}" hint-placeholder-val="{{ false }}">
+    <div data-cc-status="existing" data-cc-component="SpecHistoryPanel" data-cc-source="src/features/spec-studio/SpecHistoryPanel.tsx" style="padding: 16px 24px 64px; background: #0b1019; max-width: 1000px">
+      <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.05rem; font-weight: 800; color: #dce2f0">History</h2>
+      <p style="margin: 6px 0 0; font-family: var(--font-mono, monospace); font-size: 0.74rem; color: #7b899f">Human decisions recorded separately from policy admissions and execution lifecycle events. Unchanged from current implementation.</p>
+      <div style="display: grid; gap: 6px; margin-top: 16px">
+        <sc-for list="{{ historyEvents }}" as="ev" hint-placeholder-count="4">
+          <div style="display: flex; align-items: center; gap: 12px; border-radius: 6px; border: 1px solid #141d2e; background: #111825; padding: 9px 14px">
+            <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">{{ ev.date }}</span>
+            <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: {{ ev.color }}">{{ ev.kind }}</span>
+            <span style="font-size: 13.5px; color: #c6cede">{{ ev.text }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showAnnotations&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Handoff&quot;}}">
+class Component extends DCLogic {
+  state = {
+    lc: "s1", screen: "overview", approvals: {}, expanded: {}, commentOpen: {},
+    qa: {}, ad: {}, dials: { requirements: "gate", design: "gate", plan: "gate", execution_start: "gate", delivery: "gate" },
+    scope: "full", signOpen: false, signAck: false, toast: null, railOpen: {}, reqRev: 2,
+  };
+
+  static LCS = ["s0","s1","s2","s3","s4","s5","s6","s7","s8"];
+  static LC_LABELS = {
+    s0: "0 · initialized", s1: "1 · reqs rev 1 in review", s2: "2 · reqs rev 2 (diff)",
+    s3: "3 · design drafting", s4: "4 · design in review", s5: "5 · plan in review",
+    s6: "6 · ready to execute", s7: "7 · executing", s8: "8 · delivered",
+  };
+
+  lcIdx(lc) { return Component.LCS.indexOf(lc ?? this.state.lc); }
+
+  icon(name, size, color) {
+    const e = React.createElement;
+    const parts = {
+      check: [e("path", { key: "a", d: "M20 6L9 17l-5-5" })],
+      pencil: [e("path", { key: "a", d: "M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" })],
+      play: [e("path", { key: "a", d: "M7 4l13 8-13 8V4z", fill: color, stroke: "none" })],
+      dot: [e("circle", { key: "a", cx: 12, cy: 12, r: 6, fill: color, stroke: "none" })],
+      circle: [e("circle", { key: "a", cx: 12, cy: 12, r: 8 })],
+      chevUp: [e("path", { key: "a", d: "M18 15l-6-6-6 6" })],
+      chevDown: [e("path", { key: "a", d: "M6 9l6 6 6-6" })],
+      arrowLeft: [e("path", { key: "a", d: "M19 12H5" }), e("path", { key: "b", d: "M12 19l-7-7 7-7" })],
+      arrowRight: [e("path", { key: "a", d: "M5 12h14" }), e("path", { key: "b", d: "M12 5l7 7-7 7" })],
+      upRight: [e("path", { key: "a", d: "M7 17L17 7" }), e("path", { key: "b", d: "M7 7h10v10" })],
+      x: [e("path", { key: "a", d: "M18 6L6 18" }), e("path", { key: "b", d: "M6 6l12 12" })],
+      clock: [e("circle", { key: "a", cx: 12, cy: 12, r: 9 }), e("path", { key: "b", d: "M12 7v5l3 3" })],
+    };
+    return e("svg", { viewBox: "0 0 24 24", width: size, height: size, fill: "none", stroke: color, strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round", style: { flexShrink: 0, display: "block" } }, parts[name]);
+  }
+
+  static REQS = [
+    { h: "R1", text: "An execution context definition shall accept an optional outputSchema field holding a JSON Schema object; the field is per-context (no workflow- or global-tier default), flows losslessly from the authored definition through config resolution into the execution's workingDefinition, and survives every persistence round trip.", crit: [
+      { h: "R1.1", text: "Given a workflow definition whose context declares an outputSchema, when the workflow is resolved, then the resolved context carries the identical schema object." },
+      { h: "R1.2", text: "Given a persisted execution, when the server restarts, then the working definition still carries the authored schema byte-for-byte." },
+    ]},
+    { h: "R2", text: "When an execution context that declares an outputSchema completes its final iteration, the engine shall run the structured-output gate chain and persist exactly one validated output on the execution.", crit: [
+      { h: "R2.1", text: "Given a completing context with a schema, when the final turn ends, then the gate chain runs candidate extraction: native, then raw JSON, then fenced." },
+      { h: "R2.2", text: "Given a validated output, when the context transitions to complete, then exactly one output record exists on the execution." },
+      { h: "R2.3", text: "Given a context without an outputSchema, when it completes, then behavior is unchanged: free-form streaming turn, no schema, no gate." },
+    ]},
+    { h: "R3", text: "A final output that fails schema validation shall trigger a bounded repair turn; a second failure marks the context failed with a structured error.", crit: [
+      { h: "R3.1", text: "Given a failing candidate, when validation rejects it, then exactly one repair turn is attempted before the context is marked failed." },
+    ]},
+    { h: "R4", text: "The captured structured output shall be persisted durably on the execution and survive server restart.", crit: [
+      { h: "R4.1", text: "Given a persisted output, when the server restarts, then a typed accessor returns the identical value." },
+      { h: "R4.2", text: "Given the state-store round-trip fixtures, when the maximal execution is rebuilt, then the output field participates in assertRoundTripDurability coverage." },
+    ]},
+    { h: "R5", text: "A downstream execution context shall receive upstream structured outputs injected into its iteration prompts in a documented format.", crit: [
+      { h: "R5.1", text: "Given an upstream context with a validated output, when a downstream context iterates, then the output appears in its prompt in the documented injection format." },
+      { h: "R5.2", text: "Given no upstream outputs, when a downstream context iterates, then prompts are byte-identical to today's output." },
+    ]},
+    { h: "R6", text: "The outputSchema field shall be editable through the doc 05/06 edit surfaces with authoring-time validation of the supported JSON-Schema subset.", crit: [
+      { h: "R6.1", text: "Given a definition edit that sets an unsupported keyword ($ref, anyOf, allOf, format), when the edit is validated, then it is rejected with a JSON-path locator." },
+      { h: "R6.2", text: "Given a live edit to a pending context's schema, when applied through the choke point, then the working definition reflects it and frontier invariants hold." },
+    ]},
+    { h: "R7", text: "Workflow surfaces shall expose the feature: builder inspector context tab, plan.json authoring, and cctl workflow verbs (edit, live edit, live get).", crit: [
+      { h: "R7.1", text: "Given a context with a schema, when inspected in the builder, then the schema is visible and editable in the context config tab." },
+      { h: "R7.2", text: "Given cctl workflow live get, when run against an executing workflow, then the resolved schema is included in the output." },
+    ]},
+  ];
+
+  static SECTIONS = [
+    { title: "Problem", paras: [
+      "A graph workflow execution context produces no machine-readable output. The implementer turn is deliberately free-form (implementer-runner.ts passes no outputFormat, to preserve the streaming markdown turn body), context state carries no output field, and the only cross-context channels are git reachability (lane-readiness.ts) and prose shared documents. A downstream context learns about upstream results only by reading merged code or shared-document prose; nothing can branch on, filter, or aggregate a typed upstream result.",
+      "This is the missing data plane for the workflow vision's patterns: Classify-And-Act, Generate-And-Filter, and Tournament verdicts all require a context to emit a typed result that downstream machinery consumes (roadmap D2), and D4's conditional edges have no value to condition on until it exists.",
+      "Meanwhile the structured-output machinery already exists and is unused by contexts: the AgentCall facade gate is opt-in on request.outputSchema with candidate-extraction fall-through (native → raw JSON → fenced) and a bounded repair turn, and the graph validator already runs schema-validated task runs through the shared chain. But every current producer passes a compile-time literal schema — no author-supplied schema is plumbed anywhere in the system.",
+    ]},
+    { title: "Outcomes", paras: [
+      "A workflow author can declare an optional outputSchema (a JSON Schema object) on any execution context — at planning time, in the builder, or later through the doc 05/06 edit surfaces. When such a context finishes its work, exactly one validated output conforming to that schema exists: validated through the existing structured-output gate chain, persisted durably on the execution, and surviving server restart.",
+      "Downstream contexts see upstream structured outputs injected into their iteration prompts in a documented format, and engine code can read any context's output through a typed accessor — the seam D4 conditional edges will later consume. Contexts without an outputSchema behave exactly as today: free-form streaming implementer turns, no schema, no gate.",
+    ]},
+    { title: "Non-goals", paras: [
+      "Conditional edges or any engine branching on outputs — that is D4; this deliverable only provides the data plane it reads. Specialist validators and implementor personas (D3) are out of scope.",
+      "Extending the hand-rolled JSON-Schema subset validator to full JSON Schema — $ref, anyOf, allOf, format stay unsupported; authoring-time validation enforces the supported subset instead. A workflow- or global-tier default outputSchema in the config cascade is explicitly rejected: a shared default output shape across heterogeneous contexts is meaningless; the field is per-context only.",
+    ]},
+  ];
+
+  static DESIGN_SECTIONS = [
+    { title: "Design narrative", paras: [
+      "The authored schema rides the existing working-definition choke point: edit-schemas.ts gains a per-field entry, resolveContext returns the field as an explicit literal, and the structured-output gate chain in agent-call-facade.ts is invoked from the iteration orchestrator on the final turn. No parallel validation chain is introduced.",
+      "Downstream injection composes buildIterationPrompt: upstream outputs are serialized into a fenced, documented block ahead of shared documents. Contexts without schemas see zero change.",
+    ]},
+  ];
+
+  static DECISIONS = [
+    { h: "D1", text: "Reuse the AgentCall facade gate chain for context outputs — candidate extraction (native → raw JSON → fenced) plus one bounded repair turn; no new validation machinery." },
+    { h: "D2", text: "The schema is authored inline in the JSON context config block and validated at authoring time against the supported subset, with JSON-path locators on rejection." },
+    { h: "D3", text: "Output-validation failures ride the existing circuit-breaker path: one repair attempt, then a structured failure on the context — no new failure taxonomy." },
+  ];
+
+  static TASKS = [
+    { h: "T1", text: "Add outputSchema to definition schemas and resolveContext; cover both maximal round-trip fixtures and the storage contract test." },
+    { h: "T2", text: "Plumb the field through workingDefinition persistence and the doc 05/06 edit surfaces with per-field support in edit-schemas.ts." },
+    { h: "T3", text: "Run the structured-output gate chain on the final iteration and persist exactly one validated output on the execution." },
+    { h: "T4", text: "Inject upstream structured outputs into downstream iteration prompts in the documented format; add the typed accessor." },
+    { h: "T5", text: "Expose the field in the builder inspector context tab and the cctl workflow verbs; structured logging per steering/logs.md." },
+  ];
+
+  static QUESTIONS = [
+    { h: "Q1", text: "Capture mechanism: the implementer turn is deliberately free-form — should the final output come from a dedicated capture turn after completion, or be extracted from the last implementer message?", answer: "Dedicated capture turn — preserves the streaming markdown body untouched." },
+    { h: "Q2", text: "Downstream injection scope: which upstream outputs are injected — direct predecessors only, or all transitive upstream contexts?", answer: "Direct predecessors only; transitive access goes through the typed accessor." },
+  ];
+  static ASSUMPTIONS = [
+    { h: "A1", text: "outputSchema is authored within the JSON context config block (no separate schema registry or shared library tier)." },
+    { h: "A2", text: "Output-validation failures ride the existing circuit-breaker/repair path; no new failure taxonomy is introduced." },
+  ];
+
+  // rev-2 modifications (colorized diff segments)
+  static REV2 = {
+    R2: [
+      { t: "same", s: "When an execution context that declares an outputSchema completes its final iteration, the engine shall run the structured-output gate chain and persist exactly one validated output " },
+      { t: "del", s: "on the execution." },
+      { t: "ins", s: "conforming to that schema on the execution, surviving server restart." },
+    ],
+    R3: [
+      { t: "same", s: "A final output that fails schema validation shall trigger " },
+      { t: "del", s: "a bounded repair turn; a second failure" },
+      { t: "ins", s: "up to maxAttempts bounded repair turns (default 1); exhausting them" },
+      { t: "same", s: " marks the context failed with a structured error." },
+    ],
+    "R3.1": [
+      { t: "same", s: "Given a failing candidate, when validation rejects it, then " },
+      { t: "del", s: "exactly one repair turn is" },
+      { t: "ins", s: "at most maxAttempts repair turns are" },
+      { t: "same", s: " attempted before the context is marked failed." },
+    ],
+  };
+
+  // ---------- helpers ----------
+  go(screen) { this.setState({ screen }); }
+  setLc(lc) {
+    const i = Component.LCS.indexOf(lc);
+    const answered = i >= 3;
+    const qa = {}; const ad = {};
+    Component.QUESTIONS.forEach((q) => { qa[q.h] = answered; });
+    Component.ASSUMPTIONS.forEach((a) => { ad[a.h] = answered ? "confirmed" : null; });
+    this.setState({ lc, screen: "overview", approvals: {}, expanded: {}, commentOpen: {}, qa, ad, toast: null, signOpen: false, signAck: false, railOpen: {}, reqRev: 2 });
+  }
+
+  reviewStage() {
+    const { lc } = this.state;
+    if (lc === "s1") return { stage: "requirements", rev: 1, base: null };
+    if (lc === "s2") return { stage: "requirements", rev: 2, base: 1 };
+    if (lc === "s4") return { stage: "design", rev: 3, base: 2 };
+    if (lc === "s5") return { stage: "plan", rev: 4, base: 3 };
+    return null;
+  }
+
+  plainSeg(text) { return [{ s: text, bg: "transparent", color: "inherit", deco: "none" }]; }
+  diffSegs(segs) {
+    return segs.map((seg) => seg.t === "ins"
+      ? { s: seg.s, bg: "rgba(0,230,118,0.16)", color: "#9ff0c4", deco: "none" }
+      : seg.t === "del"
+        ? { s: seg.s, bg: "rgba(255,61,90,0.14)", color: "#ff8095", deco: "line-through" }
+        : { s: seg.s, bg: "transparent", color: "inherit", deco: "none" });
+  }
+
+  // Review cards for the active stage
+  reviewCards() {
+    const stage = this.reviewStage();
+    if (stage === null) return [];
+    const groups = [];
+    const mk = (id, over) => {
+      const approved = this.state.approvals[id] === true;
+      const expanded = this.state.expanded[id] !== false;
+      return {
+        id, approved, expanded,
+        chev: expanded ? this.icon("chevUp", 14, "#738699") : this.icon("chevDown", 14, "#738699"),
+        border: approved ? "#00b85c" : "#1a2338",
+        commentOpen: this.state.commentOpen[id] === true,
+        onToggle: () => this.setState((s) => ({ expanded: { ...s.expanded, [id]: !(s.expanded[id] !== false) } })),
+        onComment: () => this.setState((s) => ({ commentOpen: { ...s.commentOpen, [id]: !s.commentOpen[id] } })),
+        onApprove: () => this.setState((s) => ({ approvals: { ...s.approvals, [id]: !s.approvals[id] } })),
+        ...over,
+      };
+    };
+    const chipAdded = { chip: "Added", chipBg: "rgba(0,230,118,0.15)", chipBorder: "#00b85c", chipColor: "#00e676" };
+    const chipMod = { chip: "Modified", chipBg: "rgba(255,179,0,0.15)", chipBorder: "#cc8f00", chipColor: "#ffb300" };
+    const apprState = (approved, label) => approved
+      ? { apprLabel: "Approved", apprBorder: "#00b85c", apprBg: "rgba(0,230,118,0.15)", apprColor: "#00e676" }
+      : { apprLabel: label, apprBorder: "#243048", apprBg: "#172033", apprColor: "#dce2f0" };
+
+    if (stage.stage === "requirements" && stage.rev === 1) {
+      groups.push({ key: "sections", label: "Sections", cards: Component.SECTIONS.map((sec) => {
+        const id = "sec-" + sec.title;
+        const c = mk(id, { ...chipAdded, handle: sec.title, segs: this.plainSeg(sec.paras[0]), plain: sec.paras[0], body: sec.paras.slice(1).join("\n\n") || null, approvable: false, signoffChip: true, hasCriteria: false, criteria: [] });
+        return c;
+      })});
+      groups.push({ key: "reqs", label: "Requirements", cards: Component.REQS.map((r) => {
+        const approved = this.state.approvals[r.h] === true;
+        return mk(r.h, { ...chipAdded, handle: r.h, segs: this.plainSeg(r.text), plain: r.text, body: null, approvable: true, signoffChip: false,
+          ...apprState(approved, "Approve " + r.h + " + " + r.crit.length + " AC"),
+          hasCriteria: true,
+          criteria: r.crit.map((cr) => ({ handle: cr.h, segs: this.plainSeg(cr.text), rail: approved ? "#00b85c" : "#243048", chip: "added", chipColor: "#00b85c" })),
+        });
+      })});
+    } else if (stage.stage === "requirements" && stage.rev === 2) {
+      const mods = ["R2", "R3", "R6"];
+      groups.push({ key: "reqs", label: "Requirements", cards: mods.map((h) => {
+        const r = Component.REQS.find((x) => x.h === h);
+        const approved = this.state.approvals[h] === true;
+        const isMod = h !== "R6";
+        const segs = isMod ? this.diffSegs(Component.REV2[h]) : this.plainSeg(r.text);
+        const criteria = r.crit.map((cr) => {
+          const modSegs = Component.REV2[cr.h];
+          return { handle: cr.h, segs: modSegs ? this.diffSegs(modSegs) : this.plainSeg(cr.text), rail: approved ? "#00b85c" : (modSegs ? "#cc8f00" : "#243048"), chip: modSegs ? "modified" : "unchanged", chipColor: modSegs ? "#ffb300" : "#738699" };
+        });
+        if (h === "R6") criteria.push({ handle: "R6.3", segs: this.diffSegs([{ t: "ins", s: "Given an authoring-time validation error, when the builder inspector shows the context, then the JSON-path locator is surfaced inline." }]), rail: approved ? "#00b85c" : "#00b85c", chip: "added", chipColor: "#00e676" });
+        return mk(h, { ...(isMod ? chipMod : chipMod), handle: h, segs, plain: r.text, body: null, approvable: true, signoffChip: false,
+          ...apprState(approved, "Approve " + h + " + AC"), hasCriteria: true, criteria });
+      })});
+    } else if (stage.stage === "design") {
+      groups.push({ key: "sections", label: "Design narrative", cards: Component.DESIGN_SECTIONS.map((sec) => mk("dsec-" + sec.title, { ...chipAdded, handle: sec.title, segs: this.plainSeg(sec.paras[0]), plain: sec.paras[0], body: sec.paras.slice(1).join("\n\n") || null, approvable: false, signoffChip: true, hasCriteria: false, criteria: [] })) });
+      groups.push({ key: "decisions", label: "Decisions", cards: Component.DECISIONS.map((d) => {
+        const approved = this.state.approvals[d.h] === true;
+        return mk(d.h, { ...chipAdded, handle: d.h, segs: this.plainSeg(d.text), plain: d.text, body: null, approvable: true, signoffChip: false, ...apprState(approved, "Approve " + d.h), hasCriteria: false, criteria: [] });
+      })});
+    } else if (stage.stage === "plan") {
+      const approved = this.state.approvals["plan"] === true;
+      groups.push({ key: "tasks", label: "Tasks · plan", cards: Component.TASKS.map((t, i) => mk(t.h, { ...chipAdded, handle: t.h, segs: this.plainSeg(t.text), plain: t.text, body: i === 0 ? "Dependencies: none · Lane group: one task per lane · Covers: R1.1, R1.2" : null, approvable: false, signoffChip: true, hasCriteria: false, criteria: [] })) });
+      groups.push({ key: "plan", label: "Plan approval", cards: [mk("plan", { chip: "Plan", chipBg: "rgba(0,229,255,0.15)", chipBorder: "#00b8cc", chipColor: "#00e5ff", handle: "PLAN", segs: this.plainSeg("The plan is approved as a whole: 5 tasks covering every acceptance criterion (R1–R7). Approving the plan admits the execution task plan."), plain: "Approve the plan as a whole", body: null, approvable: true, signoffChip: false, ...apprState(approved, "Approve plan (5 tasks)"), hasCriteria: false, criteria: [] })] });
+    }
+    return groups;
+  }
+
+  approvableIds() {
+    return this.reviewCards().flatMap((g) => g.cards.filter((c) => c.approvable).map((c) => c.id));
+  }
+
+  readiness() {
+    const ids = this.approvableIds();
+    const approved = ids.filter((id) => this.state.approvals[id] === true).length;
+    const openQ = Component.QUESTIONS.filter((q) => this.state.qa[q.h] !== true).length;
+    const openA = Component.ASSUMPTIONS.filter((a) => !this.state.ad[a.h]).length;
+    return { total: ids.length, approved, openQ, openA, ready: approved === ids.length && openQ === 0 && openA === 0 };
+  }
+
+  signOff() {
+    const { lc } = this.state;
+    const next = lc === "s1" || lc === "s2" ? "s3" : lc === "s4" ? "s5" : "s6";
+    const signedRev = this.reviewStage().rev;
+    const stage = this.reviewStage();
+    const toast = "Revision " + stage.rev + " signed off — " + stage.stage + " approved. " + (next === "s3" ? "Next: the agent drafts the design." : next === "s5" ? "Next: the agent drafts the task plan." : "Next: start execution from the Execution screen.");
+    const qa = {}; Component.QUESTIONS.forEach((q) => { qa[q.h] = true; });
+    const ad = {}; Component.ASSUMPTIONS.forEach((a) => { ad[a.h] = this.state.ad[a.h] ?? "confirmed"; });
+    this.setState({ lc: next, screen: "overview", toast, signOpen: false, signAck: false, approvals: {}, qa, ad, reqRev: stage.stage === "requirements" ? signedRev : this.state.reqRev });
+  }
+
+  stepData() {
+    const i = this.lcIdx();
+    const C = { done: { color: "#00e676", icon: "check" }, review: { color: "#ffb300", icon: "dot" }, draft: { color: "#ffb300", icon: "pencil" }, ready: { color: "#00e5ff", icon: "play" }, running: { color: "#00e5ff", icon: "dot" }, next: { color: "#738699", icon: "circle" }, locked: { color: "#4a5a6e", icon: "circle" } };
+    const defs = [
+      { label: "Requirements", st: i >= 3 ? "done" : i >= 1 ? "review" : "draft", sub: i >= 3 ? "approved rev " + this.state.reqRev : i === 2 ? "rev 2 in review" : i === 1 ? "rev 1 in review" : "agent drafting" },
+      { label: "Design", st: i >= 5 ? "done" : i === 4 ? "review" : i === 3 ? "draft" : "next", sub: i >= 5 ? "approved rev 3" : i === 4 ? "rev 3 in review" : i === 3 ? "agent drafting" : "starts after requirements" },
+      { label: "Plan", st: i >= 6 ? "done" : i === 5 ? "review" : "next", sub: i >= 6 ? "approved rev 4 · 5 tasks" : i === 5 ? "rev 4 in review" : "starts after design" },
+      { label: "Execute", st: i >= 8 ? "done" : i === 7 ? "running" : i === 6 ? "ready" : "locked", sub: i >= 8 ? "run complete" : i === 7 ? "running · 2/5 tasks done" : i === 6 ? "ready — scope selection" : "locked until plan approved" },
+      { label: "Deliver", st: i >= 8 ? "done" : "locked", sub: i >= 8 ? "12/12 criteria proven" : "proof against pinned revision" },
+    ];
+    const steps = defs.map((d, idx) => {
+      const c = C[d.st];
+      const active = d.st === "review" || d.st === "draft" || d.st === "running" || d.st === "ready";
+      return {
+        label: d.label, sub: d.sub, icon: this.icon(c.icon, 15, c.color), color: c.color, subColor: d.st === "locked" ? "#4a5a6e" : "#738699",
+        border: active ? (d.st === "running" || d.st === "ready" ? "#00b8cc" : "#cc8f00") : d.st === "done" ? "rgba(0,184,92,0.4)" : "#1a2338",
+        chevClip: idx === 0
+          ? "polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%)"
+          : idx === defs.length - 1
+            ? "polygon(0 0, 100% 0, 100% 100%, 0 100%, 14px 50%)"
+            : "polygon(0 0, calc(100% - 14px) 0, 100% 50%, calc(100% - 14px) 100%, 0 100%, 14px 50%)",
+        chevMl: idx === 0 ? "0" : "-13px",
+        chevPl: idx === 0 ? "14px" : "28px",
+        chevBg: d.st === "running" || d.st === "ready" ? "#0b1c24" : active ? "#1c1a12" : d.st === "done" ? "#0a1b16" : "#0e1420",
+      };
+    });
+    const ctx = {
+      s0: "Spec initialized. The agent drafts the requirements contract first — design and plan stay locked until it is approved.",
+      s1: "Requirements rev 1 is proposed and awaits your review. Once signed off, the agent moves to Design.",
+      s2: "Requirements rev 2 (a follow-up after requested changes) awaits review — modified items show a colorized diff. Design starts after sign-off.",
+      s3: "Requirements approved (rev " + this.state.reqRev + "). The agent is drafting the design narrative and decisions; you'll review them next. Then: Plan.",
+      s4: "Requirements approved · Design rev 3 awaits your review. After sign-off the agent plans tasks.",
+      s5: "Requirements and Design approved · Plan rev 4 (5 tasks) awaits review. After sign-off, execution can start.",
+      s6: "All authoring stages approved. Start execution from the Execution screen — it pins revision 4 and your selected scope.",
+      s7: "Execution is running against pinned revision 4. Delivery proof accumulates per acceptance criterion.",
+      s8: "Delivered: every in-scope criterion proven and merged. The spec is read-only history.",
+    }[this.state.lc];
+    return { steps, ctx };
+  }
+
+  banner() {
+    const r = this.readiness();
+    const byLc = {
+      s0: { accent: "#ffb300", title: "Draft contract", desc: "The agent is drafting requirements. Nothing to review yet.", meta: null },
+      s1: { accent: "#ffb300", title: "Revision awaits sign-off", desc: "Requirements rev 1 proposed. Review the semantic changes and resolve open questions.", meta: (r.total - r.approved) + " approvals + " + r.openQ + " open questions — go to review", act: () => this.go("review") },
+      s2: { accent: "#ffb300", title: "Revision awaits sign-off", desc: "Requirements rev 2 proposed over rev 1 — modified items carry a colorized diff.", meta: (r.total - r.approved) + " approvals pending — go to review", act: () => this.go("review") },
+      s3: { accent: "#00e5ff", title: "Design in progress", desc: "Requirements are frozen at rev " + this.state.reqRev + ". The agent is drafting design decisions.", meta: null },
+      s4: { accent: "#ffb300", title: "Design awaits sign-off", desc: "Design rev 3 proposed: 1 narrative section and 3 decisions.", meta: (r.total - r.approved) + " approvals pending — go to review", act: () => this.go("review") },
+      s5: { accent: "#ffb300", title: "Plan awaits sign-off", desc: "Plan rev 4 proposed: 5 tasks covering all criteria.", meta: "plan approval pending — go to review", act: () => this.go("review") },
+      s6: { accent: "#00e676", title: "Ready to execute", desc: "Revision 4 approved and immutable. Select a scope and start execution.", meta: "open Execution screen", act: () => this.go("execution") },
+      s7: { accent: "#00e5ff", title: "Execution active", desc: "Delivery proof is evaluated against pinned revision 4.", meta: "open Execution screen", act: () => this.go("execution") },
+      s8: { accent: "#00e676", title: "Delivery proven", desc: "Every in-scope criterion is proven or explicitly waived.", meta: null },
+    };
+    return byLc[this.state.lc];
+  }
+
+  railItems() {
+    const i = this.lcIdx();
+    const toggle = (key) => () => this.setState((st) => ({ railOpen: { ...st.railOpen, [key]: !st.railOpen[key] } }));
+    const deco = (key, extra) => {
+      const expanded = this.state.railOpen[key] === true;
+      return { key, onOpen: toggle(key), expanded, clamp: expanded ? "none" : "2", tip: expanded ? "Collapse" : "Expand", chev: this.icon(expanded ? "chevUp" : "chevDown", 12, "#738699"), hasCriteria: false, criteria: [], answer: false, ...extra };
+    };
+    const groups = [];
+    groups.push({ id: "reqs", label: "Requirements", count: i >= 1 ? Component.REQS.length : 0,
+      empty: i < 1, emptyLabel: "None yet — the agent proposes them first", onOpenAll: null,
+      items: i < 1 ? [] : Component.REQS.map((rq) => deco("req-" + rq.h, { handle: rq.h, text: rq.text, status: i >= 3 ? "Approved" : "Pending", statusColor: i >= 3 ? "#00e676" : "#ffb300", hasCriteria: rq.crit.length > 0, criteria: rq.crit.map((c) => ({ handle: c.h, text: c.text })) })) });
+    groups.push({ id: "decisions", label: "Decisions", count: i >= 4 ? Component.DECISIONS.length : 0,
+      empty: i < 4, emptyLabel: "None recorded — arrive with the design stage", onOpenAll: null,
+      items: i < 4 ? [] : Component.DECISIONS.map((d) => deco("dec-" + d.h, { handle: d.h, text: d.text, status: i >= 5 ? "Approved" : "Proposed", statusColor: i >= 5 ? "#00e676" : "#ffb300" })) });
+    groups.push({ id: "qa", label: "Questions & assumptions", count: i >= 1 ? 4 : 0,
+      empty: i < 1, emptyLabel: "None recorded", onOpenAll: i >= 1 ? () => this.go("questions") : null,
+      items: i < 1 ? [] : [
+        ...Component.QUESTIONS.map((q) => deco("q-" + q.h, { handle: q.h, text: q.text, status: this.state.qa[q.h] ? "Answered" : "Open", statusColor: this.state.qa[q.h] ? "#00e676" : "#ffb300", answer: this.state.qa[q.h] ? q.answer : false })),
+        ...Component.ASSUMPTIONS.map((a) => deco("a-" + a.h, { handle: a.h, text: a.text, status: this.state.ad[a.h] ? this.state.ad[a.h] : "Proposed", statusColor: this.state.ad[a.h] === "confirmed" ? "#00e676" : this.state.ad[a.h] === "rejected" ? "#ff3d5a" : this.state.ad[a.h] === "deferred" ? "#738699" : "#ffb300" })),
+      ] });
+    groups.push({ id: "tasks", label: "Tasks", count: i >= 5 ? Component.TASKS.length : 0,
+      empty: i < 5, emptyLabel: "None planned — arrive with the plan stage", onOpenAll: null,
+      items: i < 5 ? [] : Component.TASKS.map((t, idx) => deco("task-" + t.h, { handle: t.h, text: t.text, status: i >= 8 ? "Completed" : i === 7 ? (idx < 2 ? "Completed" : idx === 2 ? "Running" : "Pending") : "Pending", statusColor: i >= 8 ? "#00e676" : i === 7 ? (idx < 2 ? "#00e676" : idx === 2 ? "#00e5ff" : "#738699") : "#738699" })) });
+    groups.forEach((g) => {
+      const keys = g.items.map((it) => it.key);
+      const allOpen = keys.length > 0 && keys.every((k) => this.state.railOpen[k]);
+      g.toggleAllShow = keys.length > 0;
+      g.toggleAllLabel = allOpen ? "Collapse all" : "Expand all";
+      g.onToggleAll = () => this.setState((st) => { const railOpen = { ...st.railOpen }; keys.forEach((k) => { railOpen[k] = !allOpen; }); return { railOpen }; });
+    });
+    return groups;
+  }
+
+  renderVals() {
+    const s = this.state;
+    const i = this.lcIdx();
+    const stage = this.reviewStage();
+    const r = this.readiness();
+    const step = this.stepData();
+    const ban = this.banner();
+
+    // tabs
+    const pendingReview = stage !== null ? (r.total - r.approved) + r.openQ + r.openA : 0;
+    const mkTab = (id, label, badge, badgeTone) => ({
+      label, badge: badge > 0 ? String(badge) : false,
+      badgeBg: badgeTone === "amber" ? "rgba(255,179,0,0.2)" : "rgba(0,229,255,0.2)",
+      badgeColor: badgeTone === "amber" ? "#ffb300" : "#00e5ff",
+      underline: s.screen === id ? "#00e5ff" : "transparent",
+      color: s.screen === id ? "#dce2f0" : "#738699",
+      onClick: () => this.go(id),
+    });
+    const tabs = [
+      mkTab("overview", "Overview", 0),
+      mkTab("review", "Review", stage === null ? 0 : pendingReview, "amber"),
+      mkTab("questions", "Questions & assumptions", Component.QUESTIONS.filter((q) => !s.qa[q.h]).length + Component.ASSUMPTIONS.filter((a) => !s.ad[a.h]).length, "amber"),
+      mkTab("execution", "Execution", 0),
+      mkTab("gate", "Gate policy", 0),
+      mkTab("history", "History", 0),
+    ];
+
+    // review view models
+    const groupsRaw = this.reviewCards();
+    const reviewGroups = groupsRaw.map((g) => ({
+      label: g.label,
+      meta: g.cards.length + (g.cards.length === 1 ? " change" : " changes"),
+      cards: g.cards,
+    }));
+    const allCards = groupsRaw.flatMap((g) => g.cards);
+
+    const remaining = r.total - r.approved;
+    const allApproved = remaining === 0 && r.total > 0;
+    const stageNames = { requirements: "requirements", design: "design", plan: "plan" };
+    const reviewTitle = stage === null ? "" : "Review " + stageNames[stage.stage] + "-stage revision " + stage.rev;
+    const reviewSub = stage === null ? "" : stage.base === null ? "proposed 2026-07-30 · initial proposal" : "proposed 2026-07-3" + stage.rev + " · over revision " + stage.base;
+    const changeCount = allCards.length;
+
+    const readyChips = stage === null ? [] : [
+      { label: allApproved ? "Approvals complete" : remaining + " approvals outstanding", ok: allApproved },
+      { label: r.openQ === 0 ? "Questions answered" : r.openQ + " open question" + (r.openQ === 1 ? "" : "s"), ok: r.openQ === 0 },
+      { label: r.openA === 0 ? "Assumptions disposed" : r.openA + " undisposed assumption" + (r.openA === 1 ? "" : "s"), ok: r.openA === 0 },
+      { label: "Threads resolved", ok: true },
+    ].map((c) => ({ label: c.label, bg: c.ok ? "rgba(0,230,118,0.12)" : "rgba(255,179,0,0.12)", border: c.ok ? "#00b85c" : "#cc8f00", color: c.ok ? "#00e676" : "#ffb300" }));
+
+    const qaOpenCount = r.openQ + r.openA;
+    const reviewQa = [
+      ...Component.QUESTIONS.map((q) => ({ handle: q.h, text: q.text, status: s.qa[q.h] ? "Answered" : "Open — blocks sign-off", statusColor: s.qa[q.h] ? "#00e676" : "#ffb300" })),
+      ...Component.ASSUMPTIONS.map((a) => ({ handle: a.h, text: a.text, status: s.ad[a.h] ? s.ad[a.h] : "Proposed — blocks sign-off", statusColor: s.ad[a.h] === "confirmed" ? "#00e676" : s.ad[a.h] ? "#738699" : "#ffb300" })),
+    ];
+
+    // gate dials
+    const gateDefs = [
+      { key: "requirements", label: "Requirements", desc: "Admits the requirements contract.", note: null },
+      { key: "design", label: "Design", desc: "Admits the design narrative and decisions.", note: null },
+      { key: "plan", label: "Plan", desc: "Admits the execution task plan.", note: null },
+      { key: "execution_start", label: "Execution start", desc: "Admits the pinned scope and generated definition.", note: null },
+      { key: "delivery", label: "Delivery", desc: "Admits delivery claims and merge readiness.", note: "Delivery can never be Off." },
+    ];
+    const dials = gateDefs.map((g) => ({
+      label: g.label, desc: g.desc, note: g.note,
+      options: ["gate", "notify", "off"].filter((v) => !(g.key === "delivery" && v === "off")).map((v) => ({
+        label: v.toUpperCase(),
+        bg: s.dials[g.key] === v ? "rgba(0,229,255,0.15)" : "transparent",
+        color: s.dials[g.key] === v ? "#00e5ff" : "#738699",
+        onSelect: () => this.setState((st) => ({ dials: { ...st.dials, [g.key]: v } })),
+      })),
+    }));
+
+    // execution
+    const execLocked = i < 6;
+    const execReady = i === 6;
+    const execRunning = i >= 7;
+    const lockedReasons = {
+      s0: "Requirements have not been proposed yet. Execution unlocks after requirements, design, and plan are approved.",
+      s1: "Requirements rev 1 is still in review. Execution unlocks after requirements, design, and plan are approved.",
+      s2: "Requirements rev 2 is still in review. Execution unlocks after requirements, design, and plan are approved.",
+      s3: "Design is being drafted. Execution unlocks after design and plan are approved.",
+      s4: "Design rev 3 is in review. Execution unlocks after design and plan are approved.",
+      s5: "Plan rev 4 is in review — approve it to unlock execution. Tasks must be planned and approved before a scope can be pinned.",
+    };
+    const execTasks = Component.TASKS.map((t, idx) => ({
+      handle: t.h, title: t.text.split(";")[0],
+      status: i >= 8 ? "Completed" : idx < 2 ? "Completed" : idx === 2 ? "Running" : "Pending",
+      color: i >= 8 ? "#00e676" : idx < 2 ? "#00e676" : idx === 2 ? "#00e5ff" : "#738699",
+    }));
+    const scopes = [
+      { id: "full", label: "Full scope — all 7 requirements", desc: "Every acceptance criterion in revision 4 is in scope for delivery proof." },
+      { id: "subset", label: "Subset — R1–R4 (data plane only)", desc: "Defers R5–R7 (injection + surfaces) to a later execution; deferral is recorded." },
+    ].map((sc) => ({ label: sc.label, desc: sc.desc, checked: s.scope === sc.id, border: s.scope === sc.id ? "#00b8cc" : "#1a2338", bg: s.scope === sc.id ? "rgba(0,229,255,0.05)" : "#0b1019", onSelect: () => this.setState({ scope: sc.id }) }));
+
+    // questions screen
+    const questionCards = Component.QUESTIONS.map((q) => ({
+      handle: q.h, text: q.text, open: !s.qa[q.h],
+      status: s.qa[q.h] ? "Answered" : "Open", statusColor: s.qa[q.h] ? "#00e676" : "#ffb300",
+      border: s.qa[q.h] ? "#1a2338" : "#cc8f00",
+      answer: s.qa[q.h] ? q.answer : false,
+      onAnswer: () => this.setState((st) => ({ qa: { ...st.qa, [q.h]: true } })),
+    }));
+    const assumptionCards = Component.ASSUMPTIONS.map((a) => ({
+      handle: a.h, text: a.text, open: !s.ad[a.h],
+      status: s.ad[a.h] ?? "Proposed", statusColor: s.ad[a.h] === "confirmed" ? "#00e676" : s.ad[a.h] === "rejected" ? "#ff3d5a" : s.ad[a.h] === "deferred" ? "#738699" : "#ffb300",
+      border: s.ad[a.h] ? "#1a2338" : "#cc8f00",
+      onConfirm: () => this.setState((st) => ({ ad: { ...st.ad, [a.h]: "confirmed" } })),
+      onReject: () => this.setState((st) => ({ ad: { ...st.ad, [a.h]: "rejected" } })),
+      onDefer: () => this.setState((st) => ({ ad: { ...st.ad, [a.h]: "deferred" } })),
+    }));
+
+    // header CTA
+    const ctaByLc = {
+      s1: { label: "Review revision", tone: "amber", act: () => this.go("review") },
+      s2: { label: "Review revision", tone: "amber", act: () => this.go("review") },
+      s4: { label: "Review revision", tone: "amber", act: () => this.go("review") },
+      s5: { label: "Review plan", tone: "amber", act: () => this.go("review") },
+      s6: { label: "Start execution", tone: "green", act: () => this.go("execution") },
+      s7: { label: "Open execution", tone: "cyan", act: () => this.go("execution") },
+    };
+    const cta = ctaByLc[s.lc] ?? null;
+    const toneMap = { amber: { border: "#cc8f00", bg: "rgba(255,179,0,0.15)", color: "#ffb300" }, green: { border: "#00b85c", bg: "rgba(0,230,118,0.15)", color: "#00e676" }, cyan: { border: "#00b8cc", bg: "rgba(0,229,255,0.15)", color: "#00e5ff" } };
+
+    const phaseMeta = {
+      s0: { label: "Draft", color: "#ffb300" }, s1: { label: "In review", color: "#ffb300" }, s2: { label: "In review", color: "#ffb300" },
+      s3: { label: "Draft · design", color: "#ffb300" }, s4: { label: "In review", color: "#ffb300" }, s5: { label: "In review", color: "#ffb300" },
+      s6: { label: "Approved", color: "#00e676" }, s7: { label: "Executing", color: "#00e5ff" }, s8: { label: "Delivered", color: "#00e676" },
+    }[s.lc];
+
+    const revLines = {
+      s0: "no revisions yet · gate preset: contract-bearing", s1: "rev 1 proposed 2026-07-30 · gate preset: contract-bearing",
+      s2: "rev 2 proposed 2026-07-31 · rev 1 withdrawn after requested changes", s3: "rev " + s.reqRev + " approved 2026-07-31 · requirements frozen",
+      s4: "rev 3 proposed 2026-08-01 · over rev 2", s5: "rev 4 proposed 2026-08-02 · over rev 3",
+      s6: "rev 4 approved 2026-08-02 · executions pin this revision", s7: "rev 4 approved · execution exec-01 running",
+      s8: "rev 4 approved · delivered 2026-08-05",
+    };
+
+    const historyEvents = [
+      { date: "2026-07-30", kind: "proposal", color: "#00e5ff", text: "Agent proposed requirements rev 1 (7 requirements, 14 criteria)." },
+      ...(i >= 2 ? [{ date: "2026-07-31", kind: "human", color: "#ffb300", text: "Changes requested on rev 1 — repair-turn bounds unclear; draft rev 2 opened." }] : []),
+      ...(i >= 3 ? [{ date: "2026-07-31", kind: "sign-off", color: "#00e676", text: "Requirements rev 2 signed off — contract frozen." }] : []),
+      ...(i >= 4 ? [{ date: "2026-08-01", kind: "proposal", color: "#00e5ff", text: "Agent proposed design rev 3 (1 narrative section, 3 decisions)." }] : []),
+      ...(i >= 5 ? [{ date: "2026-08-01", kind: "sign-off", color: "#00e676", text: "Design rev 3 signed off." }, { date: "2026-08-02", kind: "proposal", color: "#00e5ff", text: "Agent proposed plan rev 4 (5 tasks)." }] : []),
+      ...(i >= 6 ? [{ date: "2026-08-02", kind: "sign-off", color: "#00e676", text: "Plan rev 4 signed off — spec ready to execute." }] : []),
+      ...(i >= 7 ? [{ date: "2026-08-03", kind: "execution", color: "#00e5ff", text: "Execution exec-01 started · pinned rev 4 · full scope." }] : []),
+      ...(i >= 8 ? [{ date: "2026-08-05", kind: "delivery", color: "#00e676", text: "Delivery proven: 12/12 in-scope criteria proven and merged." }] : []),
+    ].toReversed();
+
+    return {
+      annotateAttr: (this.props.showAnnotations ?? false) ? "on" : "off",
+      lcStates: Component.LCS.map((lc) => ({
+        label: Component.LC_LABELS[lc],
+        bg: s.lc === lc ? "rgba(0,229,255,0.15)" : "transparent",
+        border: s.lc === lc ? "#00b8cc" : "#243048",
+        color: s.lc === lc ? "#00e5ff" : "#738699",
+        onClick: () => this.setLc(lc),
+      })),
+      needsYouShow: stage !== null, needsYouLabel: pendingReview + " need you · " + (stage?.stage ?? "") + " approval required",
+
+      steps: step.steps, stepContext: step.ctx,
+
+      phaseLabel: phaseMeta.label, phaseColor: phaseMeta.color, revLine: revLines[s.lc],
+      ctaShow: cta !== null, ctaLabel: cta?.label ?? "", onCta: cta?.act ?? (() => {}),
+      ctaBorder: cta ? toneMap[cta.tone].border : "#243048", ctaBg: cta ? toneMap[cta.tone].bg : "transparent", ctaColor: cta ? toneMap[cta.tone].color : "#738699",
+      tabs,
+
+      toast: s.toast ?? false, onDismissToast: () => this.setState({ toast: null }),
+
+      isOverview: s.screen === "overview", isReview: s.screen === "review", isQuestions: s.screen === "questions",
+      isGate: s.screen === "gate", isExec: s.screen === "execution", isHistory: s.screen === "history",
+
+      bannerAccent: ban.accent, bannerTitle: ban.title, bannerDesc: ban.desc,
+      bannerMetaShow: ban.meta !== null && ban.meta !== undefined, bannerMeta: ban.meta ?? "", onBannerMeta: ban.act ?? (() => {}),
+
+      sections: i >= 1 ? (i >= 4 ? [...Component.SECTIONS, ...Component.DESIGN_SECTIONS] : Component.SECTIONS) : [],
+      sectionsEmpty: i < 1,
+      railGroups: this.railItems(),
+
+      goOverview: () => this.go("overview"), goQuestions: () => this.go("questions"),
+      reviewAvailable: stage !== null, reviewUnavailable: stage === null,
+      reviewUnavailableReason: i >= 6 ? "Revision 4 is approved and frozen — there is no proposed revision to review." : i === 3 ? "The agent is drafting the design; a proposed revision will appear here for review." : "No revision has been proposed yet.",
+      reviewTitle, reviewSub,
+      reviewSummary: changeCount + " changes · " + r.total + " approval subject" + (r.total === 1 ? "" : "s"),
+      reviewGroups,
+      onApproveAll: () => { const upd = {}; this.approvableIds().forEach((id) => { upd[id] = true; }); this.setState((st) => ({ approvals: { ...st.approvals, ...upd } })); },
+      approveAllDisabled: allApproved,
+      approveAllLabel: allApproved ? "All approved" : "Approve all remaining (" + remaining + ")",
+      approveAllBorder: allApproved ? "#00b85c" : "#00b8cc", approveAllBg: allApproved ? "rgba(0,230,118,0.15)" : "rgba(0,229,255,0.15)",
+      approveAllColor: allApproved ? "#00e676" : "#00e5ff", approveAllOpacity: allApproved ? "0.7" : "1",
+      qaMeta: qaOpenCount === 0 ? "all resolved" : qaOpenCount + " open — blocks sign-off", qaMetaColor: qaOpenCount === 0 ? "#00e676" : "#ffb300",
+      reviewQa,
+      readyCount: r.approved + "/" + r.total + " approved",
+      readyPct: r.total === 0 ? "0%" : Math.round((r.approved / r.total) * 100) + "%",
+      readyBarColor: r.ready ? "#00e676" : "#ffb300",
+      readyChips,
+      signOffDisabled: !r.ready,
+      signOffTitle: r.ready ? "Freeze this revision" : "Blocked — " + (remaining > 0 ? remaining + " approvals outstanding" : "") + (r.openQ > 0 ? " · " + r.openQ + " open questions" : "") + (r.openA > 0 ? " · " + r.openA + " undisposed assumptions" : ""),
+      signOffLabel: stage === null ? "" : "Sign off revision " + stage.rev,
+      soBorder: r.ready ? "#00b8cc" : "#243048", soBg: r.ready ? "#00e5ff" : "#172033",
+      soColor: r.ready ? "#06090f" : "#738699", soOpacity: r.ready ? "1" : "0.6",
+      signOpen: s.signOpen, signAck: s.signAck,
+      onOpenSignOff: () => { if (r.ready) this.setState({ signOpen: true, signAck: false }); },
+      onCloseSignOff: () => this.setState({ signOpen: false }),
+      onToggleAck: () => this.setState((st) => ({ signAck: !st.signAck })),
+      onConfirmSignOff: () => { if (s.signAck) this.signOff(); },
+      confirmDisabled: !s.signAck, confirmOpacity: s.signAck ? "1" : "0.5",
+      signChecklist: stage === null ? [] : [
+        r.approved + "/" + r.total + " review approvals recorded",
+        "All questions answered, all assumptions disposed",
+        "Blocking threads resolved",
+        "Sign-off freezes revision " + stage.rev + " — executions pin it",
+      ],
+
+      questionCards, assumptionCards,
+      dials,
+      execLocked, execReady, execRunning,
+      execLockedReason: lockedReasons[s.lc] ?? "",
+      execRunTitle: i >= 8 ? "Execution exec-01 — delivered" : "Execution exec-01 — running",
+      execTasks, execCanComplete: i === 7,
+      scopes,
+      onStartExec: () => this.setState({ lc: "s7", screen: "execution", toast: "Execution started — definition approved, pinned to revision 4 (" + (s.scope === "full" ? "full scope" : "subset R1\u2013R4") + ")." }),
+      onCompleteExec: () => this.setState({ lc: "s8", toast: "Delivery proven — 12/12 in-scope criteria proven and merged." }),
+
+      historyEvents,
+    };
+  }
+
+  componentDidMount() {
+    // seed Q/A defaults for the initial state
+    this.setLc(this.state.lc);
+  }
+}
+</script>
+</body>
+</html>

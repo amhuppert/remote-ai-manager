@@ -167,7 +167,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
     const evidenceService = createEvidenceService({
       repo,
       ingestExecutionEvidence: async () => undefined,
-      nextId: () => `evidence-${++nextEvidenceId}`,
+      nextId: (kind) => `${kind}-${++nextEvidenceId}`,
       now: () => AT,
       getApprovedCriterion: async (targetRevisionId, criterionElementId) =>
         targetRevisionId === REVISION_ID && criterionElementId === "criterion-1"
@@ -205,6 +205,11 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
       workflowEvents,
       evidenceService,
       writeQueue: createWriteQueue(),
+      validatedTreeHash: async (_execution, commitSha, relevantPaths) => {
+        expect(commitSha).toBe(SELF_SHA);
+        expect(relevantPaths).toEqual(["src/lib/specs"]);
+        return "self-committed-tree";
+      },
       loadOriginMap: async () => originMap(),
       getWorkflowExecutionStatus: async () => "running",
     });
@@ -250,26 +255,24 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
     for (const row of evidenceRows.slice(0, 2)) {
       expect(JSON.parse(row.evaluated_state_json)).toEqual({
         commitSha: SELF_SHA,
-        relevantPaths: [],
+        relevantPaths: ["src/lib/specs"],
+        relevantTreeHash: "self-committed-tree",
       });
     }
 
-    // The proof verdict cites the test_run + validator_verdict evidence the
-    // ingest attached (the rerun shape: those kinds were present; changedCode
-    // was the missing link).
-    appendSpecEvent(db, "spec-evidence-changed", 30, {
-      kind: "lifecycle-measure",
-      measureEvents: [
-        {
-          kind: "proof-verdict-recorded",
-          verdictId: "verdict-1",
-          criterionId: "criterion-1",
-          revisionId: REVISION_ID,
-          evidenceIds: ["evidence-2", "evidence-3"],
-          valid: true,
-        },
-      ],
+    const [verdict] = repo.findProofVerdictsByCriterionRevision(
+      "criterion-1",
+      REVISION_ID,
+    );
+    expect(verdict).toMatchObject({
+      id: "verdict-4",
+      verdict_kind: "agent_validator",
+      execution_id: SPEC_EXECUTION_ID,
+      stale_at: null,
     });
+    expect(
+      new Set(JSON.parse(verdict?.evidence_ids_json ?? "[]") as string[]),
+    ).toEqual(new Set(["evidence-1", "evidence-2", "evidence-3"]));
     appendSpecEvent(db, "spec-execution-changed", 31, {
       kind: "execution_delivered",
       executionId: SPEC_EXECUTION_ID,
@@ -294,7 +297,7 @@ describe("self-committed lane work evidence chain (R13, R20.2, R21.2)", () => {
         approvedRevisionId: REVISION_ID,
         executionId: SPEC_EXECUTION_ID,
         tasks: [{ taskId: "task-1", changedCode: [{ commitSha: SELF_SHA }] }],
-        validProof: { verdictId: "verdict-1" },
+        validProof: { verdictId: "verdict-4" },
         mergeResult: { mergeCommitSha: "merge-sha" },
         complete: true,
       },
@@ -332,6 +335,7 @@ function originMap(): CompiledOriginMapEntry[] {
       contextId: CONTEXT_ID,
       taskElementId: "task-1",
       taskHandle: "native-sdd/T1",
+      touchedPaths: ["src/lib/specs"],
       criterionElementIds: ["criterion-1"],
       criterionHandles: ["native-sdd/R1.1"],
       validationStrategies: {

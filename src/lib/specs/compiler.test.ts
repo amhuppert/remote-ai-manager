@@ -260,6 +260,10 @@ describe("compileSpecExecutionPlan", () => {
     expect(compiledTask?.metadata?.specTouchedPaths).toBe(
       '["src/lib/specs","src/lib/workflow-graph"]',
     );
+    expect(readCompiledOriginMap(definition)[0]?.touchedPaths).toEqual([
+      "src/lib/specs",
+      "src/lib/workflow-graph",
+    ]);
     expect(compiledTask?.instructions).toContain(
       "native-sdd/D1: Use one contraction primitive",
     );

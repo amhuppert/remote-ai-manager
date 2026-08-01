@@ -36,7 +36,7 @@ const logger = createLogger("codex:managed-skills-bridge");
 
 /** Reserved checkout-relative path — the bridge's single collision point. */
 export const MANAGED_SKILLS_LINK_RELATIVE = path.join(
-  ".agents",
+  /* turbopackIgnore: true */ ".agents",
   "skills",
   "command-center",
 );
@@ -84,14 +84,17 @@ export async function ensureCodexManagedSkillsBridge(
     return { status: "skipped", reason: "exclude_unavailable", detail };
   }
 
-  const linkPath = path.join(checkoutPath, MANAGED_SKILLS_LINK_RELATIVE);
+  const linkPath = path.join(
+    /* turbopackIgnore: true */ checkoutPath,
+    MANAGED_SKILLS_LINK_RELATIVE,
+  );
   // CC-owned targets all live under the bundles area for this plugin; a link
   // pointing anywhere else was not created by a CC server and is never touched.
   const ccOwnedTargetPrefix = path.dirname(bundle.root) + path.sep;
 
   let existing: Awaited<ReturnType<typeof lstat>> | null = null;
   try {
-    existing = await lstat(linkPath);
+    existing = await lstat(/* turbopackIgnore: true */ linkPath);
   } catch {
     existing = null;
   }
@@ -107,7 +110,7 @@ export async function ensureCodexManagedSkillsBridge(
       });
       return { status: "conflict", linkPath, detail };
     }
-    const currentTarget = await readlink(linkPath);
+    const currentTarget = await readlink(/* turbopackIgnore: true */ linkPath);
     if (currentTarget === bundle.skillsRoot) {
       return { status: "already_linked", linkPath };
     }
@@ -124,20 +127,28 @@ export async function ensureCodexManagedSkillsBridge(
     // atomically re-point it.
   }
 
-  await mkdir(path.dirname(linkPath), { recursive: true });
+  await mkdir(/* turbopackIgnore: true */ path.dirname(linkPath), {
+    recursive: true,
+  });
   const tempLink = path.join(
-    path.dirname(linkPath),
+    /* turbopackIgnore: true */ path.dirname(linkPath),
     `.command-center.tmp-${process.pid}`,
   );
   try {
-    await rm(tempLink, { force: true });
-    await symlink(bundle.skillsRoot, tempLink);
+    await rm(/* turbopackIgnore: true */ tempLink, { force: true });
+    await symlink(
+      /* turbopackIgnore: true */ bundle.skillsRoot,
+      /* turbopackIgnore: true */ tempLink,
+    );
     // rename() atomically replaces an existing symlink, so a concurrently
     // launching agent always resolves either the old or the new bundle —
     // both immutable — never a missing path.
-    await rename(tempLink, linkPath);
+    await rename(
+      /* turbopackIgnore: true */ tempLink,
+      /* turbopackIgnore: true */ linkPath,
+    );
   } catch (err) {
-    await rm(tempLink, { force: true });
+    await rm(/* turbopackIgnore: true */ tempLink, { force: true });
     throw err;
   }
 

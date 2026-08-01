@@ -2855,9 +2855,9 @@ export function createSpecWriteRouteHandlers(
             services.review.changePolicy(withReviewIdentity(input)),
           );
         // "attach-evidence" and "record-verdict" were removed with the
-        // evidence-kind narrowing (ticket #24): evidence is only ever
-        // ingested from workflow events and proof verdicts are recorded only
-        // by the delivery gate, so both fall through to the 404 default.
+        // evidence-kind narrowing (ticket #24): evidence and proof verdicts
+        // originate only from execution ingestion or gate-side issuance, so
+        // both fall through to the 404 default.
         case "claim-task-complete":
           return invokeAction(request, taskClaimBodySchema, (input) =>
             services.evidence.claimTaskComplete({

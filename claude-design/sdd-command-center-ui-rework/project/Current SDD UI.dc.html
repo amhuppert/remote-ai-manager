@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/fonts/fonts.css">
+  <link rel="stylesheet" href="_ds/command-center-design-system-ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4/_ds_bundle.css">
+  <style>
+    html, body { overflow: auto !important; height: auto !important; }
+    body { margin: 0; background: #06090f; color: #dce2f0; font-family: var(--font-body, "Manrope", sans-serif); }
+    a { color: #00e5ff; text-decoration: none; }
+    a:hover { color: #00b8cc; }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+  </style>
+</helmet>
+<div style="display: flex; flex-direction: column; gap: 48px; background: #06090f; padding-bottom: 64px">
+
+  <!-- ============ SCREEN 1: Main spec detail (overview) ============ -->
+  <section data-screen-label="Current: Main spec screen" data-cc-source="src/features/spec-studio/SpecDetailPage.tsx">
+    <div style="background: #172033; border-bottom: 1px solid #243048; padding: 6px 16px; font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Current implementation — Main spec screen (Overview)</div>
+    <div style="background: #0b1019; min-height: 400px">
+      <header style="display: flex; height: 48px; align-items: center; justify-content: space-between; border-bottom: 1px solid #1a2338; background: rgba(6,9,15,0.75); padding: 0 16px; box-sizing: border-box">
+        <div style="display: flex; align-items: center; gap: 12px">
+          <span style="font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em; color: #00e5ff; text-shadow: 0 0 20px rgba(0,229,255,0.6)">CC</span>
+          <span style="height: 20px; width: 1px; background: #243048"></span>
+          <nav style="display: flex; align-items: center; gap: 8px; font-family: var(--font-mono, monospace); font-size: 0.8rem; color: #7b899f">
+            <span>projects</span><span style="color: #738699">/</span>
+            <span>command-center &#8964;</span><span style="color: #738699">/</span>
+            <span>specs</span><span style="color: #738699">/</span>
+            <span>context-structured-output</span>
+          </nav>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px">
+          <span style="display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; background: rgba(255,179,0,0.15); border: 1px solid #cc8f00; padding: 4px 10px; font-family: var(--font-mono, monospace); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #ffb300"><span style="height: 6px; width: 6px; border-radius: 99px; background: #ffb300"></span>8 need you · requirements approval required</span>
+          <span style="display: inline-flex; height: 28px; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid #00e5ff; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #dce2f0">Specs</span>
+          <span style="display: inline-flex; height: 28px; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid #243048; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #7b899f">Tickets</span>
+          <span style="display: inline-flex; height: 28px; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid #243048; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: #7b899f">Templates</span>
+          <span style="color: #7b899f; font-size: 14px">&#9881;</span>
+        </div>
+      </header>
+      <div style="padding: 8px 24px 48px">
+        <header style="border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+          <div style="display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px">
+            <div style="min-width: 0">
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+                <h1 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.05rem; line-height: 1; font-weight: 800; color: #dce2f0">Structured output for execution contexts</h1>
+                <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 4px; background: rgba(0,229,255,0.15); padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #00b8cc">context-structured-output &#10064;</span>
+                <span style="display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #ffb300"><span style="height: 6px; width: 6px; border-radius: 99px; background: #ffb300; box-shadow: 0 0 7px rgba(255,179,0,0.5); animation: pulse-dot 1.6s infinite"></span>In review</span>
+                <span style="display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; border: 1px solid #1a2338; background: #172033; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #7b899f">requirements stage</span>
+                <span style="display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #243048; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #7b899f">Contract-bearing</span>
+              </div>
+              <p style="margin: 4px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">rev 1 proposed 2026-07-30</p>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px">
+              <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 500; color: #738699">Export</span>
+              <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 500; color: #738699">Verify</span>
+              <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 500; color: #7b899f">Gate policy</span>
+              <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #cc8f00; background: rgba(255,179,0,0.15); padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #ffb300">Review revision</span>
+            </div>
+          </div>
+        </header>
+        <div style="display: flex; align-items: center; gap: 16px; padding-top: 8px">
+          <span style="border-bottom: 2px solid #00e5ff; padding: 4px 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: #dce2f0">Overview</span>
+          <span style="border-bottom: 2px solid transparent; padding: 4px 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: #738699">Traceability</span>
+          <span style="border-bottom: 2px solid transparent; padding: 4px 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: #738699">History</span>
+          <span style="border-bottom: 2px solid transparent; padding: 4px 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: #738699">Controls</span>
+        </div>
+        <section style="position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #0b1019; padding: 8px 16px; margin-top: 12px; font-family: var(--font-mono, monospace)">
+          <span style="position: absolute; top: 0; right: 0; left: 0; height: 2px; opacity: 0.8; background: linear-gradient(90deg, #ffb300, transparent 65%)"></span>
+          <span style="height: 7px; width: 7px; flex-shrink: 0; border-radius: 99px; background: #ffb300; box-shadow: 0 0 8px #ffb300; animation: pulse-dot 1.6s infinite"></span>
+          <span style="flex-shrink: 0; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: #ffb300">Revision awaits sign-off</span>
+          <span style="min-width: 220px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; color: #7b899f">Review semantic changes and satisfy sign-off preconditions.</span>
+          <span style="flex-shrink: 0; font-size: 0.68rem; color: #738699">7 pending approvals — review · 2 open questions</span>
+        </section>
+        <div style="display: grid; grid-template-columns: minmax(0,1fr) 400px; align-items: start; gap: 24px; margin-top: 16px">
+          <section style="min-width: 0; overflow: hidden; border-radius: 10px; border: 1px solid #1a2338; background: #0b1019; padding: 0 16px">
+            <section style="border-bottom: 1px solid #141d2e; padding: 16px 0">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <h2 style="margin: 0; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Problem</h2>
+                <span style="height: 1px; flex: 1; background: #141d2e"></span>
+              </div>
+              <div style="margin-top: 8px; font-size: 0.82rem; line-height: 1.65; color: #dce2f0">
+                <p style="margin: 0 0 10px">A graph workflow execution context produces no machine-readable output. The implementer turn is deliberately free-form (<code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">implementer-runner.ts</code> passes no <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputFormat</code>, to preserve the streaming markdown turn body), context state carries no output field, and the only cross-context channels are git reachability (<code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">lane-readiness.ts</code>) and prose shared documents. A downstream context learns about upstream results only by reading merged code or shared-document prose; nothing can branch on, filter, or aggregate a typed upstream result.</p>
+                <p style="margin: 0 0 10px">This is the missing data plane for the workflow vision's patterns: Classify-And-Act, Generate-And-Filter, and Tournament verdicts all require a context to emit a typed result that downstream machinery consumes (roadmap D2), and D4's conditional edges have no value to condition on until it exists.</p>
+                <p style="margin: 0">Meanwhile the structured-output machinery already exists and is unused by contexts: the AgentCall facade gate is opt-in on <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">request.outputSchema</code> with candidate-extraction fall-through (native → raw JSON → fenced) and a bounded repair turn, and the graph validator already runs schema-validated task runs through the shared chain. But every current producer passes a compile-time literal schema — no author-supplied schema is plumbed anywhere in the system.</p>
+              </div>
+            </section>
+            <section style="border-bottom: 1px solid #141d2e; padding: 16px 0">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <h2 style="margin: 0; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Outcomes</h2>
+                <span style="height: 1px; flex: 1; background: #141d2e"></span>
+              </div>
+              <div style="margin-top: 8px; font-size: 0.82rem; line-height: 1.65; color: #dce2f0">
+                <p style="margin: 0 0 10px">A workflow author can declare an optional <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputSchema</code> (a JSON Schema object) on any execution context — at planning time, in the builder, or later through the doc 05/06 edit surfaces. When such a context finishes its work, exactly one validated output conforming to that schema exists: validated through the existing structured-output gate chain, persisted durably on the execution, and surviving server restart.</p>
+                <p style="margin: 0">Downstream contexts see upstream structured outputs injected into their iteration prompts in a documented format, and engine code can read any context's output through a typed accessor — the seam D4 conditional edges will later consume. Contexts without an <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputSchema</code> behave exactly as today: free-form streaming implementer turns, no schema, no gate.</p>
+              </div>
+            </section>
+            <section style="padding: 16px 0">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <h2 style="margin: 0; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Non-goals</h2>
+                <span style="height: 1px; flex: 1; background: #141d2e"></span>
+              </div>
+              <div style="margin-top: 8px; font-size: 0.82rem; line-height: 1.65; color: #dce2f0">
+                <div style="display: flex; gap: 8px"><span style="color: #738699">&#8250;</span><span>Conditional edges or any engine branching on outputs — that is D4; this deliverable only provides the data plane it reads.</span></div>
+                <div style="display: flex; gap: 8px"><span style="color: #738699">&#8250;</span><span>Specialist validators and implementor personas (D3).</span></div>
+                <div style="display: flex; gap: 8px"><span style="color: #738699">&#8250;</span><span>Extending the hand-rolled JSON-Schema subset validator to full JSON Schema — <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">$ref</code>, <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">anyOf</code>, <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">allOf</code>, <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">format</code> stay unsupported; authoring-time validation enforces the supported subset instead.</span></div>
+                <div style="display: flex; gap: 8px"><span style="color: #738699">&#8250;</span><span>A workflow- or global-tier default <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputSchema</code> in the config cascade — a shared default output shape across heterogeneous contexts is meaningless; the field is per-context only.</span></div>
+              </div>
+            </section>
+          </section>
+          <aside style="display: flex; flex-direction: column; gap: 12px" data-cc-source="src/features/spec-studio/SpecDetailPage.tsx SpecStructureRail">
+            <section style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #141d2e; padding: 8px 12px">
+                <h3 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7b899f">Requirements</h3>
+                <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #738699">7</span>
+              </div>
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R1</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">An execution context definition shall ac…</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R2</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">When an execution context that declare…</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R3</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">A final output that fails schema validati…</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R4</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">The captured structured output shall be …</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R5</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">A downstream execution context shall rec…</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R6</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">The 'outputSchema' field shall be editab…</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">R7</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Workflow surfaces shall expose the featu…</span><span style="display: flex; gap: 4px"><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span><span style="height: 6px; width: 6px; border-radius: 2px; background: #ffb300"></span></span><span style="color: #ffb300; font-size: 11px">&#8635;</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+              </div>
+            </section>
+            <section style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #141d2e; padding: 8px 12px">
+                <h3 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7b899f">Decisions</h3>
+                <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #738699">0</span>
+              </div>
+              <p style="margin: 8px; border-radius: 4px; border: 1px dashed #141d2e; padding: 8px; font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #738699">None recorded</p>
+            </section>
+            <section style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #141d2e; padding: 8px 12px">
+                <h3 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7b899f">Questions &amp; assumptions</h3>
+                <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #738699">4</span>
+              </div>
+              <div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">Q1</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Capture mechanism: the implementer turn is…</span><span style="font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #ffb300">Open</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #141d2e; padding: 6px 12px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">Q2</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Downstream injection scope: which upstream…</span><span style="font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #ffb300">Open</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                <div style="border-bottom: 1px solid #141d2e; padding: 6px 12px">
+                  <div style="display: flex; align-items: center; gap: 8px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">A1</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">outputSchema is authored within the JS…</span><span style="font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #ffb300">Proposed</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                  <div style="display: flex; align-items: center; gap: 4px; padding: 4px 0 0 38px"><span style="margin-right: 4px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #738699">dispose:</span><span style="height: 20px; display: inline-flex; align-items: center; border-radius: 4px; border: 1px solid #00b85c; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #00e676">confirm</span><span style="height: 20px; display: inline-flex; align-items: center; border-radius: 4px; border: 1px solid #cc3148; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #ff3d5a">reject</span><span style="height: 20px; display: inline-flex; align-items: center; border-radius: 4px; border: 1px solid #243048; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #738699">defer</span></div>
+                </div>
+                <div style="padding: 6px 12px">
+                  <div style="display: flex; align-items: center; gap: 8px"><span style="width: 30px; flex-shrink: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; color: #738699">A2</span><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Output-validation failures ride the ex…</span><span style="font-family: var(--font-mono, monospace); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: #ffb300">Proposed</span><span style="color: #738699; font-size: 11px">&#10064;</span></div>
+                  <div style="display: flex; align-items: center; gap: 4px; padding: 4px 0 0 38px"><span style="margin-right: 4px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #738699">dispose:</span><span style="height: 20px; display: inline-flex; align-items: center; border-radius: 4px; border: 1px solid #00b85c; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #00e676">confirm</span><span style="height: 20px; display: inline-flex; align-items: center; border-radius: 4px; border: 1px solid #cc3148; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #ff3d5a">reject</span><span style="height: 20px; display: inline-flex; align-items: center; border-radius: 4px; border: 1px solid #243048; padding: 0 8px; font-family: var(--font-mono, monospace); font-size: 0.6rem; color: #738699">defer</span></div>
+                </div>
+              </div>
+            </section>
+            <section style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #141d2e; padding: 8px 12px">
+                <h3 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #7b899f">Tasks</h3>
+                <span style="font-family: var(--font-mono, monospace); font-size: 0.66rem; color: #738699">0</span>
+              </div>
+              <p style="margin: 8px; border-radius: 4px; border: 1px dashed #141d2e; padding: 8px; font-family: var(--font-mono, monospace); font-size: 0.68rem; color: #738699">None recorded</p>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SCREEN 2: Review mode ============ -->
+  <section data-screen-label="Current: Review screen" data-cc-source="src/features/spec-studio/SpecReviewMode.tsx">
+    <div style="background: #172033; border-bottom: 1px solid #243048; padding: 6px 16px; font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Current implementation — Review screen</div>
+    <div style="background: #0b1019; padding: 10px 12px 16px">
+      <div style="max-width: 1080px; margin: 0 auto">
+        <header style="display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+          <div style="min-width: 0">
+            <span style="display: inline-flex; min-height: 28px; align-items: center; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 500; color: #738699">← context-structured-output</span>
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+              <h1 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.05rem; font-weight: 800; color: #dce2f0">Review requirements-stage revision 1</h1>
+              <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">proposed 2026-07-30 · initial proposal</span>
+            </div>
+          </div>
+          <div style="display: flex; flex-shrink: 0; align-items: center; gap: 8px">
+            <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Request changes</span>
+            <span style="display: inline-flex; align-items: center; border-radius: 6px; border: 1px solid #1a2338; background: #111825; padding: 2px">
+              <span style="height: 24px; display: inline-flex; align-items: center; border-radius: 4px; background: #1a2740; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: #dce2f0">Semantic changes</span>
+              <span style="height: 24px; display: inline-flex; align-items: center; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.7rem; font-weight: 600; color: #738699">Raw diff</span>
+            </span>
+          </div>
+        </header>
+        <section style="margin-top: 14px; border-radius: 10px; border: 1px solid #1a2338; background: #0b1019; padding: 18px 20px">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+            <div style="min-width: 0">
+              <p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.76rem; font-weight: 600; color: #dce2f0">26 changes across 2 kinds</p>
+              <p style="margin: 4px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">Approvals on unchanged elements carry forward quietly.</p>
+            </div>
+            <div style="display: flex; flex-shrink: 0; gap: 8px">
+              <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Approve all requirements</span>
+              <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; background: #00e5ff; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #06090f">Approve all remaining</span>
+            </div>
+          </div>
+          <div style="margin-top: 14px">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
+              <h2 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #dce2f0">Sections</h2>
+              <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">5 changes</span>
+              <span style="height: 1px; min-width: 0; flex: 1; background: #141d2e"></span>
+            </div>
+            <div style="display: grid; gap: 8px">
+              <article style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+                <div style="display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 12px">
+                  <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(0,230,118,0.15); border: 1px solid #00b85c; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #00e676">Added</span>
+                  <span style="font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #00e5ff">context-structured-output-sec-problem</span>
+                  <span style="display: flex; min-width: 0; align-items: center; gap: 8px; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #dce2f0"><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Added section: Problem</span><span style="color: #738699">&#8963;</span></span>
+                  <span style="display: flex; align-items: center; gap: 4px">
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Comment</span>
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #00b85c; background: rgba(0,230,118,0.15); padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #00e676">Approve item</span>
+                  </span>
+                </div>
+                <div style="border-top: 1px solid #1a2338; background: #0b1019; padding: 8px 12px; font-size: 0.82rem; line-height: 1.6; color: #7b899f">
+                  A graph workflow execution context produces no machine-readable output. The implementer turn is deliberately free-form (<code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">implementer-runner.ts</code> passes no <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputFormat</code>, to preserve the streaming markdown turn body), context state carries no output field…
+                </div>
+              </article>
+              <article style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+                <div style="display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 12px">
+                  <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(0,230,118,0.15); border: 1px solid #00b85c; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #00e676">Added</span>
+                  <span style="font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #00e5ff">context-structured-output-sec-outcomes</span>
+                  <span style="display: flex; min-width: 0; align-items: center; gap: 8px; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #dce2f0"><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Added section: Outcomes</span><span style="color: #738699">&#8963;</span></span>
+                  <span style="display: flex; align-items: center; gap: 4px">
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Comment</span>
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #00b85c; background: rgba(0,230,118,0.15); padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #00e676">Approve item</span>
+                  </span>
+                </div>
+                <div style="border-top: 1px solid #1a2338; background: #0b1019; padding: 8px 12px; font-size: 0.82rem; line-height: 1.6; color: #7b899f">
+                  A workflow author can declare an optional <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputSchema</code> (a JSON Schema object) on any execution context — at planning time, in the builder, or later through the doc 05/06 edit surfaces…
+                </div>
+              </article>
+            </div>
+          </div>
+          <div style="margin-top: 14px">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
+              <h2 style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #dce2f0">Requirements</h2>
+              <span style="font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">21 changes</span>
+              <span style="height: 1px; min-width: 0; flex: 1; background: #141d2e"></span>
+            </div>
+            <div style="display: grid; gap: 8px">
+              <article style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+                <div style="display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 12px">
+                  <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(0,230,118,0.15); border: 1px solid #00b85c; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #00e676">Added</span>
+                  <span style="font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #00e5ff">R1</span>
+                  <span style="display: flex; min-width: 0; align-items: center; gap: 8px; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #dce2f0"><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Added requirement: An execution context definition shall accept an optional 'outputSchema' field holdi…</span><span style="color: #738699">&#8963;</span></span>
+                  <span style="display: flex; align-items: center; gap: 4px">
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Comment</span>
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #00b85c; background: rgba(0,230,118,0.15); padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #00e676">Approve item</span>
+                  </span>
+                </div>
+                <div style="border-top: 1px solid #1a2338; background: #0b1019; padding: 8px 12px; font-size: 0.82rem; line-height: 1.6; color: #7b899f">
+                  An execution context definition shall accept an optional <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">outputSchema</code> field holding a JSON Schema object; the field is per-context (no workflow- or global-tier default), flows losslessly from the authored definition through config resolution into the execution's <code style="background: #172033; border-radius: 3px; padding: 1px 5px; font-family: var(--font-mono, monospace); font-size: 0.76em; color: #9fb0c9">workingDefinition</code>, and survives every persistence round trip.
+                </div>
+              </article>
+              <article style="overflow: hidden; border-radius: 6px; border: 1px solid #1a2338; background: #111825">
+                <div style="display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 12px">
+                  <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(0,230,118,0.15); border: 1px solid #00b85c; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #00e676">Added</span>
+                  <span style="font-family: var(--font-mono, monospace); font-size: 0.72rem; font-weight: 600; color: #00e5ff">R1.1</span>
+                  <span style="display: flex; min-width: 0; align-items: center; gap: 8px; font-family: var(--font-mono, monospace); font-size: 0.78rem; color: #dce2f0"><span style="min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">Added criterion: Given a workflow definition whose context declares an 'outputSchema', when the workfl…</span><span style="color: #738699">&#8964;</span></span>
+                  <span style="display: flex; align-items: center; gap: 4px">
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #dce2f0">Comment</span>
+                    <span style="display: inline-flex; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #00b85c; background: rgba(0,230,118,0.15); padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #00e676">Approve item</span>
+                  </span>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+        <footer style="position: sticky; bottom: 0; display: flex; align-items: center; gap: 16px; border-top: 1px solid #1a2338; background: #111825; padding: 12px 8px; box-shadow: 0 -12px 32px #06090f; margin-top: 16px">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; flex: 1">
+            <span style="font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 700; color: #dce2f0">0/7 approved</span>
+            <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(255,179,0,0.15); border: 1px solid #cc8f00; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #ffb300">Approvals incomplete</span>
+            <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(0,230,118,0.15); border: 1px solid #00b85c; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #00e676">Threads resolved</span>
+            <span style="display: inline-flex; align-items: center; border-radius: 999px; background: rgba(0,230,118,0.15); border: 1px solid #00b85c; padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 600; color: #00e676">Assumptions clear</span>
+          </div>
+          <span style="display: inline-flex; height: 32px; align-items: center; border-radius: 4px; border: 1px solid #243048; background: #172033; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #738699; opacity: 0.6">Sign off revision 1</span>
+        </footer>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SCREEN 3: Controls (gate policy + execution + danger zone) ============ -->
+  <section data-screen-label="Current: Controls screen" data-cc-source="src/features/spec-studio/SpecControls.tsx">
+    <div style="background: #172033; border-bottom: 1px solid #243048; padding: 6px 16px; font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Current implementation — Controls screen (gate policy + execution bundled)</div>
+    <div style="background: #0b1019; padding: 24px 12px 32px">
+      <div style="max-width: 900px; margin: 0 auto; border: 1px solid #1a2338; border-radius: 10px; background: #111825; padding: 16px">
+        <div style="display: grid; gap: 14px">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+            <div><p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 600; color: #dce2f0">Requirements</p><p style="margin: 2px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Admits the requirements contract.</p></div>
+            <span style="display: inline-flex; align-items: center; border: 1px solid #243048; border-radius: 4px; overflow: hidden"><span style="height: 24px; display: inline-flex; align-items: center; background: rgba(0,229,255,0.15); padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; color: #00e5ff">GATE</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">NOTIFY</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">OFF</span></span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+            <div><p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 600; color: #dce2f0">Design</p><p style="margin: 2px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Admits the design narrative and decisions.</p></div>
+            <span style="display: inline-flex; align-items: center; border: 1px solid #243048; border-radius: 4px; overflow: hidden"><span style="height: 24px; display: inline-flex; align-items: center; background: rgba(0,229,255,0.15); padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; color: #00e5ff">GATE</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">NOTIFY</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">OFF</span></span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+            <div><p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 600; color: #dce2f0">Plan</p><p style="margin: 2px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Admits the execution task plan.</p></div>
+            <span style="display: inline-flex; align-items: center; border: 1px solid #243048; border-radius: 4px; overflow: hidden"><span style="height: 24px; display: inline-flex; align-items: center; background: rgba(0,229,255,0.15); padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; color: #00e5ff">GATE</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">NOTIFY</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">OFF</span></span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #141d2e; padding-bottom: 12px">
+            <div><p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 600; color: #dce2f0">Execution start</p><p style="margin: 2px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Admits the pinned scope and generated definition.</p></div>
+            <span style="display: inline-flex; align-items: center; border: 1px solid #243048; border-radius: 4px; overflow: hidden"><span style="height: 24px; display: inline-flex; align-items: center; background: rgba(0,229,255,0.15); padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; color: #00e5ff">GATE</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">NOTIFY</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">OFF</span></span>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+            <div><p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.78rem; font-weight: 600; color: #dce2f0">Delivery</p><p style="margin: 2px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Admits delivery claims and merge readiness.</p><p style="margin: 6px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #7b899f">Delivery can never be Off.</p></div>
+            <span style="display: inline-flex; align-items: center; border: 1px solid #243048; border-radius: 4px; overflow: hidden"><span style="height: 24px; display: inline-flex; align-items: center; background: rgba(0,229,255,0.15); padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.05em; color: #00e5ff">GATE</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #738699">NOTIFY</span><span style="height: 24px; display: inline-flex; align-items: center; padding: 0 10px; font-family: var(--font-mono, monospace); font-size: 0.64rem; letter-spacing: 0.05em; color: #4a5568">OFF</span></span>
+          </div>
+          <div style="border-radius: 6px; border: 1px solid #141d2e; background: #0b1019; padding: 12px 16px">
+            <p style="margin: 0 0 8px; font-family: var(--font-mono, monospace); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #738699">Dial values</p>
+            <div style="display: grid; grid-template-columns: 80px 1fr; gap: 4px 16px; font-family: var(--font-mono, monospace); font-size: 0.7rem">
+              <span style="font-weight: 700; color: #dce2f0">Gate</span><span style="color: #7b899f">hard stop — human approval required</span>
+              <span style="font-weight: 700; color: #dce2f0">Notify</span><span style="color: #7b899f">agent proceeds; human notified; recorded as a policy admission</span>
+              <span style="font-weight: 700; color: #dce2f0">Off</span><span style="color: #7b899f">transition free — still recorded as a policy admission</span>
+            </div>
+            <p style="margin: 12px 0 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #ffb300">Floor: executions always pin revision and scope · evidence is always collected · Delivery is never Off · waivers are never grantable by policy</p>
+          </div>
+        </div>
+      </div>
+      <div style="max-width: 1020px; margin: 32px auto 0">
+        <p style="margin: 0; font-family: var(--font-mono, monospace); font-size: 0.7rem; color: #738699">workflows / context-structured-output</p>
+        <h2 style="margin: 4px 0 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1.15rem; font-weight: 800; color: #dce2f0">Execution — inside the workflow surface</h2>
+        <p style="margin: 6px 0 0; font-size: 0.8rem; color: #7b899f">The approved plan compiles to a standard graph workflow; scope, provenance, and merge criteria stay visible here.</p>
+        <div style="margin-top: 16px; border-radius: 10px; border: 1px solid #1a2338; background: #111825; padding: 20px 24px">
+          <h3 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 0.95rem; font-weight: 700; color: #dce2f0">Start execution — scope selection</h3>
+          <p style="margin: 10px 0 0; font-size: 0.8rem; color: #7b899f">Approve a revision before selecting an execution scope.</p>
+        </div>
+      </div>
+      <div style="margin: 48px 24px 0; border: 1px solid #ff3d5a; border-radius: 10px; padding: 16px 20px">
+        <div style="display: flex; align-items: center; gap: 8px">
+          <h2 style="margin: 0; font-family: var(--font-display, 'Anybody', sans-serif); font-size: 1rem; font-weight: 800; color: #ff3d5a">Abandon this spec</h2>
+          <span style="display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #cc3148; background: rgba(255,61,90,0.12); padding: 2px 8px; font-family: var(--font-mono, monospace); font-size: 0.64rem; color: #e8506c">Terminal</span>
+        </div>
+        <p style="margin: 10px 0 0; max-width: 640px; font-size: 0.8rem; line-height: 1.5; color: #7b899f">This retires the whole spec, not a run: it leaves the active inventory, no further execution can start from it, and its revisions stay readable as history. To stop one run and start another, use Abandon execution on the execution surface above.</p>
+        <span style="display: inline-flex; margin-top: 12px; height: 28px; align-items: center; border-radius: 4px; border: 1px solid #cc3148; background: transparent; padding: 0 12px; font-family: var(--font-mono, monospace); font-size: 0.72rem; color: #ff3d5a">Abandon whole spec</span>
+      </div>
+    </div>
+  </section>
+</div>
+</x-dc>
+</body>
+</html>

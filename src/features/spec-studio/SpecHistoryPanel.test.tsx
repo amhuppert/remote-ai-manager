@@ -217,6 +217,21 @@ describe("buildSpecHistory", () => {
     expect(executionRow).toHaveClass("border-b", "py-sm");
   });
 
+  it("keeps immutable sign-off detail readable on its green status tint", () => {
+    render(
+      <SpecHistoryPanel
+        detail={specControlsDetailFixture("running")}
+        projectName="command-center"
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "The approved revision is immutable and can anchor execution scope.",
+      ),
+    ).toHaveClass("text-text-primary");
+  });
+
   it("provides the prototype's post-hoc review loop on policy admissions", async () => {
     const user = userEvent.setup();
     const detail = specControlsDetailFixture("running");

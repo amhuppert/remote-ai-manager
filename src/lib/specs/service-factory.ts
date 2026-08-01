@@ -119,6 +119,7 @@ export async function createProductionSpecRouteServices(
     );
   };
 
+  const gitProbesForProject = (path: string) => createGitProbes(path);
   const evidenceRef: { current?: EvidenceService } = {};
   const ingest = createEvidenceIngestService({
     repo: deliveryRepo,
@@ -130,8 +131,24 @@ export async function createProductionSpecRouteServices(
         }
         return evidenceRef.current.attachEvidence(input);
       },
+      recordProofVerdict(input) {
+        if (evidenceRef.current === undefined) {
+          throw new Error("Spec evidence service is not initialized");
+        }
+        return evidenceRef.current.recordProofVerdict(input);
+      },
     },
     writeQueue,
+    async validatedTreeHash(execution, commitSha, relevantPaths) {
+      const spec = await specs.findById(execution.spec_id);
+      if (spec === null) {
+        throw new Error(`Spec ${execution.spec_id} was not found`);
+      }
+      return gitProbesForProject(spec.projectPath).relevantTreeHash(
+        commitSha,
+        relevantPaths,
+      );
+    },
     async loadOriginMap(workflowDefinitionId, execution) {
       const spec = await specs.findById(execution.spec_id);
       if (spec === null) return [];
@@ -145,7 +162,6 @@ export async function createProductionSpecRouteServices(
   });
   const ingestExecutionEvidence = (executionId: string) =>
     ingest.ingestAuthoritatively(executionId);
-  const gitProbesForProject = (path: string) => createGitProbes(path);
 
   const evidencePublication = createEvidenceMutationRecorder({
     eventsRepo,
