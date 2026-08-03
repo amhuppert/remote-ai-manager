@@ -24,6 +24,8 @@ const handshakeResponseSchema = z.object({
     conversation: z.string().nullable(),
   }),
   tokenValid: z.boolean(),
+  /** Absent on servers older than the build-parity recovery path. */
+  cliPath: z.string().optional(),
 });
 
 /**
@@ -122,11 +124,27 @@ export async function runDoctor(
     });
   }
 
-  const { serverBuild, identity: echoedIdentity, tokenValid } = parsed.data;
+  const {
+    serverBuild,
+    identity: echoedIdentity,
+    tokenValid,
+    cliPath,
+  } = parsed.data;
   const buildMatch = serverBuild === cliBuild;
+  // Naming the wrong cause here is worse than saying nothing: an agent that
+  // reads "transient" runs the command anyway, against a surface from another
+  // tree. Every CC server publishes its own cctl, so skew means wrong binary
+  // until proven otherwise, and the recovery is that server's own path.
   const warning = buildMatch
     ? ""
-    : `warning: cctl build differs from server (cli=${cliBuild} server=${serverBuild}) — transient across a server restart\n`;
+    : [
+        `warning: this cctl is build ${cliBuild}; ${server} is build ${serverBuild}`,
+        cliPath === undefined
+          ? "  that server publishes its own cctl at <its configDir>/bin/cctl — run that binary against it"
+          : `  run that server's own binary instead: ${cliPath}`,
+        "  (a server restart alone does not change the stamp — a differing stamp is a differing build)",
+        "",
+      ].join("\n");
 
   const identityLine = [
     `project=${echoedIdentity.project ?? "-"}`,
@@ -137,6 +155,7 @@ export async function runDoctor(
     `server        ${server}`,
     `server build  ${serverBuild}`,
     `cli build     ${cliBuild}`,
+    ...(cliPath === undefined ? [] : [`server cctl   ${cliPath}`]),
     `identity      ${identityLine}`,
     `token         valid (source: ${tokenSource ?? "-"})`,
   ].join("\n");

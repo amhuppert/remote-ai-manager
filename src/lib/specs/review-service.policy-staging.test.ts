@@ -154,6 +154,7 @@ describe("R25 policy-change staging semantics", () => {
       action: "propose",
       requiresHumanSignOff: true,
       consultedGates: [{ gate: "requirements", dial: "combined-approval" }],
+      governanceConsultedGates: ["requirements"],
     });
 
     const reloaded = await specs.findDraft(created.spec.id);

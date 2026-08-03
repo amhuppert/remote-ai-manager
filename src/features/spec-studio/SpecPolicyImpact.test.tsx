@@ -12,8 +12,10 @@ import {
   type SpecGatePolicy,
 } from "@/lib/specs/schemas";
 
+import { draftingSpecControlsDetailFixture } from "./SpecControls.fixtures";
 import {
   PolicyImpactPreview,
+  openDraftForPolicyImpact,
   type PolicyImpactApprovalEffect,
 } from "./SpecPolicyImpact";
 
@@ -138,5 +140,42 @@ describe("PolicyImpactPreview approval chips", () => {
     expect(
       within(impact).getByText("Requirements · Gate → Combined approval"),
     ).toBeVisible();
+  });
+
+  /**
+   * Which gates a propose consults is decided against the nearest approved
+   * ancestor, where the server measures it. Re-deriving it here from the
+   * immediate parent named fewer gates than the transition will consult
+   * whenever the draft continues an attempt a human withdrew.
+   */
+  it("names the gates the server measured rather than a set of its own", () => {
+    const detail = draftingSpecControlsDetailFixture("plan");
+    const sequence = detail.status.authoringSequence;
+    if (sequence === null) throw new Error("Fixture requires an open draft");
+    detail.status.authoringSequence = {
+      ...sequence,
+      nextTransition: {
+        ...sequence.nextTransition,
+        governanceConsultedGates: ["requirements", "plan"],
+      },
+    };
+
+    render(
+      <PolicyImpactPreview
+        currentPolicy={{ preset: "exploratory" }}
+        proposedPolicy={{ preset: "contract-bearing" }}
+        draft={openDraftForPolicyImpact(detail)}
+      />,
+    );
+
+    const impact = screen.getByRole("region", { name: POLICY_IMPACT_NAME });
+    const consulted = within(impact).getByRole("list", {
+      name: "Gates the next transition consults",
+    });
+    expect(
+      within(consulted)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["Requirements · Gate", "Plan · Gate"]);
   });
 });

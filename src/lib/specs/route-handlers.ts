@@ -21,6 +21,7 @@ import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import {
   SpecElementIdTakenError,
+  SpecHistoricalElementError,
   SpecRevisionImmutableError,
   StaleElementConflictError,
   StaleStageConflictError,
@@ -35,13 +36,18 @@ import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
 import { draftAuthoringSequence } from "./authoring-sequence";
 import {
   SpecDraftUnavailableError,
+  SpecRevisionInReviewError,
   SpecSlugTakenError,
   StageBlockedWriteError,
   createAuthoringService,
   createAuthoringSpecInputSchema,
-  draftElementBatchInputSchema,
+  batchCarriesWork,
+  draftElementBatchShapeSchema,
+  BATCH_WITHOUT_WORK_MESSAGE,
   draftElementWriteInputSchema,
   type DraftElementBatchRefusal,
+  historicalElementRefusal,
+  immutableRevisionRefusal,
   openAmendmentInputSchema,
   proposeAuthoringRevisionInputSchema,
   removeDraftElementInputSchema,
@@ -65,15 +71,24 @@ import type {
   ReconciledSpecExecution,
 } from "./execution-service";
 import {
+  createApprovalApplicability,
+  type ApprovalApplicability,
+} from "./approval-applicability";
+import {
   currentExecution,
   elementHandle,
-  gateStatuses,
   latestRevision,
   parseProvenance,
-  pendingApprovals,
   type PendingApproval,
-  type SpecGateStatus,
 } from "./gate-projection";
+import {
+  authoringReviewProjection,
+  type AuthoringNextAction,
+  type AuthoringPendingBlock,
+  type ProjectedGateStatus,
+  type RevisionSignOffProjection,
+} from "./authoring-review-projection";
+import { ancestorIds, governanceBaseRevisionId } from "./revision-lineage";
 import {
   explainInvalidElementHandle,
   formatBareElementHandle,
@@ -102,7 +117,11 @@ import {
   type DeliveryCriterion,
   type SpecPhaseProjection,
 } from "./phase";
-import { elementHandleInSnapshot, toLintSnapshot } from "./review-state";
+import {
+  elementHandleInSnapshot,
+  toDiffRows,
+  toLintSnapshot,
+} from "./review-state";
 import {
   answerQuestionInputSchema,
   approveItemInputSchema,
@@ -118,6 +137,7 @@ import {
   resolveReviewThreadInputSchema,
   reviewCommentInputSchema,
   signOffRevisionInputSchema,
+  withdrawProposalInputSchema,
   type ReviewService,
 } from "./review-service";
 import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
@@ -149,6 +169,7 @@ import {
   type SpecCriterionDispositionRow,
   type SpecEvidenceRow,
   type SpecExecutionRow,
+  type SpecGate,
   type SpecGateAdmissionRow,
   type SpecLinkRow,
   type SpecProofVerdictRow,
@@ -240,7 +261,14 @@ interface CurrentSpecState {
   revisions: SpecRevision[];
   currentRevision: SpecRevision | null;
   currentSnapshot: SpecRevisionSnapshot | null;
+  /** The current revision's immediate parent — the review diff's baseline. */
   baseSnapshot: SpecRevisionSnapshot | null;
+  /**
+   * The current revision's nearest approved ancestor — the baseline gate
+   * applicability is cumulative against. Not the same revision as
+   * `currentApprovedSnapshot` once an amendment forks past a withdrawn attempt.
+   */
+  governanceBaseSnapshot: SpecRevisionSnapshot | null;
   currentApprovedSnapshot: SpecRevisionSnapshot | null;
 }
 
@@ -255,9 +283,13 @@ interface SpecStatusView {
   slug: string;
   phase: SpecPhaseProjection;
   executions: SpecStatusExecution[];
-  gates: SpecGateStatus[];
+  gates: ProjectedGateStatus[];
   authoringSequence: RemainingAuthoringSequence | null;
   pendingApprovals: PendingApproval[];
+  applicableGates: SpecGate[];
+  revisionSignOff: RevisionSignOffProjection | null;
+  pendingBlock: AuthoringPendingBlock | null;
+  nextAction: AuthoringNextAction;
   openQuestions: Array<{
     id: string;
     handle: string;
@@ -455,21 +487,74 @@ async function loadCurrentState(
         ? currentSnapshot
         : await deps.getRevisionSnapshot(currentApprovedRevision.id);
   const baseRevisionId = currentRevision?.basedOnRevisionId ?? null;
-  const baseSnapshot =
-    baseRevisionId === null
+  const loadedById = new Map(
+    [currentSnapshot, currentApprovedSnapshot].flatMap((snapshot) =>
+      snapshot === null ? [] : [[snapshot.revision.id, snapshot] as const],
+    ),
+  );
+  const readSnapshot = async (revisionId: string | null) =>
+    revisionId === null
       ? null
-      : baseRevisionId === currentSnapshot?.revision.id
-        ? currentSnapshot
-        : baseRevisionId === currentApprovedSnapshot?.revision.id
-          ? currentApprovedSnapshot
-          : await deps.getRevisionSnapshot(baseRevisionId);
+      : (loadedById.get(revisionId) ??
+        (await deps.getRevisionSnapshot(revisionId)));
+  const baseSnapshot = await readSnapshot(baseRevisionId);
+  const governanceBaseId = governanceBaseRevisionId(revisions, currentRevision);
+  const governanceBaseSnapshot =
+    governanceBaseId === baseRevisionId
+      ? baseSnapshot
+      : await readSnapshot(governanceBaseId);
   return {
     revisions,
     currentRevision,
     currentSnapshot,
     baseSnapshot,
+    governanceBaseSnapshot,
     currentApprovedSnapshot,
   };
+}
+
+/**
+ * The approval authority for the current revision. Approvals accumulate
+ * without bound while the revisions they name do not, so the snapshots are
+ * read once per distinct revision rather than once per approval.
+ */
+async function loadApprovalApplicability(
+  deps: SpecRouteDeps,
+  state: CurrentSpecState,
+  approvals: readonly SpecApprovalRow[],
+): Promise<ApprovalApplicability> {
+  const current = state.currentSnapshot;
+  if (current === null) {
+    return () => false;
+  }
+  const known = new Map(
+    [state.currentSnapshot, state.baseSnapshot, state.governanceBaseSnapshot]
+      .filter((snapshot): snapshot is SpecRevisionSnapshot => snapshot !== null)
+      .map((snapshot) => [snapshot.revision.id, snapshot]),
+  );
+  const unread = [
+    ...new Set(approvals.map((approval) => approval.revision_id)),
+  ].filter((revisionId) => !known.has(revisionId));
+  for (const [revisionId, snapshot] of await Promise.all(
+    unread.map(
+      async (revisionId) =>
+        [revisionId, await deps.getRevisionSnapshot(revisionId)] as const,
+    ),
+  )) {
+    if (snapshot !== null) known.set(revisionId, snapshot);
+  }
+  const rows = new Map(
+    [...known].map(([revisionId, snapshot]) => [
+      revisionId,
+      toDiffRows(snapshot),
+    ]),
+  );
+  return createApprovalApplicability({
+    revisionId: current.revision.id,
+    ancestorRevisionIds: ancestorIds(state.revisions, current.revision.id),
+    revisionRows: rows.get(current.revision.id) ?? toDiffRows(current),
+    rowsForRevision: (revisionId) => rows.get(revisionId) ?? null,
+  });
 }
 
 function elementCounts(snapshot: SpecRevisionSnapshot | null) {
@@ -495,12 +580,23 @@ function elementCounts(snapshot: SpecRevisionSnapshot | null) {
   return counts;
 }
 
-function coverage(snapshot: SpecRevisionSnapshot | null): SpecCoverage {
-  const criteria = new Set(
+/**
+ * The criteria the coverage ratio is computed over. The plan status reports
+ * the ids it excludes from the same set, so the two readings cannot disagree
+ * about which criterion a revision carries.
+ */
+function currentCriterionElementIds(
+  snapshot: SpecRevisionSnapshot | null,
+): Set<string> {
+  return new Set(
     (snapshot?.elements ?? [])
       .filter(({ element }) => element.kind === "criterion")
       .map(({ element }) => element.id),
   );
+}
+
+function coverage(snapshot: SpecRevisionSnapshot | null): SpecCoverage {
+  const criteria = currentCriterionElementIds(snapshot);
   const covered = new Set<string>();
   for (const { version } of snapshot?.elements ?? []) {
     if (version.payload.kind !== "task") continue;
@@ -801,23 +897,34 @@ function taskPlanStatus(snapshot: SpecRevisionSnapshot | null) {
       elementHandle(snapshot, entry),
     ]),
   );
+  const criterionIds = currentCriterionElementIds(snapshot);
   return snapshot.elements.flatMap((entry) => {
     const payload = entry.version.payload;
     if (payload.kind !== "task") return [];
     const handle = handles.get(entry.element.id) ?? entry.element.id;
+    const covered = payload.coveredCriterionElementIds;
     return [
       {
         elementId: entry.element.id,
         handle,
         title: payload.title,
-        dependsOn: payload.dependsOnTaskElementIds.map(
-          (elementId) => handles.get(elementId) ?? elementId,
-        ),
+        // A handle only exists for an element this revision carries, and the
+        // ones it does not carry are reported as the ids they are rather than
+        // sitting in the handle field looking like content.
+        dependsOn: payload.dependsOnTaskElementIds
+          .filter((elementId) => handles.has(elementId))
+          .map((elementId) => handles.get(elementId) ?? elementId),
+        unresolvedDependsOnTaskElementIds: payload.dependsOnTaskElementIds
+          .filter((elementId) => !handles.has(elementId))
+          .sort(),
         laneGroup: payload.laneGroup ?? null,
         touchedPaths: payload.touchedPaths ?? [],
-        criterionCoverage: payload.coveredCriterionElementIds.map(
-          (elementId) => handles.get(elementId) ?? elementId,
-        ),
+        criterionCoverage: covered
+          .filter((elementId) => criterionIds.has(elementId))
+          .map((elementId) => handles.get(elementId) ?? elementId),
+        unresolvedCriterionElementIds: covered
+          .filter((elementId) => !criterionIds.has(elementId))
+          .sort(),
       },
     ];
   });
@@ -1107,13 +1214,37 @@ async function buildStatus(
   );
   const admissions =
     loadedAdmissions ?? deps.findGateAdmissionsBySpecId(spec.id);
-  const gates = gateStatuses(
-    spec,
-    revisionId,
+  const applies = await loadApprovalApplicability(deps, state, approvals);
+  // Sign-off is blocked by unresolved blocking threads and sign-off lint as
+  // well as by outstanding subjects, so the status projection reads the same
+  // three sources the sign-off transition does.
+  const signOffFindings =
+    revisionId === null
+      ? []
+      : (await deps.lintDraft(spec.id, revisionId)).filter(
+          (finding) => finding.severity === "blocks_signoff",
+        );
+  const projection = authoringReviewProjection({
+    policy: spec.gatePolicy,
+    snapshot: state.currentSnapshot,
+    governanceBaseSnapshot: state.governanceBaseSnapshot,
+    approvals,
     admissions,
-    selectedExecution,
+    currentExecution: selectedExecution,
     revisionNumberById,
-  );
+    applies,
+    blockingThreads:
+      revisionId === null
+        ? []
+        : deps
+            .findCommentsByRevision(revisionId)
+            .filter((comment) => comment.blocking === 1)
+            .map((comment) => ({
+              handle: comment.thread_id,
+              resolved: comment.resolution !== "open",
+            })),
+    signOffFindings,
+  });
   const criteria = deliveryCriteria(
     deps,
     state.currentApprovedSnapshot,
@@ -1140,22 +1271,20 @@ async function buildStatus(
       workflowExecutionId: run.workflow_execution_id,
       workflowStatus: reconciled.laneStatusById.get(run.id) ?? null,
     })),
-    gates,
+    gates: projection.gates,
     authoringSequence:
       state.currentSnapshot === null
         ? null
         : draftAuthoringSequence({
             policy: spec.gatePolicy,
             snapshot: state.currentSnapshot,
-            baseSnapshot: state.baseSnapshot,
+            governanceBaseSnapshot: state.governanceBaseSnapshot,
           }),
-    pendingApprovals: pendingApprovals(
-      state.currentSnapshot,
-      state.baseSnapshot,
-      approvals,
-      gates,
-      selectedExecution,
-    ),
+    pendingApprovals: projection.pendingApprovals,
+    applicableGates: projection.applicableGates,
+    revisionSignOff: projection.revisionSignOff,
+    pendingBlock: projection.pendingBlock,
+    nextAction: projection.nextAction,
     openQuestions: deps
       .findQuestionsBySpecId(spec.id)
       .filter((question) => question.status === "open")
@@ -1219,14 +1348,22 @@ async function buildSummary(deps: SpecRouteDeps, spec: Spec) {
   const state = await loadCurrentState(deps, spec.id);
   const reconciled = await loadReconciledExecutions(deps, spec);
   const status = await buildStatus(deps, spec, state, reconciled);
+  // A consulted gate stays pending after its last subject approval until a
+  // human signs the revision off, so the outstanding sign-off is one more
+  // human act the inventory owes — counting only subjects made a revision that
+  // still needs a human vanish from the "needs you" rollups.
+  const signOffOutstanding =
+    status.revisionSignOff !== null &&
+    status.revisionSignOff.state !== "signed_off";
+  const pendingApprovalCount =
+    status.pendingApprovals.length + (signOffOutstanding ? 1 : 0);
   return {
     spec,
     phase: status.phase,
     currentRevision: state.currentRevision,
     counts: elementCounts(state.currentSnapshot),
-    pendingApprovalCount: status.pendingApprovals.length,
-    approvalState:
-      status.pendingApprovals.length === 0 ? "complete" : "pending",
+    pendingApprovalCount,
+    approvalState: pendingApprovalCount === 0 ? "complete" : "pending",
     delivery: status.delivery,
     linkedWork: linkedWork(deps.findLinksBySpecId(spec.id)),
   };
@@ -2102,10 +2239,12 @@ const draftElementBodySchema = draftElementWriteInputSchema.omit({
   specId: true,
   actor: true,
 });
-const draftElementBatchBodySchema = draftElementBatchInputSchema.omit({
-  specId: true,
-  actor: true,
-});
+const draftElementBatchBodySchema = draftElementBatchShapeSchema
+  .omit({ specId: true, actor: true })
+  .refine(batchCarriesWork, {
+    message: BATCH_WITHOUT_WORK_MESSAGE,
+    path: ["elements"],
+  });
 const reorderDraftElementBodySchema = reorderDraftElementInputSchema.omit({
   specId: true,
   actor: true,
@@ -2137,6 +2276,13 @@ const resolveThreadBodySchema = resolveReviewThreadInputSchema.omit({
   actor: true,
 });
 const requestChangesBodySchema = requestChangesInputSchema.omit({
+  specId: true,
+  actor: true,
+});
+// The revision id stays required rather than defaulting to the current
+// proposal: it is the caller's compare-and-swap token, and inferring it would
+// let a replacement proposal be withdrawn by an agent that never saw it.
+const withdrawProposalBodySchema = withdrawProposalInputSchema.omit({
   specId: true,
   actor: true,
 });
@@ -2522,11 +2668,21 @@ function routeFailure(
       },
     });
   }
+  if (error instanceof SpecHistoricalElementError) {
+    return specRefusalResponse(historicalElementRefusal(error));
+  }
   if (error instanceof SpecRevisionImmutableError) {
+    return specRefusalResponse(immutableRevisionRefusal(error));
+  }
+  if (error instanceof SpecRevisionInReviewError) {
     return specRefusalResponse({
-      code: "amendment_required",
+      code: error.code,
       unmetConditions: [error.message],
-      instruction: "Open an amendment draft before changing approved content.",
+      instruction: error.instruction,
+      details: {
+        proposals: error.proposals.map(({ id, number }) => ({ id, number })),
+        approvedBaseRevisionId: error.approvedBase?.id ?? null,
+      },
     });
   }
   if (
@@ -2783,6 +2939,10 @@ export function createSpecWriteRouteHandlers(
         case "withdraw":
           return invokeAction(request, requestChangesBodySchema, (input) =>
             services.review.withdraw(withReviewIdentity(input)),
+          );
+        case "withdraw-proposal":
+          return invokeAction(request, withdrawProposalBodySchema, (input) =>
+            services.review.withdrawProposal(withReviewIdentity(input)),
           );
         case "bulk-approve":
           return invokeAction(request, bulkApproveBodySchema, (input) =>

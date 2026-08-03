@@ -11,20 +11,28 @@
 
 import { NextResponse } from "next/server";
 import { getBuildStamp } from "@/lib/build-info";
+import { getConfigDirPath } from "@/lib/config/loader";
+import {
+  BUILD_MISMATCH_HEADER,
+  CLI_BUILD_HEADER,
+  buildMismatchHeaderValue,
+} from "./build-parity";
+import { cctlInstallPath } from "./install-cli";
 import { createLogger, withTracing } from "@/lib/logging";
 import { getServerBootNonce } from "./server-url";
 import { createAgentAuth } from "./token";
 
 const log = createLogger("agent-gateway");
 
-export const CLI_BUILD_HEADER = "x-cc-cli-build";
-export const BUILD_MISMATCH_HEADER = "x-cc-build-mismatch";
+export { BUILD_MISMATCH_HEADER, CLI_BUILD_HEADER } from "./build-parity";
 
 export interface AgentGatewayDeps {
   /** Config dir holding the api-token file; defaults to the live config dir. */
   configDir?: string;
   getServerBuildStamp?(): string;
   getBootNonce?(): string | null;
+  /** Absolute path of the cctl this server publishes. */
+  getCliPath?(): string;
 }
 
 export function createAgentGatewayHandlers(deps: AgentGatewayDeps = {}) {
@@ -33,6 +41,9 @@ export function createAgentGatewayHandlers(deps: AgentGatewayDeps = {}) {
   );
   const getServerBuildStamp = deps.getServerBuildStamp ?? getBuildStamp;
   const getBootNonce = deps.getBootNonce ?? getServerBootNonce;
+  const getCliPath =
+    deps.getCliPath ??
+    (() => cctlInstallPath(deps.configDir ?? getConfigDirPath()));
 
   async function handshakeGET(request: Request): Promise<Response> {
     const denied = await auth.requireToken(request);
@@ -48,17 +59,17 @@ export function createAgentGatewayHandlers(deps: AgentGatewayDeps = {}) {
     const serverBuild = getServerBuildStamp();
     const cliBuild = request.headers.get(CLI_BUILD_HEADER);
     const headers = new Headers();
-    if (cliBuild !== null && cliBuild !== serverBuild) {
-      headers.set(
-        BUILD_MISMATCH_HEADER,
-        `server=${serverBuild} cli=${cliBuild}`,
-      );
+    const mismatch = buildMismatchHeaderValue(cliBuild, serverBuild);
+    if (mismatch !== null) {
+      headers.set(BUILD_MISMATCH_HEADER, mismatch);
       log.warn("agent-gateway.build_mismatch", { serverBuild, cliBuild });
     }
 
     log.info("agent-gateway.handshake", { ...identity, cliBuild });
+    // cliPath is what makes a build mismatch actionable: this server owns a
+    // stamped binary, and doctor is the command that can name it.
     return NextResponse.json(
-      { serverBuild, identity, tokenValid: true },
+      { serverBuild, identity, tokenValid: true, cliPath: getCliPath() },
       { headers },
     );
   }

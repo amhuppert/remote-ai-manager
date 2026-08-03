@@ -22,7 +22,6 @@ import {
   specSummaryViewSchema,
   type CanonicalSpecBundle,
   type RemainingAuthoringSequence,
-  type SpecGatePriorAdmission,
   type SpecProjectSearchView,
   type SpecSearchHit,
   type SpecStatusExecution,
@@ -47,6 +46,7 @@ import {
   type ProjectContext,
   type RequestIssue,
 } from "../../shared";
+import { gateLines, signOffLines } from "./projection-text";
 
 const logger = createLogger("cli.spec");
 const specShowResponseSchema = z.union([
@@ -146,30 +146,6 @@ async function requestTyped<T>(
     };
   }
   return { ok: true, value: parsed.data };
-}
-
-/**
- * `pending` is evaluated against the current revision (or the selected run),
- * so say which revision it is pending on — otherwise a reader who also sees an
- * earlier admission cannot tell the two apart.
- */
-function gateStateText(
-  state: SpecStatusView["gates"][number]["state"],
-): string {
-  return state === "pending" ? "pending on current revision" : state;
-}
-
-/**
- * An earlier revision's admission, rendered as its own history line. Nothing
- * here establishes that the governed content is unchanged, so it must never be
- * folded into the state position or worded as still-satisfied. `basis` stays
- * visible so a policy admission is not read as a human approval.
- */
-function priorAdmissionText(admission: SpecGatePriorAdmission): string {
-  const run =
-    admission.executionId === null ? "" : ` for run ${admission.executionId}`;
-  const actor = admission.actor === null ? "" : ` by ${admission.actor.kind}`;
-  return `history: admitted on rev ${admission.revisionNumber}${run}${actor} (basis ${admission.basis})`;
 }
 
 type ExecutionLaneState =
@@ -337,6 +313,39 @@ function authoringSequenceLines(
   ];
 }
 
+/**
+ * Covered criterion ids the current revision does not carry. They are counted
+ * by neither side of the coverage ratio, so each one is named with the reason
+ * it is missing from it — a plan claiming content the revision lost is the
+ * readable signature of an amendment that forked past that content.
+ */
+function unresolvedCoverageLines(elementIds: readonly string[]): string[] {
+  if (elementIds.length === 0) return [];
+  return [
+    "    unresolved criterion ids:",
+    ...elementIds.map(
+      (elementId) =>
+        `      ${elementId} (not in the current revision; excluded from coverage)`,
+    ),
+  ];
+}
+
+/**
+ * Depended-on task ids the current revision does not carry. The compiler can
+ * order nothing against them, so they are named apart from the dependencies
+ * that resolve rather than printed as if they were handles.
+ */
+function unresolvedDependencyLines(elementIds: readonly string[]): string[] {
+  if (elementIds.length === 0) return [];
+  return [
+    "    unresolved dependency ids:",
+    ...elementIds.map(
+      (elementId) =>
+        `      ${elementId} (not in the current revision; excluded from ordering)`,
+    ),
+  ];
+}
+
 function statusText(
   status: SpecStatusView,
   executions: readonly ActiveExecution[],
@@ -349,23 +358,25 @@ function statusText(
           `authoring stage: ${status.phase.authoringStage} (concluding gate: ${status.phase.authoringStage})`,
         ]),
     ...authoringSequenceLines(status.slug, status.authoringSequence),
-    `coverage: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} (${status.coverage.percentage}%)`,
+    // The ratio counts only the criteria this revision carries, so it says so:
+    // a plan covering ids the revision lost would otherwise read as complete.
+    `coverage: ${status.coverage.coveredCriteria}/${status.coverage.totalCriteria} current-revision criteria (${status.coverage.percentage}%)`,
     ...(executions.length === 0
       ? []
       : ["executions:", ...executions.map(executionLine)]),
     "gates:",
-    ...status.gates.flatMap((gate) => [
-      `  ${gate.gate}: ${gateStateText(gate.state)} (${gate.dial})`,
-      ...gate.priorAdmissions.map(
-        (admission) => `    ${priorAdmissionText(admission)}`,
-      ),
-    ]),
-    "pending approvals:",
+    ...gateLines(status.gates),
+    // Subject approvals and the revision's own sign-off are separate answers:
+    // a consulted human gate stays pending after its last subject approval, so
+    // an empty subject list beside a pending gate would name no act at all.
+    "pending subject approvals:",
     ...(status.pendingApprovals.length === 0
       ? ["  none"]
       : status.pendingApprovals.map(
           (approval) => `  ${approval.gate}: ${approval.subject}`,
         )),
+    "revision sign-off:",
+    ...signOffLines(status.revisionSignOff),
     "open questions:",
     ...(status.openQuestions.length === 0
       ? ["  none"]
@@ -385,9 +396,11 @@ function statusText(
       : status.taskPlan.flatMap((task) => [
           `  ${task.handle}: ${task.title}`,
           `    dependencies: ${task.dependsOn.join(", ") || "none"}`,
+          ...unresolvedDependencyLines(task.unresolvedDependsOnTaskElementIds),
           `    lane group: ${task.laneGroup ?? "one task per lane"}`,
           `    touched surfaces: ${task.touchedPaths.join(", ") || "not declared"}`,
           `    criterion coverage: ${task.criterionCoverage.join(", ") || "none"}`,
+          ...unresolvedCoverageLines(task.unresolvedCriterionElementIds),
         ])),
   ];
   return `${lines.join("\n")}\n`;

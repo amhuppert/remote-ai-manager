@@ -1,6 +1,5 @@
 import { dialRequiresHumanApproval, resolveDial } from "./policy";
 import { toDiffRows } from "./review-state";
-import type { RevisionElement } from "./revision-diff";
 import type {
   SpecAuthoringStage,
   SpecGatePolicy,
@@ -11,6 +10,7 @@ import {
   authoringStages,
   consultedAuthoringGates,
   nextAuthoringStage,
+  type AuthoringGate,
 } from "./transitions";
 import type { RemainingAuthoringSequence } from "./view-schemas";
 
@@ -23,8 +23,14 @@ export interface RemainingAuthoringSequenceContext {
    * so it is read from the revision rather than re-derived from the policy.
    */
   pinnedStage: SpecAuthoringStage;
-  baseRevisionRows: readonly RevisionElement[];
-  revisionRows: readonly RevisionElement[];
+  /**
+   * The gates a propose from this stage consults, measured against the nearest
+   * approved ancestor. Which gates those are depends on content, not on dials,
+   * so it is decided once where the baseline lives — a caller that re-derives
+   * it from the immediate parent drops every obligation that entered through a
+   * withdrawn attempt.
+   */
+  governanceConsultedGates: readonly AuthoringGate[];
 }
 
 /**
@@ -66,11 +72,10 @@ export function remainingAuthoringSequence(
   const consultedGates =
     current.concludedBy === "advance"
       ? [{ gate: current.gate, dial: current.dial }]
-      : consultedAuthoringGates(
-          context.pinnedStage,
-          [...context.baseRevisionRows],
-          [...context.revisionRows],
-        ).map((gate) => ({ gate, dial: resolveDial(context.policy, gate) }));
+      : context.governanceConsultedGates.map((gate) => ({
+          gate,
+          dial: resolveDial(context.policy, gate),
+        }));
 
   return {
     revisionId: context.revisionId,
@@ -84,6 +89,9 @@ export function remainingAuthoringSequence(
         dialRequiresHumanApproval(dial),
       ),
       consultedGates,
+      // Carried so a caller previewing other dials asks the same question of
+      // the same baseline instead of measuring one of its own.
+      governanceConsultedGates: [...context.governanceConsultedGates],
     },
   };
 }
@@ -97,7 +105,7 @@ export function remainingAuthoringSequence(
 export function draftAuthoringSequence(input: {
   policy: SpecGatePolicy;
   snapshot: SpecRevisionSnapshot;
-  baseSnapshot: SpecRevisionSnapshot | null;
+  governanceBaseSnapshot: SpecRevisionSnapshot | null;
 }): RemainingAuthoringSequence | null {
   const { revision } = input.snapshot;
   if (revision.state !== "draft") return null;
@@ -106,8 +114,12 @@ export function draftAuthoringSequence(input: {
     revisionId: revision.id,
     revisionNumber: revision.number,
     pinnedStage: revision.authoringStage,
-    baseRevisionRows:
-      input.baseSnapshot === null ? [] : toDiffRows(input.baseSnapshot),
-    revisionRows: toDiffRows(input.snapshot),
+    governanceConsultedGates: consultedAuthoringGates(
+      revision.authoringStage,
+      input.governanceBaseSnapshot === null
+        ? []
+        : toDiffRows(input.governanceBaseSnapshot),
+      toDiffRows(input.snapshot),
+    ),
   });
 }

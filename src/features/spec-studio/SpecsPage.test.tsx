@@ -355,10 +355,35 @@ function detailPayload(
         authoringStage: "plan",
       },
       gates: [
-        { gate: "requirements", dial: "gate", state: "admitted" },
-        { gate: "design", dial: "gate", state: "pending" },
-        { gate: "plan", dial: "gate", state: "pending" },
+        {
+          gate: "requirements",
+          dial: "gate",
+          state: "admitted",
+          applicability: {
+            reason: "changed_since_governance_base",
+            governanceBaseRevisionId: "revision-3",
+          },
+        },
+        {
+          gate: "design",
+          dial: "gate",
+          state: "pending",
+          applicability: {
+            reason: "changed_since_governance_base",
+            governanceBaseRevisionId: "revision-3",
+          },
+        },
+        {
+          gate: "plan",
+          dial: "gate",
+          state: "pending",
+          applicability: {
+            reason: "current_stage",
+            governanceBaseRevisionId: "revision-3",
+          },
+        },
       ],
+      applicableGates: ["requirements", "design", "plan"],
       pendingApprovals: [
         { gate: "design", subject: "D1", elementId: "decision-1" },
         { gate: "plan", subject: "plan", elementId: null },
@@ -445,6 +470,17 @@ function reviewDetailPayload() {
       revision_id: baseRevision.id,
       validity: "stale" as const,
     })),
+    // What the server projects for this revision: the requirement changed and
+    // owes its approval, the decision did not change so its gate is not
+    // consulted, and the plan stage is the revision's own.
+    status: {
+      ...payload.status,
+      applicableGates: ["requirements", "plan"],
+      pendingApprovals: [
+        { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+        { gate: "plan", subject: "plan", elementId: null },
+      ],
+    },
     baseRevision: {
       revision: baseRevision,
       elements: [...baseElements, retiredSection],
@@ -1648,7 +1684,23 @@ describe("Spec Studio routes and inventory", () => {
         validity: "valid",
       },
     ];
-    const reviewPayload = { ...reviewDetailPayload(), approvals };
+    const base = reviewDetailPayload();
+    const reviewPayload = {
+      ...base,
+      approvals,
+      // Plan and design already hold their approvals, so the requirement is
+      // the one subject the server still owes.
+      status: {
+        ...base.status,
+        pendingApprovals: [
+          {
+            gate: "requirements" as const,
+            subject: "R1",
+            elementId: "requirement-1",
+          },
+        ],
+      },
+    };
     const requirementApproval: SpecApprovalRow = {
       id: "approval-requirement-1-current",
       spec_id: executingSpec.id,
@@ -1700,7 +1752,13 @@ describe("Spec Studio routes and inventory", () => {
       ).toHaveLength(1),
     );
 
+    // The refetched projection is what tells the surface the subject is no
+    // longer outstanding; the approval row alone never says that.
     reviewPayload.approvals.push(requirementApproval);
+    reviewPayload.status.pendingApprovals =
+      reviewPayload.status.pendingApprovals.filter(
+        (pending) => pending.elementId !== "requirement-1",
+      );
     await user.click(
       within(change).getByRole("button", { name: "Approve item" }),
     );

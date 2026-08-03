@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
+import { formatBareElementHandle } from "@/lib/specs/handles";
 import {
   specAliasRowSchema,
   specAliasSchema,
@@ -151,6 +152,16 @@ const createDraftElementInputSchema = z
      */
     position: z.number().int().nonnegative().optional(),
     payload: specElementPayloadSchema,
+    /**
+     * Explicit intent to bring an identity this spec already owns back into
+     * the target revision. Element ids are global and their rows are never
+     * deleted, so an element whose only versions live outside this revision
+     * would otherwise be unreachable: a create refuses the taken id and an
+     * update finds no version to compare against. The marker is required
+     * rather than inferred, because silently reviving an id is how an author
+     * unknowingly re-opens content a review already ended.
+     */
+    reintroduceHistorical: z.boolean().optional(),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
   })
@@ -226,6 +237,12 @@ export interface RenameSpecResult {
 export interface CreateDraftElementResult {
   readonly element: SpecElement;
   readonly version: SpecElementVersion;
+  /**
+   * True when the write brought an identity the spec already owned back into
+   * the revision rather than minting a new one. A revived element keeps its
+   * number, so its handle is the address readers already know it by.
+   */
+  readonly revived: boolean;
 }
 
 export interface RevisionVerification {
@@ -246,6 +263,80 @@ export class SpecElementIdTakenError extends Error {
       `Spec element ID "${elementId}" is already used by spec "${existingSpecId}"; element IDs are globally unique.`,
     );
     this.name = "SpecElementIdTakenError";
+  }
+}
+
+/**
+ * Why a write against an id this spec already owns cannot proceed as asked.
+ * `reintroduction_required` is recoverable by retrying with the marker; the
+ * other two are not, because a reintroduced element keeps the identity facts
+ * its number, handle, and containment were assigned from.
+ */
+export type SpecHistoricalElementReason =
+  | "reintroduction_required"
+  | "kind_changed"
+  | "parent_changed";
+
+export interface SpecHistoricalElementFacts {
+  readonly reason: SpecHistoricalElementReason;
+  readonly elementId: string;
+  readonly specId: string;
+  readonly revisionId: string;
+  /** The kind the identity was created as. */
+  readonly kind: SpecElementKind;
+  /** The parent the identity was created under; null for a top-level element. */
+  readonly parentElementId: string | null;
+  /** The address the element keeps when it returns; null for a section. */
+  readonly handle: string | null;
+  readonly attemptedKind: SpecElementKind;
+  readonly attemptedParentElementId: string | null;
+}
+
+/**
+ * A same-spec element id whose versions all live outside the target revision.
+ * Distinct from `SpecElementIdTakenError`, which reports an id owned by
+ * ANOTHER spec: that one can only be resolved by choosing a different id,
+ * while this one names a recovery the caller can actually take.
+ */
+export class SpecHistoricalElementError extends Error {
+  readonly code = "historical_element_id" as const;
+  readonly reason: SpecHistoricalElementReason;
+  readonly elementId: string;
+  readonly specId: string;
+  readonly revisionId: string;
+  readonly kind: SpecElementKind;
+  readonly parentElementId: string | null;
+  readonly handle: string | null;
+  readonly attemptedKind: SpecElementKind;
+  readonly attemptedParentElementId: string | null;
+
+  constructor(facts: SpecHistoricalElementFacts) {
+    super(historicalElementMessage(facts));
+    this.reason = facts.reason;
+    this.elementId = facts.elementId;
+    this.specId = facts.specId;
+    this.revisionId = facts.revisionId;
+    this.kind = facts.kind;
+    this.parentElementId = facts.parentElementId;
+    this.handle = facts.handle;
+    this.attemptedKind = facts.attemptedKind;
+    this.attemptedParentElementId = facts.attemptedParentElementId;
+    this.name = "SpecHistoricalElementError";
+  }
+}
+
+function historicalElementMessage(facts: SpecHistoricalElementFacts): string {
+  const address =
+    facts.handle === null
+      ? `a ${facts.kind}`
+      : `${facts.handle} (${facts.kind})`;
+  switch (facts.reason) {
+    case "reintroduction_required":
+      return `Spec element ID "${facts.elementId}" is ${address} this spec already owns, and no version of it lives in revision ${facts.revisionId}.`;
+    case "kind_changed":
+      return `Spec element ID "${facts.elementId}" is ${address} this spec already owns; a reintroduced element keeps its original kind, so it cannot return as a ${facts.attemptedKind}.`;
+    case "parent_changed":
+      return `Spec element ID "${facts.elementId}" is ${address} this spec already owns under ${facts.parentElementId ?? "no parent"}; a reintroduced element keeps the parent it was created under.`;
   }
 }
 
@@ -286,6 +377,11 @@ export class StaleStageConflictError extends Error {
 export class SpecRevisionImmutableError extends Error {
   constructor(
     readonly revisionId: string,
+    /**
+     * Carried alongside the id because every refusal built from this error
+     * addresses the revision the way its reader does — by number.
+     */
+    readonly revisionNumber: number,
     readonly state: SpecRevision["state"],
   ) {
     super(`spec revision ${revisionId} is ${state}; only drafts are editable`);
@@ -961,7 +1057,11 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
   function requireDraft(revisionId: string): SpecRevision {
     const revision = requireRevision(revisionId);
     if (revision.state !== "draft") {
-      throw new SpecRevisionImmutableError(revision.id, revision.state);
+      throw new SpecRevisionImmutableError(
+        revision.id,
+        revision.number,
+        revision.state,
+      );
     }
     return revision;
   }
@@ -1297,7 +1397,11 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
       });
       if (result.changes !== 1) {
         const current = requireRevision(input.revisionId);
-        throw new SpecRevisionImmutableError(current.id, current.state);
+        throw new SpecRevisionImmutableError(
+          current.id,
+          current.number,
+          current.state,
+        );
       }
       return requireRevision(input.revisionId);
     },
@@ -1356,6 +1460,121 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     },
   );
 
+  function writtenElement(
+    revisionId: string,
+    elementId: string,
+    revived: boolean,
+  ): CreateDraftElementResult {
+    const element = readElement(elementId);
+    const version = readElementVersion(revisionId, elementId);
+    if (element === null || version === null) {
+      return notFound("spec_element", elementId);
+    }
+    return { element, version, revived };
+  }
+
+  /**
+   * The address a reader knows an element by, composed from the durable
+   * element rows rather than a revision snapshot: the element a reintroduction
+   * refusal names has no version in the revision the caller is writing into,
+   * so there is no snapshot to read its handle from.
+   */
+  function durableElementHandle(element: SpecElement): string | null {
+    const number = element.number;
+    if (number === null) return null;
+    switch (element.kind) {
+      case "requirement":
+        return formatBareElementHandle({
+          kind: "requirement",
+          requirementNumber: number,
+        });
+      case "decision":
+        return formatBareElementHandle({ kind: "decision", number });
+      case "task":
+        return formatBareElementHandle({ kind: "task", number });
+      case "criterion": {
+        const parent =
+          element.parentElementId === null
+            ? null
+            : readElement(element.parentElementId);
+        return parent === null || parent.number === null
+          ? null
+          : formatBareElementHandle({
+              kind: "criterion",
+              requirementNumber: parent.number,
+              criterionNumber: number,
+            });
+      }
+      case "section":
+        return null;
+    }
+  }
+
+  /**
+   * Brings an identity this spec already owns back into the target revision.
+   * Only a revision-local version row is written: the element row carries the
+   * number, containment and creation provenance the spec allocated once, so
+   * reusing it is what makes R3 come back as R3 rather than as a new R7 that
+   * every approval, evidence row and comment now addresses under two ids.
+   */
+  function reintroduceElement(
+    input: z.output<typeof createDraftElementInputSchema>,
+    existing: SpecElement,
+  ): CreateDraftElementResult {
+    const live = readElementVersion(input.revisionId, input.id);
+    if (live !== null) {
+      // The identity is present in this very revision, so this is an ordinary
+      // create-over-existing conflict, not a recovery: the caller is at
+      // version 0 of an element that already has one.
+      throw new StaleElementConflictError(input.revisionId, input.id, 0, live);
+    }
+    const facts = {
+      elementId: input.id,
+      specId: input.specId,
+      revisionId: input.revisionId,
+      kind: existing.kind,
+      parentElementId: existing.parentElementId,
+      handle: durableElementHandle(existing),
+      attemptedKind: input.kind,
+      attemptedParentElementId: input.parentElementId,
+    } as const;
+    if (input.reintroduceHistorical !== true) {
+      throw new SpecHistoricalElementError({
+        ...facts,
+        reason: "reintroduction_required",
+      });
+    }
+    if (existing.kind !== input.kind) {
+      throw new SpecHistoricalElementError({
+        ...facts,
+        reason: "kind_changed",
+      });
+    }
+    if (existing.parentElementId !== input.parentElementId) {
+      throw new SpecHistoricalElementError({
+        ...facts,
+        reason: "parent_changed",
+      });
+    }
+    insertElementVersionStmt.run({
+      revision_id: input.revisionId,
+      element_id: input.id,
+      position: input.position ?? nextElementPosition(input.revisionId),
+      payload_json: stableStringify(input.payload),
+      payload_hash: computeSpecElementPayloadHash(input.payload),
+      created_at: input.createdAt,
+      updated_at: input.updatedAt,
+    });
+    logger.info("state-store.specs.element_reintroduced", {
+      specId: input.specId,
+      revisionId: input.revisionId,
+      elementId: input.id,
+      elementKind: existing.kind,
+      elementNumber: existing.number,
+    });
+    return writtenElement(input.revisionId, input.id, true);
+  }
+
   const createDraftElementTx = db.transaction(
     (
       input: z.output<typeof createDraftElementInputSchema>,
@@ -1371,7 +1590,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         ]);
       }
       const existingElement = readElement(input.id);
-      if (existingElement !== null) {
+      if (existingElement !== null && existingElement.specId !== input.specId) {
         throw new SpecElementIdTakenError(input.id, existingElement.specId);
       }
       if (input.payload.kind !== input.kind) {
@@ -1382,6 +1601,9 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
             message: "payload kind must match element identity kind",
           },
         ]);
+      }
+      if (existingElement !== null) {
+        return reintroduceElement(input, existingElement);
       }
       validateElementParent(input.specId, input.kind, input.parentElementId);
       const scopeKey = counterScopeFor(input.kind, input.parentElementId);
@@ -1412,12 +1634,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         created_at: input.createdAt,
         updated_at: input.updatedAt,
       });
-      const element = readElement(input.id);
-      const version = readElementVersion(input.revisionId, input.id);
-      if (element === null || version === null) {
-        return notFound("spec_element", input.id);
-      }
-      return { element, version };
+      return writtenElement(input.revisionId, input.id, false);
     },
   );
 
@@ -1425,7 +1642,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     (
       input: z.output<typeof updateDraftElementInputSchema>,
     ): SpecElementVersion => {
-      requireDraft(input.revisionId);
+      const revision = requireDraft(input.revisionId);
       const element = readElement(input.elementId);
       if (element === null) return notFound("spec_element", input.elementId);
       if (element.kind !== input.payload.kind) {
@@ -1440,6 +1657,25 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
 
       const before = readElementVersion(input.revisionId, input.elementId);
       if (before === null) {
+        // The other half of the orphaned-id dead zone: this spec owns the
+        // identity, but no version of it lives in the target revision, so a
+        // caller replaying the version it read on an ended attempt has nothing
+        // to compare against. Reporting a missing version row would name an
+        // internal table instead of the recovery, leaving the caller to rename
+        // the element around a dead id.
+        if (element.specId === revision.specId) {
+          throw new SpecHistoricalElementError({
+            reason: "reintroduction_required",
+            elementId: input.elementId,
+            specId: element.specId,
+            revisionId: input.revisionId,
+            kind: element.kind,
+            parentElementId: element.parentElementId,
+            handle: durableElementHandle(element),
+            attemptedKind: input.payload.kind,
+            attemptedParentElementId: element.parentElementId,
+          });
+        }
         return notFound(
           "spec_element_version",
           `${input.revisionId}/${input.elementId}`,

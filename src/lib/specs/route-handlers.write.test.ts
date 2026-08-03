@@ -4,15 +4,17 @@ import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { PersistenceError } from "@/lib/shared/errors";
 import {
   SpecElementIdTakenError,
+  SpecRevisionImmutableError,
   StaleStageConflictError,
 } from "@/lib/state-store/specs-repo";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
 
 import {
+  SpecRevisionInReviewError,
   SpecSlugTakenError,
   StageBlockedWriteError,
 } from "./authoring-service";
-import type { Spec } from "./schemas";
+import type { Spec, SpecRevision } from "./schemas";
 import {
   createSpecWriteRouteHandlers,
   type SpecMutationServices,
@@ -30,6 +32,30 @@ const spec: Spec = {
   createdAt: "2026-07-18T00:00:00.000Z",
   updatedAt: "2026-07-18T00:00:00.000Z",
 };
+
+function revision(
+  fields: Pick<SpecRevision, "id" | "number" | "state">,
+): SpecRevision {
+  return {
+    specId: spec.id,
+    authoringStage: "plan",
+    basedOnRevisionId: null,
+    contentHash: null,
+    proposedAt: null,
+    approvedAt: null,
+    createdAt: "2026-07-18T00:00:00.000Z",
+    ...fields,
+  };
+}
+
+function instructionOf(refusal: unknown): string {
+  return typeof refusal === "object" &&
+    refusal !== null &&
+    "instruction" in refusal &&
+    typeof refusal.instruction === "string"
+    ? refusal.instruction
+    : "";
+}
 
 function routeContext(action: string) {
   return {
@@ -512,6 +538,102 @@ describe("spec write route handlers", () => {
     expect(instruction).toContain(`cctl spec amend ${spec.slug}`);
     expect(instruction).not.toContain("Read the current draft");
   });
+
+  it("refuses an amendment that would fork past a revision under review", async () => {
+    const services = createServices();
+    vi.mocked(services.authoring.openAmendment).mockRejectedValueOnce(
+      new SpecRevisionInReviewError(spec.id, {
+        kind: "blocked_by_proposal",
+        proposals: [
+          revision({ id: "revision-2", number: 2, state: "proposed" }),
+        ],
+        approved: revision({ id: "revision-1", number: 1, state: "approved" }),
+      }),
+    );
+    const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+    const response = await handlers.specActionPOST(
+      postRequest(
+        {},
+        {
+          authorization: "Bearer valid",
+          "x-cc-conversation-id": "conversation-agent",
+        },
+      ),
+      routeContext("open-amendment"),
+    );
+
+    expect(response.status).toBe(409);
+    const refusal: unknown = await response.json();
+    expect(refusal).toMatchObject({
+      code: "revision_in_review",
+      unmetConditions: [expect.stringContaining("Revision 2")],
+      details: {
+        proposals: [{ id: "revision-2", number: 2 }],
+        approvedBaseRevisionId: "revision-1",
+      },
+    });
+    const instruction = instructionOf(refusal);
+    expect(instruction).toContain("revision 2");
+    expect(instruction).toContain("Spec Studio");
+    expect(instruction).toContain("request changes");
+    // The proposing agent's own exit is the third recovery; telling the reader
+    // to open an amendment is the instruction `spec amend` itself refuses.
+    expect(instruction).toContain("cctl spec withdraw-proposal");
+    expect(instruction).not.toContain("Open an amendment draft");
+  });
+
+  it.each([
+    ["proposed", "revision_in_review"],
+    ["approved", "amendment_required"],
+    ["withdrawn", "amendment_required"],
+  ] as const)(
+    "refuses a write into a %s revision with the %s code",
+    async (state, code) => {
+      const services = createServices();
+      vi.mocked(services.authoring.upsertDraftElement).mockRejectedValueOnce(
+        new SpecRevisionImmutableError("revision-3", 2, state),
+      );
+      const handlers = createSpecWriteRouteHandlers(createDeps(services));
+
+      const response = await handlers.specActionPOST(
+        postRequest(
+          {
+            revisionId: "revision-3",
+            elementId: "requirement-1",
+            kind: "requirement",
+            parentElementId: null,
+            payload: firstElement.payload,
+            baseElementVersion: 1,
+          },
+          {
+            authorization: "Bearer valid",
+            "x-cc-conversation-id": "conversation-agent",
+          },
+        ),
+        routeContext("draft-upsert"),
+      );
+
+      expect(response.status).toBe(409);
+      const refusal: unknown = await response.json();
+      expect(refusal).toMatchObject({ code });
+      const instruction = instructionOf(refusal);
+      if (code === "amendment_required") {
+        expect(instruction).toBe(
+          "Open an amendment draft before changing approved content.",
+        );
+      } else {
+        // Pointing a write against a revision under review at `spec amend`
+        // contradicts itself: that command refuses for the same reason. The
+        // revision is named by number, as every other surface names it, and
+        // the refused act is the write the caller actually attempted.
+        expect(instruction).toBe(
+          "Revision 2 is under review. Conclude that review before editing it: sign off revision 2 in Spec Studio, have a human request changes on it, or — if this conversation proposed it and no human has acted on it yet — run `cctl spec withdraw-proposal <slug> --revision <revision-id>` to take it back and continue in the draft it reopens. Writing into it now would change content a reviewer is reading.",
+        );
+        expect(instruction).not.toContain("revision-3");
+      }
+    },
+  );
 
   it("derives and records actor provenance from both transports", async () => {
     const services = createServices();

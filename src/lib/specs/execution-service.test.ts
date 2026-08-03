@@ -1335,6 +1335,14 @@ describe("ExecutionService start", () => {
   it("16.9 captures discovered work in an amendment draft without changing the running pin", async () => {
     const running = await startRunning();
     const originalScope = running.scope_json;
+    // Capture drafts against the execution's pinned revision, so it keeps
+    // working while a later revision is under review: it is not an ordinary
+    // authoring continuation and must not take that refusal.
+    expect(
+      db
+        .prepare("SELECT state FROM spec_revisions WHERE id = ?")
+        .get(proposedRevisionId),
+    ).toEqual({ state: "proposed" });
 
     const amendment = await service.captureScopeAmendment({
       executionId: running.id,
@@ -1822,6 +1830,9 @@ describe("ExecutionService abandon clears open spec attention (runtime wiring)",
       projectPath,
       gate,
       subject,
+      scope: "item",
+      outstandingSubjects: [subject],
+      signOffOutstanding: true,
       gateRequestId,
       occurredAt: now,
     });

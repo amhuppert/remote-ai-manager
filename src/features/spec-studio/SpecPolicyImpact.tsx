@@ -8,8 +8,6 @@ import {
   resolveDial,
 } from "@/lib/specs/policy";
 import type { SpecDetailView } from "@/lib/specs/queries";
-import { toDiffRows } from "@/lib/specs/review-state";
-import type { RevisionElement } from "@/lib/specs/revision-diff";
 import {
   specGateSchema,
   type ResolvedGateDial,
@@ -23,18 +21,16 @@ import { gateLabels } from "./presentation";
 
 /**
  * The open draft a policy change would land on, in the shape
- * `remainingAuthoringSequence` consumes. The pinned stage is taken from the
- * server's own sequence rather than re-derived here, and the element rows come
- * with it because the stage-scoped consultation of R10.11 depends on what the
- * draft changed — under the *proposed* dials, which no stored projection can
- * have computed yet.
+ * `remainingAuthoringSequence` consumes. Both the pinned stage and the gates
+ * the stage-scoped consultation of R10.11 reaches are taken from the server's
+ * own sequence: which gates a propose consults depends on content measured
+ * against the nearest approved ancestor, not on the dials being previewed.
  */
 export interface PolicyImpactDraft {
   readonly revisionId: string;
   readonly revisionNumber: number;
   readonly pinnedStage: SpecAuthoringStage;
-  readonly baseRevisionRows: readonly RevisionElement[];
-  readonly revisionRows: readonly RevisionElement[];
+  readonly governanceConsultedGates: readonly SpecAuthoringStage[];
 }
 
 export type PolicyImpactApprovalEffect = "added" | "removed" | "unaffected";
@@ -80,9 +76,7 @@ export function openDraftForPolicyImpact(
     revisionId: sequence.revisionId,
     revisionNumber: sequence.revisionNumber,
     pinnedStage: sequence.pinnedStage,
-    baseRevisionRows:
-      detail.baseRevision === null ? [] : toDiffRows(detail.baseRevision),
-    revisionRows: toDiffRows(snapshot),
+    governanceConsultedGates: sequence.nextTransition.governanceConsultedGates,
   };
 }
 
@@ -104,7 +98,13 @@ export function policyChangeImpact(
   const sequence =
     draft === null
       ? null
-      : remainingAuthoringSequence({ policy: proposedPolicy, ...draft });
+      : remainingAuthoringSequence({
+          policy: proposedPolicy,
+          revisionId: draft.revisionId,
+          revisionNumber: draft.revisionNumber,
+          pinnedStage: draft.pinnedStage,
+          governanceConsultedGates: draft.governanceConsultedGates,
+        });
   return {
     sequence,
     gateChanges: specGateSchema.options.map((gate) => {

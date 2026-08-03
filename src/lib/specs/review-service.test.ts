@@ -26,6 +26,8 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import { authoringReviewProjection } from "./authoring-review-projection";
+import { loadProposalState } from "./review-state";
 import { createReviewService, type ReviewService } from "./review-service";
 
 const PROJECT_PATH = "/repos/native-sdd-review";
@@ -35,6 +37,7 @@ const HUMAN = { kind: "human" } as const;
 let db: Db;
 let specs: SpecsRepo;
 let reviewRepo: SpecReviewRepo;
+let linksRepo: ReturnType<typeof createSpecLinksRepo>;
 let specEvents: ReturnType<typeof createSpecEventsRepo>;
 let authoring: AuthoringService;
 let reviewing: ReviewService;
@@ -47,6 +50,7 @@ beforeEach(() => {
   const writeQueue = createWriteQueue();
   specs = createSpecsRepo(db, writeQueue);
   reviewRepo = createSpecReviewRepo(db);
+  linksRepo = createSpecLinksRepo(db);
   specEvents = createSpecEventsRepo(db);
   const events = createSpecEventsPublisher({
     appendInTransaction: specEvents.appendInTransaction,
@@ -57,7 +61,7 @@ beforeEach(() => {
   const deps = {
     specs,
     review: reviewRepo,
-    links: createSpecLinksRepo(db),
+    links: linksRepo,
     events,
     attention: specEvents,
     newId(prefix: string) {
@@ -250,7 +254,7 @@ describe("ReviewService", () => {
 
     await expect(
       authoring.openAmendment({ specId: created.spec.id, actor: AGENT }),
-    ).resolves.toMatchObject({ authoringStage: "design" });
+    ).resolves.toMatchObject({ revision: { authoringStage: "design" } });
   });
 
   it("comments without unfreezing and request-changes preserves the withdrawn snapshot while opening a based-on draft", async () => {
@@ -292,6 +296,347 @@ describe("ReviewService", () => {
     const after = await specs.getRevisionSnapshot(created.draft.id);
     expect(after?.revision.contentHash).toBe(before?.revision.contentHash);
     expect(after?.elements).toEqual(before?.elements);
+  });
+
+  /**
+   * Withdraw ends a review without opening a follow-up draft, so the next
+   * amendment continues from the approved base and cannot carry what the
+   * withdrawn revision held. That drop is terminal — refusing it would leave
+   * no exit — so the amendment has to report it instead.
+   */
+  it("names the withdrawn revision an amendment leaves behind after a human withdraw", async () => {
+    const created = await proposedSpec("fast-path");
+    await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "alex",
+      actor: HUMAN,
+    });
+    const withdrawnAmendment = await authoring.openAmendment({
+      specId: created.spec.id,
+      actor: AGENT,
+    });
+    await authoring.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: withdrawnAmendment.revision.id,
+      elementId: "requirement-withdrawn",
+      kind: "requirement",
+      parentElementId: null,
+      position: 4,
+      payload: {
+        kind: "requirement",
+        statement: "This statement never survives the withdrawal.",
+        priority: "must",
+        risk: "low",
+      },
+      baseElementVersion: null,
+      actor: AGENT,
+    });
+    await authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: withdrawnAmendment.revision.id,
+      actor: AGENT,
+    });
+    await expect(
+      reviewing.withdraw({
+        specId: created.spec.id,
+        revisionId: withdrawnAmendment.revision.id,
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { state: "withdrawn" } });
+
+    const reopened = await authoring.openAmendment({
+      specId: created.spec.id,
+      actor: AGENT,
+    });
+
+    expect(reopened.revision).toMatchObject({
+      number: 3,
+      state: "draft",
+      basedOnRevisionId: created.draft.id,
+    });
+    expect(
+      reopened.skippedWithdrawnRevisions.map(({ id, number }) => ({
+        id,
+        number,
+      })),
+    ).toEqual([{ id: withdrawnAmendment.revision.id, number: 2 }]);
+    // The report names a real drop: the withdrawn revision's element is not
+    // in the revision that continues the spec.
+    expect(
+      (await specs.getRevisionSnapshot(reopened.revision.id))?.elements.map(
+        ({ element }) => element.id,
+      ),
+    ).not.toContain("requirement-withdrawn");
+  });
+
+  /**
+   * The D3 incident. An amendment that changed a requirement was ended by a
+   * human's Request Changes, and the follow-up revision changed only a
+   * decision. Against its immediate parent the follow-up shows no requirement
+   * change, but against the nearest APPROVED ancestor the requirement is still
+   * unadmitted — so the requirements gate still owes this revision an
+   * admission, and sign-off must earn one.
+   */
+  it("keeps the requirements gate applicable when the requirement change arrived through a withdrawn ancestor", async () => {
+    const created = await proposedSpec();
+    await reviewing.bulkApprove({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjects: [
+        { subjectKind: "requirement", elementId: "requirement-1" },
+        { subjectKind: "decision", elementId: "decision-1" },
+        { subjectKind: "plan", elementId: null },
+      ],
+      approver: "alex",
+      actor: HUMAN,
+    });
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    const amendment = await authoring.openAmendment({
+      specId: created.spec.id,
+      actor: AGENT,
+    });
+    const requirementVersion = await specs.findElementVersion(
+      amendment.revision.id,
+      "requirement-1",
+    );
+    await authoring.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: amendment.revision.id,
+      elementId: "requirement-1",
+      kind: "requirement",
+      parentElementId: null,
+      position: 0,
+      payload: {
+        kind: "requirement",
+        statement: "Review gates are durable across withdrawn attempts.",
+        priority: "must",
+        risk: "high",
+      },
+      baseElementVersion: requirementVersion?.elementVersion ?? null,
+      actor: AGENT,
+    });
+    await authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: amendment.revision.id,
+      actor: AGENT,
+    });
+    const changesRequested = await reviewing.requestChanges({
+      specId: created.spec.id,
+      revisionId: amendment.revision.id,
+      actor: HUMAN,
+    });
+    if (!changesRequested.ok) throw new Error("request changes refused");
+    const followUp = changesRequested.value.draft;
+    expect(followUp.basedOnRevisionId).toBe(amendment.revision.id);
+
+    const decisionVersion = await specs.findElementVersion(
+      followUp.id,
+      "decision-1",
+    );
+    await authoring.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: followUp.id,
+      elementId: "decision-1",
+      kind: "decision",
+      parentElementId: null,
+      position: 2,
+      payload: {
+        kind: "decision",
+        title: "Transition owner",
+        chosenApproach: "The server owns review transitions and their gates.",
+        rejectedAlternatives: [],
+        reason: "No prompt can bypass the gate.",
+        tracedRequirementElementIds: ["requirement-1"],
+      },
+      baseElementVersion: decisionVersion?.elementVersion ?? null,
+      actor: AGENT,
+    });
+    await authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: followUp.id,
+      actor: AGENT,
+    });
+    await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: followUp.id,
+      subjectKind: "decision",
+      elementId: "decision-1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: followUp.id,
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      refusal: {
+        code: "gate_blocked",
+        unmetConditions: [
+          `Requirement R1 needs a valid approval for ${followUp.id}.`,
+        ],
+      },
+    });
+
+    await reviewing.approveItem({
+      specId: created.spec.id,
+      revisionId: followUp.id,
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+      approver: "alex",
+      actor: HUMAN,
+    });
+    await expect(
+      reviewing.signOffRevision({
+        specId: created.spec.id,
+        revisionId: followUp.id,
+        approver: "alex",
+        actor: HUMAN,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(
+      reviewRepo
+        .findGateAdmissionsByRevision(followUp.id)
+        .map(({ gate }) => gate)
+        .sort(),
+    ).toEqual(["design", "plan", "requirements"]);
+
+    // The read must agree: the requirements gate is satisfied BY THIS
+    // revision's own admission. Reading it as pending with a rev-1 row filed
+    // under history is what left the D3 spec unable to say who admitted it.
+    const revisions = await specs.listRevisions(created.spec.id);
+    const signedOff = await specs.getRevisionSnapshot(followUp.id);
+    if (signedOff === null) throw new Error("expected a signed-off snapshot");
+    const projection = await specs.transaction("test.projection", (repo) => {
+      const loaded = loadProposalState(
+        repo,
+        reviewRepo,
+        linksRepo,
+        created.spec,
+        signedOff,
+      );
+      return authoringReviewProjection({
+        policy: created.spec.gatePolicy,
+        snapshot: signedOff,
+        governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+        approvals: reviewRepo.findApprovalsBySpecId(created.spec.id),
+        admissions: reviewRepo.findGateAdmissionsBySpecId(created.spec.id),
+        currentExecution: null,
+        revisionNumberById: new Map(
+          revisions.map((candidate) => [candidate.id, candidate.number]),
+        ),
+        applies: loaded.approvalApplies,
+        blockingThreads: loaded.reviewSnapshot.blockingThreads,
+        signOffFindings: [],
+      });
+    });
+    const requirements = projection.gates.find(
+      (gate) => gate.gate === "requirements",
+    );
+    expect(requirements?.state).toBe("admitted");
+    expect(
+      requirements?.currentAdmissions.map(({ revisionId }) => revisionId),
+    ).toEqual([followUp.id]);
+    expect(
+      requirements?.priorAdmissions.map(({ revisionId }) => revisionId),
+    ).toEqual([created.draft.id]);
+    expect(projection.revisionSignOff?.state).toBe("signed_off");
+  });
+
+  /**
+   * Approvals accumulate on a spec without bound while the revisions they name
+   * do not, so the work of loading a proposal must grow with the revisions
+   * involved rather than with the approval count.
+   */
+  it("reads each revision snapshot once however many approvals accumulate", async () => {
+    const created = await proposedSpec();
+    await reviewing.bulkApprove({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjects: [
+        { subjectKind: "requirement", elementId: "requirement-1" },
+        { subjectKind: "decision", elementId: "decision-1" },
+        { subjectKind: "plan", elementId: null },
+      ],
+      approver: "alex",
+      actor: HUMAN,
+    });
+    await reviewing.signOffRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      approver: "alex",
+      actor: HUMAN,
+    });
+    // The measurement runs against an amendment, so the approvals it consults
+    // name a revision other than the one already in hand.
+    const amendment = await authoring.openAmendment({
+      specId: created.spec.id,
+      actor: AGENT,
+    });
+    await authoring.proposeRevision({
+      specId: created.spec.id,
+      revisionId: amendment.revision.id,
+      actor: AGENT,
+    });
+
+    const snapshotReads = async (): Promise<string[]> => {
+      const spec = await specs.findById(created.spec.id);
+      const snapshot = await specs.getRevisionSnapshot(amendment.revision.id);
+      if (spec === null || snapshot === null) throw new Error("no spec");
+      return specs.transaction("test.count-snapshot-reads", (repo) => {
+        const reads: string[] = [];
+        const loaded = loadProposalState(
+          {
+            listRevisions: (specId) => repo.listRevisions(specId),
+            getRevisionSnapshot: (revisionId) => {
+              reads.push(revisionId);
+              return repo.getRevisionSnapshot(revisionId);
+            },
+          },
+          reviewRepo,
+          linksRepo,
+          spec,
+          snapshot,
+        );
+        // The predicate loads lazily, so the measurement has to consult it for
+        // every approval the way sign-off does.
+        for (const approval of loaded.reviewSnapshot.approvals) {
+          loaded.approvalApplies(approval);
+        }
+        return reads;
+      });
+    };
+
+    const withThreeApprovals = await snapshotReads();
+    for (let index = 0; index < 40; index += 1) {
+      reviewRepo.saveApproval({
+        id: `approval-bulk-${index}`,
+        spec_id: created.spec.id,
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: created.draft.id,
+        approver: "alex",
+        granted_at: "2026-07-18T14:30:00.000Z",
+        validity: "valid",
+      });
+    }
+
+    expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toHaveLength(44);
+    expect(await snapshotReads()).toEqual(withThreeApprovals);
+    expect(new Set(withThreeApprovals).size).toBe(withThreeApprovals.length);
   });
 
   it("refuses sign-off for a blocking thread, a rejected attached assumption, and missing configured approvals", async () => {
@@ -607,7 +952,7 @@ describe("ReviewService", () => {
     }
     const firstApproval = structuredClone(first.value.approval);
 
-    const amendment = await authoring.openAmendment({
+    const { revision: amendment } = await authoring.openAmendment({
       specId: created.spec.id,
       actor: AGENT,
     });

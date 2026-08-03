@@ -26,6 +26,7 @@ import {
   runSpecRequestApproval,
   runSpecStart,
   runSpecTaskComplete,
+  runSpecWithdrawProposal,
 } from "./write";
 
 export async function runSpec(
@@ -54,6 +55,8 @@ export async function runSpec(
       amend: (next) => runSpecAmend(next, flags, values, env, host),
       draft: (next) => runSpecDraft(next, flags, values, env, host),
       propose: (next) => runSpecPropose(next, flags, values, env, host),
+      "withdraw-proposal": (next) =>
+        runSpecWithdrawProposal(next, flags, values, env, host),
       advance: (next) => runSpecAdvance(next, flags, values, env, host),
       question: (next) => runSpecQuestion(next, flags, values, env, host),
       answer: (next) => runSpecAnswer(next, flags, values, env, host),

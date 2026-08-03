@@ -1114,3 +1114,210 @@ describe("draft compare-and-swap", () => {
     },
   );
 });
+
+describe("historical element reintroduction", () => {
+  const ORPHAN_ID = "requirement-orphaned";
+
+  /**
+   * The reported dead zone, built the way the incident produced it: an element
+   * authored on a revision a human then ended, so its identity survives while
+   * every version of it lives outside the revision now being authored.
+   */
+  async function orphanElement() {
+    const created = await createSpec();
+    await addRequirement(created.spec.id, created.revision.id, "Kept.");
+    await repo.proposeRevision({
+      revisionId: created.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    await repo.approveRevision({
+      revisionId: created.revision.id,
+      approvedAt: APPROVED_AT,
+    });
+
+    const attempt = await repo.createDraftFromBase({
+      id: `${created.spec.id}-revision-2`,
+      specId: created.spec.id,
+      baseRevisionId: created.revision.id,
+      authoringStage: "requirements",
+      createdAt: UPDATED_AT,
+    });
+    const orphan = await repo.createDraftElement({
+      id: ORPHAN_ID,
+      specId: created.spec.id,
+      revisionId: attempt.id,
+      kind: "requirement",
+      parentElementId: null,
+      payload: requirementPayload("Authored on the attempt a human ended."),
+      createdAt: CREATED_AT,
+      updatedAt: UPDATED_AT,
+    });
+    await repo.proposeRevision({
+      revisionId: attempt.id,
+      proposedAt: PROPOSED_AT,
+    });
+    await repo.withdrawRevision({ revisionId: attempt.id });
+
+    const followUp = await repo.createDraftFromBase({
+      id: `${created.spec.id}-revision-3`,
+      specId: created.spec.id,
+      baseRevisionId: created.revision.id,
+      authoringStage: "requirements",
+      createdAt: UPDATED_AT,
+    });
+    return { spec: created.spec, approved: created.revision, orphan, followUp };
+  }
+
+  it("restores the orphaned identity with its number, provenance, and a revision-local first version", async () => {
+    const { spec, orphan, followUp } = await orphanElement();
+    const restoredPayload = requirementPayload("Restored, and rewritten.");
+
+    const revived = await repo.createDraftElement({
+      id: ORPHAN_ID,
+      specId: spec.id,
+      revisionId: followUp.id,
+      kind: "requirement",
+      parentElementId: null,
+      payload: restoredPayload,
+      reintroduceHistorical: true,
+      createdAt: PROPOSED_AT,
+      updatedAt: PROPOSED_AT,
+    });
+
+    expect(revived.revived).toBe(true);
+    // Reloaded through the repository: the identity row is untouched, so the
+    // element keeps the number its handle is composed from.
+    const reloadedElement = await repo.findElement(ORPHAN_ID);
+    expect(reloadedElement).toEqual(orphan.element);
+    const snapshot = await repo.getRevisionSnapshot(followUp.id);
+    const row = snapshot?.elements.find(
+      ({ element }) => element.id === ORPHAN_ID,
+    );
+    expect(row?.version).toMatchObject({
+      revisionId: followUp.id,
+      elementVersion: 1,
+      payload: restoredPayload,
+    });
+    // The counter is not advanced: reintroduction reuses an allocated number
+    // rather than minting one, so the next new requirement is R3.
+    expect(await repo.findCounter(spec.id, "R")).toMatchObject({
+      lastNumber: 2,
+    });
+  });
+
+  it("refuses a historical identity of the same spec without the reintroduction marker", async () => {
+    const { spec, followUp } = await orphanElement();
+
+    await expect(
+      repo.createDraftElement({
+        id: ORPHAN_ID,
+        specId: spec.id,
+        revisionId: followUp.id,
+        kind: "requirement",
+        parentElementId: null,
+        payload: requirementPayload("Re-authored under the same id."),
+        createdAt: PROPOSED_AT,
+        updatedAt: PROPOSED_AT,
+      }),
+    ).rejects.toMatchObject({
+      name: "SpecHistoricalElementError",
+      code: "historical_element_id",
+      reason: "reintroduction_required",
+      elementId: ORPHAN_ID,
+      specId: spec.id,
+      handle: "R2",
+    });
+  });
+
+  it("refuses a reintroduction that would change the element's kind", async () => {
+    const { spec, followUp } = await orphanElement();
+
+    await expect(
+      repo.createDraftElement({
+        id: ORPHAN_ID,
+        specId: spec.id,
+        revisionId: followUp.id,
+        kind: "task",
+        parentElementId: null,
+        payload: maximalTaskPayload(),
+        reintroduceHistorical: true,
+        createdAt: PROPOSED_AT,
+        updatedAt: PROPOSED_AT,
+      }),
+    ).rejects.toMatchObject({
+      name: "SpecHistoricalElementError",
+      reason: "kind_changed",
+      kind: "requirement",
+      attemptedKind: "task",
+    });
+  });
+
+  it("refuses a reintroduction that would change the element's parent", async () => {
+    const created = await createSpec();
+    const first = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+      "First.",
+    );
+    const second = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+      "Second.",
+    );
+    const criterion = await addCriterion(
+      created.spec.id,
+      created.revision.id,
+      first.element.id,
+    );
+    await repo.removeDraftElement({
+      revisionId: created.revision.id,
+      elementId: criterion.element.id,
+      expectedElementVersion: criterion.version.elementVersion,
+    });
+
+    await expect(
+      repo.createDraftElement({
+        id: criterion.element.id,
+        specId: created.spec.id,
+        revisionId: created.revision.id,
+        kind: "criterion",
+        parentElementId: second.element.id,
+        payload: criterionPayload("Restored under the wrong requirement."),
+        reintroduceHistorical: true,
+        createdAt: PROPOSED_AT,
+        updatedAt: PROPOSED_AT,
+      }),
+    ).rejects.toMatchObject({
+      name: "SpecHistoricalElementError",
+      reason: "parent_changed",
+      parentElementId: first.element.id,
+      attemptedParentElementId: second.element.id,
+    });
+  });
+
+  it("reports the ordinary stale-create conflict when the identity is live in the target revision", async () => {
+    const created = await createSpec();
+    const requirement = await addRequirement(
+      created.spec.id,
+      created.revision.id,
+    );
+
+    await expect(
+      repo.createDraftElement({
+        id: requirement.element.id,
+        specId: created.spec.id,
+        revisionId: created.revision.id,
+        kind: "requirement",
+        parentElementId: null,
+        payload: requirementPayload("A second create of a live element."),
+        reintroduceHistorical: true,
+        createdAt: PROPOSED_AT,
+        updatedAt: PROPOSED_AT,
+      }),
+    ).rejects.toMatchObject({
+      name: "StaleElementConflictError",
+      code: "stale_element",
+      expectedElementVersion: 0,
+    });
+  });
+});

@@ -3,12 +3,13 @@ import { z } from "zod";
 
 import {
   createSpecInitialElementSchema,
-  draftElementBatchItemSchema,
+  draftElementDocumentSchema,
 } from "@/lib/specs/authoring-service";
 import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   specElementKindSchema,
   taskElementPayloadSchema,
+  touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
 import { executionScopeSchema } from "@/lib/specs/scope-validation";
@@ -70,15 +71,115 @@ async function readDocuments() {
 }
 
 describe("cctl spec schema", () => {
-  it("publishes one document per element kind plus the batch, scope, and capture inputs", async () => {
+  it("publishes one document per element kind plus the batch, create, scope, and capture inputs", async () => {
     const documents = await readDocuments();
 
     expect(documents.map((document) => document.id)).toEqual([
       ...specElementKindSchema.options,
       "element-batch",
+      "create-element",
       "scope",
       "discovered-task",
     ]);
+  });
+
+  /**
+   * The draft document and the create document are different shapes, and one
+   * document claiming both verbs is what made a draft file carrying the
+   * compare-and-swap version fail as an unrecognized key while every batch
+   * element required it. Each published document names exactly the invocations
+   * that accept it.
+   */
+  it("publishes the draft and create element documents as distinct shapes", async () => {
+    const documents = await readDocuments();
+
+    for (const kind of specElementKindSchema.options) {
+      const draft = documents.find(({ id }) => id === kind);
+      expect(
+        draft?.usedBy,
+        `${kind}: draft document names the wrong verbs`,
+      ).toEqual([
+        "cctl spec draft <slug> --file <element.json>",
+        "cctl spec draft <slug> --file <elements.json>",
+      ]);
+      // The draft document requires the version, and its example states one.
+      expect(draft?.jsonSchema).toMatchObject({
+        required: [
+          "elementId",
+          "kind",
+          "parentElementId",
+          "payload",
+          "baseElementVersion",
+        ],
+      });
+      const parsedDraft = draftElementDocumentSchema.safeParse(draft?.example);
+      expect(
+        parsedDraft.success ? null : { kind, issues: parsedDraft.error.issues },
+      ).toBeNull();
+    }
+
+    const create = documents.find(({ id }) => id === "create-element");
+    expect(create?.usedBy).toEqual([
+      "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>",
+    ]);
+    // The create document has no version to compare against, and states none.
+    expect(
+      createSpecInitialElementSchema.safeParse(create?.example).success,
+    ).toBe(true);
+    expect(
+      createSpecInitialElementSchema.safeParse({
+        ...z.record(z.string(), z.unknown()).parse(create?.example),
+        baseElementVersion: null,
+      }).success,
+    ).toBe(false);
+    expect(create?.notes.join(" ")).toContain("no baseElementVersion");
+  });
+
+  /**
+   * `spec create` opens an amendment when the slug already exists with no
+   * draft, so the marker does belong here — but the document states no base
+   * version, and telling an author to pair it with one names a field this
+   * document rejects.
+   */
+  it("states the reintroduction marker without a base version to pair it with", async () => {
+    const documents = await readDocuments();
+    const create = documents.find(({ id }) => id === "create-element");
+    const notes = create?.notes.join(" ") ?? "";
+
+    expect(notes).toContain("reintroduceHistorical");
+    expect(notes).toContain("historical_element_id");
+    expect(notes).not.toContain("pair it with a null base version");
+    // The marker is a real field of this document, not prose about another.
+    expect(
+      createSpecInitialElementSchema.safeParse({
+        ...z.record(z.string(), z.unknown()).parse(create?.example),
+        reintroduceHistorical: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  /**
+   * Element versions are revision-local: an amendment copies the approved
+   * content in at version 1. A document that teaches the compare-and-swap
+   * without that fact teaches an author to reuse a version the new revision
+   * never had.
+   */
+  it("states that element versions restart at 1 in a new revision", async () => {
+    const documents = await readDocuments();
+
+    for (const id of [...specElementKindSchema.options, "element-batch"]) {
+      const notes = (
+        documents.find((document) => document.id === id)?.notes ?? []
+      )
+        .join(" ")
+        .toLowerCase();
+      expect(notes, `${id}: no revision-local version statement`).toContain(
+        "restart at 1",
+      );
+      expect(notes, `${id}: does not name the amend re-read`).toContain(
+        "re-read the element after an amendment",
+      );
+    }
   });
 
   it("publishes the batch document as an array of per-element writes", async () => {
@@ -101,7 +202,7 @@ describe("cctl spec schema", () => {
     // The worked example must be authorable as-is: the server's own batch item
     // schema is what parses it.
     const parsed = z
-      .array(draftElementBatchItemSchema)
+      .array(draftElementDocumentSchema)
       .safeParse(batch?.example);
     expect(parsed.success ? null : parsed.error.issues).toBeNull();
     // Each element states its own base version — a batch is not a
@@ -117,18 +218,21 @@ describe("cctl spec schema", () => {
     );
   });
 
-  it("never points a batch author at the single-element --base-version flag", async () => {
+  /**
+   * The flag is gone: the version travels in the document. A published note
+   * still naming it would send an author at a flag every form now refuses.
+   */
+  it("never points an author at the removed --base-version flag", async () => {
     const documents = await readDocuments();
-    const batch = documents.find(({ id }) => id === "element-batch");
 
-    // Naming the flag to refuse it is the one legitimate mention; anything
-    // else instructs the author to pass a flag this form rejects.
-    expect(
-      (batch?.notes ?? []).filter(
-        (note) =>
-          note.includes("--base-version") && !note.includes("does not apply"),
-      ),
-    ).toEqual([]);
+    for (const document of documents) {
+      expect(
+        [...document.notes, ...document.usedBy].filter((line) =>
+          line.includes("--base-version"),
+        ),
+        `${document.id} still names --base-version`,
+      ).toEqual([]);
+    }
   });
 
   it("emits a JSON Schema narrowed to each element kind's payload", async () => {
@@ -146,7 +250,13 @@ describe("cctl spec schema", () => {
           required: ["kind", "text", "validationStrategy"],
         },
       },
-      required: ["elementId", "kind", "parentElementId", "payload"],
+      required: [
+        "elementId",
+        "kind",
+        "parentElementId",
+        "payload",
+        "baseElementVersion",
+      ],
       additionalProperties: false,
     });
   });
@@ -236,14 +346,55 @@ describe("cctl spec schema", () => {
     );
   });
 
+  /**
+   * `touchedPathSchema`'s normalization is a `.superRefine()`, which
+   * `z.toJSONSchema` drops: an author reading the published task document sees
+   * a bare string array and writes `src/cli/` or an absolute path, which the
+   * server then refuses. The published node has to carry the rule in prose,
+   * and the worked example has to show the shape the rule accepts.
+   */
+  it("publishes the touched-path normalization rule the server enforces", async () => {
+    const documents = await readDocuments();
+    const task = documents.find(({ id }) => id === "task");
+    const touchedPathsNode = z
+      .object({
+        properties: z.object({
+          payload: z.object({
+            properties: z.object({
+              touchedPaths: z.object({
+                items: z.record(z.string(), z.unknown()),
+              }),
+            }),
+          }),
+        }),
+      })
+      .loose()
+      .parse(task?.jsonSchema).properties.payload.properties.touchedPaths.items;
+
+    expect(touchedPathsNode).toMatchObject({
+      type: "string",
+      description:
+        "normalized repo-relative POSIX paths; directories without a trailing slash",
+    });
+    // The example is the only shape an author copies, so it must be the
+    // directory form the refinement accepts — a trailing slash is refused.
+    const touchedPaths = z
+      .object({ payload: z.object({ touchedPaths: z.array(z.string()) }) })
+      .loose()
+      .parse(task?.example).payload.touchedPaths;
+    expect(touchedPaths).toEqual(["src/cli/commands/spec"]);
+    for (const path of touchedPaths) {
+      expect(touchedPathSchema.safeParse(path).success).toBe(true);
+      expect(touchedPathSchema.safeParse(`${path}/`).success).toBe(false);
+    }
+  });
+
   it("ships a worked example that the server's own input schema accepts", async () => {
     const documents = await readDocuments();
 
     for (const kind of specElementKindSchema.options) {
       const document = documents.find(({ id }) => id === kind);
-      const parsed = createSpecInitialElementSchema.safeParse(
-        document?.example,
-      );
+      const parsed = draftElementDocumentSchema.safeParse(document?.example);
       expect(
         parsed.success ? null : { kind, issues: parsed.error.issues },
       ).toBeNull();
@@ -295,6 +446,20 @@ describe("cctl spec schema", () => {
       expect(notes).toContain("omit position on create to append");
       expect(notes).toContain("nesting comes from parentelementid alone");
       expect(notes).toContain("duplicate positions are accepted");
+    }
+  });
+
+  it("documents the reintroduction marker on every element write document", async () => {
+    const documents = await readDocuments();
+
+    for (const id of [...specElementKindSchema.options, "element-batch"]) {
+      const document = documents.find((candidate) => candidate.id === id);
+      const notes = (document?.notes ?? []).join(" ");
+      expect(notes).toContain("reintroduceHistorical");
+      // The marker is only reachable from the refusal that asks for it, so the
+      // note has to name that refusal.
+      expect(notes).toContain("historical_element_id");
+      expect(notes.toLowerCase()).toContain("keeps its number and handle");
     }
   });
 

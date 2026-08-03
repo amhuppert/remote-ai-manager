@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   COMBINED_APPROVAL_DIAL,
@@ -10,12 +11,20 @@ import {
   resolvedGateDialSchema,
   type SpecGatePreset,
 } from "@/lib/specs/schemas";
+import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
 import { executionStartActor } from "./write";
 
 const CREATED_AT = "2026-07-18T00:00:00.000Z";
+// Built from the server's own instruction builder: a hand-copied string here
+// would let the CLI test keep passing after the recovery it teaches changed.
+const REVISION_IN_REVIEW_INSTRUCTION = revisionInReviewInstruction(
+  [2],
+  "amendment",
+);
 const SPEC_FILE = "/tmp/spec-element.json";
+const DRAFT_FILE = "/tmp/spec-draft-element.json";
 const BATCH_FILE = "/tmp/spec-elements.json";
 const SCOPE_FILE = "/tmp/spec-scope.json";
 const TASK_FILE = "/tmp/spec-discovered-task.json";
@@ -231,7 +240,8 @@ function makeHost(
       | "rename"
       | "capture-scope-amendment"
       | "abandon-spec"
-      | "answer-question";
+      | "answer-question"
+      | "open-amendment";
     approved?: boolean;
     /** false emulates a server built before handles were projected. */
     handles?: boolean;
@@ -239,6 +249,12 @@ function makeHost(
     preset?: SpecGatePreset;
     /** The approval ask was already open, so no second request was created. */
     alreadyRequested?: boolean;
+    /** A revision was withdrawn above the base the amendment clones. */
+    skippedWithdrawn?: boolean;
+    /** Every dial concluded the stage, so the propose absorbed the sign-off. */
+    absorbedSignOff?: boolean;
+    /** The write brought a historical element id back into the revision. */
+    revived?: boolean;
   } = {},
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
@@ -340,6 +356,22 @@ function makeHost(
               "Perform this action from the authenticated browser session.",
           },
           403,
+        );
+      }
+      if (options.refusal === "open-amendment" && action === "open-amendment") {
+        return response(
+          {
+            code: "revision_in_review",
+            unmetConditions: [
+              "Revision 2 of spec spec-1 is proposed and under review, so an amendment would fork past it",
+            ],
+            instruction: REVISION_IN_REVIEW_INSTRUCTION,
+            details: {
+              proposals: [{ id: "revision-2", number: 2 }],
+              approvedBaseRevisionId: "revision-1",
+            },
+          },
+          409,
         );
       }
       if (
@@ -462,6 +494,9 @@ function makeHost(
           return response({
             element: taskElementBody().element.element,
             version: taskElementBody().element.version,
+            ...(options.revived === undefined
+              ? {}
+              : { revived: options.revived }),
             ...handle("T1"),
           });
         case "draft-batch":
@@ -494,19 +529,96 @@ function makeHost(
                   "requirement-id-1",
                 ),
                 version: batchVersion("criterion-id-1", 1, CRITERION_PAYLOAD),
+                ...(options.revived === undefined
+                  ? {}
+                  : { revived: options.revived }),
                 ...handle("R1.1"),
               },
             ],
           });
         case "propose":
+          if (options.absorbedSignOff) {
+            return response({
+              revision: {
+                ...revision("approved"),
+                authoringStage: "requirements",
+                number: 1,
+              },
+              diff: { classifications: [], changeList: [], planStale: false },
+              absorbedSignOff: true,
+              pendingBlock: null,
+              nextAction: {
+                kind: "none",
+                actsNext: null,
+                gate: null,
+                subject: null,
+                elementId: null,
+                instruction: "Nothing is outstanding for the current revision.",
+              },
+            });
+          }
           return response({
+            // The revision sits at the plan stage while the gate it still owes
+            // is requirements — the shape ticket #42 reported, so any rendering
+            // that reads the stage names the wrong gate.
             revision: {
               ...revision(),
+              authoringStage: "plan",
               state: "proposed",
               proposedAt: CREATED_AT,
             },
-            diff: {},
+            diff: { classifications: [], changeList: [], planStale: false },
             absorbedSignOff: false,
+            // The server authors the blocker: which gates the transition
+            // consulted, the subject each is waiting on, and the sign-off
+            // standing. The stage alone cannot produce any of it.
+            pendingBlock: {
+              actsNext: "human",
+              gates: [
+                {
+                  gate: "requirements",
+                  dial: "gate",
+                  state: "pending",
+                  applicability: {
+                    reason: "current_stage",
+                    governanceBaseRevisionId: null,
+                  },
+                  subjects: ["R1"],
+                },
+              ],
+              outstandingSubjects: [
+                {
+                  gate: "requirements",
+                  subject: "R1",
+                  elementId: "requirement-id-1",
+                },
+              ],
+              signOff: {
+                revisionId: "revision-draft",
+                revisionNumber: 1,
+                state: "blocked",
+                outstandingSubjectCount: 1,
+                unmetConditions: [
+                  "Requirement R1 needs a valid approval for revision-draft.",
+                ],
+                approval: null,
+              },
+              unmetConditions: [
+                "Requirement R1 needs a valid approval for revision-draft.",
+              ],
+              display: "revision 1 needs 1 human approval — requirements: R1",
+              instruction:
+                "Ask a human to approve R1 at the requirements gate in Spec Studio, or request it with gate requirements and subject R1.",
+            },
+            nextAction: {
+              kind: "approve_subject",
+              actsNext: "human",
+              gate: "requirements",
+              subject: "R1",
+              elementId: "requirement-id-1",
+              instruction:
+                "Ask a human to approve R1 at the requirements gate in Spec Studio.",
+            },
           });
         case "advance":
           return response({
@@ -568,15 +680,25 @@ function makeHost(
             claimed_at: CREATED_AT,
             status: "accepted",
           });
-        case "request-approval":
+        case "request-approval": {
+          // The server, not the CLI, decides the scope: an omitted subject is
+          // the whole-gate ask and carries no element.
+          const posted = z
+            .object({ subject: z.string().optional() })
+            .safeParse(JSON.parse(init.body ?? "{}"));
+          const named = posted.success ? posted.data.subject : undefined;
           return response({
             attentionId: "attention-1",
             revisionId: "revision-draft",
             gate: "requirements",
-            subject: "R1",
+            subject: named ?? "requirements",
+            scope: named === undefined ? "gate" : "item",
             alreadyRequested: options.alreadyRequested === true,
-            elementId: "requirement-id-1",
+            elementId: named === undefined ? null : "requirement-id-1",
+            outstandingSubjects: ["R1", "R2"],
+            signOffOutstanding: true,
           });
+        }
         case "start-execution":
           return response({
             execution: {
@@ -604,11 +726,43 @@ function makeHost(
           });
         case "open-amendment":
           return response({
-            ...revision(),
-            id: "revision-amendment",
-            number: 2,
-            authoringStage: "plan",
-            basedOnRevisionId: "revision-approved",
+            revision: {
+              ...revision(),
+              id: "revision-amendment",
+              number: options.skippedWithdrawn === true ? 3 : 2,
+              authoringStage: "plan",
+              basedOnRevisionId: "revision-approved",
+            },
+            skippedWithdrawnRevisions:
+              options.skippedWithdrawn === true
+                ? [
+                    {
+                      ...revision(),
+                      id: "revision-withdrawn",
+                      number: 2,
+                      state: "withdrawn",
+                      authoringStage: "plan",
+                      basedOnRevisionId: "revision-approved",
+                    },
+                  ]
+                : [],
+          });
+        case "withdraw-proposal":
+          return response({
+            withdrawn: {
+              ...revision(),
+              id: "revision-proposed",
+              number: 2,
+              state: "withdrawn",
+              authoringStage: "plan",
+            },
+            draft: {
+              ...revision(),
+              id: "revision-follow-up",
+              number: 3,
+              authoringStage: "plan",
+              basedOnRevisionId: "revision-proposed",
+            },
           });
         case "abandon-spec":
           return response({
@@ -697,7 +851,9 @@ function actionRequests(host: { requests: RecordedRequest[] }) {
   return host.requests.filter((request) => request.init.method === "POST");
 }
 
-const FIRST_ELEMENT_FILE_CONTENT = JSON.stringify({
+// The create document: the spec's first revision has no element version to
+// compare against, so it states none.
+const FIRST_ELEMENT_ADDRESS = {
   elementId: "requirement-id-1",
   kind: "requirement",
   parentElementId: null,
@@ -708,7 +864,12 @@ const FIRST_ELEMENT_FILE_CONTENT = JSON.stringify({
     priority: "must",
     risk: "high",
   },
-});
+};
+const FIRST_ELEMENT_FILE_CONTENT = JSON.stringify(FIRST_ELEMENT_ADDRESS);
+// The draft document: the same element, plus the compare-and-swap version the
+// author last read. `null` creates the element.
+const DRAFT_ELEMENT = { ...FIRST_ELEMENT_ADDRESS, baseElementVersion: null };
+const DRAFT_FILE_CONTENT = JSON.stringify(DRAFT_ELEMENT);
 
 // A batch document: an array of element writes, each carrying its OWN
 // baseElementVersion — the concurrency boundary stays per element.
@@ -808,7 +969,10 @@ describe("cctl spec write verbs", () => {
 
   it("prints the addressing handle assigned by create, draft, and question", async () => {
     const host = makeHost({
-      files: { [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT },
+      files: {
+        [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT,
+        [DRAFT_FILE]: DRAFT_FILE_CONTENT,
+      },
     });
 
     const created = await runCli(
@@ -831,16 +995,7 @@ describe("cctl spec write verbs", () => {
     expect(created.stdout).toContain("native-sdd/R1");
 
     const drafted = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        SPEC_FILE,
-        "--base-version",
-        "1",
-        "--json",
-      ],
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE, "--json"],
       baseEnv,
       host,
     );
@@ -856,21 +1011,34 @@ describe("cctl spec write verbs", () => {
     expect(questioned.stdout).toContain("native-sdd/Q2");
   });
 
+  it("reports a revived element id as a return rather than a fresh save", async () => {
+    const host = makeHost({
+      revived: true,
+      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
+    });
+
+    const drafted = await runCli(
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(drafted.exitCode).toBe(0);
+    expect(drafted.stdout).toContain("revived native-sdd/T1 (task)");
+    // The number and handle came back with it, which is the whole point of
+    // reintroducing rather than re-authoring under a new id.
+    expect(drafted.stdout).toContain(
+      "the element kept the number and handle it was created with",
+    );
+  });
+
   it("falls back to kind and version when an older server sends no handle", async () => {
     const host = makeHost({
       handles: false,
-      files: { [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT },
+      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
     });
     const drafted = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        SPEC_FILE,
-        "--base-version",
-        "1",
-      ],
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
       baseEnv,
       host,
     );
@@ -913,6 +1081,149 @@ describe("cctl spec write verbs", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("revision 2");
     expect(result.stdout).toContain("plan");
+    expect(result.stdout).not.toContain("withdrawn");
+  });
+
+  /**
+   * A withdrawn revision is terminal, so the amendment cannot carry it and
+   * cannot refuse over it. The one remaining option is saying so.
+   */
+  it("names the withdrawn revision the amendment leaves behind, in text and JSON", async () => {
+    const text = await runCli(
+      ["spec", "amend", "native-sdd"],
+      baseEnv,
+      makeHost({ approved: true, skippedWithdrawn: true }),
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "revision 2 was withdrawn and its content is not carried into revision 3 — re-author anything from it that still applies",
+    );
+
+    const json = await runCli(
+      ["spec", "amend", "native-sdd", "--json"],
+      baseEnv,
+      makeHost({ approved: true, skippedWithdrawn: true }),
+    );
+
+    expect(json.exitCode).toBe(0);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      ok: true,
+      revision: { id: "revision-amendment", number: 3 },
+      skippedWithdrawnRevisions: [{ id: "revision-withdrawn", number: 2 }],
+    });
+  });
+
+  it("renders the revision_in_review refusal when an amendment would fork past a review", async () => {
+    const host = makeHost({ approved: true, refusal: "open-amendment" });
+
+    const text = await runCli(["spec", "amend", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(1);
+    expect(text.stderr).toContain("Revision 2");
+    expect(text.stderr).toContain(
+      `instruction: ${REVISION_IN_REVIEW_INSTRUCTION}`,
+    );
+    // The agent-side exit is one of the three recoveries the server teaches,
+    // so a rendering that drops it leaves the agent waiting on a human.
+    expect(text.stderr).toContain("cctl spec withdraw-proposal");
+
+    const json = await runCli(
+      ["spec", "amend", "native-sdd", "--json"],
+      baseEnv,
+      makeHost({ approved: true, refusal: "open-amendment" }),
+    );
+
+    expect(json.exitCode).toBe(1);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      ok: false,
+      code: "revision_in_review",
+      instruction: expect.stringContaining("sign off revision 2"),
+      details: { proposals: [{ id: "revision-2", number: 2 }] },
+    });
+  });
+
+  it("withdraws the caller's own proposal and names the draft it reopened", async () => {
+    const host = makeHost();
+    const result = await runCli(
+      [
+        "spec",
+        "withdraw-proposal",
+        "native-sdd",
+        "--revision",
+        "revision-proposed",
+        "--json",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const request = actionRequests(host)[0];
+    expect(new URL(request?.url ?? "").pathname).toBe(
+      "/api/specs/demo/native-sdd/actions/withdraw-proposal",
+    );
+    // The token travels exactly as given: the CLI never substitutes the
+    // server's current proposal for the one the caller named.
+    expect(JSON.parse(request?.init.body ?? "null")).toEqual({
+      revisionId: "revision-proposed",
+    });
+    expect(request?.init.headers["x-cc-conversation-id"]).toBe(
+      "conversation-1",
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      withdrawal: {
+        withdrawn: { id: "revision-proposed", state: "withdrawn" },
+        draft: { id: "revision-follow-up", number: 3 },
+      },
+    });
+
+    const text = await runCli(
+      [
+        "spec",
+        "withdraw-proposal",
+        "native-sdd",
+        "--revision",
+        "revision-proposed",
+      ],
+      baseEnv,
+      makeHost(),
+    );
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "withdrew proposed revision 2 and reopened its content as draft revision 3",
+    );
+    expect(text.stdout).toContain("acts next: agent");
+  });
+
+  it("refuses a withdraw-proposal with no revision token before any network request", async () => {
+    const host = makeHost();
+    for (const argv of [
+      ["spec", "withdraw-proposal"],
+      ["spec", "withdraw-proposal", "native-sdd"],
+      ["spec", "withdraw-proposal", "native-sdd", "--revision", ""],
+      ["spec", "withdraw-proposal", "Not A Slug!", "--revision", "revision-1"],
+      [
+        "spec",
+        "withdraw-proposal",
+        "native-sdd",
+        "extra",
+        "--revision",
+        "revision-1",
+      ],
+    ]) {
+      const result = await runCli(argv, baseEnv, host);
+      expect(result.exitCode, argv.join(" ")).toBe(2);
+    }
+    expect(host.requests).toHaveLength(0);
+
+    const missing = await runCli(
+      ["spec", "withdraw-proposal", "native-sdd"],
+      baseEnv,
+      makeHost(),
+    );
+    expect(missing.stderr).toContain("--revision <revision-id>");
   });
 
   it("validates the amend slug locally before any network request", async () => {
@@ -1152,32 +1463,15 @@ describe("cctl spec write verbs", () => {
 
   it("sends base-versioned draft writes and surfaces current content on conflict", async () => {
     const elementFile = JSON.stringify({
-      elementId: "requirement-id-1",
-      kind: "requirement",
-      parentElementId: null,
-      position: 0,
-      payload: {
-        kind: "requirement",
-        statement: "Candidate content",
-        priority: "must",
-        risk: "high",
-      },
+      ...FIRST_ELEMENT_ADDRESS,
+      baseElementVersion: 1,
     });
     const host = makeHost({
       files: { [SPEC_FILE]: elementFile },
       refusal: "draft-upsert",
     });
     const result = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        SPEC_FILE,
-        "--base-version",
-        "1",
-        "--json",
-      ],
+      ["spec", "draft", "native-sdd", "--file", SPEC_FILE, "--json"],
       baseEnv,
       host,
     );
@@ -1196,6 +1490,101 @@ describe("cctl spec write verbs", () => {
       baseElementVersion: 1,
       elementId: "requirement-id-1",
     });
+  });
+
+  /**
+   * The single-element form and the batch form are the same document, so one
+   * schema parses both and neither can accept a shape the other refuses. A
+   * one-element array and a lone object therefore describe the same write, and
+   * the element the server receives is identical either way.
+   */
+  it("normalizes the single and batch draft forms to the same element document", async () => {
+    const single = makeHost({ files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT } });
+    const asBatch = makeHost({
+      files: { [DRAFT_FILE]: JSON.stringify([DRAFT_ELEMENT]) },
+    });
+
+    const one = await runCli(
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
+      baseEnv,
+      single,
+    );
+    const batched = await runCli(
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
+      baseEnv,
+      asBatch,
+    );
+
+    expect(one.exitCode).toBe(0);
+    expect(batched.exitCode).toBe(0);
+    // The element travels verbatim in both forms; only the reporting shape
+    // the server owes back differs, so only the envelope around it differs.
+    expect(JSON.parse(actionRequests(single)[0]?.init.body ?? "{}")).toEqual({
+      revisionId: "revision-draft",
+      ...DRAFT_ELEMENT,
+    });
+    expect(JSON.parse(actionRequests(asBatch)[0]?.init.body ?? "{}")).toEqual({
+      revisionId: "revision-draft",
+      elements: [DRAFT_ELEMENT],
+    });
+  });
+
+  /**
+   * The compare-and-swap version moved into the document, so a caller still
+   * passing the flag must be told where it went. A silently ignored flag would
+   * send the write at whatever version the file happens to state.
+   */
+  it("refuses the removed --base-version flag and names the field it moved to", async () => {
+    const host = makeHost({ files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT } });
+
+    const result = await runCli(
+      [
+        "spec",
+        "draft",
+        "native-sdd",
+        "--file",
+        DRAFT_FILE,
+        "--base-version",
+        "3",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--base-version");
+    expect(result.stderr).toContain("baseElementVersion");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  /**
+   * The create document and the draft document are different shapes: a spec's
+   * first revision has no element version to compare against. A create file
+   * carrying one is a draft document sent at the wrong verb.
+   */
+  it("refuses a create file that states a base element version", async () => {
+    const host = makeHost({ files: { [SPEC_FILE]: DRAFT_FILE_CONTENT } });
+
+    const result = await runCli(
+      [
+        "spec",
+        "create",
+        "--slug",
+        "native-sdd",
+        "--name",
+        "Native SDD",
+        "--preset",
+        "contract-bearing",
+        "--file",
+        SPEC_FILE,
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("baseElementVersion");
+    expect(host.requests).toHaveLength(0);
   });
 
   it("submits an array --file as one batch and reports each element by its index", async () => {
@@ -1246,6 +1635,28 @@ describe("cctl spec write verbs", () => {
     });
   });
 
+  it("marks the batch entries that returned rather than being created", async () => {
+    const host = makeHost({
+      revived: true,
+      files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
+    });
+
+    const text = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain(
+      "[1] native-sdd/R1.1 (criterion) at version 1 (revived)",
+    );
+    // The entry the server did not mark reads as an ordinary save.
+    expect(text.stdout).toContain(
+      "[0] native-sdd/R1 (requirement) at version 4\n",
+    );
+  });
+
   it("names every element that refused a batch, by index, in text and json", async () => {
     const host = makeHost({
       files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
@@ -1294,27 +1705,6 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("refuses --base-version alongside a batch file before any network request", async () => {
-    const host = makeHost({ files: { [BATCH_FILE]: BATCH_FILE_CONTENT } });
-    const result = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        BATCH_FILE,
-        "--base-version",
-        "3",
-      ],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("baseElementVersion");
-    expect(host.requests).toHaveLength(0);
-  });
-
   it("refuses a batch element that omits its own baseElementVersion", async () => {
     const host = makeHost({
       files: {
@@ -1342,10 +1732,11 @@ describe("cctl spec write verbs", () => {
   it("names the failing field when a draft file misses the schema", async () => {
     const host = makeHost({
       files: {
-        [SPEC_FILE]: JSON.stringify({
+        [DRAFT_FILE]: JSON.stringify({
           elementId: "criterion-id-1",
           kind: "criterion",
           parentElementId: "requirement-id-1",
+          baseElementVersion: null,
           payload: {
             kind: "criterion",
             text: "Rendered output matches a screenshot.",
@@ -1355,15 +1746,7 @@ describe("cctl spec write verbs", () => {
       },
     });
     const result = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        SPEC_FILE,
-        "--base-version",
-        "new",
-      ],
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
       baseEnv,
       host,
     );
@@ -1375,19 +1758,9 @@ describe("cctl spec write verbs", () => {
   });
 
   it("resolves a draft write's target revision from the edit-context read alone", async () => {
-    const host = makeHost({
-      files: { [SPEC_FILE]: FIRST_ELEMENT_FILE_CONTENT },
-    });
+    const host = makeHost({ files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT } });
     const result = await runCli(
-      [
-        "spec",
-        "draft",
-        "native-sdd",
-        "--file",
-        SPEC_FILE,
-        "--base-version",
-        "new",
-      ],
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
       baseEnv,
       host,
     );
@@ -1622,7 +1995,7 @@ describe("cctl spec write verbs", () => {
     expect(text.stdout).toContain("  element version: 1");
     expect(text.stdout).toContain("acts next: agent");
     expect(text.stdout).toContain(
-      "next: cctl spec draft native-sdd --file <element.json> --base-version new",
+      "next: cctl spec draft native-sdd --file <element.json>",
     );
   });
 
@@ -1638,11 +2011,11 @@ describe("cctl spec write verbs", () => {
     expect(result.stdout).toContain("  revision: revision-amendment");
     expect(result.stdout).toContain("acts next: agent");
     expect(result.stdout).toContain(
-      "next: cctl spec draft native-sdd --file <element.json> --base-version new",
+      "next: cctl spec draft native-sdd --file <element.json>",
     );
   });
 
-  it("names the human sign-off a propose is now blocked on", async () => {
+  it("renders the server's pending block instead of deriving one from the stage", async () => {
     const result = await runCli(
       ["spec", "propose", "native-sdd"],
       baseEnv,
@@ -1652,10 +2025,40 @@ describe("cctl spec write verbs", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("state: revision 1 is proposed");
     expect(result.stdout).toContain("  revision: revision-draft");
-    expect(result.stdout).toContain("acts next: human");
     expect(result.stdout).toContain(
-      "next: cctl spec request-approval native-sdd --gate requirements",
+      "acts next: human — revision 1 needs 1 human approval — requirements: R1",
     );
+    expect(result.stdout).toContain(
+      "  requirements: pending on current revision (gate) — consulted: the revision's current authoring stage — subjects: R1",
+    );
+    // Sign-off can be blocked by more than outstanding subjects, so every
+    // unmet condition travels rather than one subjects-or-sign-off scalar.
+    expect(result.stdout).toContain(
+      "  Requirement R1 needs a valid approval for revision-draft.",
+    );
+    // The subjectless request the stage-derived blocker offered is refused by
+    // the server as invalid_subject once a gate has more than one subject.
+    expect(result.stdout).toContain(
+      "next: cctl spec request-approval native-sdd --gate requirements --subject R1",
+    );
+    expect(result.stdout).toContain(
+      "instruction: Ask a human to approve R1 at the requirements gate in Spec Studio, or request it with gate requirements and subject R1.",
+    );
+    expect(result.stdout).not.toContain("plan gate");
+  });
+
+  it("hands the next draft back to the agent when the propose absorbed the sign-off", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd"],
+      baseEnv,
+      makeHost({ absorbedSignOff: true }),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("state: revision 1 is approved");
+    expect(result.stdout).toContain("acts next: agent");
+    expect(result.stdout).toContain("next: cctl spec amend native-sdd");
+    expect(result.stdout).not.toContain("instruction:");
   });
 
   it("names the human answer an opened question waits on", async () => {
@@ -1716,6 +2119,10 @@ describe("cctl spec write verbs", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("  attention: attention-1");
     expect(result.stdout).toContain("acts next: human");
+    // A whole-gate ask has to say what it covers, or the agent cannot tell
+    // this entry from a request for one subject.
+    expect(result.stdout).toContain("  scope: gate");
+    expect(result.stdout).toContain("2 outstanding: R1, R2");
   });
 
   it("sends an omitted --subject as an omission for the server to resolve", async () => {
@@ -1733,8 +2140,8 @@ describe("cctl spec write verbs", () => {
       throw new Error("no request-approval body was sent");
     }
     const body: unknown = JSON.parse(request.init.body);
-    // A locally guessed gate-name subject would be refused invalid_subject;
-    // the omission is what lets the server resolve the outstanding one.
+    // A locally substituted subject would file an item request the sign-off
+    // cannot clear; the omission is what asks for the gate itself.
     expect(body).toEqual({
       revisionId: "revision-draft",
       gate: "requirements",
@@ -1760,16 +2167,19 @@ describe("cctl spec write verbs", () => {
     // A repeat must not read as a second Needs You entry, or an agent that
     // re-asks will believe it escalated when nothing changed.
     expect(envelope.changed).toContain("was already open");
-    expect(envelope.changed).not.toContain("requested requirements approval");
+    expect(envelope.changed).not.toContain("requested the requirements gate");
     expect(envelope.request).toMatchObject({
       alreadyRequested: true,
-      elementId: "requirement-id-1",
+      scope: "gate",
+      subject: "requirements",
+      elementId: null,
     });
     expect(envelope.tokens).toMatchObject({
       attention: "attention-1",
       revision: "revision-draft",
-      elementId: "requirement-id-1",
+      scope: "gate",
     });
+    expect(envelope.tokens).not.toHaveProperty("elementId");
   });
 
   it("carries the mutation envelope into --json for every mutating verb", async () => {

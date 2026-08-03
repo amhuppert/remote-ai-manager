@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cctlInstallPath } from "./install-cli";
 import { createAgentGatewayHandlers } from "./route-handlers";
 
 const SERVER_BUILD = "abc1234-2026-07-02T10:00:00.000Z";
@@ -58,6 +59,9 @@ describe("GET /api/agent/handshake", () => {
         conversation: "conv-1",
       },
       tokenValid: true,
+      // The recovery for a build mismatch is this server's own binary, so the
+      // handshake has to name it rather than leave the caller guessing.
+      cliPath: cctlInstallPath(dir),
     });
   });
 

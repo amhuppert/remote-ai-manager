@@ -19,7 +19,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec verify <slug> [--against <bundle.json>]",
       "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>",
       "cctl spec amend <slug>",
-      "cctl spec draft <slug> --file <element.json> --base-version <number|new>",
+      "cctl spec draft <slug> --file <element.json>",
       "cctl spec propose <slug>",
       "cctl spec advance <slug> --from <requirements|design>",
       "cctl spec question <slug> --text <text> [--element <handle>]",
@@ -47,7 +47,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
         command: "spec amend",
         oneLiner: "reopen authoring on a spec whose gate was approved",
       },
-      { command: "spec draft", oneLiner: "save a base-versioned element" },
+      {
+        command: "spec draft",
+        oneLiner: "save an element at the version it replaces",
+      },
       {
         command: "spec measures",
         oneLiner: "inspect pilot measures and reviewer navigation chains",
@@ -124,7 +127,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "status"],
     summary: "inspect a spec's phase and gate readiness",
     description:
-      "Show phase, current authoring stage and its concluding gate, the authoring stages the open draft still has to walk, every gate state, pending approvals, open questions, criterion coverage, and the task execution graph for one spec. Each active execution is reported with its lane position: running, parked with no workflow lane launched, or parked awaiting human approval of the compiled definition.",
+      "Show phase, current authoring stage and its concluding gate, the authoring stages the open draft still has to walk, every gate state with why it is or is not consulted for the current revision, the subject approvals still outstanding, whether a proposed revision still owes an explicit human sign-off, open questions, criterion coverage, and the task execution graph for one spec. Each active execution is reported with its lane position: running, parked with no workflow lane launched, or parked awaiting human approval of the compiled definition.",
     usage: ["cctl spec status <slug>"],
     flags: [],
     examples: [
@@ -134,11 +137,15 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose.",
+      "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose. Gate applicability is measured against the nearest APPROVED ancestor, so a gate stays consulted for content that entered through an attempt a human withdrew, and an earlier admission is reported as history rather than as current satisfaction.",
     related: [
       { command: "spec show", oneLiner: "read the full current spec" },
       { command: "spec get", oneLiner: "inspect one pending element" },
       { command: "spec verify", oneLiner: "recompute revision integrity" },
+      {
+        command: "spec propose",
+        oneLiner: "freeze the current authoring stage for review",
+      },
       {
         command: "spec advance",
         oneLiner: "explicitly conclude a Notify/Off authoring stage",
@@ -215,7 +222,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "schema"],
     summary: "print the schema of every input document this family accepts",
     description:
-      "Print the JSON Schema, enumerated values, field constraints, and a worked example for each schema-backed --file document: the element write document per element kind, the execution scope document, and the discovered-task document. Everything is generated from the schemas the server parses input with, so it cannot drift. Runs entirely offline — no server, no project.",
+      "Print the JSON Schema, enumerated values, field constraints, and a worked example for each schema-backed --file document: the draft element write document per element kind, the batch form of it, the create-element document `cctl spec create` takes, the execution scope document, and the discovered-task document. The draft and create documents are published separately because they are different shapes — only a draft element states the baseElementVersion it replaces. Everything is generated from the schemas the server parses input with, so it cannot drift. Runs entirely offline — no server, no project.",
     usage: ["cctl spec schema", "cctl spec schema <document>"],
     flags: [],
     examples: [
@@ -223,6 +230,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
         invocation: "cctl spec schema criterion",
         explanation:
           "read the criterion write document's shape, its evidence-kind enum, and a payload you can copy",
+      },
+      {
+        invocation: "cctl spec schema create-element",
+        explanation:
+          "read the document `cctl spec create` takes — the same element without a baseElementVersion, because the revision it opens has no version to compare against",
       },
       {
         invocation: "cctl spec schema --json",
@@ -337,7 +349,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<element.json>",
         description:
-          "schema-backed first element saved in the same transaction — run `cctl spec schema <kind>` for its shape",
+          "schema-backed first element saved in the same transaction — run `cctl spec schema create-element` for its shape; it states no baseElementVersion, because the revision it opens holds no version to compare against",
       },
     ],
     examples: [
@@ -352,7 +364,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
       { command: "spec draft", oneLiner: "save subsequent content elements" },
       {
         command: "spec schema",
-        oneLiner: "print the first element's schema and a worked example",
+        oneLiner:
+          "print the create-element document's schema and a worked example",
       },
       {
         command: "spec amend",
@@ -365,7 +378,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "amend"],
     summary: "reopen authoring on an approved spec as an amendment draft",
     description:
-      "Open the editable draft on a spec whose latest revision is approved, so authoring continues without mutating immutable approved content. This is authoring continuation after a gate is approved — to record work discovered inside a running execution use `cctl spec capture` instead. The action is idempotent: an already-open draft is returned unchanged, and a slug with no spec behind it refuses with not_found.",
+      "Open the editable draft on a spec whose latest revision is approved, so authoring continues without mutating immutable approved content. This is authoring continuation after a gate is approved — to record work discovered inside a running execution use `cctl spec capture` instead. The action is idempotent: an already-open draft is returned unchanged, and a slug with no spec behind it refuses with not_found. A spec whose revision is proposed refuses with revision_in_review: amending would number a new revision above the one being reviewed while carrying none of its content, so conclude the review first — human sign-off in Spec Studio, a human requesting changes on that revision, or, if this conversation proposed it and no human has acted on it yet, `cctl spec withdraw-proposal <slug> --revision <revision-id>`.",
     usage: ["cctl spec amend <slug>"],
     flags: [],
     examples: [
@@ -376,7 +389,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The amendment draft opens at the stage after the approved revision's stage, and stays at plan once the approved revision was already at plan. Draft-write admissibility is stage-only, so save elements the reopened stage admits.",
+      "The amendment draft opens at the stage after the approved revision's stage, and stays at plan once the approved revision was already at plan. Draft-write admissibility is stage-only, so save elements the reopened stage admits. A revision a human ended with Request Changes is terminal: its content is not carried into the new draft, and the response names those revisions in `skippedWithdrawnRevisions` so anything from them that still applies can be re-authored. Element ids, numbers and handles carry across, but element VERSIONS do not: the copied elements restart at 1 in the new revision, so re-read an element before writing it rather than reusing the version you read on the approved revision.",
     related: [
       {
         command: "spec draft",
@@ -394,15 +407,25 @@ export const specHelpEntries: CommandHelpEntry[] = [
         command: "spec create",
         oneLiner: "create a spec that does not exist yet",
       },
+      {
+        command: "spec request-approval",
+        oneLiner:
+          "route a revision_in_review revision to the human who ends the review",
+      },
+      {
+        command: "spec withdraw-proposal",
+        oneLiner:
+          "end a revision_in_review revision yourself when you proposed it",
+      },
     ],
   },
   {
     path: ["spec", "draft"],
-    summary: "save a base-versioned draft element",
+    summary: "save a draft element at the version it replaces",
     description:
-      "Upsert one element admitted by the current authoring stage into the editable revision. Use the version last read, or new when creating the element; stale writes return the winning content and version. Element order is one global order per revision, sorted by position then elementId: omit position on create to append after the current last element, and omit it on update to keep the element's current slot. Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak. A --file holding a JSON array is a batch: every element in it is written in one transaction, each against its own baseElementVersion, and the response names each element by its index in the array.",
+      "Upsert one element admitted by the current authoring stage into the editable revision. The element states the version it replaces in the file itself, as baseElementVersion: the version you last read, or null to create the element; a stale write returns the winning version, and the lone-element form returns the winning content with it. Element versions are per revision and restart at 1 — `cctl spec amend` copies the approved content into the new revision as version 1 — so re-read an element after an amendment instead of reusing a version from the revision before it. Element order is one global order per revision, sorted by position then elementId: omit position on create to append after the current last element, and omit it on update to keep the element's current slot. Nesting comes from parentElementId alone and never from position; duplicate positions are accepted and resolved by the elementId tiebreak. A --file holding a JSON array is a batch: every element in it is written in one transaction, each against its own baseElementVersion, and the response names each element by its index in the array. A write lands only in a draft, and the target revision's state picks the refusal: approved or withdrawn content returns amendment_required, so run `cctl spec amend <slug>` first; a revision already proposed returns revision_in_review, which amend refuses too until a human signs it off in Spec Studio, requests changes on it, or the conversation that proposed it takes it back with `cctl spec withdraw-proposal <slug> --revision <revision-id>`. Every element id a payload names must resolve, in this revision, to an element of the kind the field expects, or the write returns dangling_reference and nothing lands — a batch resolves ids against its own final result, so an element may reference another element the same batch introduces, in either order. An empty id array is always legal; only a populated one that does not resolve refuses. An element id this spec already owns but this revision does not carry — one introduced by a revision a human ended, or removed from the draft — is refused with historical_element_id rather than written under a fork; retry that write with \"reintroduceHistorical\": true and a null base version to bring the element back with its number and handle intact (R3 returns as R3), keeping its original kind and parent. An id owned by a DIFFERENT spec is element_id_taken and has no such recovery: choose another id.",
     usage: [
-      "cctl spec draft <slug> --file <element.json> --base-version <number|new>",
+      "cctl spec draft <slug> --file <element.json>",
       "cctl spec draft <slug> --file <elements.json>",
     ],
     flags: [
@@ -411,22 +434,14 @@ export const specHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<element.json|elements.json>",
         description:
-          "one schema-backed element write document, or a JSON array of them for a batch — run `cctl spec schema <kind>` or `cctl spec schema element-batch` for the shapes, enums, and worked examples",
-      },
-      {
-        name: "base-version",
-        kind: "value",
-        valuePlaceholder: "<number|new>",
-        description:
-          "compare-and-swap version observed by the author; single-element form only, since a batch states baseElementVersion per element",
+          "one schema-backed draft element write document, or a JSON array of them for a batch — every element states its own baseElementVersion either way; run `cctl spec schema <kind>` or `cctl spec schema element-batch` for the shapes, enums, and worked examples",
       },
     ],
     examples: [
       {
-        invocation:
-          "cctl spec draft audit-log --file .cc/temp/R1.json --base-version 3 --json",
+        invocation: "cctl spec draft audit-log --file .cc/temp/R1.json --json",
         explanation:
-          "save an edited element only if version 3 is still current",
+          'save an edited element only if the version it names is still current — {"elementId":"req-audit","kind":"requirement","parentElementId":null,"payload":{…},"baseElementVersion":3} writes over version 3 and refuses if the element moved on',
       },
       {
         invocation:
@@ -451,13 +466,21 @@ export const specHelpEntries: CommandHelpEntry[] = [
         command: "spec create",
         oneLiner: "create the spec with its first element",
       },
+      {
+        command: "spec amend",
+        oneLiner: "reopen a draft after an amendment_required refusal",
+      },
+      {
+        command: "spec withdraw-proposal",
+        oneLiner: "reopen a draft after a revision_in_review refusal",
+      },
     ],
   },
   {
     path: ["spec", "propose"],
     summary: "propose the current authoring stage for review",
     description:
-      "Freeze the editable revision and enter review for its current authoring stage. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending.",
+      "Freeze the editable revision and enter review for its current authoring stage. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending. The receipt carries the server's pending block — every gate the transition consults, the subjects each still needs, all unmet sign-off conditions, and the exact next command — so read that rather than inferring a gate from the revision's authoring stage.",
     usage: ["cctl spec propose <slug>"],
     flags: [],
     examples: [
@@ -467,12 +490,67 @@ export const specHelpEntries: CommandHelpEntry[] = [
           "propose the current draft or receive its blocking findings",
       },
     ],
+    domainContext:
+      "A revision can consult an earlier stage's gate: applicability is measured against the nearest approved ancestor, so a requirement changed during an attempt a human withdrew still owes a requirements admission on the follow-up revision, whatever stage that revision sits at.",
     related: [
       { command: "spec draft", oneLiner: "resolve findings in the draft" },
       {
         command: "spec request-approval",
         oneLiner: "route the proposed gate to the user",
       },
+      {
+        command: "spec status",
+        oneLiner: "read the gates and sign-off the revision still owes",
+      },
+      {
+        command: "spec withdraw-proposal",
+        oneLiner: "take back a proposal you made, before a human acts on it",
+      },
+    ],
+  },
+  {
+    path: ["spec", "withdraw-proposal"],
+    summary: "take back your own proposal and reopen it as a draft",
+    description:
+      "End a review attempt this conversation proposed, reopening its exact content as one editable draft at the same authoring stage, so an external-review fix cycle costs no human click. Only the conversation the propose event records as the author may run it — there is no takeover flag, so a successor conversation receives proposal_not_owned and a dead session is recovered by a human Request Changes. It refuses with gate_blocked once a human has engaged: any approval or unapproval on the attempt (read from the durable log, so withdrawing an approval does not undo the engagement) or any resolved or dismissed review thread. An open human comment does not block — withdraw-and-fix is the same comment → revise → re-review loop, and threads carry into the follow-up revision. It also refuses when a draft is already open, since the spec carries exactly one editable revision.",
+    usage: ["cctl spec withdraw-proposal <slug> --revision <revision-id>"],
+    flags: [
+      {
+        name: "revision",
+        kind: "value",
+        valuePlaceholder: "<revision-id>",
+        description:
+          "the proposed revision to take back — the compare-and-swap token `cctl spec propose` returned; it is never inferred, so a replacement proposal is never withdrawn by mistake",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec withdraw-proposal audit-log --revision revision-8f21 --json",
+        explanation:
+          "take back the proposal quoted by the propose receipt and continue in the follow-up draft it reopens",
+      },
+    ],
+    domainContext:
+      "This is the agent half of the two exits from a frozen revision. A human's Request Changes also reopens the content as a draft; a human's Withdraw ends the attempt without one, and its content is not carried forward. The revision itself stays withdrawn either way — the follow-up draft is a new revision based on it.",
+    related: [
+      {
+        command: "spec propose",
+        oneLiner: "the receipt whose revision token this command quotes",
+      },
+      {
+        command: "spec amend",
+        oneLiner: "the continuation that refuses while a proposal is open",
+      },
+      {
+        command: "spec draft",
+        oneLiner: "fix the content in the reopened draft",
+      },
+      {
+        command: "spec request-approval",
+        oneLiner: "route the review to a human instead of taking it back",
+      },
+      { command: "spec status", oneLiner: "read which revision is proposed" },
     ],
   },
   {
@@ -659,7 +737,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "request-approval"],
     summary: "route a spec gate to the user",
     description:
-      "Create durable attention for a human-controlled gate. Agents can request approval but cannot approve, sign off, or change policy. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, or the draft has not reached it), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
+      "Create durable attention for a human-controlled gate. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
     usage: [
       "cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]",
     ],
@@ -675,7 +753,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<handle-or-label>",
         description:
-          "exact review subject for Needs You navigation; omitted, the server resolves it — the gate itself for execution gates, the single outstanding subject for authoring gates — and an ambiguous ask is refused listing the candidates",
+          "one review subject to route, cleared by that subject's approval alone; omit it to request the gate as a whole, which the revision sign-off clears",
       },
     ],
     examples: [
@@ -683,6 +761,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
         invocation:
           "cctl spec request-approval audit-log --gate requirements --subject R1",
         explanation: "route requirement R1 to the human review surface",
+      },
+      {
+        invocation: "cctl spec request-approval audit-log --gate requirements",
+        explanation:
+          "open one entry for the requirements gate whatever it is waiting on — the receipt lists the outstanding subjects, and the entry survives until the revision is signed off",
       },
       {
         invocation: "cctl spec request-approval audit-log --gate delivery",
@@ -693,6 +776,15 @@ export const specHelpEntries: CommandHelpEntry[] = [
     related: [
       { command: "spec status", oneLiner: "inspect pending approvals" },
       { command: "spec propose", oneLiner: "freeze the revision for review" },
+      {
+        command: "spec amend",
+        oneLiner: "continue authoring once the review concludes",
+      },
+      {
+        command: "spec withdraw-proposal",
+        oneLiner:
+          "take the proposal back instead of asking, while no human has acted",
+      },
     ],
   },
   {
@@ -740,7 +832,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     summary:
       "record work discovered during a running execution as a scope amendment",
     description:
-      "Record work discovered during a running execution as a task on a draft amendment revision based on the run's pinned revision. This is the execution-time scope amendment; to continue authoring after a gate is approved, outside any run, use `cctl spec amend`. The run's pinned scope never changes; the amendment queues for a future execution. With --blocking-reason the running execution is abandoned in the same operation (abandon-and-restart).",
+      "Record work discovered during a running execution as a task on a draft amendment revision based on the run's pinned revision. This is the execution-time scope amendment; to continue authoring after a gate is approved, outside any run, use `cctl spec amend`. The run's pinned scope never changes; the amendment queues for a future execution. With --blocking-reason the running execution is abandoned in the same operation (abandon-and-restart). The task's four trace id arrays may be empty at capture time, but any id they do name must resolve in the pinned revision to an element of the expected kind: otherwise the capture returns dangling_reference and leaves no amendment draft, no task, and no event behind.",
     usage: [
       "cctl spec capture <slug> --execution <id> --file <task.json> [--blocking-reason <reason>]",
     ],

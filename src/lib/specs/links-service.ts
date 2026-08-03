@@ -22,9 +22,10 @@ import type {
   UpdateTicketFields,
 } from "@/lib/tickets/schemas";
 
-import type {
-  AuthoringService,
-  AuthoringSpecResult,
+import {
+  continueOrdinaryAuthoring,
+  type AuthoringService,
+  type AuthoringSpecResult,
 } from "./authoring-service";
 import { compiledWorkflowTaskId } from "./compiler";
 import type { SpecEventsPublisher } from "./events";
@@ -484,19 +485,19 @@ export function createLinksService(deps: LinksServiceDeps): LinksService {
           draftEventKind = "spec-created";
         } else {
           spec = resolved;
-          const existingDraft = repo.findDraft(spec.id);
-          if (existingDraft !== null) {
-            draft = existingDraft;
+          const continuation = continueOrdinaryAuthoring(repo, spec.id);
+          if (continuation.kind === "reuse_draft") {
+            draft = continuation.draft;
             reused = true;
             draftEventKind = null;
           } else {
-            const approved = repo.findLatestApproved(spec.id);
-            if (approved === null) {
+            if (continuation.kind === "unavailable") {
               throw new LinksServiceError(
                 "not_found",
                 `spec ${spec.id} has no reusable revision`,
               );
             }
+            const approved = continuation.approved;
             draft = repo.createDraftFromBase({
               id: newId("revision"),
               specId: spec.id,

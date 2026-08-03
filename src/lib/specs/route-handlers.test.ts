@@ -987,6 +987,7 @@ describe("spec read route handlers", () => {
           { gate: "design", dial: "gate" },
           { gate: "plan", dial: "gate" },
         ],
+        governanceConsultedGates: ["requirements", "design", "plan"],
       },
     });
   });
@@ -1712,6 +1713,88 @@ describe("spec read route handlers", () => {
     });
   });
 
+  /**
+   * An approval names the revision whose content a human read. Status must
+   * keep asking for a subject whose only approval sits on a branch the current
+   * revision does not descend from, even when both carry identical content.
+   */
+  it("keeps a subject pending when its only approval sits outside the current revision's lineage", async () => {
+    const approvedRevision: SpecRevision = {
+      ...revision,
+      id: "revision-approved",
+      state: "approved",
+      contentHash: "approved-hash",
+      approvedAt: revision.createdAt,
+    };
+    const abandonedRevision: SpecRevision = {
+      ...revision,
+      id: "revision-abandoned",
+      number: 2,
+      state: "withdrawn",
+      basedOnRevisionId: approvedRevision.id,
+      contentHash: "abandoned-hash",
+    };
+    const proposedRevision: SpecRevision = {
+      ...revision,
+      id: "revision-proposed",
+      number: 3,
+      state: "proposed",
+      // The requirements gate is the current stage's own gate here, so the
+      // only question the assertion asks is whose approval satisfies it.
+      authoringStage: "requirements",
+      basedOnRevisionId: approvedRevision.id,
+      contentHash: "proposed-hash",
+      proposedAt: revision.createdAt,
+    };
+    const snapshotOf = (target: SpecRevision): SpecRevisionSnapshot => ({
+      revision: target,
+      elements: snapshot.elements.map((entry) => ({
+        ...entry,
+        version: { ...entry.version, revisionId: target.id },
+      })),
+    });
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [
+          approvedRevision,
+          abandonedRevision,
+          proposedRevision,
+        ],
+        getRevisionSnapshot: async (revisionId) =>
+          snapshotOf(
+            [approvedRevision, abandonedRevision, proposedRevision].find(
+              (candidate) => candidate.id === revisionId,
+            ) ?? revision,
+          ),
+        findApprovalsBySpecId: () => [
+          {
+            id: "approval-requirement-abandoned",
+            spec_id: spec.id,
+            subject_kind: "requirement",
+            element_id: "requirement-1",
+            revision_id: abandonedRevision.id,
+            approver: "alex",
+            granted_at: revision.createdAt,
+            validity: "valid",
+          },
+        ],
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({
+      pendingApprovals: expect.arrayContaining([
+        { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+      ]),
+    });
+  });
+
   it("lists the execution-scoped approvals exactly while a run can receive them", async () => {
     const parked = execution({
       state: "definition_review",
@@ -1750,6 +1833,159 @@ describe("spec read route handlers", () => {
     await expect(statusFor([])).resolves.toEqual([]);
   });
 
+  /**
+   * The contradiction ticket #42 reported: status read subject approvals from
+   * a consulted-filtered source and gate state from an admission-only source,
+   * so it could answer "pending approvals: none" beside a pending gate with no
+   * act named anywhere. Sign-off is the missing item, and it is its own.
+   */
+  it("names the outstanding revision sign-off once every consulted subject is approved", async () => {
+    const proposed: SpecRevision = {
+      ...revision,
+      state: "proposed",
+      proposedAt: "2026-07-18T01:00:00.000Z",
+    };
+    const approvals: SpecApprovalRow[] = [
+      {
+        id: "approval-requirement",
+        spec_id: spec.id,
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: proposed.id,
+        approver: "alex",
+        validity: "valid",
+        granted_at: "2026-07-18T02:00:00.000Z",
+      },
+      {
+        id: "approval-decision",
+        spec_id: spec.id,
+        subject_kind: "decision",
+        element_id: "decision-1",
+        revision_id: proposed.id,
+        approver: "alex",
+        validity: "valid",
+        granted_at: "2026-07-18T02:00:00.000Z",
+      },
+      {
+        id: "approval-plan",
+        spec_id: spec.id,
+        subject_kind: "plan",
+        element_id: null,
+        revision_id: proposed.id,
+        approver: "alex",
+        validity: "valid",
+        granted_at: "2026-07-18T02:00:00.000Z",
+      },
+    ];
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [proposed],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === proposed.id
+            ? { ...snapshot, revision: proposed }
+            : null,
+        findApprovalsBySpecId: () => approvals,
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.pendingApprovals).toEqual([]);
+    // Every consulted gate still reads pending: sign-off is never a side
+    // effect of approving the last element.
+    expect(
+      status.gates
+        .filter(
+          (gate) =>
+            gate.state === "pending" &&
+            status.applicableGates.includes(gate.gate),
+        )
+        .map((gate) => gate.gate),
+    ).toEqual(["requirements", "design", "plan"]);
+    expect(status.revisionSignOff).toMatchObject({
+      revisionId: proposed.id,
+      revisionNumber: proposed.number,
+      state: "ready",
+      outstandingSubjectCount: 0,
+      unmetConditions: [],
+    });
+    expect(status.nextAction?.kind).toBe("sign_off_revision");
+    expect(status.pendingBlock?.signOff?.state).toBe("ready");
+    expect(status.pendingBlock?.display).toContain("sign-off");
+  });
+
+  it("reads an earlier gate unchanged since the governance base as not required, with its admission as history", async () => {
+    const approvedRevision: SpecRevision = {
+      ...revision,
+      state: "approved",
+      authoringStage: "requirements",
+      contentHash: "revision-1-hash",
+      approvedAt: revision.createdAt,
+    };
+    const amendment: SpecRevision = {
+      ...revision,
+      id: "revision-2",
+      number: 2,
+      basedOnRevisionId: approvedRevision.id,
+    };
+    const priorAdmission: SpecGateAdmissionRow = {
+      id: "admission-1",
+      spec_id: spec.id,
+      gate: "requirements",
+      basis: "human_approval",
+      approval_id: "approval-1",
+      revision_id: approvedRevision.id,
+      execution_id: null,
+      actor_json: JSON.stringify({ kind: "human" }),
+      created_at: "2026-07-18T02:00:00.000Z",
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedRevision, amendment],
+        // Identical element content on both revisions: the amendment changed
+        // nothing the requirements gate governs.
+        getRevisionSnapshot: async (revisionId) => ({
+          revision: revisionId === amendment.id ? amendment : approvedRevision,
+          elements: snapshot.elements,
+        }),
+        findGateAdmissionsBySpecId: () => [priorAdmission],
+      }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    const requirements = status.gates.find(
+      (gate) => gate.gate === "requirements",
+    );
+    expect(requirements?.state).toBe("not_required");
+    expect(requirements?.applicability).toEqual({
+      reason: "unchanged_since_governance_base",
+      governanceBaseRevisionId: approvedRevision.id,
+    });
+    expect(status.applicableGates).toEqual(["plan"]);
+    // Requirement 24.13: the earlier admission is provenance, never current
+    // satisfaction, so it stays out of `currentAdmissions` and out of `state`.
+    expect(requirements?.currentAdmissions).toEqual([]);
+    expect(requirements?.priorAdmissions).toEqual([
+      {
+        revisionId: approvedRevision.id,
+        revisionNumber: 1,
+        executionId: null,
+        basis: "human_approval",
+        actor: { kind: "human" },
+        admittedAt: "2026-07-18T02:00:00.000Z",
+      },
+    ]);
+  });
+
   it("returns a complete status payload", async () => {
     const handlers = createSpecRouteHandlers(createDeps());
 
@@ -1769,25 +2005,58 @@ describe("spec read route handlers", () => {
           gate: "requirements",
           dial: "gate",
           state: "pending",
+          applicability: {
+            reason: "changed_since_governance_base",
+            governanceBaseRevisionId: null,
+          },
+          currentAdmissions: [],
           priorAdmissions: [],
         },
         {
           gate: "design",
           dial: "gate",
           state: "pending",
+          applicability: {
+            reason: "changed_since_governance_base",
+            governanceBaseRevisionId: null,
+          },
+          currentAdmissions: [],
           priorAdmissions: [],
         },
-        { gate: "plan", dial: "gate", state: "pending", priorAdmissions: [] },
+        {
+          gate: "plan",
+          dial: "gate",
+          state: "pending",
+          applicability: {
+            reason: "current_stage",
+            governanceBaseRevisionId: null,
+          },
+          currentAdmissions: [],
+          priorAdmissions: [],
+        },
         {
           gate: "execution_start",
           dial: "gate",
-          state: "pending",
+          // No run exists, so nothing about this gate is a human's to act on
+          // yet — which is why it is absent from `applicableGates` below, and
+          // why calling it pending would contradict its own applicability.
+          state: "not_required",
+          applicability: {
+            reason: "dial_off",
+            governanceBaseRevisionId: null,
+          },
+          currentAdmissions: [],
           priorAdmissions: [],
         },
         {
           gate: "delivery",
           dial: "gate",
-          state: "pending",
+          state: "not_required",
+          applicability: {
+            reason: "dial_off",
+            governanceBaseRevisionId: null,
+          },
+          currentAdmissions: [],
           priorAdmissions: [],
         },
       ],
@@ -1813,6 +2082,7 @@ describe("spec read route handlers", () => {
             { gate: "design", dial: "gate" },
             { gate: "plan", dial: "gate" },
           ],
+          governanceConsultedGates: ["requirements", "design", "plan"],
         },
       },
       // The execution-scoped gates are absent: with no run there is nothing
@@ -1822,6 +2092,64 @@ describe("spec read route handlers", () => {
         { gate: "design", subject: "D1", elementId: "decision-1" },
         { gate: "plan", subject: "plan", elementId: null },
       ],
+      applicableGates: ["requirements", "design", "plan"],
+      // A draft owes a propose before it owes a sign-off.
+      revisionSignOff: null,
+      pendingBlock: {
+        actsNext: "agent",
+        gates: [
+          {
+            gate: "requirements",
+            dial: "gate",
+            state: "pending",
+            applicability: {
+              reason: "changed_since_governance_base",
+              governanceBaseRevisionId: null,
+            },
+            subjects: ["R1"],
+          },
+          {
+            gate: "design",
+            dial: "gate",
+            state: "pending",
+            applicability: {
+              reason: "changed_since_governance_base",
+              governanceBaseRevisionId: null,
+            },
+            subjects: ["D1"],
+          },
+          {
+            gate: "plan",
+            dial: "gate",
+            state: "pending",
+            applicability: {
+              reason: "current_stage",
+              governanceBaseRevisionId: null,
+            },
+            subjects: ["plan"],
+          },
+        ],
+        outstandingSubjects: [
+          { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+          { gate: "design", subject: "D1", elementId: "decision-1" },
+          { gate: "plan", subject: "plan", elementId: null },
+        ],
+        signOff: null,
+        unmetConditions: [],
+        // Element approval is refused on a draft, so the subjects are what the
+        // review will ask for and the act is still the agent's propose.
+        display:
+          "revision 1 is an open draft; proposing it opens the review its consulted gates ask for",
+        instruction: "Propose the draft revision when it is ready for review.",
+      },
+      nextAction: {
+        kind: "propose",
+        actsNext: "agent",
+        gate: null,
+        subject: null,
+        elementId: null,
+        instruction: "Propose the draft revision when it is ready for review.",
+      },
       openQuestions: [
         {
           id: question.id,
@@ -1845,9 +2173,11 @@ describe("spec read route handlers", () => {
           handle: "T1",
           title: "Build read routes",
           dependsOn: [],
+          unresolvedDependsOnTaskElementIds: [],
           laneGroup: null,
           touchedPaths: [],
           criterionCoverage: ["R1.1"],
+          unresolvedCriterionElementIds: [],
         },
       ],
       coverage: {
@@ -1861,6 +2191,114 @@ describe("spec read route handlers", () => {
         totalInScope: 0,
       },
     });
+  });
+
+  /**
+   * A criterion id a task covers but the current revision does not carry is
+   * the visible signature of an amendment that forked past its own content
+   * (ticket #42). Rendering it beside real handles and dropping it from both
+   * sides of the coverage ratio is what made that incident invisible: the plan
+   * reads as fully covered while a criterion it claims is not in the spec.
+   */
+  it("names the covered criterion ids the current revision does not carry", async () => {
+    const forkedTaskSnapshot: SpecRevisionSnapshot = {
+      revision,
+      elements: snapshot.elements.map((row) =>
+        row.element.id === "task-1" && row.version.payload.kind === "task"
+          ? {
+              ...row,
+              version: {
+                ...row.version,
+                payload: {
+                  ...row.version.payload,
+                  coveredCriterionElementIds: [
+                    "criterion-orphaned-2",
+                    "criterion-1",
+                    "criterion-orphaned-1",
+                  ],
+                },
+              },
+            }
+          : row,
+      ),
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({ getRevisionSnapshot: async () => forkedTaskSnapshot }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.taskPlan).toEqual([
+      expect.objectContaining({
+        handle: "T1",
+        // Only the ids this revision actually resolves are reported as
+        // coverage, and none of them is an invented handle.
+        criterionCoverage: ["R1.1"],
+        unresolvedCriterionElementIds: [
+          "criterion-orphaned-1",
+          "criterion-orphaned-2",
+        ],
+      }),
+    ]);
+    // The ratio is over the criteria this revision carries, so the orphaned
+    // ids inflate neither side of it.
+    expect(status.coverage).toEqual({
+      coveredCriteria: 1,
+      totalCriteria: 1,
+      percentage: 100,
+    });
+  });
+
+  /**
+   * A dependency on a task the amendment dropped has the same fork signature
+   * as an orphaned criterion, and a raw id sitting in the handle-typed field
+   * reads as ordering the compiler can honour.
+   */
+  it("names the depended-on task ids the current revision does not carry", async () => {
+    const forkedTaskSnapshot: SpecRevisionSnapshot = {
+      revision,
+      elements: snapshot.elements.map((row) =>
+        row.element.id === "task-1" && row.version.payload.kind === "task"
+          ? {
+              ...row,
+              version: {
+                ...row.version,
+                payload: {
+                  ...row.version.payload,
+                  dependsOnTaskElementIds: [
+                    "task-orphaned-2",
+                    "task-orphaned-1",
+                  ],
+                },
+              },
+            }
+          : row,
+      ),
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({ getRevisionSnapshot: async () => forkedTaskSnapshot }),
+    );
+
+    const response = await handlers.getSpecStatusGET(
+      new Request("http://cc.test/api/specs/demo/current-slug/status"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const status = specStatusViewSchema.parse(await response.json());
+    expect(status.taskPlan).toEqual([
+      expect.objectContaining({
+        handle: "T1",
+        dependsOn: [],
+        unresolvedDependsOnTaskElementIds: [
+          "task-orphaned-1",
+          "task-orphaned-2",
+        ],
+      }),
+    ]);
   });
 
   it("keeps a gate pending on the current revision while naming its earlier admission", async () => {
@@ -1887,13 +2325,31 @@ describe("spec read route handlers", () => {
       actor_json: JSON.stringify({ kind: "human" }),
       created_at: "2026-07-18T02:00:00.000Z",
     };
+    const [requirementRow, ...otherRows] = snapshot.elements;
+    if (requirementRow === undefined) {
+      throw new Error("the fixture snapshot carries no elements");
+    }
     const handlers = createSpecRouteHandlers(
       createDeps({
         listRevisions: async () => [approvedRevision, amendment],
-        getRevisionSnapshot: async (revisionId) => ({
-          revision: revisionId === amendment.id ? amendment : approvedRevision,
-          elements: snapshot.elements,
-        }),
+        // The amendment restates the requirement, so the requirements gate is
+        // consulted again and its earlier admission covers other content.
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === amendment.id
+            ? { revision: amendment, elements: snapshot.elements }
+            : {
+                revision: approvedRevision,
+                elements: [
+                  {
+                    element: requirementRow.element,
+                    version: {
+                      ...requirementRow.version,
+                      payloadHash: "requirement-hash-v1",
+                    },
+                  },
+                  ...otherRows,
+                ],
+              },
         findGateAdmissionsBySpecId: () => [priorAdmission],
       }),
     );
@@ -1909,6 +2365,11 @@ describe("spec read route handlers", () => {
       gate: "requirements",
       dial: "gate",
       state: "pending",
+      applicability: {
+        reason: "changed_since_governance_base",
+        governanceBaseRevisionId: approvedRevision.id,
+      },
+      currentAdmissions: [],
       priorAdmissions: [
         {
           revisionId: approvedRevision.id,
@@ -1959,7 +2420,11 @@ describe("spec read route handlers", () => {
     const gate = status.gates.find(
       (candidate) => candidate.gate === "execution_start",
     );
-    expect(gate?.state).toBe("pending");
+    // The running run is past the position that could receive an
+    // execution-start approval, so the gate asks for nothing now; the older
+    // run's admission stays visible as history and admits nothing.
+    expect(gate?.state).toBe("not_required");
+    expect(gate?.currentAdmissions).toEqual([]);
     expect(gate?.priorAdmissions).toEqual([
       {
         revisionId: revision.id,
@@ -1998,6 +2463,24 @@ describe("spec read route handlers", () => {
       gate: "requirements",
       dial: "gate",
       state: "admitted",
+      applicability: {
+        reason: "changed_since_governance_base",
+        governanceBaseRevisionId: null,
+      },
+      // The admission belongs to the revision being read, so it explains the
+      // current state instead of standing beside it as history.
+      currentAdmissions: [
+        {
+          revisionId: revision.id,
+          revisionNumber: 1,
+          executionId: null,
+          basis: "notify_policy",
+          // The stored provenance is not a shape the actor schema admits, and
+          // one unreadable record degrades to null rather than failing a read.
+          actor: null,
+          admittedAt: "2026-07-18T02:00:00.000Z",
+        },
+      ],
       priorAdmissions: [],
     });
     expect(
@@ -2326,9 +2809,12 @@ describe("spec read route handlers", () => {
     const staleBody = (await stale.json()) as {
       gates: Array<{ gate: string; state: string }>;
     };
+    // The new run's definition has not linked its lane yet, so no one can
+    // grant its execution start; delivery is grantable for any run that has
+    // not ended. Neither reads admitted off the older run's rows.
     expect(
       staleBody.gates.find((gate) => gate.gate === "execution_start"),
-    ).toMatchObject({ state: "pending" });
+    ).toMatchObject({ state: "not_required" });
     expect(
       staleBody.gates.find((gate) => gate.gate === "delivery"),
     ).toMatchObject({ state: "pending" });

@@ -207,6 +207,20 @@ export const specGateDialSchema = z.enum(["gate", "notify", "off"]);
 export type SpecGateDial = z.infer<typeof specGateDialSchema>;
 
 /**
+ * What an approval request asks for. `gate` asks for the gate as a whole — the
+ * ask an omitted subject always makes, at twelve outstanding subjects or none
+ * — and is answered by the act that admits the gate. `item` asks for one named
+ * subject and is answered by that subject's approval alone.
+ *
+ * It is part of the durable request identity, so the meaning of a request can
+ * never drift as its gate's outstanding set shrinks.
+ */
+export const specApprovalRequestScopeSchema = z.enum(["gate", "item"]);
+export type SpecApprovalRequestScope = z.infer<
+  typeof specApprovalRequestScopeSchema
+>;
+
+/**
  * The fast-path dial: authorable only as a preset, never as an override, so it
  * is a resolution result rather than a storable dial value.
  */
@@ -269,6 +283,12 @@ export const refusalCodeSchema = z.enum([
   "unresolvable_evidence",
   "invalid_scope",
   "revision_not_approved",
+  // An ordinary authoring continuation was asked for while a revision is
+  // proposed and under review. Distinct from `revision_not_approved`, which
+  // diagnoses an execution pinned to an unapproved revision: that code tells
+  // the reader to get the revision approved, this one tells them to conclude
+  // the review before opening the next revision.
+  "revision_in_review",
   "execution_active",
   "human_act_required",
   "amendment_required",
@@ -277,6 +297,24 @@ export const refusalCodeSchema = z.enum([
   "delivery_gate_failed",
   "slug_taken",
   "element_id_taken",
+  // A write that names an element id THIS spec already owns but whose versions
+  // all live outside the target revision. Distinct from `element_id_taken`,
+  // which reports an id owned by another spec and can only be resolved by
+  // choosing a different one: this identity can come back, so the refusal
+  // states the retry that brings it back with its number and handle intact.
+  "historical_element_id",
+  // A write whose committed result would leave a typed element reference
+  // pointing at an element the revision does not carry, or carries under
+  // another kind. Distinct from `lint_blocked`, which reports the propose-time
+  // sweep over content that is already committed: this one refuses the write
+  // itself, so a fork can never be authored against in the first place.
+  "dangling_reference",
+  // A proposal withdrawal asked for by anyone other than the conversation the
+  // durable propose event names as the author — a human, a successor
+  // conversation, or a propose whose provenance cannot be read at all. It fails
+  // closed: there is no takeover flag, because a conversation that did not
+  // write the proposal cannot know what the review is mid-way through.
+  "proposal_not_owned",
   // Approval-request refusals (R10.9, R24.1). A request that names a revision
   // the gate is no longer evaluated against, a gate the policy does not gate
   // on or the draft has not reached, a subject with nothing outstanding, or an

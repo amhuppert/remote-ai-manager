@@ -18,15 +18,16 @@ import { z } from "zod";
 
 import {
   createSpecInitialElementSchema,
-  draftElementBatchItemSchema,
+  draftElementDocumentSchema,
   type CreateSpecInitialElement,
-  type DraftElementBatchItem,
+  type DraftElementInput,
 } from "@/lib/specs/authoring-service";
 import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
   sectionRoleSchema,
   specElementPayloadSchema,
   taskElementPayloadSchema,
+  touchedPathSchema,
   validationStrategyKindsSchema,
   type SectionRole,
   type SpecAuthoringStage,
@@ -73,11 +74,26 @@ interface SchemaDocument {
   readonly roleStages?: Readonly<Record<string, SpecAuthoringStage>>;
 }
 
-const DRAFT_USAGE =
-  "cctl spec draft <slug> --file <element.json> --base-version <number|new>";
+const DRAFT_USAGE = "cctl spec draft <slug> --file <element.json>";
 const BATCH_USAGE = "cctl spec draft <slug> --file <elements.json>";
 const CREATE_USAGE =
   "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>";
+
+const TOUCHED_PATH_DESCRIPTION =
+  "normalized repo-relative POSIX paths; directories without a trailing slash";
+
+const CREATE_DOCUMENT_ID = "create-element";
+
+/**
+ * What the compare-and-swap version is, and the trap in reading one: element
+ * versions are revision-local. An amendment copies the approved content in at
+ * version 1, so a version read before the amendment names nothing in the new
+ * revision.
+ */
+const BASE_VERSION_NOTES = [
+  "baseElementVersion is the version you last read for this element, or null to create it. The compare-and-swap boundary is the element, so two authors writing disjoint elements never conflict.",
+  "Element versions are per revision and restart at 1: `cctl spec amend` copies the approved content into the new revision as version 1, so re-read the element after an amendment instead of reusing a version from the revision before it.",
+];
 
 /**
  * `admitDraftWrite` reads the resolved dials only to word its refusal, never to
@@ -166,6 +182,13 @@ function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
         };
         ctx.jsonSchema.minContains = 1;
       }
+      // A touched path's normalization is a `.superRefine()`, which generates
+      // to a bare string. JSON Schema cannot express the rule, so the node
+      // carries it in prose rather than publishing a shape that accepts
+      // `src/cli/` and absolute paths the server refuses.
+      if (ctx.zodSchema === touchedPathSchema) {
+        ctx.jsonSchema.description = TOUCHED_PATH_DESCRIPTION;
+      }
     },
   });
   return isRecord(generated) ? generated : {};
@@ -173,9 +196,10 @@ function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
 
 /**
  * The ordering and identity contract every element write document carries.
- * Only the compare-and-swap phrasing differs by form — a single write names
- * the flag, a batch element names its own field — so a caller is never pointed
- * at a flag the form it is authoring does not accept.
+ * Only the compare-and-swap phrasing differs by document — a draft element
+ * states its own version, a create document has no revision to compare
+ * against — so a caller is never pointed at a field the document it is
+ * authoring does not accept.
  */
 function positionNotes(baseVersionPhrase: string): string[] {
   return [
@@ -185,6 +209,20 @@ function positionNotes(baseVersionPhrase: string): string[] {
     "The top-level kind selects stage admissibility and must equal payload.kind.",
   ];
 }
+
+/**
+ * The reintroduction marker. It is only ever reached from the refusal that
+ * asks for it, so the note is written as the answer to that refusal — and the
+ * compare-and-swap half differs by document, because a document that states no
+ * base version has none to pair the marker with.
+ */
+function reintroductionNote(baseVersionPairing: string): string {
+  return `reintroduceHistorical: true brings an element id this spec already owns, but this revision does not carry, back into the revision — set it only after a write refused with historical_element_id${baseVersionPairing}. A reintroduced element keeps its number and handle (R3 returns as R3) and cannot change kind or parent; anything else needs a new element id.`;
+}
+
+const DRAFT_REINTRODUCTION_NOTE = reintroductionNote(
+  ", and pair it with a null base version",
+);
 
 /**
  * Facts about a kind that its schema cannot state: what its parent link means,
@@ -289,12 +327,21 @@ const ELEMENT_EXAMPLES: Record<SpecElementKind, CreateSpecInitialElement> = {
 };
 
 /**
+ * The same element as a draft write: identical to the create document plus the
+ * version it replaces. A create example carrying one, or a draft example
+ * missing one, would be a document the verb it names refuses.
+ */
+function draftExample(kind: SpecElementKind): DraftElementInput {
+  return { ...ELEMENT_EXAMPLES[kind], baseElementVersion: null };
+}
+
+/**
  * A worked batch: one element updated at the version its author last read, and
  * one created under it, in a single transaction.
  */
-const BATCH_EXAMPLE: DraftElementBatchItem[] = [
+const BATCH_EXAMPLE: DraftElementInput[] = [
   { ...ELEMENT_EXAMPLES.requirement, baseElementVersion: 3 },
-  { ...ELEMENT_EXAMPLES.criterion, baseElementVersion: null },
+  draftExample("criterion"),
 ];
 
 const SCOPE_EXAMPLE: ExecutionScope = {
@@ -317,29 +364,35 @@ const DISCOVERED_TASK_EXAMPLE: Omit<TaskElementPayload, "kind"> = {
 };
 
 /**
- * The element write document narrowed to one kind. Both the discriminator and
+ * The draft write document narrowed to one kind. Both the discriminator and
  * the payload variant come from `specElementPayloadSchema`'s own options, so a
- * new element kind publishes itself.
+ * new element kind publishes itself. The create document is published
+ * separately rather than sharing this one: it is a different shape, and one
+ * document claiming both verbs is what taught authors to send `spec draft` a
+ * file with no version in it.
  */
 function elementDocuments(): SchemaDocument[] {
   return specElementPayloadSchema.options.map((payload) => {
     const kind: SpecElementKind = payload.shape.kind.value;
     const jsonSchema = jsonSchemaOf(
-      createSpecInitialElementSchema.extend({
+      draftElementDocumentSchema.extend({
         kind: z.literal(kind),
         payload,
       }),
     );
     return {
       id: kind,
-      title: `element write document (kind: ${kind})`,
-      usedBy: [DRAFT_USAGE, CREATE_USAGE],
+      title: `draft element write document (kind: ${kind})`,
+      usedBy: [DRAFT_USAGE, BATCH_USAGE],
       jsonSchema,
       enums: collectEnums(jsonSchema, ""),
-      example: ELEMENT_EXAMPLES[kind],
+      example: draftExample(kind),
       notes: [
         ...KIND_NOTES[kind],
-        ...positionNotes("--base-version <the version you last read>"),
+        ...positionNotes("this element's own baseElementVersion"),
+        DRAFT_REINTRODUCTION_NOTE,
+        ...BASE_VERSION_NOTES,
+        `The first element of a spec that does not exist yet is a different document — run \`cctl spec schema ${CREATE_DOCUMENT_ID}\`.`,
       ],
       // Role-less probe: the earliest stage this kind can be admitted at
       // under any role. `roleStages` carries the per-role answer where it
@@ -367,7 +420,7 @@ function elementDocuments(): SchemaDocument[] {
  * compare-and-swap stays per element when they do.
  */
 function batchDocument(): SchemaDocument {
-  const jsonSchema = jsonSchemaOf(z.array(draftElementBatchItemSchema).min(1));
+  const jsonSchema = jsonSchemaOf(z.array(draftElementDocumentSchema).min(1));
   return {
     id: "element-batch",
     title: "element write batch document",
@@ -376,11 +429,56 @@ function batchDocument(): SchemaDocument {
     enums: collectEnums(jsonSchema, ""),
     example: BATCH_EXAMPLE,
     notes: [
-      "Every element states its own baseElementVersion: the version you last read to update it, or null to create it. The compare-and-swap boundary stays the element, so two authors writing disjoint elements never conflict.",
+      "An array file is a batch of the same per-kind draft documents; a lone object is one of them, so an element that is legal in one form is legal in the other.",
       "The batch is one transaction. If any element refuses, nothing is written and every refusal is reported against that element's index in this array.",
-      "--base-version is the single-element flag and does not apply here; passing it with an array file is refused locally.",
+      // The two forms take different write paths, and only the single write
+      // can name one winning element, so promising the batch returns content
+      // would send an author looking for a field that is not in the refusal.
+      "A stale write refuses with the winning element version in both forms; only the lone-object form also returns the winning content. Re-read the element to see what a batch lost to.",
       "Element kinds may be mixed, but each one must be admitted by the draft's current authoring stage — the same rule a single write obeys.",
       ...positionNotes("this element's own baseElementVersion"),
+      DRAFT_REINTRODUCTION_NOTE,
+      ...BASE_VERSION_NOTES,
+    ],
+  };
+}
+
+/**
+ * The create document: the same element without a compare-and-swap version,
+ * because the revision it opens holds nothing to compare against. Published as
+ * one kind-correlated document rather than five, since a spec is created once
+ * and the author already knows which kind the first element is.
+ */
+function createDocument(): SchemaDocument {
+  const jsonSchema = jsonSchemaOf(
+    z.union(
+      specElementPayloadSchema.options.map((payload) =>
+        createSpecInitialElementSchema.extend({
+          kind: z.literal(payload.shape.kind.value),
+          payload,
+        }),
+      ),
+    ),
+  );
+  return {
+    id: CREATE_DOCUMENT_ID,
+    title: "first element write document (spec creation)",
+    usedBy: [CREATE_USAGE],
+    jsonSchema,
+    enums: collectEnums(jsonSchema, ""),
+    example: ELEMENT_EXAMPLES.section,
+    notes: [
+      "This document states no baseElementVersion: the spec's first revision has no version to compare against, and stating one is refused rather than ignored.",
+      "Every later write is the draft document for that kind — run `cctl spec schema <kind>`.",
+      ...positionNotes(
+        "the baseElementVersion the draft document carries once the spec exists",
+      ),
+      // The same verb opens an amendment when the slug already exists with no
+      // draft open, which is the only position where this document can carry
+      // the marker — and it has no base version to pair it with.
+      reintroductionNote(
+        ", which this document can only meet when the slug already exists and this create opens an amendment; there is no base version here to pair it with",
+      ),
     ],
   };
 }
@@ -419,7 +517,12 @@ function otherDocuments(): SchemaDocument[] {
 }
 
 function allDocuments(): SchemaDocument[] {
-  return [...elementDocuments(), batchDocument(), ...otherDocuments()];
+  return [
+    ...elementDocuments(),
+    batchDocument(),
+    createDocument(),
+    ...otherDocuments(),
+  ];
 }
 
 function documentText(document: SchemaDocument): string {

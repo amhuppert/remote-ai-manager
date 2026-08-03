@@ -1,45 +1,21 @@
-import { dialRequiresHumanApproval, resolveDial } from "./policy";
-import { elementHandleInSnapshot, toDiffRows } from "./review-state";
+import type { AuthoringReviewProjection } from "./authoring-review-projection";
+import type {
+  ApprovalApplicability,
+  ApprovalSubjectKind,
+} from "./approval-applicability";
+import { dialRequiresHumanApproval } from "./policy";
+import { elementHandleInSnapshot } from "./review-state";
 import {
   actorProvenanceSchema,
-  specGateSchema,
   type ActorProvenance,
-  type ResolvedGateDial,
-  type Spec,
+  type SpecApprovalRequestScope,
   type SpecApprovalRow,
   type SpecExecutionRow,
   type SpecGate,
-  type SpecGateAdmissionRow,
   type SpecRevision,
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
 } from "./schemas";
-import { consultedAuthoringGates } from "./transitions";
-
-/**
- * An admission this gate received on some other revision or run. Strictly
- * historical provenance: nothing here establishes that the content the gate
- * governs is unchanged since, so it must never be rendered as satisfaction.
- * `basis` stays visible so a Notify/Off policy admission is not mistaken for
- * a human approval.
- */
-export interface SpecGatePriorAdmission {
-  revisionId: string;
-  revisionNumber: number;
-  /** The run the admission covered, for the per-execution gates. */
-  executionId: string | null;
-  basis: SpecGateAdmissionRow["basis"];
-  actor: ActorProvenance | null;
-  admittedAt: string;
-}
-
-export interface SpecGateStatus {
-  gate: SpecGate;
-  dial: ResolvedGateDial;
-  /** Evaluated against the current revision (or the selected run) only. */
-  state: "pending" | "admitted" | "not_required";
-  priorAdmissions: SpecGatePriorAdmission[];
-}
 
 /**
  * One approval a human still owes for the current revision (or the selected
@@ -72,16 +48,27 @@ export function latestRevision(
   );
 }
 
-export function validApproval(
+/**
+ * Whether a human's approval of this subject stands for the revision the
+ * projection reads. Decided by `approvalAppliesToRevision` alone, so status,
+ * request validation, and sign-off cannot disagree about what is outstanding.
+ */
+export function approvalHeld(
   approvals: readonly SpecApprovalRow[],
-  subjectKind: SpecApprovalRow["subject_kind"],
+  applies: ApprovalApplicability,
+  subjectKind: ApprovalSubjectKind,
   elementId: string | null,
 ): boolean {
   return approvals.some(
     (approval) =>
       approval.subject_kind === subjectKind &&
       approval.element_id === elementId &&
-      approval.validity === "valid",
+      applies({
+        subjectKind,
+        elementId: approval.element_id,
+        revisionId: approval.revision_id,
+        validity: approval.validity,
+      }),
   );
 }
 
@@ -97,85 +84,6 @@ export function elementHandle(
   return elementHandleInSnapshot(snapshot, row.element.id) ?? row.element.id;
 }
 
-export function gateStatuses(
-  spec: Spec,
-  revisionId: string | null,
-  admissions: readonly SpecGateAdmissionRow[],
-  currentExecution: Pick<
-    SpecExecutionRow,
-    | "id"
-    | "revision_id"
-    | "state"
-    | "workflow_execution_id"
-    | "execution_start_dial"
-  > | null,
-  revisionNumberById: ReadonlyMap<string, number>,
-): SpecGateStatus[] {
-  return specGateSchema.options.map((gate) => {
-    const dial =
-      gate === "execution_start" &&
-      currentExecution?.execution_start_dial != null
-        ? currentExecution.execution_start_dial
-        : resolveDial(spec.gatePolicy, gate);
-    // Execution-scoped gates admit one run, read against the run's PINNED
-    // revision: an older run's admission must not make the current run read
-    // as admitted, and a newer draft amendment must not hide the active
-    // run's admission (its rows carry the pinned revision, not the draft).
-    const countsNow = (admission: SpecGateAdmissionRow) =>
-      admission.gate !== gate
-        ? false
-        : EXECUTION_SCOPED_GATES.has(gate)
-          ? currentExecution !== null &&
-            admission.execution_id === currentExecution.id &&
-            admission.revision_id === currentExecution.revision_id
-          : revisionId === null || admission.revision_id === revisionId;
-    const admitted = admissions.some(countsNow);
-    const frozenExecutionStartPending =
-      gate === "execution_start" &&
-      executionGateActionable("execution_start", currentExecution);
-    // Everything the gate ever admitted that today's `state` does NOT reflect.
-    // An amendment legitimately leaves a gate pending; without this an
-    // operator cannot tell that from an approval that was lost.
-    const priorAdmissions = admissions
-      .filter((admission) => admission.gate === gate && !countsNow(admission))
-      .flatMap((admission) => {
-        // A revision-less admission has no place in a per-revision history.
-        const revisionId = admission.revision_id;
-        const revisionNumber =
-          revisionId === null ? undefined : revisionNumberById.get(revisionId);
-        return revisionId === null || revisionNumber === undefined
-          ? []
-          : [
-              {
-                revisionId,
-                revisionNumber,
-                executionId: admission.execution_id,
-                basis: admission.basis,
-                actor: parseProvenance(admission.actor_json),
-                admittedAt: admission.created_at,
-              },
-            ];
-      })
-      .sort(
-        (left, right) =>
-          left.revisionNumber - right.revisionNumber ||
-          left.admittedAt.localeCompare(right.admittedAt),
-      );
-    return {
-      gate,
-      dial,
-      priorAdmissions,
-      state: admitted
-        ? "admitted"
-        : frozenExecutionStartPending
-          ? "pending"
-          : dialRequiresHumanApproval(dial)
-            ? "pending"
-            : "not_required",
-    };
-  });
-}
-
 /**
  * Whether a human act exists right now for an execution-scoped gate. Before a
  * run exists there is nothing to approve, so a pending entry would be a Needs
@@ -184,7 +92,7 @@ export function gateStatuses(
  * with its workflow lane linked (the grant path refuses in every other
  * position); delivery is grantable for any run that has not ended.
  */
-function executionGateActionable(
+export function executionGateActionable(
   gate: "execution_start" | "delivery",
   execution: Pick<SpecExecutionRow, "state" | "workflow_execution_id"> | null,
 ): boolean {
@@ -198,76 +106,6 @@ function executionGateActionable(
   return (
     execution.state === "definition_review" || execution.state === "running"
   );
-}
-
-export function pendingApprovals(
-  snapshot: SpecRevisionSnapshot | null,
-  baseSnapshot: SpecRevisionSnapshot | null,
-  approvals: readonly SpecApprovalRow[],
-  gates: readonly SpecGateStatus[],
-  currentExecution: Pick<
-    SpecExecutionRow,
-    "state" | "workflow_execution_id"
-  > | null,
-): PendingApproval[] {
-  if (snapshot === null) return [];
-
-  const pending: PendingApproval[] = [];
-  const consulted = new Set(
-    consultedAuthoringGates(
-      snapshot.revision.authoringStage,
-      baseSnapshot === null ? [] : toDiffRows(baseSnapshot),
-      toDiffRows(snapshot),
-    ),
-  );
-  const gatePending = (gate: SpecGate) =>
-    gates.some((status) => status.gate === gate && status.state === "pending");
-  const handles = new Map(
-    snapshot.elements.map((row) => [
-      row.element.id,
-      elementHandle(snapshot, row),
-    ]),
-  );
-  for (const row of snapshot.elements) {
-    if (
-      row.element.kind === "requirement" &&
-      consulted.has("requirements") &&
-      gatePending("requirements") &&
-      !validApproval(approvals, "requirement", row.element.id)
-    ) {
-      pending.push({
-        gate: "requirements",
-        subject: handles.get(row.element.id) ?? row.element.id,
-        elementId: row.element.id,
-      });
-    }
-    if (
-      row.element.kind === "decision" &&
-      consulted.has("design") &&
-      gatePending("design") &&
-      !validApproval(approvals, "decision", row.element.id)
-    ) {
-      pending.push({
-        gate: "design",
-        subject: handles.get(row.element.id) ?? row.element.id,
-        elementId: row.element.id,
-      });
-    }
-  }
-  if (
-    consulted.has("plan") &&
-    snapshot.revision.authoringStage === "plan" &&
-    gatePending("plan") &&
-    !validApproval(approvals, "plan", null)
-  ) {
-    pending.push({ gate: "plan", subject: "plan", elementId: null });
-  }
-  for (const gate of ["execution_start", "delivery"] as const) {
-    if (gatePending(gate) && executionGateActionable(gate, currentExecution)) {
-      pending.push({ gate, subject: gate, elementId: null });
-    }
-  }
-  return pending;
 }
 
 /**
@@ -310,28 +148,24 @@ export function parseProvenance(raw: string): ActorProvenance | null {
 }
 
 export interface ApprovalRequestContext {
-  spec: Spec;
+  /**
+   * The one projection status also reports. Validation reads gate state and
+   * the outstanding set from it rather than recomputing them, so a request can
+   * never be accepted for something status calls satisfied — or refused for
+   * something status calls outstanding.
+   */
+  projection: AuthoringReviewProjection;
   /** The revision the caller named. */
   requestedRevisionId: string;
   /** The revision the authoring gates are evaluated against right now. */
   currentRevisionId: string | null;
   snapshot: SpecRevisionSnapshot | null;
-  baseSnapshot: SpecRevisionSnapshot | null;
   /** The run's pinned revision, where an execution-gate subject is addressed. */
   executionSnapshot: SpecRevisionSnapshot | null;
   approvals: readonly SpecApprovalRow[];
-  admissions: readonly SpecGateAdmissionRow[];
-  currentExecution: Pick<
-    SpecExecutionRow,
-    | "id"
-    | "revision_id"
-    | "state"
-    | "workflow_execution_id"
-    | "execution_start_dial"
-  > | null;
-  revisionNumberById: ReadonlyMap<string, number>;
+  applies: ApprovalApplicability;
   gate: SpecGate;
-  /** Null asks the validation to resolve the gate's outstanding subject. */
+  /** Null is the whole-gate ask, never a request to guess a subject. */
   subject: string | null;
 }
 
@@ -347,8 +181,26 @@ export interface ApprovalRequestRefusal {
   instruction: string;
 }
 
+/**
+ * The ask a validated request records. `scope` is what the durable identity is
+ * keyed on; `outstandingSubjects` is a display snapshot taken when the ask was
+ * made and is deliberately NOT part of that identity — a gate request whose
+ * identity moved as subjects were approved would open a second Needs You entry
+ * for work a human is already looking at.
+ */
+export interface ValidatedApprovalRequest {
+  scope: SpecApprovalRequestScope;
+  gate: SpecGate;
+  /** The gate name for a gate-scoped ask; the named handle for an item. */
+  subject: string;
+  elementId: string | null;
+  outstandingSubjects: string[];
+  /** Whether the revision still owes a human sign-off when the ask was made. */
+  signOffOutstanding: boolean;
+}
+
 export type ApprovalRequestValidation =
-  | { readonly ok: true; readonly approval: PendingApproval }
+  | { readonly ok: true; readonly request: ValidatedApprovalRequest }
   | { readonly ok: false; readonly refusal: ApprovalRequestRefusal };
 
 function refuse(
@@ -367,9 +219,9 @@ function refuse(
  *
  * Requests become durable Needs You entries, so an unvalidated request is a
  * notification no act can clear: the human sees work that does not exist and
- * learns to ignore the queue. The requestable set is exactly the outstanding
- * approvals of the current status projection, which is why this reads the same
- * gate states the status surface reports rather than trusting the caller.
+ * learns to ignore the queue. What is requestable is read off the current
+ * status projection — the gates it reports as pending, and the subjects they
+ * are pending on — rather than from the caller's word.
  */
 export function validateApprovalRequest(
   context: ApprovalRequestContext,
@@ -387,15 +239,40 @@ export function validateApprovalRequest(
     );
   }
 
-  const gates = gateStatuses(
-    context.spec,
-    context.currentRevisionId,
-    context.admissions,
-    context.currentExecution,
-    context.revisionNumberById,
+  const status = context.projection.gates.find(
+    (candidate) => candidate.gate === context.gate,
   );
-  const status = gates.find((candidate) => candidate.gate === context.gate);
   if (status === undefined || status.state === "not_required") {
+    // A gate whose dial asks for nothing and a gate whose content this
+    // revision did not touch are different answers to "why can I not request
+    // this?", and only the second is about the governance baseline.
+    if (status?.applicability.reason === "unchanged_since_governance_base") {
+      const base = status.applicability.governanceBaseRevisionId;
+      return refuse(
+        "gate_not_applicable",
+        base === null
+          ? `The ${context.gate} gate is not consulted for revision ${context.currentRevisionId}: this revision authors nothing it governs.`
+          : `The ${context.gate} gate is not consulted for revision ${context.currentRevisionId}: nothing it governs changed since revision ${base}.`,
+        "Read the spec status for the gates that are actually blocking, then request one of those.",
+      );
+    }
+    // A terminal revision and an unstarted run are both "the dial requires a
+    // human, but nothing can receive the act", which the dial sentence below
+    // would deny outright.
+    if (context.snapshot?.revision.state === "withdrawn") {
+      return refuse(
+        "gate_not_applicable",
+        `Revision ${context.currentRevisionId} was withdrawn, so no approval can be recorded against it.`,
+        "Open an amendment draft, re-author what still applies, and propose it for review.",
+      );
+    }
+    if (status !== undefined && dialRequiresHumanApproval(status.dial)) {
+      return refuse(
+        "gate_not_applicable",
+        `The ${context.gate} gate has no run in a position to receive its approval right now.`,
+        "Read the spec status for the gates that are actually blocking, then request one of those.",
+      );
+    }
     return refuse(
       "gate_not_applicable",
       `The ${context.gate} gate is set to ${status?.dial ?? "off"}, so it asks for no human approval.`,
@@ -409,69 +286,79 @@ export function validateApprovalRequest(
       "Read the spec status; this gate is no longer blocking.",
     );
   }
-
-  const outstanding = pendingApprovals(
-    context.snapshot,
-    context.baseSnapshot,
-    context.approvals,
-    gates,
-    context.currentExecution,
-  );
-  const forGate = outstanding.filter(
-    (candidate) => candidate.gate === context.gate,
-  );
-
-  // An omitted subject resolves rather than refusing: an execution gate's
-  // outstanding entry IS the gate, and an authoring gate with exactly one
-  // outstanding subject has an unambiguous answer. Only a genuinely ambiguous
-  // ask sends the caller back for a --subject, and the refusal lists them.
-  let subject: string;
-  if (context.subject !== null) {
-    subject = context.subject;
-  } else if (!authoringScoped) {
-    subject = context.gate;
-  } else {
-    const only = forGate.length === 1 ? forGate[0] : undefined;
-    if (only !== undefined) {
-      subject = only.subject;
-    } else if (forGate.length === 0) {
-      return refuse(
-        "gate_not_applicable",
-        `The ${context.gate} gate has nothing outstanding for the current revision.`,
-        "Read the spec status for the gates that are actually blocking, then request one of those.",
-      );
-    } else {
-      return refuse(
-        "invalid_subject",
-        `The ${context.gate} gate has ${forGate.length} outstanding subjects.`,
-        `Pass --subject with one of: ${forGate.map((candidate) => candidate.subject).join(", ")}.`,
-      );
-    }
+  // Approval, sign-off, Request Changes and withdrawal all refuse on a draft,
+  // so an authoring ask filed here is an entry whose only exit is the agent
+  // proposing the revision. The draft owes a propose before it owes anything
+  // to a human, which is what the projection's next action already says.
+  if (authoringScoped && context.snapshot?.revision.state === "draft") {
+    return refuse(
+      "gate_not_applicable",
+      `Revision ${context.currentRevisionId} is still a draft, so no human act can be recorded against its ${context.gate} gate.`,
+      "Propose the revision for review, then request the gate.",
+    );
   }
 
-  const matched = forGate.find((candidate) => candidate.subject === subject);
-  if (matched !== undefined) return { ok: true, approval: matched };
+  const forGate = context.projection.pendingApprovals.filter(
+    (candidate) => candidate.gate === context.gate,
+  );
+  const outstandingSubjects = forGate.map((candidate) => candidate.subject);
+  const signOff = context.projection.revisionSignOff;
+  const signOffOutstanding =
+    signOff !== null &&
+    (signOff.state === "ready" || signOff.state === "blocked");
+  const gateScoped = (
+    subject: string,
+    elementId: string | null,
+  ): ApprovalRequestValidation => ({
+    ok: true,
+    request: {
+      scope: "gate",
+      gate: context.gate,
+      subject,
+      elementId,
+      outstandingSubjects,
+      signOffOutstanding,
+    },
+  });
 
-  // An execution gate admits the run as a whole, so its outstanding entry is
-  // the gate itself. Callers may still name the element the run is blocked on
-  // so the human lands on it; that pointer must address something real.
-  if (!authoringScoped && forGate.length > 0) {
+  // An omitted subject is the whole-gate ask, at twelve outstanding subjects
+  // or none. Resolving it to "the single outstanding subject" would make the
+  // meaning of the same command change as approvals land, and a gate with a
+  // dozen subjects would have no requestable form at all. The gate is still
+  // answerable here: the checks above already refused an admitted gate, and a
+  // gate whose subjects are all approved is exactly the sign-off tail.
+  if (context.subject === null) {
+    return gateScoped(context.gate, null);
+  }
+  const subject = context.subject;
+
+  // An execution gate admits the run as a whole, so every request at one is
+  // gate-scoped: a named subject is a deep-link pointer at the element the run
+  // is blocked on, not an item a human can approve on its own.
+  if (!authoringScoped) {
+    if (subject === context.gate) return gateScoped(subject, null);
     const target = elementForSubject(context.executionSnapshot, subject);
-    if (target !== null) {
-      return {
-        ok: true,
-        approval: {
-          gate: context.gate,
-          subject,
-          elementId: target,
-        },
-      };
-    }
+    if (target !== null) return gateScoped(subject, target);
     return refuse(
       "invalid_subject",
       `${subject} addresses nothing in the revision this run pinned.`,
       `Name the element the ${context.gate} gate is blocked on, or the gate itself: ${context.gate}.`,
     );
+  }
+
+  const matched = forGate.find((candidate) => candidate.subject === subject);
+  if (matched !== undefined) {
+    return {
+      ok: true,
+      request: {
+        scope: "item",
+        gate: context.gate,
+        subject: matched.subject,
+        elementId: matched.elementId,
+        outstandingSubjects,
+        signOffOutstanding,
+      },
+    };
   }
 
   // A subject drops out of the outstanding set both when it has been approved
@@ -487,21 +374,19 @@ export function validateApprovalRequest(
   if (forGate.length === 0) {
     return refuse(
       "gate_not_applicable",
-      `The ${context.gate} gate has nothing outstanding for the current revision.`,
-      "Read the spec status for the gates that are actually blocking, then request one of those.",
+      `The ${context.gate} gate has no outstanding subject named ${subject} for the current revision.`,
+      `Omit --subject to request the ${context.gate} gate itself, which is what the revision sign-off admits.`,
     );
   }
   return refuse(
     "invalid_subject",
     `${subject} is not an outstanding subject at the ${context.gate} gate.`,
-    `Request one of: ${forGate.map((candidate) => candidate.subject).join(", ")}.`,
+    `Request one of: ${forGate.map((candidate) => candidate.subject).join(", ")} — or omit --subject to request the whole gate.`,
   );
 }
 
 /** The approval subject kind an authoring gate asks a human to record. */
-function subjectKindForGate(
-  gate: SpecGate,
-): SpecApprovalRow["subject_kind"] | null {
+function subjectKindForGate(gate: SpecGate): ApprovalSubjectKind | null {
   if (gate === "requirements") return "requirement";
   if (gate === "design") return "decision";
   if (gate === "plan") return "plan";
@@ -526,11 +411,14 @@ function subjectAlreadyApproved(
   const subjectKind = subjectKindForGate(context.gate);
   if (subjectKind === null) return false;
   if (subjectKind === "plan") {
-    return subject === "plan" && validApproval(context.approvals, "plan", null);
+    return (
+      subject === "plan" &&
+      approvalHeld(context.approvals, context.applies, "plan", null)
+    );
   }
   const elementId = elementForSubject(context.snapshot, subject);
   return (
     elementId !== null &&
-    validApproval(context.approvals, subjectKind, elementId)
+    approvalHeld(context.approvals, context.applies, subjectKind, elementId)
   );
 }

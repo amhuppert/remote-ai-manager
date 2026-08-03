@@ -45,8 +45,11 @@ visible immediately through `cctl spec list` and Spec Studio. Do not
 create the spec before the first element is ready.
 
 Partial drafts are valid. Continue with element-granular `cctl spec draft`
-writes carrying the last observed `--base-version`; a stale write returns
-the winning content and version. If create refuses with `slug_taken`,
+writes whose file states the last observed `baseElementVersion`; a stale
+single-element write returns the winning content and version, and a batch
+returns the winning version alone. Element versions are per
+revision and restart at 1, so re-read an element after `cctl spec amend`.
+If create refuses with `slug_taken`,
 follow the returned instruction: continue the existing draft or choose a
 different slug.
 

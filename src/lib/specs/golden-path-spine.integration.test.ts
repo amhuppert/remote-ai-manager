@@ -116,9 +116,14 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     // the runtime seam that creates spec approval notification rows
     // (remediation: spec-attention-runtime-wiring).
     expect(world.reviewNotifications.granted.length).toBeGreaterThanOrEqual(3);
+    const planAdmission = world.repos.review
+      .findGateAdmissionsByRevision(authored.draftRevisionId)
+      .find((admission) => admission.gate === "plan");
     expect(
-      world.reviewNotifications.granted.some((notice) =>
-        notice.satisfiedGates.includes("plan"),
+      world.reviewNotifications.granted.some(
+        (notice) =>
+          notice.approvalId !== null &&
+          notice.approvalId === planAdmission?.approval_id,
       ),
     ).toBe(true);
 
@@ -236,9 +241,13 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     });
     // The grant cleared the waiting execution-start request through the
     // notifier port (R10.9).
+    const startRequestIds = world.reviewNotifications.requested
+      .filter((notice) => notice.gate === "execution_start")
+      .map((notice) => notice.gateRequestId);
+    expect(startRequestIds.length).toBeGreaterThan(0);
     expect(
       world.reviewNotifications.granted.some((notice) =>
-        notice.satisfiedGates.includes("execution_start"),
+        notice.satisfiedAttentionIds.some((id) => startRequestIds.includes(id)),
       ),
     ).toBe(true);
     // Status projection: the execution-start gate reads admitted, not pending.
@@ -919,9 +928,13 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       kind: "human",
     });
     // The grant cleared the waiting request through the notifier port.
+    const startRequestIds = world.reviewNotifications.requested
+      .filter((notice) => notice.gate === "execution_start")
+      .map((notice) => notice.gateRequestId);
+    expect(startRequestIds.length).toBeGreaterThan(0);
     expect(
       world.reviewNotifications.granted.some((notice) =>
-        notice.satisfiedGates.includes("execution_start"),
+        notice.satisfiedAttentionIds.some((id) => startRequestIds.includes(id)),
       ),
     ).toBe(true);
   });

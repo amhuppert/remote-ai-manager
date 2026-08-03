@@ -30,6 +30,14 @@ export type InstallCctlResult =
   | { installed: false; reason: "bundle_missing" | "stamp_mismatch" };
 
 /**
+ * Where this server publishes its own cctl. One definition, so the installer
+ * and the handshake that tells an agent which binary to run cannot disagree.
+ */
+export function cctlInstallPath(configDir: string): string {
+  return path.join(configDir, "bin", "cctl");
+}
+
+/**
  * Publish the server's own cctl bundle to <configDir>/bin/cctl (0755).
  * Atomic (temp write + rename) so an agent invoking cctl mid-install never
  * sees a torn file; idempotent so re-running register() is safe. A missing
@@ -69,8 +77,8 @@ export async function installCctl(
     return { installed: false, reason: "stamp_mismatch" };
   }
 
-  const binDir = path.join(configDir, "bin");
-  const targetPath = path.join(binDir, "cctl");
+  const targetPath = cctlInstallPath(configDir);
+  const binDir = path.dirname(targetPath);
   const tempPath = path.join(binDir, `.cctl.tmp-${process.pid}`);
 
   await mkdir(binDir, { recursive: true });

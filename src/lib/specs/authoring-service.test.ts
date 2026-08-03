@@ -20,6 +20,8 @@ import type { Db } from "@/lib/state-store/schemas";
 
 import {
   createAuthoringService,
+  SpecRevisionInReviewError,
+  SpecSlugTakenError,
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
@@ -547,17 +549,200 @@ describe("AuthoringService create and draft writes", () => {
       actor: ACTOR,
     });
     const approved = await service.getRevisionSnapshot(created.draft.id);
-    const copied = await service.getRevisionSnapshot(amendment.id);
+    const copied = await service.getRevisionSnapshot(amendment.revision.id);
 
-    expect(amendment.basedOnRevisionId).toBe(created.draft.id);
-    expect(amendment.authoringStage).toBe("design");
-    expect(reused.id).toBe(amendment.id);
+    expect(amendment.revision.basedOnRevisionId).toBe(created.draft.id);
+    expect(amendment.revision.authoringStage).toBe("design");
+    // Nothing was withdrawn above the approved base, so the amendment leaves
+    // nothing behind to report.
+    expect(amendment.skippedWithdrawnRevisions).toEqual([]);
+    expect(reused.revision.id).toBe(amendment.revision.id);
+    expect(reused.skippedWithdrawnRevisions).toEqual([]);
     expect(copied?.elements.map(({ version }) => version.payload)).toEqual(
       approved?.elements.map(({ version }) => version.payload),
     );
     expect(
       (await service.getRevisionSnapshot(created.draft.id))?.revision.state,
     ).toBe("approved");
+  });
+});
+
+describe("AuthoringService amendment while a revision is under review", () => {
+  function countRevisions() {
+    return db.prepare("SELECT COUNT(*) AS count FROM spec_revisions").get() as {
+      count: number;
+    };
+  }
+
+  function countElementVersions() {
+    return db
+      .prepare("SELECT COUNT(*) AS count FROM spec_element_versions")
+      .get() as { count: number };
+  }
+
+  function countEvents() {
+    return db.prepare("SELECT COUNT(*) AS count FROM spec_events").get() as {
+      count: number;
+    };
+  }
+
+  async function approvedSpecWithProposal() {
+    const created = await createDraft(firstElement("Approved requirement."));
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T12:10:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T12:11:00.000Z",
+    });
+    const { revision: amendment } = await service.openAmendment({
+      specId: created.spec.id,
+      actor: ACTOR,
+    });
+    await service.upsertDraftElement({
+      specId: created.spec.id,
+      revisionId: amendment.id,
+      elementId: "requirement-2",
+      kind: "requirement",
+      parentElementId: null,
+      position: 1,
+      payload: requirement("Amended requirement."),
+      baseElementVersion: null,
+      actor: ACTOR,
+    });
+    await specs.proposeRevision({
+      revisionId: amendment.id,
+      proposedAt: "2026-07-18T12:20:00.000Z",
+    });
+    return { created, amendment };
+  }
+
+  it("refuses openAmendment and writes nothing while a proposal is under review", async () => {
+    const { created, amendment } = await approvedSpecWithProposal();
+    const revisionsBefore = countRevisions();
+    const elementsBefore = countElementVersions();
+    const eventsBefore = countEvents();
+    const publishedBefore = published.length;
+
+    const refusal = await service
+      .openAmendment({ specId: created.spec.id, actor: ACTOR })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
+    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
+    expect(refusal.code).toBe("revision_in_review");
+    expect(refusal.proposals.map(({ id }) => id)).toEqual([amendment.id]);
+    expect(refusal.proposals.map(({ number }) => number)).toEqual([2]);
+    expect(refusal.approvedBase?.id).toBe(created.draft.id);
+    expect(refusal.instruction).toContain("revision 2");
+    expect(refusal.instruction).toContain("Spec Studio");
+    // The verb an agent can run itself is named alongside the two human exits,
+    // so a proposer is not left waiting on a human it could unblock.
+    expect(refusal.instruction).toContain("cctl spec withdraw-proposal");
+
+    expect(countRevisions()).toEqual(revisionsBefore);
+    expect(countElementVersions()).toEqual(elementsBefore);
+    expect(countEvents()).toEqual(eventsBefore);
+    expect(published).toHaveLength(publishedBefore);
+  });
+
+  it("refuses openAmendment on a spec whose only revision is under review", async () => {
+    const created = await createDraft(firstElement("First requirement."));
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T12:10:00.000Z",
+    });
+    const revisionsBefore = countRevisions();
+
+    const refusal = await service
+      .openAmendment({ specId: created.spec.id, actor: ACTOR })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
+    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
+    expect(refusal.approvedBase).toBeNull();
+    expect(refusal.proposals.map(({ number }) => number)).toEqual([1]);
+    expect(countRevisions()).toEqual(revisionsBefore);
+  });
+
+  it("refuses an existing-slug create while a proposal is under review", async () => {
+    const { created } = await approvedSpecWithProposal();
+    const revisionsBefore = countRevisions();
+    const elementsBefore = countElementVersions();
+    const eventsBefore = countEvents();
+
+    const refusal = await service
+      .createSpec({
+        projectPath: PROJECT_PATH,
+        slug: "native-sdd",
+        name: "Native SDD",
+        gatePolicy: { preset: "contract-bearing" },
+        initialElement: firstElement("Late requirement.", "requirement-late"),
+        actor: ACTOR,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
+    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
+    expect(refusal.specId).toBe(created.spec.id);
+    expect(countRevisions()).toEqual(revisionsBefore);
+    expect(countElementVersions()).toEqual(elementsBefore);
+    expect(countEvents()).toEqual(eventsBefore);
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM spec_elements WHERE id = ?")
+        .get("requirement-late"),
+    ).toEqual({ count: 0 });
+  });
+
+  it("names the taken slug when a create collides with a spec that carries both a draft and a proposal", async () => {
+    const { created } = await approvedSpecWithProposal();
+    // An execution's scope capture opens a draft on the pinned approved
+    // revision, so a draft and a proposal legitimately coexist here.
+    await specs.createDraftFromBase({
+      id: "revision-capture",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "design",
+      createdAt: "2026-07-18T12:30:00.000Z",
+    });
+    const revisionsBefore = countRevisions();
+    const elementsBefore = countElementVersions();
+
+    const refusal = await service
+      .createSpec({
+        projectPath: PROJECT_PATH,
+        slug: "native-sdd",
+        name: "Competing Native SDD",
+        gatePolicy: { preset: "contract-bearing" },
+        initialElement: firstElement("Late requirement.", "requirement-late"),
+        actor: ACTOR,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    // The caller asked for a NEW spec and hit a taken slug: it needs the
+    // colliding spec's identity and the option of another slug, not the
+    // recovery for continuing this spec's authoring line.
+    expect(refusal).toBeInstanceOf(SpecSlugTakenError);
+    if (!(refusal instanceof SpecSlugTakenError)) throw refusal;
+    expect(refusal.slug).toBe("native-sdd");
+    expect(refusal.existingSpecId).toBe(created.spec.id);
+    expect(refusal.existingName).toBe("Native SDD");
+    expect(countRevisions()).toEqual(revisionsBefore);
+    expect(countElementVersions()).toEqual(elementsBefore);
   });
 });
 

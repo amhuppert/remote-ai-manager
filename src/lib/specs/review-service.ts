@@ -4,11 +4,14 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
   actorProvenanceSchema,
+  specApprovalRequestScopeSchema,
   specAssumptionDispositionSchema,
   specGateSchema,
   specGatePolicySchema,
   type ActorProvenance,
+  type AgentActorProvenance,
   type Spec,
+  type SpecApprovalRequestScope,
   type SpecAuthoringStage,
   type SpecGate,
   type SpecGatePolicy,
@@ -17,9 +20,13 @@ import {
   type SpecCommentRow,
   type SpecQuestionRow,
   type SpecRevision,
+  type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
-import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import type {
+  OpenApprovalRequest,
+  SpecEventsRepo,
+} from "@/lib/state-store/spec-events-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type {
@@ -45,7 +52,11 @@ import {
   validateApprovalRequest,
   EXECUTION_SCOPED_GATES,
 } from "./gate-projection";
+import { authoringReviewProjection } from "./authoring-review-projection";
+import { lint } from "./lint";
+import { evaluateProposalWithdrawal } from "./proposal-withdrawal";
 import { loadProposalState } from "./review-state";
+import { governanceBaseRevisionId } from "./revision-lineage";
 import {
   approveElement,
   changePolicy as evaluatePolicyChange,
@@ -95,6 +106,15 @@ export type ResolveReviewThreadInput = z.infer<
 
 export const requestChangesInputSchema = reviewIdentitySchema;
 export type RequestChangesInput = z.infer<typeof requestChangesInputSchema>;
+
+/**
+ * The revision id is the compare-and-swap token the propose response returned,
+ * and the proposer always holds it. Inferring "the one current proposal" server
+ * side is atomically safe but not intent-safe: a replacement proposal can land
+ * between the agent observing the state and the withdrawal running.
+ */
+export const withdrawProposalInputSchema = reviewIdentitySchema;
+export type WithdrawProposalInput = z.infer<typeof withdrawProposalInputSchema>;
 
 export const approveItemInputSchema = reviewIdentitySchema
   .extend({
@@ -188,9 +208,10 @@ export const requestApprovalInputSchema = reviewIdentitySchema
   .extend({
     gate: specGateSchema,
     /**
-     * Omitted, the server resolves it: an execution gate's subject is the
-     * gate itself, and an authoring gate with one outstanding subject uses
-     * it. Only an ambiguous ask is refused, listing the candidates.
+     * Omitted, the request is for the gate as a whole — the ask a gate with a
+     * dozen outstanding subjects has to be able to make, and the only ask that
+     * still means the same thing once they are all approved. Naming a subject
+     * asks for that item alone.
      */
     subject: z.string().min(1).optional(),
   })
@@ -200,8 +221,9 @@ export type RequestApprovalInput = z.infer<typeof requestApprovalInputSchema>;
 export const approvalRequestReceiptSchema = requestApprovalInputSchema
   .omit({ specId: true, actor: true })
   .extend({
-    /** Always the resolved subject, even when the request omitted one. */
+    /** The gate name for a gate-scoped ask; the named handle for an item. */
     subject: z.string().min(1),
+    scope: specApprovalRequestScopeSchema,
     attentionId: z.string().min(1),
     /**
      * True when this ask was already open: the receipt names the request that
@@ -211,6 +233,14 @@ export const approvalRequestReceiptSchema = requestApprovalInputSchema
     alreadyRequested: z.boolean(),
     /** The element the approval is for, or null for plan and gate subjects. */
     elementId: z.string().min(1).nullable(),
+    /**
+     * What the gate was still waiting on when the ask was made. A display
+     * snapshot: it is never part of the request's identity, so it may differ
+     * from the entry a human is reading.
+     */
+    outstandingSubjects: z.array(z.string().min(1)),
+    /** Whether a human sign-off is still owed, which no item approval gives. */
+    signOffOutstanding: z.boolean(),
   })
   .strict();
 export type ApprovalRequestReceipt = z.infer<
@@ -265,6 +295,16 @@ export interface ReviewService {
     input: GrantGateApprovalInput,
   ): Promise<ReviewResult<SpecApprovalRow>>;
   withdraw(input: RequestChangesInput): Promise<ReviewResult<SpecRevision>>;
+  /**
+   * The agent-side exit from a frozen proposal. Distinct from `withdraw`,
+   * which is the human's terminal end of a review: this one is guarded by
+   * authorship, refuses once a human has engaged, and reopens the withdrawn
+   * content as a draft so the author can fix and re-propose without a
+   * ceremony click.
+   */
+  withdrawProposal(
+    input: WithdrawProposalInput,
+  ): Promise<ReviewResult<{ withdrawn: SpecRevision; draft: SpecRevision }>>;
   bulkApprove(
     input: BulkApproveInput,
   ): Promise<ReviewResult<SpecApprovalRow[]>>;
@@ -295,6 +335,10 @@ export interface SpecApprovalRequestNotice {
   projectPath: string;
   gate: SpecGate;
   subject: string;
+  scope: SpecApprovalRequestScope;
+  /** What the gate owed when the ask was made, for the entry's body. */
+  outstandingSubjects: string[];
+  signOffOutstanding: boolean;
   /** The attention id issued for the request — the durable correlation key. */
   gateRequestId: string;
   occurredAt: string;
@@ -306,28 +350,38 @@ export interface SpecApprovalGrantNotice {
   specName: string;
   projectPath: string;
   approvalId: string | null;
-  /** Gates this human act admits; open requests with these gates are satisfied. */
-  satisfiedGates: SpecGate[];
   /**
-   * Subjects this act approved; open requests whose subject matches exactly
-   * are satisfied regardless of gate. Element approvals report BOTH the
-   * internal element id and the element's durable display handle (R1, D1):
-   * requests are stored under the handle a human or agent typed, and element
-   * numbers are append-only per spec, so the handle is a stable correlation
-   * identity. Non-element acts report "plan"/"revision".
+   * The exact open requests this human act satisfies, resolved here against
+   * the durable request log. Which act answers which ask is a review decision
+   * — an item approval never answers a whole-gate ask — so notification
+   * storage must not re-derive it from a request's subject or deep link.
    */
-  approvedSubjects: string[];
+  satisfiedAttentionIds: string[];
+  occurredAt: string;
+}
+
+/**
+ * Requests that end without ever being answered: the revision they belong to
+ * was withdrawn or sent back, or the request predates request scope and has
+ * been retired. They close, they do not report a grant.
+ */
+export interface SpecApprovalRequestsClosedNotice {
+  specId: string;
+  attentionIds: string[];
+  reason: string;
   occurredAt: string;
 }
 
 /**
  * Outbound port for durable human-facing approval notifications. Called only
- * after the review transaction commits; the composed implementation owns
- * matching grants to open requests and notification dedupe.
+ * after the review transaction commits; the composed implementation renders
+ * the notices and owns notification dedupe, never the decision of which
+ * request an act answers.
  */
 export interface SpecReviewNotifier {
   approvalRequested(notice: SpecApprovalRequestNotice): void;
   approvalGranted(notice: SpecApprovalGrantNotice): void;
+  approvalRequestsClosed(notice: SpecApprovalRequestsClosedNotice): void;
 }
 
 export interface ReviewServiceDeps {
@@ -343,10 +397,15 @@ export interface ReviewServiceDeps {
   links: Pick<SpecLinksRepo, "findBySpecId">;
   events: SpecEventsPublisher;
   /**
-   * Read side of the durable attention log. An approval request is recorded as
-   * an event, so recognising a repeat of the same ask means reading it back.
+   * Read side of the durable event log. An approval request is recorded as an
+   * event, so recognising a repeat of the same ask — and deciding which open
+   * asks an act answers — means reading it back; so is who proposed a revision
+   * and whether a human has acted on it, which no live row can prove.
    */
-  attention: Pick<SpecEventsRepo, "findApprovalRequest">;
+  attention: Pick<
+    SpecEventsRepo,
+    "findApprovalRequest" | "listOpenApprovalRequests" | "findBySpecId"
+  >;
   notifier?: SpecReviewNotifier;
   /** Post-hoc notices for Notify-dial policy-admitted sign-offs (R11.2). */
   policyNotifier?: SpecPolicyAdmissionNotifier;
@@ -373,6 +432,13 @@ function requireReviewTarget(
     return null;
   }
   return { spec, revision };
+}
+
+function snapshotOrNull(
+  repo: SpecsRepoTransaction,
+  revisionId: string | null,
+): SpecRevisionSnapshot | null {
+  return revisionId === null ? null : repo.getRevisionSnapshot(revisionId);
 }
 
 // The durable display handle (R1, D1) for an approved element, so grant
@@ -414,7 +480,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     spec: Spec,
     notice: Pick<
       SpecApprovalGrantNotice,
-      "approvalId" | "satisfiedGates" | "approvedSubjects" | "occurredAt"
+      "approvalId" | "satisfiedAttentionIds" | "occurredAt"
     >,
   ): SpecApprovalGrantNotice {
     return {
@@ -424,6 +490,66 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       projectPath: spec.projectPath,
       ...notice,
     };
+  }
+
+  /** The requests a revision-scoped authoring act can answer or end. */
+  function authoringRequestsForRevision(
+    specId: string,
+    revisionId: string,
+  ): OpenApprovalRequest[] {
+    return deps.attention
+      .listOpenApprovalRequests(specId)
+      .filter(
+        (request) =>
+          request.executionId === null &&
+          request.revisionId === revisionId &&
+          !EXECUTION_SCOPED_GATES.has(request.gate),
+      );
+  }
+
+  /**
+   * Approving an item answers only the asks that named that item. A whole-gate
+   * ask survives it: the gate is admitted by the revision sign-off, and
+   * closing its entry here would retire the very notice that asks for the
+   * sign-off (Requirement 24.13 — an item approval is not a gate admission).
+   *
+   * A request recorded before requests carried a scope named exactly one
+   * subject, because that is the only form that existed, so the approval of
+   * that subject answers it as it always did.
+   */
+  function requestsSatisfiedByItems(
+    specId: string,
+    revisionId: string,
+    approvedSubjects: readonly string[],
+  ): string[] {
+    const subjects = new Set(approvedSubjects);
+    return authoringRequestsForRevision(specId, revisionId)
+      .filter(
+        (request) => request.scope !== "gate" && subjects.has(request.subject),
+      )
+      .map((request) => request.attentionId);
+  }
+
+  /**
+   * A per-run gate admits the run as a whole, so its grant answers every ask
+   * filed at that gate for that run — including one filed under an element
+   * handle, which is a pointer at what blocked the run rather than a separate
+   * approval. Requests written before runs entered request identity carry no
+   * execution id and belong to the only run that could have opened them.
+   */
+  function requestsSatisfiedByRunGate(
+    specId: string,
+    gate: SpecGate,
+    executionId: string,
+  ): string[] {
+    return deps.attention
+      .listOpenApprovalRequests(specId)
+      .filter(
+        (request) =>
+          request.gate === gate &&
+          (request.executionId === executionId || request.executionId === null),
+      )
+      .map((request) => request.attentionId);
   }
 
   function appendEvent(
@@ -547,6 +673,160 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         active,
       },
     });
+  }
+
+  /**
+   * Ends the requests a grant just answered. An answered ask has to leave
+   * request identity too: leaving it open makes the next ask for the same
+   * subject dedupe onto an id the queue already resolved, so a human who
+   * withdraws their approval gets a subject that is outstanding again with
+   * nothing in their queue and no way to put it back.
+   */
+  function retireAnsweredRequests(
+    spec: Spec,
+    actor: ActorProvenance,
+    occurredAt: string,
+    attentionIds: readonly string[],
+  ): PreparedSpecEventPublication[] {
+    return attentionIds.map((attentionId) =>
+      appendRequestRetirement(
+        spec,
+        actor,
+        occurredAt,
+        attentionId,
+        "the approval it asked for was recorded",
+      ),
+    );
+  }
+
+  /**
+   * Ends an approval request that will never be answered. The request event
+   * stays as history; this is what takes it out of request identity and out of
+   * every later act's resolution, so a retired ask can neither be reused nor
+   * clear something else.
+   */
+  function appendRequestRetirement(
+    spec: Spec,
+    actor: ActorProvenance,
+    occurredAt: string,
+    attentionId: string,
+    reason: string,
+  ): PreparedSpecEventPublication {
+    return deps.events.appendInTransaction({
+      actor,
+      durableEventType: "spec-attention-changed",
+      durablePayload: {
+        kind: "approval-request-retired",
+        attentionId,
+        reason,
+        active: false,
+      },
+      sseEvent: {
+        type: "spec-attention-changed",
+        kind: "approval-request-retired",
+        projectPath: spec.projectPath,
+        specId: spec.id,
+        specSlug: spec.slug,
+        occurredAt,
+        attentionId,
+        active: false,
+      },
+    });
+  }
+
+  /**
+   * Records the proposing agent ending its own attempt. Both provenances ride
+   * the payload because the event's actor column can only carry one, and the
+   * audit question here is a pair: who proposed, and who took it back.
+   */
+  function appendProposalWithdrawnEvent(
+    spec: Spec,
+    revisionId: string,
+    proposer: AgentActorProvenance,
+    withdrawnBy: AgentActorProvenance,
+    followUpDraftRevisionId: string,
+    occurredAt: string,
+  ): PreparedSpecEventPublication {
+    return deps.events.appendInTransaction({
+      actor: withdrawnBy,
+      durableEventType: "spec-revision-changed",
+      durablePayload: {
+        kind: "proposal-withdrawn-by-author",
+        revisionId,
+        proposer,
+        withdrawnBy,
+        followUpDraftRevisionId,
+      },
+      sseEvent: {
+        type: "spec-revision-changed",
+        kind: "proposal-withdrawn-by-author",
+        projectPath: spec.projectPath,
+        specId: spec.id,
+        specSlug: spec.slug,
+        occurredAt,
+        revisionId,
+      },
+    });
+  }
+
+  /**
+   * The one way a proposed revision becomes an editable draft again. Request
+   * Changes and the proposing agent's own withdrawal both land here, so
+   * neither can open a second editable revision beside a draft an execution
+   * capture already left open — the spec carries exactly one at a time.
+   */
+  function withdrawAndOpenDraft(
+    repo: SpecsRepoTransaction,
+    spec: Spec,
+    revision: SpecRevision,
+    occurredAt: string,
+  ):
+    | {
+        readonly ok: true;
+        readonly withdrawn: SpecRevision;
+        readonly draft: SpecRevision;
+      }
+    | { readonly ok: false; readonly refusal: TransitionRefusal } {
+    const openDraft = repo.findDraft(spec.id);
+    if (openDraft !== null) {
+      return {
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: [
+            `Revision ${openDraft.number} is already open as a draft, so ending revision ${revision.number} would leave the spec with two editable revisions.`,
+          ],
+          instruction: `Propose draft revision ${openDraft.number} before ending the review of revision ${revision.number}.`,
+        },
+      };
+    }
+    const withdrawn = repo.withdrawRevision({ revisionId: revision.id });
+    const draft = repo.createDraftFromBase({
+      id: newId("revision"),
+      specId: spec.id,
+      baseRevisionId: withdrawn.id,
+      authoringStage: openDraftAuthoringStage({
+        policy: spec.gatePolicy,
+        baseRevision: {
+          state: "withdrawn",
+          authoringStage: withdrawn.authoringStage,
+        },
+      }),
+      createdAt: occurredAt,
+    });
+    return { ok: true, withdrawn, draft };
+  }
+
+  /** Threads on a review attempt a human resolved or dismissed. */
+  function humanEndedThreadIds(revisionId: string): string[] {
+    return [
+      ...new Set(
+        deps.review
+          .findCommentsByRevision(revisionId)
+          .filter((comment) => comment.resolution !== "open")
+          .map((comment) => comment.thread_id),
+      ),
+    ];
   }
 
   /**
@@ -1052,6 +1332,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       const parsed = requestApprovalInputSchema.parse(input);
       const occurredAt = now();
       let requestedNotice: SpecApprovalRequestNotice | null = null;
+      let retiredAttentionIds: string[] = [];
       const transaction = await deps.specs.transaction(
         "specs.review.request-approval",
         (repo) => {
@@ -1081,27 +1362,51 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           const run = currentExecution(
             deps.delivery.findExecutionsBySpecId(target.spec.id),
           );
+          const approvals = deps.review.findApprovalsBySpecId(target.spec.id);
+          const loaded =
+            snapshot === null
+              ? null
+              : loadProposalState(
+                  repo,
+                  deps.review,
+                  deps.links,
+                  target.spec,
+                  snapshot,
+                );
+          const applies = loaded?.approvalApplies ?? (() => false);
           const validation = validateApprovalRequest({
-            spec: target.spec,
+            projection: authoringReviewProjection({
+              policy: target.spec.gatePolicy,
+              snapshot,
+              governanceBaseSnapshot: loaded?.governanceBaseSnapshot ?? null,
+              approvals,
+              admissions: deps.review.findGateAdmissionsBySpecId(
+                target.spec.id,
+              ),
+              currentExecution: run,
+              revisionNumberById: new Map(
+                revisions.map((revision) => [revision.id, revision.number]),
+              ),
+              applies,
+              blockingThreads: loaded?.reviewSnapshot.blockingThreads ?? [],
+              signOffFindings:
+                loaded === null
+                  ? []
+                  : lint(loaded.draft, loaded.records).filter(
+                      (finding) => finding.severity === "blocks_signoff",
+                    ),
+            }),
             requestedRevisionId: target.revision.id,
             currentRevisionId: current?.id ?? null,
             snapshot,
-            baseSnapshot:
-              snapshot === null || snapshot.revision.basedOnRevisionId === null
-                ? null
-                : repo.getRevisionSnapshot(snapshot.revision.basedOnRevisionId),
             executionSnapshot:
               run === null
                 ? null
                 : run.revision_id === snapshot?.revision.id
                   ? snapshot
                   : repo.getRevisionSnapshot(run.revision_id),
-            approvals: deps.review.findApprovalsBySpecId(target.spec.id),
-            admissions: deps.review.findGateAdmissionsBySpecId(target.spec.id),
-            currentExecution: run,
-            revisionNumberById: new Map(
-              revisions.map((revision) => [revision.id, revision.number]),
-            ),
+            approvals,
+            applies,
             gate: parsed.gate,
             subject: parsed.subject ?? null,
           });
@@ -1114,10 +1419,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               prepared: [],
             };
           }
-          // The durable identity and every notice carry the RESOLVED subject,
-          // so an omitted-subject ask and its explicit repeat converge on one
-          // Needs You entry.
-          const subject = validation.approval.subject;
+          const request = validation.request;
 
           // A per-run gate is asked once per run, not once per revision: the
           // run the request covers belongs to its identity (R24.1). Its
@@ -1126,35 +1428,53 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           // gate auto-fire (which names the pin) and the CLI (which names the
           // latest revision) converge on one durable ask under an open
           // amendment instead of opening two Needs You entries.
-          const requestExecutionId = EXECUTION_SCOPED_GATES.has(parsed.gate)
-            ? (run?.id ?? null)
-            : null;
-          const identityRevisionId =
-            requestExecutionId !== null && run !== null
-              ? run.revision_id
-              : target.revision.id;
-          const existing = deps.attention.findApprovalRequest({
+          const executionScoped =
+            EXECUTION_SCOPED_GATES.has(parsed.gate) && run !== null;
+          const requestExecutionId = executionScoped ? run.id : null;
+          const identityRevisionId = executionScoped
+            ? run.revision_id
+            : target.revision.id;
+          const existing = deps.attention.findApprovalRequest(
+            executionScoped
+              ? {
+                  kind: "execution",
+                  specId: target.spec.id,
+                  revisionId: identityRevisionId,
+                  gate: parsed.gate,
+                  subject: request.subject,
+                  executionId: run.id,
+                }
+              : {
+                  kind: "authoring",
+                  specId: target.spec.id,
+                  revisionId: identityRevisionId,
+                  gate: parsed.gate,
+                  scope: request.scope,
+                  // A gate ask is one ask however its subject list moves.
+                  subject: request.scope === "gate" ? null : request.subject,
+                },
+          );
+          const noticeFor = (
+            attentionId: string,
+          ): SpecApprovalRequestNotice => ({
             specId: target.spec.id,
-            revisionId: identityRevisionId,
+            specSlug: target.spec.slug,
+            specName: target.spec.name,
+            projectPath: target.spec.projectPath,
             gate: parsed.gate,
-            subject,
-            executionId: requestExecutionId,
+            subject: request.subject,
+            scope: request.scope,
+            outstandingSubjects: request.outstandingSubjects,
+            signOffOutstanding: request.signOffOutstanding,
+            gateRequestId: attentionId,
+            occurredAt,
           });
           if (existing !== null) {
             // Rebuild the notice so the notifier runs on every repeat: it
             // dedupes on the stable attention id, so re-invocation is an
             // idempotent ensure — and the only way a Needs You row lost to a
             // notifier crash after the first commit can ever be recovered.
-            requestedNotice = {
-              specId: target.spec.id,
-              specSlug: target.spec.slug,
-              specName: target.spec.name,
-              projectPath: target.spec.projectPath,
-              gate: parsed.gate,
-              subject,
-              gateRequestId: existing.attentionId,
-              occurredAt,
-            };
+            requestedNotice = noticeFor(existing.attentionId);
             return {
               result: {
                 ok: true,
@@ -1162,8 +1482,11 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                   attentionId: existing.attentionId,
                   revisionId: identityRevisionId,
                   gate: parsed.gate,
-                  subject,
-                  elementId: validation.approval.elementId,
+                  subject: request.subject,
+                  scope: request.scope,
+                  elementId: request.elementId,
+                  outstandingSubjects: request.outstandingSubjects,
+                  signOffOutstanding: request.signOffOutstanding,
                   alreadyRequested: true,
                 },
               } satisfies ReviewResult<ApprovalRequestReceipt>,
@@ -1171,27 +1494,55 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             };
           }
 
+          // Requests recorded before scope existed cannot be told apart from a
+          // gate ask, so the same ask would open a second entry beside them.
+          // They are retired here rather than decoded: the events stay as
+          // history, and the scoped request replaces what they were asking.
+          // Only the asks this one actually subsumes are retired — a gate ask
+          // covers every subject at its gate, an item ask covers its own
+          // subject alone — because a legacy ask about another subject is work
+          // a human still owes and would otherwise vanish unanswered.
+          const retired = executionScoped
+            ? []
+            : deps.attention
+                .listOpenApprovalRequests(target.spec.id)
+                .filter(
+                  (candidate) =>
+                    candidate.scope === null &&
+                    candidate.executionId === null &&
+                    candidate.gate === parsed.gate &&
+                    candidate.revisionId === identityRevisionId &&
+                    (request.scope === "gate" ||
+                      candidate.subject === request.subject),
+                );
+          retiredAttentionIds = retired.map(
+            (candidate) => candidate.attentionId,
+          );
+
           const value: ApprovalRequestReceipt = {
             attentionId: newId("attention"),
             revisionId: identityRevisionId,
             gate: parsed.gate,
-            subject,
-            elementId: validation.approval.elementId,
+            subject: request.subject,
+            scope: request.scope,
+            elementId: request.elementId,
+            outstandingSubjects: request.outstandingSubjects,
+            signOffOutstanding: request.signOffOutstanding,
             alreadyRequested: false,
           };
-          requestedNotice = {
-            specId: target.spec.id,
-            specSlug: target.spec.slug,
-            specName: target.spec.name,
-            projectPath: target.spec.projectPath,
-            gate: parsed.gate,
-            subject,
-            gateRequestId: value.attentionId,
-            occurredAt,
-          };
+          requestedNotice = noticeFor(value.attentionId);
           return {
             result: { ok: true, value } as ReviewResult<ApprovalRequestReceipt>,
             prepared: [
+              ...retired.map((candidate) =>
+                appendRequestRetirement(
+                  target.spec,
+                  parsed.actor,
+                  occurredAt,
+                  candidate.attentionId,
+                  "recorded before approval requests carried a scope",
+                ),
+              ),
               deps.events.appendInTransaction({
                 actor: parsed.actor,
                 durableEventType: "spec-attention-changed",
@@ -1200,6 +1551,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                   attentionId: value.attentionId,
                   revisionId: value.revisionId,
                   gate: value.gate,
+                  scope: value.scope,
                   subject: value.subject,
                   executionId: requestExecutionId,
                   active: true,
@@ -1220,6 +1572,15 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
         },
       );
       publishAll(transaction.prepared);
+      if (transaction.result.ok && retiredAttentionIds.length > 0) {
+        deps.notifier?.approvalRequestsClosed({
+          specId: parsed.specId,
+          attentionIds: retiredAttentionIds,
+          reason:
+            "this request predates approval request scope and was replaced",
+          occurredAt,
+        });
+      }
       if (transaction.result.ok && requestedNotice !== null) {
         deps.notifier?.approvalRequested(requestedNotice);
       }
@@ -1383,12 +1744,13 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               : draftAuthoringSequence({
                   policy: spec.gatePolicy,
                   snapshot: draftSnapshot,
-                  baseSnapshot:
-                    draftSnapshot.revision.basedOnRevisionId === null
-                      ? null
-                      : repo.getRevisionSnapshot(
-                          draftSnapshot.revision.basedOnRevisionId,
-                        ),
+                  governanceBaseSnapshot: snapshotOrNull(
+                    repo,
+                    governanceBaseRevisionId(
+                      repo.listRevisions(spec.id),
+                      draftSnapshot.revision,
+                    ),
+                  ),
                 });
           return {
             result: {
@@ -1421,6 +1783,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       const humanRefusal = humanRequired(parsed.actor);
       if (humanRefusal !== null) return humanRefusal;
       const occurredAt = now();
+      let endedRequests: OpenApprovalRequest[] = [];
       const transaction = await deps.specs.transaction(
         "specs.review.request-changes",
         (repo) => {
@@ -1447,22 +1810,25 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               ),
               prepared: [],
             };
-          const withdrawn = repo.withdrawRevision({
-            revisionId: target.revision.id,
-          });
-          const draft = repo.createDraftFromBase({
-            id: newId("revision"),
-            specId: target.spec.id,
-            baseRevisionId: withdrawn.id,
-            authoringStage: openDraftAuthoringStage({
-              policy: target.spec.gatePolicy,
-              baseRevision: {
-                state: "withdrawn",
-                authoringStage: withdrawn.authoringStage,
-              },
-            }),
-            createdAt: occurredAt,
-          });
+          const reopened = withdrawAndOpenDraft(
+            repo,
+            target.spec,
+            target.revision,
+            occurredAt,
+          );
+          if (!reopened.ok)
+            return {
+              result: { ok: false, refusal: reopened.refusal } as ReviewResult<{
+                withdrawn: SpecRevision;
+                draft: SpecRevision;
+              }>,
+              prepared: [],
+            };
+          const { withdrawn, draft } = reopened;
+          endedRequests = authoringRequestsForRevision(
+            target.spec.id,
+            target.revision.id,
+          );
           return {
             result: { ok: true, value: { withdrawn, draft } } as ReviewResult<{
               withdrawn: SpecRevision;
@@ -1479,11 +1845,31 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 undefined,
                 parsed.activeStartedAt,
               ),
+              ...endedRequests.map((request) =>
+                appendRequestRetirement(
+                  target.spec,
+                  parsed.actor,
+                  occurredAt,
+                  request.attentionId,
+                  "the revision it asked about was sent back for changes",
+                ),
+              ),
             ],
           };
         },
       );
       publishAll(transaction.prepared);
+      // The run's own gates outlive the revision: a delivery or
+      // execution-start ask belongs to the execution, which an ended review
+      // attempt does not touch (R3.6).
+      if (transaction.result.ok && endedRequests.length > 0) {
+        deps.notifier?.approvalRequestsClosed({
+          specId: parsed.specId,
+          attentionIds: endedRequests.map((request) => request.attentionId),
+          reason: "the revision it asked about was sent back for changes",
+          occurredAt,
+        });
+      }
       return transaction.result;
     },
 
@@ -1528,10 +1914,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             occurredAt,
           );
           deps.review.saveApproval(row);
-          grantedNotice = grantNoticeFor(target.spec, {
-            approvalId: row.id,
-            satisfiedGates: [],
-            approvedSubjects: [
+          const answered = requestsSatisfiedByItems(
+            target.spec.id,
+            target.revision.id,
+            [
               parsed.elementId,
               ...approvedElementHandle(
                 repo,
@@ -1539,6 +1925,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 parsed.elementId,
               ),
             ],
+          );
+          grantedNotice = grantNoticeFor(target.spec, {
+            approvalId: row.id,
+            satisfiedAttentionIds: answered,
             occurredAt,
           });
           return {
@@ -1553,6 +1943,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 "item-approved",
                 parsed.elementId,
                 parsed.activeStartedAt,
+              ),
+              ...retireAnsweredRequests(
+                target.spec,
+                parsed.actor,
+                occurredAt,
+                answered,
               ),
             ],
           };
@@ -1692,10 +2088,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             ),
           );
           for (const row of rows) deps.review.saveApproval(row);
-          grantedNotice = grantNoticeFor(target.spec, {
-            approvalId: rows[0]?.id ?? null,
-            satisfiedGates: [],
-            approvedSubjects: parsed.subjects.flatMap((subject) =>
+          const answered = requestsSatisfiedByItems(
+            target.spec.id,
+            target.revision.id,
+            parsed.subjects.flatMap((subject) =>
               subject.elementId === null
                 ? ["plan"]
                 : [
@@ -1707,24 +2103,36 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                     ),
                   ],
             ),
+          );
+          grantedNotice = grantNoticeFor(target.spec, {
+            approvalId: rows[0]?.id ?? null,
+            satisfiedAttentionIds: answered,
             occurredAt,
           });
           return {
             result: { ok: true, value: rows } as ReviewResult<
               SpecApprovalRow[]
             >,
-            prepared: rows.map((row) =>
-              appendEvent(
+            prepared: [
+              ...rows.map((row) =>
+                appendEvent(
+                  target.spec,
+                  target.revision.id,
+                  parsed.actor,
+                  occurredAt,
+                  "spec-review-item-approved",
+                  "item-approved",
+                  row.element_id ?? "plan",
+                  parsed.activeStartedAt,
+                ),
+              ),
+              ...retireAnsweredRequests(
                 target.spec,
-                target.revision.id,
                 parsed.actor,
                 occurredAt,
-                "spec-review-item-approved",
-                "item-approved",
-                row.element_id ?? "plan",
-                parsed.activeStartedAt,
+                answered,
               ),
-            ),
+            ],
           };
         },
       );
@@ -1802,6 +2210,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             draft: loaded.draft,
             records: loaded.records,
             review: loaded.reviewSnapshot,
+            approvalApplies: loaded.approvalApplies,
           });
           if (!decision.ok)
             return {
@@ -1813,7 +2222,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
             };
           const resolvedGates = consultedAuthoringGates(
             target.revision.authoringStage,
-            loaded.reviewSnapshot.baseRevisionRows,
+            loaded.reviewSnapshot.governanceBaseRevisionRows,
             loaded.reviewSnapshot.revisionRows,
           ).map((gate) => ({
             gate,
@@ -1931,13 +2340,22 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               });
             }
           }
+          // Sign-off is the act that admits the revision's gates, so it
+          // answers every authoring ask filed against it — the whole-gate
+          // entries no item approval could clear, and any item entry still
+          // open under a policy that collapsed the per-item approvals.
+          const admittedGates = new Set<string>(
+            resolvedGates.map(({ gate }) => gate),
+          );
+          const answered = authoringRequestsForRevision(
+            target.spec.id,
+            parsed.revisionId,
+          )
+            .filter((request) => admittedGates.has(request.gate))
+            .map((request) => request.attentionId);
           grantedNotice = grantNoticeFor(target.spec, {
             approvalId: approval?.id ?? null,
-            satisfiedGates: resolvedGates.map(({ gate }) => gate),
-            approvedSubjects: [
-              ...combinedSubjects.map((subject) => subject.elementId ?? "plan"),
-              "revision",
-            ],
+            satisfiedAttentionIds: answered,
             occurredAt,
           });
           return {
@@ -1964,6 +2382,12 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 parsed.activeStartedAt,
               ),
               ...stalePrepared,
+              ...retireAnsweredRequests(
+                target.spec,
+                parsed.actor,
+                occurredAt,
+                answered,
+              ),
             ],
           };
         },
@@ -2062,8 +2486,11 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
               // per request, so already-cleared requests stay single-row.
               grantedNotice = grantNoticeFor(target.spec, {
                 approvalId: existingApproval.id,
-                satisfiedGates: [parsed.gate],
-                approvedSubjects: [],
+                satisfiedAttentionIds: requestsSatisfiedByRunGate(
+                  parsed.specId,
+                  parsed.gate,
+                  parsed.executionId,
+                ),
                 occurredAt,
               });
               return {
@@ -2099,8 +2526,11 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           });
           grantedNotice = grantNoticeFor(target.spec, {
             approvalId: approval.id,
-            satisfiedGates: [parsed.gate],
-            approvedSubjects: [],
+            satisfiedAttentionIds: requestsSatisfiedByRunGate(
+              parsed.specId,
+              parsed.gate,
+              parsed.executionId,
+            ),
             occurredAt,
           });
           return {
@@ -2144,6 +2574,7 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       const humanRefusal = humanRequired(parsed.actor);
       if (humanRefusal !== null) return humanRefusal;
       const occurredAt = now();
+      let endedRequests: OpenApprovalRequest[] = [];
       const transaction = await deps.specs.transaction(
         "specs.review.withdraw",
         (repo) => {
@@ -2173,6 +2604,10 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           const revision = repo.withdrawRevision({
             revisionId: parsed.revisionId,
           });
+          endedRequests = authoringRequestsForRevision(
+            target.spec.id,
+            parsed.revisionId,
+          );
           return {
             result: { ok: true, value: revision } as ReviewResult<SpecRevision>,
             prepared: [
@@ -2186,11 +2621,138 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 undefined,
                 parsed.activeStartedAt,
               ),
+              ...endedRequests.map((request) =>
+                appendRequestRetirement(
+                  target.spec,
+                  parsed.actor,
+                  occurredAt,
+                  request.attentionId,
+                  "the revision it asked about was withdrawn",
+                ),
+              ),
             ],
           };
         },
       );
       publishAll(transaction.prepared);
+      if (transaction.result.ok && endedRequests.length > 0) {
+        deps.notifier?.approvalRequestsClosed({
+          specId: parsed.specId,
+          attentionIds: endedRequests.map((request) => request.attentionId),
+          reason: "the revision it asked about was withdrawn",
+          occurredAt,
+        });
+      }
+      return transaction.result;
+    },
+
+    async withdrawProposal(input) {
+      const parsed = withdrawProposalInputSchema.parse(input);
+      const occurredAt = now();
+      const closedReason = "its author withdrew the proposal";
+      let endedRequests: OpenApprovalRequest[] = [];
+      const transaction = await deps.specs.transaction(
+        "specs.review.withdraw-proposal",
+        (repo) => {
+          const target = requireReviewTarget(
+            repo,
+            parsed.specId,
+            parsed.revisionId,
+          );
+          if (target === null)
+            return {
+              result: refused(
+                "not_found",
+                [
+                  `Revision ${parsed.revisionId} is not a revision of this spec.`,
+                ],
+                "Quote the revision id the propose returned; it is the compare-and-swap token for this withdrawal.",
+              ),
+              prepared: [],
+            };
+          // Read the durable log inside the transaction: a human approval
+          // committing between the check and the withdrawal is exactly the
+          // race this verb must lose.
+          const decision = evaluateProposalWithdrawal({
+            revision: target.revision,
+            caller: parsed.actor,
+            events: deps.attention.findBySpecId(target.spec.id),
+            endedThreadIds: humanEndedThreadIds(target.revision.id),
+          });
+          if (!decision.ok)
+            return {
+              result: {
+                ok: false,
+                refusal: decision.refusal,
+              } as ReviewResult<{
+                withdrawn: SpecRevision;
+                draft: SpecRevision;
+              }>,
+              prepared: [],
+            };
+          const reopened = withdrawAndOpenDraft(
+            repo,
+            target.spec,
+            target.revision,
+            occurredAt,
+          );
+          if (!reopened.ok)
+            return {
+              result: { ok: false, refusal: reopened.refusal } as ReviewResult<{
+                withdrawn: SpecRevision;
+                draft: SpecRevision;
+              }>,
+              prepared: [],
+            };
+          const { withdrawn, draft } = reopened;
+          endedRequests = authoringRequestsForRevision(
+            target.spec.id,
+            target.revision.id,
+          );
+          return {
+            result: { ok: true, value: { withdrawn, draft } } as ReviewResult<{
+              withdrawn: SpecRevision;
+              draft: SpecRevision;
+            }>,
+            prepared: [
+              appendProposalWithdrawnEvent(
+                target.spec,
+                withdrawn.id,
+                decision.proposer,
+                decision.withdrawnBy,
+                draft.id,
+                occurredAt,
+              ),
+              ...endedRequests.map((request) =>
+                appendRequestRetirement(
+                  target.spec,
+                  parsed.actor,
+                  occurredAt,
+                  request.attentionId,
+                  closedReason,
+                ),
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      if (transaction.result.ok && endedRequests.length > 0) {
+        deps.notifier?.approvalRequestsClosed({
+          specId: parsed.specId,
+          attentionIds: endedRequests.map((request) => request.attentionId),
+          reason: closedReason,
+          occurredAt,
+        });
+      }
+      logger.info("specs.review.withdraw_proposal.complete", {
+        specId: parsed.specId,
+        revisionId: parsed.revisionId,
+        ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? {}
+          : { refusalCode: transaction.result.refusal.code }),
+      });
       return transaction.result;
     },
   };

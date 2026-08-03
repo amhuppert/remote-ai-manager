@@ -62,6 +62,24 @@ export function dialRequiresHumanApproval(dial: ResolvedGateDial): boolean {
   return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
 }
 
+/**
+ * Whether the policy collapses every per-element authoring approval into the
+ * one sign-off act (R11.5). It takes the combined dial on all three authoring
+ * gates: a mixed policy still asks per element at the gates that require it.
+ *
+ * The sign-off preconditions, the status projection, and the review surface
+ * all read it here. A second copy is what let the projection list subjects the
+ * transition never asks for and point the caller at `request-approval` for an
+ * approval the policy folded into the sign-off.
+ */
+export function authoringApprovalsCollapseIntoSignOff(
+  policy: SpecGatePolicy,
+): boolean {
+  return (["requirements", "design", "plan"] as const).every(
+    (gate) => resolveDial(policy, gate) === COMBINED_APPROVAL_DIAL,
+  );
+}
+
 export function isExploratoryShippingRefused(policy: SpecGatePolicy): boolean {
   return policy.preset === "exploratory";
 }

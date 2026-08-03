@@ -179,6 +179,20 @@ const snapshot: SpecRevisionSnapshot = {
   ],
 };
 
+// The amendment's own requirements admission, so a reader can tell who
+// admitted the revision being read from who admitted an earlier one.
+const currentRequirementsAdmission: SpecGateAdmissionRow = {
+  id: "admission-2",
+  spec_id: spec.id,
+  gate: "requirements",
+  basis: "human_approval",
+  approval_id: null,
+  revision_id: "revision-1",
+  execution_id: null,
+  actor_json: JSON.stringify({ kind: "human" }),
+  created_at: CREATED_AT,
+};
+
 // An approved predecessor whose requirements gate was admitted, so the draft
 // amendment above it can be shown as pending while its history stays visible.
 const approvedPredecessor: SpecRevision = {
@@ -463,6 +477,8 @@ function makeHost(
     measuresSlug?: boolean;
     /** Seed an approved predecessor whose requirements gate was admitted. */
     priorAdmission?: boolean;
+    /** Also admit the requirements gate on the amendment being read. */
+    currentAdmission?: boolean;
     executions?: readonly SpecExecutionRow[];
     /** Workflow lane status the reconcile read reports, keyed by execution. */
     laneStatus?: Record<
@@ -477,6 +493,13 @@ function makeHost(
     preset?: Spec["gatePolicy"]["preset"];
     /** Freeze the seeded revision as proposed, so no draft is open. */
     proposed?: boolean;
+    /**
+     * Point the seeded plan at a criterion id the revision does not carry —
+     * the shape an amendment that forked past its own content leaves behind.
+     */
+    orphanedCoverage?: boolean;
+    /** Point the seeded plan at a depended-on task id the revision lost. */
+    orphanedDependency?: boolean;
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -503,6 +526,41 @@ function makeHost(
     options.preset === undefined
       ? spec
       : { ...spec, gatePolicy: { preset: options.preset } };
+  const seededSnapshot: SpecRevisionSnapshot =
+    options.orphanedCoverage === true || options.orphanedDependency === true
+      ? {
+          ...snapshot,
+          elements: snapshot.elements.map((row) =>
+            row.element.id === "task-2" && row.version.payload.kind === "task"
+              ? {
+                  ...row,
+                  version: {
+                    ...row.version,
+                    payload: {
+                      ...row.version.payload,
+                      ...(options.orphanedCoverage === true
+                        ? {
+                            coveredCriterionElementIds: [
+                              ...row.version.payload.coveredCriterionElementIds,
+                              "criterion-dropped-by-amendment",
+                            ],
+                          }
+                        : {}),
+                      ...(options.orphanedDependency === true
+                        ? {
+                            dependsOnTaskElementIds: [
+                              ...row.version.payload.dependsOnTaskElementIds,
+                              "task-dropped-by-amendment",
+                            ],
+                          }
+                        : {}),
+                    },
+                  },
+                }
+              : row,
+          ),
+        }
+      : snapshot;
   const handlers = createSpecRouteHandlers({
     ...baseDeps,
     async listSpecs() {
@@ -529,18 +587,21 @@ function makeHost(
       }
       if (!options.priorAdmission) {
         return revisionId === revision.id
-          ? { ...snapshot, revision: stagedRevision }
+          ? { ...seededSnapshot, revision: stagedRevision }
           : null;
       }
       if (revisionId === approvedPredecessor.id) {
         return { revision: approvedPredecessor, elements: [] };
       }
       return revisionId === revision.id
-        ? { ...snapshot, revision: amendedDraft }
+        ? { ...seededSnapshot, revision: amendedDraft }
         : null;
     },
     findGateAdmissionsBySpecId() {
-      return options.priorAdmission ? [priorRequirementsAdmission] : [];
+      return [
+        ...(options.priorAdmission ? [priorRequirementsAdmission] : []),
+        ...(options.currentAdmission ? [currentRequirementsAdmission] : []),
+      ];
     },
     findExecutionsBySpecId() {
       return [...(options.executions ?? [])];
@@ -887,6 +948,78 @@ describe("cctl spec read verbs against seeded read routes", () => {
       "touched surfaces: src/cli/commands/spec/read.contract.test.ts",
     );
     expect(result.stdout).toContain("criterion coverage: R1.1");
+    // Nothing is unresolvable here, so status must not carry a line about it.
+    expect(result.stdout).not.toContain("unresolved criterion ids");
+    expect(result.stdout).not.toContain("unresolved dependency ids");
+  });
+
+  /**
+   * The dependency list is the other half of the same fork signature: a task
+   * id the amendment dropped printed as if it were a handle reads as ordering
+   * the compiler can honour.
+   */
+  it("names a depended-on task the current revision does not carry", async () => {
+    const host = makeHost({ orphanedDependency: true });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("unresolved dependency ids:");
+    expect(text.stdout).toContain(
+      "task-dropped-by-amendment (not in the current revision; excluded from ordering)",
+    );
+    // The raw id never enters the handle-shaped field.
+    expect(text.stdout).not.toContain(
+      "dependencies: T1, task-dropped-by-amendment",
+    );
+
+    const status = JSON.parse(structured.stdout).status;
+    expect(status.taskPlan[1]).toMatchObject({
+      handle: "T2",
+      dependsOn: ["T1"],
+      unresolvedDependsOnTaskElementIds: ["task-dropped-by-amendment"],
+    });
+  });
+
+  /**
+   * The ratio and the per-task coverage line both used to swallow a criterion
+   * id the revision does not carry: coverage dropped it from numerator and
+   * denominator, and the task line printed the raw id where handles go. A plan
+   * that reads "100%" while pointing at content the spec lost is exactly the
+   * fork this ticket exists for, so status has to name it.
+   */
+  it("names a covered criterion the current revision does not carry", async () => {
+    const host = makeHost({ orphanedCoverage: true });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("unresolved criterion ids:");
+    expect(text.stdout).toContain(
+      "criterion-dropped-by-amendment (not in the current revision; excluded from coverage)",
+    );
+    // The ratio says which criteria it counted, so a reader cannot take it for
+    // coverage of everything the plan claims.
+    expect(text.stdout).toContain("coverage: 1/1 current-revision criteria");
+    // The raw id never enters the handle-shaped field.
+    expect(text.stdout).not.toContain(
+      "criterion coverage: R1.1, criterion-dropped-by-amendment",
+    );
+
+    const status = JSON.parse(structured.stdout).status;
+    expect(status.taskPlan[1]).toMatchObject({
+      handle: "T2",
+      criterionCoverage: ["R1.1"],
+      unresolvedCriterionElementIds: ["criterion-dropped-by-amendment"],
+    });
   });
 
   it("qualifies an executing phase whose executions have launched no workflow lane", async () => {
@@ -1070,7 +1203,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
 
     expect(text.exitCode).toBe(0);
     expect(text.stdout).toContain(
-      "requirements: pending on current revision (gate)",
+      "requirements: pending on current revision (gate) — consulted: changed since revision revision-0",
     );
     expect(text.stdout).toContain(
       "    history: admitted on rev 1 by human (basis human_approval)",
@@ -1078,16 +1211,78 @@ describe("cctl spec read verbs against seeded read routes", () => {
     // A prior revision's admission must never read as today's gate state.
     expect(text.stdout).not.toMatch(/requirements: admitted/);
 
-    const gates = JSON.parse(structured.stdout).status.gates as Array<{
-      gate: string;
-      state: string;
-      priorAdmissions: Array<{ revisionNumber: number; basis: string }>;
-    }>;
-    const requirements = gates.find((gate) => gate.gate === "requirements");
+    const status = JSON.parse(structured.stdout).status as {
+      applicableGates: string[];
+      gates: Array<{
+        gate: string;
+        state: string;
+        applicability: { reason: string; governanceBaseRevisionId: string };
+        currentAdmissions: unknown[];
+        priorAdmissions: Array<{ revisionNumber: number; basis: string }>;
+      }>;
+    };
+    const requirements = status.gates.find(
+      (gate) => gate.gate === "requirements",
+    );
+    // The amendment introduces the requirement the approved predecessor never
+    // carried, so the gate is consulted again against that governance base.
     expect(requirements?.state).toBe("pending");
+    expect(requirements?.applicability).toEqual({
+      reason: "changed_since_governance_base",
+      governanceBaseRevisionId: approvedPredecessor.id,
+    });
+    expect(status.applicableGates).toContain("requirements");
+    // The rev-1 row is history and only history: it never becomes a current
+    // admission of revision 2.
+    expect(requirements?.currentAdmissions).toEqual([]);
     expect(requirements?.priorAdmissions).toEqual([
       expect.objectContaining({ revisionNumber: 1, basis: "human_approval" }),
     ]);
+  });
+
+  it("separates the admission that satisfies the current revision from its history", async () => {
+    const host = makeHost({ priorAdmission: true, currentAdmission: true });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    // Only the current-revision row explains today's state; the earlier one
+    // stays labelled history, with its provenance intact (R24.13).
+    expect(text.stdout).toContain(
+      "requirements: admitted (gate) — consulted: changed since revision revision-0",
+    );
+    expect(text.stdout).toContain(
+      "    admitted on rev 2 by human (basis human_approval)",
+    );
+    expect(text.stdout).toContain(
+      "    history: admitted on rev 1 by human (basis human_approval)",
+    );
+  });
+
+  it("says why a gate it does not consult asks for nothing", async () => {
+    const host = makeHost({ priorAdmission: true });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    // The design gate governs nothing this revision changed since the approved
+    // base, so "not required" has to carry the reason rather than read as an
+    // unexplained silence.
+    expect(text.stdout).toContain(
+      "design: not required (gate) — not consulted: nothing it governs changed since revision revision-0",
+    );
+    expect(text.stdout).not.toContain("not_required");
+  });
+
+  it("reports the subject approvals and the revision sign-off as separate items", async () => {
+    const host = makeHost();
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("pending subject approvals:");
+    // An open draft owes a propose, not a sign-off, and status has to say so
+    // rather than leave the section absent.
+    expect(text.stdout).toContain(
+      "revision sign-off:\n  none — no revision is under review",
+    );
   });
 
   it("gets qualified and bare element handles", async () => {

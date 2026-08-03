@@ -216,7 +216,7 @@ describe("R14.5 waiver staleness at revision approval (runtime wiring)", () => {
     specId: string,
     changedText: string,
   ): Promise<string> {
-    const amendment = await authoring.openAmendment({
+    const { revision: amendment } = await authoring.openAmendment({
       specId,
       actor: AGENT,
     });

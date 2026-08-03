@@ -14,7 +14,12 @@ import type {
   RevisionSnapshot as LintRevisionSnapshot,
   SpecRecords,
 } from "./lint";
+import {
+  createApprovalApplicability,
+  type ApprovalApplicability,
+} from "./approval-applicability";
 import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
+import { ancestorIds, nearestApprovedAncestor } from "./revision-lineage";
 import type { SignOffReviewSnapshot } from "./transitions";
 
 /**
@@ -138,24 +143,68 @@ export function toDiffRows(
   }));
 }
 
+/**
+ * Reads each distinct revision snapshot once. Approvals accumulate on a spec
+ * without bound and several of them name the same revision, so a per-approval
+ * read would grow the work of every status and sign-off evaluation with the
+ * approval count rather than with the number of revisions involved.
+ */
+export function cacheRevisionSnapshots(
+  load: (revisionId: string) => SpecRevisionSnapshot | null,
+): (revisionId: string) => SpecRevisionSnapshot | null {
+  const loaded = new Map<string, SpecRevisionSnapshot | null>();
+  return (revisionId) => {
+    if (!loaded.has(revisionId)) loaded.set(revisionId, load(revisionId));
+    return loaded.get(revisionId) ?? null;
+  };
+}
+
 export interface LoadedProposalState {
   draft: LintRevisionSnapshot;
   records: SpecRecords;
   reviewSnapshot: SignOffReviewSnapshot;
-  baseSnapshot: SpecRevisionSnapshot | null;
+  /**
+   * The immediate parent (`basedOnRevisionId`) — what this review attempt
+   * changed, and the baseline the review diff and approval carry-forward read.
+   */
+  reviewBaseSnapshot: SpecRevisionSnapshot | null;
+  /**
+   * The nearest approved ancestor — what still owes an admission. Null for a
+   * spec no revision of which has ever been approved.
+   */
+  governanceBaseSnapshot: SpecRevisionSnapshot | null;
+  /** The one authority on whether an approval satisfies this revision. */
+  approvalApplies: ApprovalApplicability;
 }
 
+export type ProposalStateRepo = Pick<
+  SpecsRepoTransaction,
+  "getRevisionSnapshot" | "listRevisions"
+>;
+
 export function loadProposalState(
-  repo: SpecsRepoTransaction,
+  repo: ProposalStateRepo,
   review: SpecReviewRepo,
   links: Pick<SpecLinksRepo, "findBySpecId">,
   spec: Spec,
   snapshot: SpecRevisionSnapshot,
 ): LoadedProposalState {
+  const loadSnapshot = cacheRevisionSnapshots((revisionId) =>
+    revisionId === snapshot.revision.id
+      ? snapshot
+      : repo.getRevisionSnapshot(revisionId),
+  );
   const baseSnapshot =
     snapshot.revision.basedOnRevisionId === null
       ? null
-      : repo.getRevisionSnapshot(snapshot.revision.basedOnRevisionId);
+      : loadSnapshot(snapshot.revision.basedOnRevisionId);
+  const revisions = repo.listRevisions(spec.id);
+  const governanceBase = nearestApprovedAncestor(
+    revisions,
+    snapshot.revision.id,
+  );
+  const governanceBaseSnapshot =
+    governanceBase === null ? null : loadSnapshot(governanceBase.id);
   const draft = toLintSnapshot(spec, snapshot, review);
   const baseDraft =
     baseSnapshot === null
@@ -164,7 +213,7 @@ export function loadProposalState(
   const approvals = review.findApprovalsBySpecId(spec.id);
   const approvedElements = approvals.flatMap((approval) => {
     if (approval.element_id === null) return [];
-    const approvedSnapshot = repo.getRevisionSnapshot(approval.revision_id);
+    const approvedSnapshot = loadSnapshot(approval.revision_id);
     const approvedVersion = approvedSnapshot?.elements.find(
       ({ element }) => element.id === approval.element_id,
     )?.version;
@@ -206,9 +255,7 @@ export function loadProposalState(
         })
         .safeParse(JSON.parse(link.snapshot_json!));
       if (!parsed.success) return [];
-      const approvedSnapshot = repo.getRevisionSnapshot(
-        parsed.data.approvedRevisionId,
-      );
+      const approvedSnapshot = loadSnapshot(parsed.data.approvedRevisionId);
       if (approvedSnapshot === null) return [];
       const task = approvedSnapshot.elements.find(
         ({ element, version }) =>
@@ -247,7 +294,9 @@ export function loadProposalState(
   };
   const reviewSnapshot: SignOffReviewSnapshot = {
     revisionId: snapshot.revision.id,
-    baseRevisionRows: baseSnapshot === null ? [] : toDiffRows(baseSnapshot),
+    governanceBaseRevisionId: governanceBase?.id ?? null,
+    governanceBaseRevisionRows:
+      governanceBaseSnapshot === null ? [] : toDiffRows(governanceBaseSnapshot),
     revisionRows: toDiffRows(snapshot),
     blockingThreads: review
       .findCommentsByRevision(snapshot.revision.id)
@@ -256,19 +305,33 @@ export function loadProposalState(
         handle: comment.thread_id,
         resolved: comment.resolution !== "open",
       })),
-    approvals: approvals
-      .filter((approval) => approval.subject_kind !== "revision")
-      .map((approval) => ({
-        subjectKind: approval.subject_kind as
-          | "requirement"
-          | "decision"
-          | "plan",
-        ...(approval.element_id === null
-          ? {}
-          : { elementId: approval.element_id }),
-        revisionId: approval.revision_id,
-        validity: approval.validity,
-      })),
+    approvals: approvals.flatMap((approval) =>
+      approval.subject_kind === "revision"
+        ? []
+        : [
+            {
+              subjectKind: approval.subject_kind,
+              elementId: approval.element_id,
+              revisionId: approval.revision_id,
+              validity: approval.validity,
+            },
+          ],
+    ),
   };
-  return { draft, records, reviewSnapshot, baseSnapshot };
+  return {
+    draft,
+    records,
+    reviewSnapshot,
+    reviewBaseSnapshot: baseSnapshot,
+    governanceBaseSnapshot,
+    approvalApplies: createApprovalApplicability({
+      revisionId: snapshot.revision.id,
+      ancestorRevisionIds: ancestorIds(revisions, snapshot.revision.id),
+      revisionRows: reviewSnapshot.revisionRows,
+      rowsForRevision: (revisionId) => {
+        const approved = loadSnapshot(revisionId);
+        return approved === null ? null : toDiffRows(approved);
+      },
+    }),
+  };
 }

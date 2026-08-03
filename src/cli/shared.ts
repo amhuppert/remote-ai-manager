@@ -1,4 +1,8 @@
 import path from "node:path";
+import {
+  BUILD_MISMATCH_HEADER,
+  parseBuildMismatchHeader,
+} from "@/lib/agent-gateway/build-parity";
 import { BUILD_INFO, formatBuildStamp } from "@/lib/build-info";
 import { resolveConfigDirFrom } from "@/lib/config/config-dir";
 import {
@@ -793,6 +797,7 @@ export type CliRequestResult =
   | { kind: "ok"; status: number; body: unknown }
   | { kind: "connection"; detail: string }
   | { kind: "auth"; hadToken: boolean; tokenSource: TokenSource | null }
+  | { kind: "version_mismatch"; serverBuild: string; cliBuild: string }
   | {
       kind: "error";
       status: number;
@@ -980,6 +985,22 @@ function classifyErrorBody(
 }
 
 /**
+ * The build skew this response reports, or null when the binary and the server
+ * agree. Every CC server publishes its own `cctl`, so skew means this binary
+ * belongs to a different server than the one being addressed — its command
+ * surface and the state it is reading come from different trees.
+ */
+function readBuildMismatch(
+  response: Response,
+): Extract<CliRequestResult, { kind: "version_mismatch" }> | null {
+  const header = response.headers.get(BUILD_MISMATCH_HEADER);
+  if (header === null) return null;
+  const parsed = parseBuildMismatchHeader(header);
+  if (parsed === null) return null;
+  return { kind: "version_mismatch", ...parsed };
+}
+
+/**
  * Issue a token-authenticated request to a CC agent endpoint and classify the
  * response into the shared discriminated result. Sends the build header and a
  * JSON content-type; attaches the bearer token when present.
@@ -1008,6 +1029,9 @@ export async function cliRequest(
       tokenSource: params.tokenSource,
     };
   }
+
+  const skew = readBuildMismatch(response);
+  if (skew !== null) return skew;
 
   let body: unknown;
   try {
@@ -1054,6 +1078,9 @@ export async function cliRequestText(
       tokenSource: params.tokenSource,
     };
   }
+
+  const skew = readBuildMismatch(response);
+  if (skew !== null) return skew;
 
   const text = await response.text();
   if (response.ok) return { kind: "ok", status: response.status, text };
@@ -1155,6 +1182,16 @@ export function failureFromRequest(
       exitCode: EXIT_CONNECTION,
       message,
       hint: "run `cctl doctor` to check connectivity and auth",
+      json,
+    });
+  }
+  if (result.kind === "version_mismatch") {
+    return failure({
+      exitCode: EXIT_VERSION_MISMATCH,
+      message: `this cctl is build ${result.cliBuild}; the server is build ${result.serverBuild}`,
+      detail:
+        "  every CC server publishes its own cctl at <its configDir>/bin/cctl — a binary from one server reads a\n  command surface the other does not have, so the result would describe the wrong build",
+      hint: "run `cctl doctor --server <url>` to print that server's cctl path, then invoke that binary",
       json,
     });
   }

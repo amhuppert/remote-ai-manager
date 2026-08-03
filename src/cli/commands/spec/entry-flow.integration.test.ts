@@ -24,6 +24,12 @@ import type { CliEnv, CliHost, FetchInit } from "../../shared";
 const PROJECT_PATH = "/repos/native-entry";
 const ELEMENT_FILE = "/tmp/native-entry-element.json";
 const SECOND_ELEMENT_FILE = "/tmp/native-entry-second-element.json";
+/**
+ * The same element as a draft write. `spec create` and `spec draft` take
+ * different documents — only the draft one states the version it replaces — so
+ * one file cannot serve both verbs.
+ */
+const SECOND_DRAFT_FILE = "/tmp/native-entry-second-draft.json";
 const BATCH_FILE = "/tmp/native-entry-batch.json";
 const STALE_BATCH_FILE = "/tmp/native-entry-stale-batch.json";
 
@@ -215,12 +221,18 @@ describe("native /spec first-save visibility", () => {
         }
         if (filePath === BATCH_FILE) return batchDocument(1);
         if (filePath === STALE_BATCH_FILE) return batchDocument(7);
-        if (filePath === SECOND_ELEMENT_FILE) {
+        if (
+          filePath === SECOND_ELEMENT_FILE ||
+          filePath === SECOND_DRAFT_FILE
+        ) {
           return JSON.stringify({
             elementId: "requirement-2",
             kind: "requirement",
             parentElementId: null,
             position: 1,
+            ...(filePath === SECOND_DRAFT_FILE
+              ? { baseElementVersion: null }
+              : {}),
             payload: {
               kind: "requirement",
               statement: "Audit events are queryable.",
@@ -412,15 +424,7 @@ describe("native /spec first-save visibility", () => {
     expect(created.exitCode).toBe(0);
 
     const drafted = await runCli(
-      [
-        "spec",
-        "draft",
-        "audit-log",
-        "--file",
-        SECOND_ELEMENT_FILE,
-        "--base-version",
-        "new",
-      ],
+      ["spec", "draft", "audit-log", "--file", SECOND_DRAFT_FILE],
       env,
       host,
     );

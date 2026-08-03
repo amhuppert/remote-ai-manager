@@ -144,10 +144,21 @@ describe("ReviewService.grantGateApproval (delivery gate)", () => {
         publish: () => ({ delivered: true }),
       }),
       attention: eventsRepo,
-      notifier: { approvalRequested: vi.fn(), approvalGranted },
+      notifier: {
+        approvalRequested: vi.fn(),
+        approvalGranted,
+        approvalRequestsClosed: vi.fn(),
+      },
       newId: (prefix) => `${prefix}-idem-${++idemSequence}`,
       now: () => NOW,
     });
+    const requested = await notifyingService.requestApproval({
+      specId: SPEC_ID,
+      revisionId: APPROVED_REVISION_ID,
+      gate: "delivery",
+      actor: { kind: "agent", conversationId: "conversation-1" },
+    });
+    if (!requested.ok) throw new Error("the delivery request was refused");
     const first = await notifyingService.grantGateApproval({
       specId: SPEC_ID,
       revisionId: APPROVED_REVISION_ID,
@@ -172,13 +183,15 @@ describe("ReviewService.grantGateApproval (delivery gate)", () => {
         .findGateAdmissionsByRevision(APPROVED_REVISION_ID)
         .filter((admission) => admission.gate === "delivery"),
     ).toHaveLength(1);
-    // The replayed grant re-reports the notice so a request re-opened after
-    // the original grant still clears from Needs You (the notifier dedupes
-    // per request, so nothing duplicates).
+    // The replayed grant re-reports the notice naming the same open request,
+    // so a Needs You row lost to a notifier crash still clears (the notifier
+    // dedupes per request, so nothing duplicates).
     expect(approvalGranted).toHaveBeenCalledTimes(2);
-    expect(approvalGranted.mock.calls[1]?.[0]).toMatchObject({
-      satisfiedGates: ["delivery"],
-    });
+    for (const call of approvalGranted.mock.calls) {
+      expect(call[0]).toMatchObject({
+        satisfiedAttentionIds: [requested.value.attentionId],
+      });
+    }
   });
 
   it("records a human execution-start approval with its own admission and durable marker", async () => {

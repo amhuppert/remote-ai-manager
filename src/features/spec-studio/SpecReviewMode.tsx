@@ -42,7 +42,11 @@ import {
   type CommentAnchor,
 } from "@/lib/document-comments/schemas";
 import { createClientLogger } from "@/lib/logging/client-logger";
-import { COMBINED_APPROVAL_DIAL, resolveDial } from "@/lib/specs/policy";
+import {
+  COMBINED_APPROVAL_DIAL,
+  authoringApprovalsCollapseIntoSignOff,
+  resolveDial,
+} from "@/lib/specs/policy";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import {
@@ -59,7 +63,6 @@ import {
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
 } from "@/lib/specs/schemas";
-import { consultedAuthoringGates } from "@/lib/specs/transitions";
 import { cn } from "@/lib/ui/cn";
 
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
@@ -379,6 +382,11 @@ export default function SpecReviewMode({
   );
   const unchangedViews = unchangedElementViews(diff, currentSnapshot);
   const readiness = reviewReadiness(detail);
+  const outstandingElementIds = new Set(
+    detail.status.pendingApprovals.flatMap((pending) =>
+      pending.elementId === null ? [] : [pending.elementId],
+    ),
+  );
 
   return (
     <div
@@ -580,7 +588,10 @@ export default function SpecReviewMode({
                   ))}
                 </div>
 
-                <UnchangedApprovals views={unchangedViews} />
+                <UnchangedApprovals
+                  views={unchangedViews}
+                  outstandingElementIds={outstandingElementIds}
+                />
               </>
             )}
           </section>
@@ -921,8 +932,16 @@ function unchangedElementViews(
 
 function UnchangedApprovals({
   views,
+  outstandingElementIds,
 }: {
   views: ReviewElementView[];
+  /**
+   * Unchanged against the immediate parent is not approved: a change that
+   * entered through a withdrawn attempt still owes the approval the server
+   * measures against the nearest approved ancestor, so its chip must not read
+   * as carried forward.
+   */
+  outstandingElementIds: ReadonlySet<string>;
 }): React.JSX.Element | null {
   if (views.length === 0) return null;
 
@@ -935,15 +954,21 @@ function UnchangedApprovals({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="flex flex-wrap gap-xs pt-sm">
-            {views.map((view) => (
-              <StatusChip
-                key={view.entry.element.id}
-                tone="green"
-                icon={<CheckIcon size={12} className="text-green" />}
-              >
-                {view.handle}
-              </StatusChip>
-            ))}
+            {views.map((view) =>
+              outstandingElementIds.has(view.entry.element.id) ? (
+                <StatusChip key={view.entry.element.id} tone="amber">
+                  {view.handle} — approval outstanding
+                </StatusChip>
+              ) : (
+                <StatusChip
+                  key={view.entry.element.id}
+                  tone="green"
+                  icon={<CheckIcon size={12} className="text-green" />}
+                >
+                  {view.handle}
+                </StatusChip>
+              ),
+            )}
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -1061,17 +1086,14 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
     };
   }
 
-  // Mirrors the server sign-off preconditions: when every propose-time dial
-  // is the combined dial, the human sign-off act itself is the combined
-  // approval and no per-item approvals are required.
-  const combined = (["requirements", "design", "plan"] as const).every(
-    (gate) =>
-      resolveDial(detail.spec.gatePolicy, gate) === COMBINED_APPROVAL_DIAL,
+  const combined = authoringApprovalsCollapseIntoSignOff(
+    detail.spec.gatePolicy,
   );
   const requiresApproval = (gate: "requirements" | "design" | "plan") => {
     const dial = resolveDial(detail.spec.gatePolicy, gate);
     return dial === "gate" || dial === COMBINED_APPROVAL_DIAL;
   };
+  const outstanding = outstandingSubjects(detail);
   const consulted = consultedReviewGates(detail);
   const subjects: BulkApprovalSubject[] = [];
   if (!combined) {
@@ -1110,8 +1132,7 @@ function reviewReadiness(detail: SpecDetailView): ReviewReadiness {
   }
 
   const approved = subjects.filter(
-    (subject) =>
-      latestSubjectApproval(detail.approvals, subject)?.validity === "valid",
+    (subject) => !outstanding.has(subjectKey(subject)),
   ).length;
   const blockingThreadCount = groupThreads(detail).filter((thread) =>
     thread.comments.some(
@@ -1225,53 +1246,71 @@ export function bulkApprovalSubjects(
     );
   }
 
-  const remaining: BulkApprovalSubject[] = elementSubjects.filter(
-    (subject) =>
-      latestSubjectApproval(detail.approvals, subject)?.validity !== "valid",
+  const outstanding = outstandingSubjects(detail);
+  const remaining: BulkApprovalSubject[] = elementSubjects.filter((subject) =>
+    outstanding.has(subjectKey(subject)),
   );
   const planSubject = { subjectKind: "plan" as const, elementId: null };
   if (
     snapshot.revision.authoringStage === "plan" &&
     consulted.has("plan") &&
     requiresApproval("plan") &&
-    latestSubjectApproval(detail.approvals, planSubject)?.validity !== "valid"
+    outstanding.has(subjectKey(planSubject))
   ) {
     remaining.push(planSubject);
   }
   return remaining;
 }
 
+/**
+ * The gates the server's projection says this revision's transition consults.
+ * Applicability is measured against the nearest approved ancestor, which no
+ * client-side comparison against the immediate parent can reproduce: an
+ * obligation that entered through a withdrawn attempt is unchanged against
+ * that attempt and still unadmitted against the governance baseline.
+ */
 function consultedReviewGates(
   detail: SpecDetailView,
 ): Set<"requirements" | "design" | "plan"> {
-  const snapshot = detail.currentRevision;
-  if (snapshot === null) return new Set();
   return new Set(
-    consultedAuthoringGates(
-      snapshot.revision.authoringStage,
-      detail.baseRevision === null ? [] : toDiffRows(detail.baseRevision),
-      toDiffRows(snapshot),
+    detail.status.applicableGates.flatMap((gate) =>
+      gate === "requirements" || gate === "design" || gate === "plan"
+        ? [gate]
+        : [],
     ),
   );
 }
 
-function latestSubjectApproval(
-  approvals: SpecApprovalRow[],
-  subject: BulkApprovalSubject,
-): SpecApprovalRow | null {
-  return (
-    approvals
-      .filter(
-        (approval) =>
-          approval.subject_kind === subject.subjectKind &&
-          approval.element_id === subject.elementId,
-      )
-      .toSorted((left, right) =>
-        left.granted_at === right.granted_at
-          ? left.id.localeCompare(right.id)
-          : left.granted_at.localeCompare(right.granted_at),
-      )
-      .at(-1) ?? null
+function subjectKey(subject: BulkApprovalSubject): string {
+  return `${subject.subjectKind}:${subject.elementId ?? ""}`;
+}
+
+/**
+ * The subjects a human still owes, read from the server's projection. An
+ * approval row's own `validity` cannot answer this: it says nothing about
+ * whether the approval was recorded on a revision in this lineage or against
+ * the content the revision carries now.
+ */
+function outstandingSubjects(detail: SpecDetailView): Set<string> {
+  return new Set(
+    detail.status.pendingApprovals.flatMap((pending) => {
+      if (pending.gate === "requirements" && pending.elementId !== null) {
+        return [
+          subjectKey({
+            subjectKind: "requirement",
+            elementId: pending.elementId,
+          }),
+        ];
+      }
+      if (pending.gate === "design" && pending.elementId !== null) {
+        return [
+          subjectKey({ subjectKind: "decision", elementId: pending.elementId }),
+        ];
+      }
+      return pending.gate === "plan"
+        ? [subjectKey({ subjectKind: "plan", elementId: null })]
+        : [];
+    }),
   );
 }
 
@@ -1317,6 +1356,14 @@ function ReviewChangeCard({
     approvalTarget === null
       ? null
       : approvalFor(detail.approvals, approvalTarget);
+  // A recorded approval is not an approval of THIS revision: whether it
+  // applies depends on the lineage it was recorded in and on the content the
+  // revision carries now, which only the server's projection answers. The
+  // row's own validity would offer "Unapprove" for a subject sign-off refuses.
+  const approvalApplies =
+    approval?.validity === "valid" &&
+    (approvalTarget === null ||
+      !outstandingSubjects(detail).has(subjectKey(approvalTarget)));
   const threads = groupThreads(detail).filter(
     (thread) => thread.comments[0]?.element_id === change.elementId,
   );
@@ -1537,9 +1584,7 @@ function ReviewChangeCard({
             {approval?.validity === "closed" && (
               <StatusChip tone="neutral">Approval closed</StatusChip>
             )}
-            {approval?.validity === "valid" && (
-              <StatusChip tone="green">Approved</StatusChip>
-            )}
+            {approvalApplies && <StatusChip tone="green">Approved</StatusChip>}
             <Button
               size="sm"
               touch
@@ -1557,7 +1602,7 @@ function ReviewChangeCard({
               >
                 Covered by sign-off
               </StatusChip>
-            ) : approval?.validity === "valid" ? (
+            ) : approvalApplies ? (
               <Button
                 size="sm"
                 touch

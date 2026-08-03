@@ -238,6 +238,18 @@ describe("shared spec contracts", () => {
     }
   });
 
+  it("carries a refusal code for a write that would leave a reference dangling", () => {
+    expect(refusalCodeSchema.safeParse("dangling_reference").success).toBe(
+      true,
+    );
+  });
+
+  it("carries a refusal code for an element id the spec already owns historically", () => {
+    expect(refusalCodeSchema.safeParse("historical_element_id").success).toBe(
+      true,
+    );
+  });
+
   it.each([
     "spec-changed",
     "spec-revision-changed",

@@ -2,7 +2,6 @@ import type {
   SpecAssumptionDisposition,
   SpecAuthoringStage,
   SpecElementKind,
-  SpecElementPayload,
   SpecQuestionStatus,
 } from "./schemas";
 import {
@@ -11,6 +10,11 @@ import {
   type ContractedTaskGroup,
   type GroupContraction,
 } from "./group-contraction";
+import {
+  elementReferences,
+  type ReferenceSourceElement,
+  type SpecReferenceRelation,
+} from "./element-references";
 
 export type LintSeverity =
   | "blocks_propose"
@@ -25,27 +29,10 @@ export interface LintFinding {
   message: string;
 }
 
-export interface ElementCitation {
-  kind: "element";
-  elementId: string;
-  handle: string;
-}
-
-export interface AssumptionCitation {
-  kind: "assumption";
-  assumptionId: string;
-  handle: string;
-}
-
-export type InternalCitation = ElementCitation | AssumptionCitation;
-
-export interface RevisionElement {
-  id: string;
+export interface RevisionElement extends ReferenceSourceElement {
   handle: string;
   parentElementId?: string;
   payloadHash: string;
-  payload: SpecElementPayload;
-  citations?: InternalCitation[];
 }
 
 export interface RevisionSnapshot {
@@ -471,8 +458,8 @@ function firstTouchedPathOverlap(
 function danglingTypedReferenceFinding(
   sourceElement: RevisionElement,
   targetId: string,
-  expectedKind: "requirement" | "criterion" | "decision" | "task",
-  relation: "traces to" | "covers" | "depends on",
+  expectedKind: SpecElementKind,
+  relation: SpecReferenceRelation,
   elementsById: ReadonlyMap<string, RevisionElement>,
   knownElementsById: ReadonlyMap<string, KnownElementRecord>,
   removedTaskDependencyHasSpecificFinding = false,
@@ -534,9 +521,6 @@ export function lint(
   const requirementIds = new Set(requirements.map((element) => element.id));
   const criteria = elements.filter(
     (element) => element.payload.kind === "criterion",
-  );
-  const decisions = elements.filter(
-    (element) => element.payload.kind === "decision",
   );
   const tasks = elements.filter((element) => element.payload.kind === "task");
   const tasksById = new Map(tasks.map((element) => [element.id, element]));
@@ -632,74 +616,6 @@ export function lint(
     }
   }
 
-  for (const taskElement of tasks) {
-    const scope = taskScope(taskElement);
-    if (!scope) {
-      continue;
-    }
-    const references = [
-      ...scope.tracedRequirementElementIds.map((targetId) => ({
-        targetId,
-        expectedKind: "requirement" as const,
-        relation: "traces to" as const,
-        removedTaskDependencyHasSpecificFinding: false,
-      })),
-      ...scope.tracedDecisionElementIds.map((targetId) => ({
-        targetId,
-        expectedKind: "decision" as const,
-        relation: "traces to" as const,
-        removedTaskDependencyHasSpecificFinding: false,
-      })),
-      ...scope.coveredCriterionElementIds.map((targetId) => ({
-        targetId,
-        expectedKind: "criterion" as const,
-        relation: "covers" as const,
-        removedTaskDependencyHasSpecificFinding: false,
-      })),
-      ...scope.dependsOnTaskElementIds.map((targetId) => ({
-        targetId,
-        expectedKind: "task" as const,
-        relation: "depends on" as const,
-        removedTaskDependencyHasSpecificFinding: true,
-      })),
-    ];
-
-    for (const reference of references) {
-      const finding = danglingTypedReferenceFinding(
-        taskElement,
-        reference.targetId,
-        reference.expectedKind,
-        reference.relation,
-        elementsById,
-        knownElementsById,
-        reference.removedTaskDependencyHasSpecificFinding,
-      );
-      if (finding) {
-        findings.push(finding);
-      }
-    }
-  }
-
-  for (const decisionElement of decisions) {
-    if (decisionElement.payload.kind !== "decision") {
-      continue;
-    }
-    for (const requirementId of decisionElement.payload
-      .tracedRequirementElementIds) {
-      const finding = danglingTypedReferenceFinding(
-        decisionElement,
-        requirementId,
-        "requirement",
-        "traces to",
-        elementsById,
-        knownElementsById,
-      );
-      if (finding) {
-        findings.push(finding);
-      }
-    }
-  }
-
   const assumptionsById = new Map(
     (records.assumptions ?? []).map((assumption) => [
       assumption.assumptionId,
@@ -707,28 +623,38 @@ export function lint(
     ]),
   );
   for (const sourceElement of elements) {
-    for (const citation of sourceElement.citations ?? []) {
-      const targetExists =
-        citation.kind === "element"
-          ? elementsById.has(citation.elementId)
-          : assumptionsById.has(citation.assumptionId);
-      if (targetExists) {
+    for (const reference of elementReferences(sourceElement)) {
+      if (reference.expectedKind === null) {
+        const targetExists =
+          reference.targetSpace === "assumption"
+            ? assumptionsById.has(reference.targetId)
+            : elementsById.has(reference.targetId);
+        if (targetExists) {
+          continue;
+        }
+        findings.push({
+          ruleId: "9.6.dangling-handle",
+          severity: "blocks_propose",
+          elementHandle: sourceElement.handle,
+          message: `${sourceElement.handle} cites ${
+            knownElementsById.has(reference.targetId) ? "removed" : "unknown"
+          } element ${reference.targetHandle ?? reference.targetId}.`,
+        });
         continue;
       }
 
-      const targetId =
-        citation.kind === "element"
-          ? citation.elementId
-          : citation.assumptionId;
-      const targetWasKnown = knownElementsById.has(targetId);
-      findings.push({
-        ruleId: "9.6.dangling-handle",
-        severity: "blocks_propose",
-        elementHandle: sourceElement.handle,
-        message: `${sourceElement.handle} cites ${
-          targetWasKnown ? "removed" : "unknown"
-        } element ${citation.handle}.`,
-      });
+      const finding = danglingTypedReferenceFinding(
+        sourceElement,
+        reference.targetId,
+        reference.expectedKind,
+        reference.relation,
+        elementsById,
+        knownElementsById,
+        reference.field === "dependsOnTaskElementIds",
+      );
+      if (finding) {
+        findings.push(finding);
+      }
     }
   }
 
@@ -757,11 +683,11 @@ export function lint(
   }
 
   for (const sourceElement of elements) {
-    for (const citation of sourceElement.citations ?? []) {
-      if (citation.kind !== "assumption") {
+    for (const reference of elementReferences(sourceElement)) {
+      if (reference.targetSpace !== "assumption") {
         continue;
       }
-      const assumption = assumptionsById.get(citation.assumptionId);
+      const assumption = assumptionsById.get(reference.targetId);
       if (assumption?.disposition !== "rejected") {
         continue;
       }
@@ -805,12 +731,15 @@ export function lint(
     if (!approvedElementsById.has(sourceElement.id)) {
       continue;
     }
-    for (const citation of sourceElement.citations ?? []) {
-      if (citation.kind !== "element") {
+    for (const reference of elementReferences(sourceElement)) {
+      if (
+        reference.field !== "citations" ||
+        reference.targetSpace !== "element"
+      ) {
         continue;
       }
-      const baseTarget = baseElementsById.get(citation.elementId);
-      const currentTarget = elementsById.get(citation.elementId);
+      const baseTarget = baseElementsById.get(reference.targetId);
+      const currentTarget = elementsById.get(reference.targetId);
       if (
         !baseTarget ||
         !currentTarget ||

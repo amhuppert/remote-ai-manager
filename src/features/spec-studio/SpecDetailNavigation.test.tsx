@@ -79,6 +79,12 @@ function attentionDetailFixture(): ReturnType<
   };
   detail.revisions = [...detail.revisions, proposedRevision];
   detail.status.phase = { primary: "in_review", authoringStage: "plan" };
+  // The plan stage is the revision's own, so its gate is consulted and its
+  // subject is what the server still owes.
+  detail.status.applicableGates = ["plan"];
+  detail.status.pendingApprovals = [
+    { gate: "plan", subject: "plan", elementId: null },
+  ];
   detail.questions = [
     {
       id: "question-1",

@@ -1,6 +1,7 @@
 import { remainingAuthoringSequence } from "@/lib/specs/authoring-sequence";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import { toDiffRows } from "@/lib/specs/review-state";
+import { consultedAuthoringGates } from "@/lib/specs/transitions";
 import type { SpecAuthoringStage } from "@/lib/specs/schemas";
 import {
   specDetailViewSchema,
@@ -31,20 +32,23 @@ export function policyImpactDraftFixture(
     revisionId: "revision-4",
     revisionNumber: 4,
     pinnedStage,
-    baseRevisionRows: [],
-    revisionRows: [
-      {
-        elementId: "requirement-1",
-        parentElementId: null,
-        payloadHash: "requirement-hash",
-        payload: {
-          kind: "requirement",
-          statement: "Every execution pins scope.",
-          priority: "must",
-          risk: "high",
+    governanceConsultedGates: consultedAuthoringGates(
+      pinnedStage,
+      [],
+      [
+        {
+          elementId: "requirement-1",
+          parentElementId: null,
+          payloadHash: "requirement-hash",
+          payload: {
+            kind: "requirement",
+            statement: "Every execution pins scope.",
+            priority: "must",
+            risk: "high",
+          },
         },
-      },
-    ],
+      ],
+    ),
   };
 }
 
@@ -260,6 +264,10 @@ export function specControlsDetailFixture(
       // The fixture spec's current revision is approved, so no draft is open.
       authoringSequence: null,
       pendingApprovals: [],
+      applicableGates: [],
+      revisionSignOff: null,
+      pendingBlock: null,
+      nextAction: null,
       openQuestions: [],
       assumptions: [],
       taskPlan: [],
@@ -558,8 +566,11 @@ export function draftingSpecControlsDetailFixture(
     revisionId: draft.revision.id,
     revisionNumber: draft.revision.number,
     pinnedStage,
-    baseRevisionRows: toDiffRows(approved),
-    revisionRows: toDiffRows(draft),
+    governanceConsultedGates: consultedAuthoringGates(
+      pinnedStage,
+      toDiffRows(approved),
+      toDiffRows(draft),
+    ),
   });
   return detail;
 }

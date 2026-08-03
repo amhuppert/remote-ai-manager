@@ -4,7 +4,8 @@ import { createLogger } from "@/lib/logging";
 import {
   createAuthoringSpecInputSchema,
   createSpecInitialElementSchema,
-  draftElementBatchItemSchema,
+  draftElementDocumentSchema,
+  type DraftElementInput,
 } from "@/lib/specs/authoring-service";
 import {
   explainInvalidElementHandle,
@@ -33,9 +34,11 @@ import { executionScopeSchema } from "@/lib/specs/scope-validation";
 import {
   specAssumptionViewSchema,
   specEditContextViewSchema,
+  specProposeResultViewSchema,
   specQuestionViewSchema,
   specStartedExecutionViewSchema,
   type SpecEditContextView,
+  type SpecProposeResultView,
 } from "@/lib/specs/view-schemas";
 import { flagNamesFor } from "../../help-registry";
 import {
@@ -59,6 +62,7 @@ import {
   type ProjectConversationContext,
   type GlobalFlags,
 } from "../../shared";
+import { pendingBlockLines } from "./projection-text";
 
 const logger = createLogger("cli.spec");
 const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
@@ -75,32 +79,36 @@ const createFlagsSchema = createAuthoringSpecInputSchema
  * kind/version phrasing rather than failing with invalid_response.
  */
 const assignedHandleSchema = z.string().min(1).nullable().optional();
+/**
+ * Whether the write brought an element id the spec already owned back into the
+ * revision. Optional for the same reason the handle is: a CLI newer than its
+ * server still parses, and an absent flag reads as an ordinary save.
+ */
+const revivedSchema = z.boolean().optional();
 const createResponseSchema = z
   .object({
     spec: specSchema,
     draft: specRevisionSchema,
     element: specElementSchema,
     version: specElementVersionSchema,
+    revived: revivedSchema,
     handle: assignedHandleSchema,
   })
   .strict();
-// One element-file shape serves both the create --file (first save) and
-// draft --file payloads; it is the server's own input schema, so the CLI
-// cannot drift from what the create/draft-upsert actions accept.
-const draftFileSchema = createSpecInitialElementSchema;
 const draftResponseSchema = z
   .object({
     element: specElementSchema,
     version: specElementVersionSchema,
+    revived: revivedSchema,
     handle: assignedHandleSchema,
   })
   .strict();
 /**
- * The batch form of the same document: an array of element writes, each
- * carrying its OWN `baseElementVersion`. It is the server's batch item schema,
- * so a batch cannot be authored against a shape the action would reject.
+ * The batch form of the same document: an array of the element writes a lone
+ * `--file` object already is. Both forms are the server's own draft input
+ * schema, so a document a batch accepts is one a single write accepts too.
  */
-const draftBatchFileSchema = z.array(draftElementBatchItemSchema).min(1);
+const draftBatchFileSchema = z.array(draftElementDocumentSchema).min(1);
 const draftBatchResponseSchema = z
   .object({
     revisionId: z.string().min(1),
@@ -132,12 +140,20 @@ const draftBatchRefusalsSchema = z
 // Mutations answer with the same domain views the read path projects, so
 // the CLI parses those views — a raw persistence row is a contract break.
 const questionResponseSchema = specQuestionViewSchema;
-const proposeResponseSchema = z
+const proposeResponseSchema = specProposeResultViewSchema;
+/**
+ * An amendment answers with the revision it opened and the withdrawn
+ * revisions it could not carry — a withdrawal is terminal, so its content is
+ * dropped rather than folded forward.
+ */
+const amendResponseSchema = z
   .object({
     revision: specRevisionSchema,
-    diff: z.unknown(),
-    absorbedSignOff: z.boolean(),
+    skippedWithdrawnRevisions: z.array(specRevisionSchema),
   })
+  .strict();
+const withdrawProposalResponseSchema = z
+  .object({ withdrawn: specRevisionSchema, draft: specRevisionSchema })
   .strict();
 const advanceStageSchema = z.enum(["requirements", "design"]);
 const advanceResponseSchema = z
@@ -378,7 +394,7 @@ function batchWrittenLine(
   slug: string,
   entry: z.infer<typeof draftBatchResponseSchema>["written"][number],
 ): string {
-  return `  [${entry.index}] ${elementLabel(slug, entry.handle, entry.element.kind)} at version ${entry.version.elementVersion}`;
+  return `  [${entry.index}] ${elementLabel(slug, entry.handle, entry.element.kind)} at version ${entry.version.elementVersion}${entry.revived ? " (revived)" : ""}`;
 }
 
 /**
@@ -473,6 +489,12 @@ interface MutationOutcome {
   readonly actsNext: "agent" | "human";
   /** What is blocked and on whom, or null when nothing is. */
   readonly blocked: string | null;
+  /**
+   * The structured detail behind `blocked` — the gates and conditions the
+   * server named. Rendered between the position and the next action, because a
+   * one-sentence blocker cannot carry a multi-gate, multi-condition block.
+   */
+  readonly detail?: readonly string[];
   readonly next: string;
   readonly instruction?: string;
 }
@@ -501,6 +523,7 @@ function mutationResult(
           ...tokens.map(([key, token]) => `  ${tokenLabel(key)}: ${token}`),
         ]),
     `acts next: ${outcome.actsNext}${outcome.blocked === null ? "" : ` — ${outcome.blocked}`}`,
+    ...(outcome.detail ?? []),
     `next: ${outcome.next}`,
     ...(outcome.instruction === undefined
       ? []
@@ -529,7 +552,51 @@ function mutationResult(
 
 /** The command that continues authoring in an open draft. */
 function draftNextCommand(slug: string): string {
-  return `cctl spec draft ${slug} --file <element.json> --base-version new`;
+  return `cctl spec draft ${slug} --file <element.json>`;
+}
+
+/**
+ * The command that carries out the act the server's projection named. Which
+ * act comes next — and at which gate, for which subject — is the server's
+ * answer; this only turns it into an invocation. Sign-off and condition
+ * resolution have no agent-callable verb, so both point back at the read that
+ * reports them until a human acts.
+ */
+function nextActionCommand(
+  slug: string,
+  action: SpecProposeResultView["nextAction"],
+): string {
+  switch (action?.kind) {
+    case "approve_subject":
+      return `cctl spec request-approval ${slug} --gate ${action.gate}${
+        action.subject === null ? "" : ` --subject ${action.subject}`
+      }`;
+    case "sign_off_revision":
+    case "resolve_conditions":
+      return `cctl spec status ${slug}`;
+    case "propose":
+      return `cctl spec propose ${slug}`;
+    default:
+      return `cctl spec amend ${slug}`;
+  }
+}
+
+/**
+ * What an amendment left behind. A withdrawn revision is terminal, so nothing
+ * folds its content forward: the author only learns the new revision starts
+ * short of the last thing written if the amendment names the drop.
+ */
+function skippedWithdrawnLine(
+  skipped: readonly { readonly number: number }[],
+  openedNumber: number,
+): string {
+  const numbers = skipped.map(({ number }) => number);
+  const plural = numbers.length > 1;
+  const joined =
+    numbers.length <= 2
+      ? numbers.join(" and ")
+      : `${numbers.slice(0, -1).join(", ")}, and ${numbers.at(-1) ?? ""}`;
+  return `${plural ? "revisions" : "revision"} ${joined} ${plural ? "were" : "was"} withdrawn and ${plural ? "their" : "its"} content is not carried into revision ${openedNumber} — re-author anything from ${plural ? "them" : "it"} that still applies`;
 }
 
 /**
@@ -651,7 +718,10 @@ export async function runSpecCreate(
   }
   const file = await readJsonObjectFile(host, filePath, "first element", json);
   if (!file.ok) return file.result;
-  const parsedFile = draftFileSchema.safeParse(file.value);
+  // The create document, not the draft one: the revision this element opens
+  // holds no version to compare against, so a `baseElementVersion` here is
+  // refused rather than ignored.
+  const parsedFile = createSpecInitialElementSchema.safeParse(file.value);
   if (!parsedFile.success) {
     return invalidFileResult(
       "create",
@@ -728,17 +798,22 @@ export async function runSpecAmend(
       path: actionPath(resolved.context, slug.value, "open-amendment"),
       // The action body is strict and empty; a bodyless POST is a 400.
       body: {},
-      schema: specRevisionSchema,
+      schema: amendResponseSchema,
       command: "amend",
     },
     json,
   );
   if (!response.ok) return response.result;
-  const opened = response.value;
+  const opened = response.value.revision;
+  const skipped = response.value.skippedWithdrawnRevisions;
   return mutationResult(
     json,
     {
       changed: `opened amendment revision ${opened.number} at ${opened.authoringStage} stage`,
+      items:
+        skipped.length === 0
+          ? undefined
+          : [skippedWithdrawnLine(skipped, opened.number)],
       state: `draft revision ${opened.number} at ${opened.authoringStage} stage`,
       tokens: { revision: opened.id },
       actsNext: "agent",
@@ -747,6 +822,7 @@ export async function runSpecAmend(
     },
     "revision",
     opened,
+    { skippedWithdrawnRevisions: skipped },
   );
 }
 
@@ -755,10 +831,49 @@ interface DraftWriteRequest {
   readonly flags: GlobalFlags;
   readonly env: CliEnv;
   readonly slug: string;
-  readonly filePath: string;
-  readonly document: unknown;
-  readonly rawBaseVersion: string | undefined;
   readonly json: boolean;
+}
+
+/** How a draft document states the version each of its elements replaces. */
+const BASE_ELEMENT_VERSION_FIELD =
+  '"baseElementVersion": <the version you last read, or null to create the element>';
+
+const DRAFT_FILE_USAGE =
+  "spec draft requires --file <element.json>, holding one element write document or a JSON array of them; each element states its own baseElementVersion";
+
+/**
+ * Both `--file` forms hold the same document, so one schema parses both and a
+ * lone element cannot be legal in a shape a batch element is not. The forms are
+ * told apart by the file, not by a flag: the array is parsed as an array so a
+ * schema failure still names the offending element's index and field, which a
+ * union parse would flatten away.
+ */
+function parseDraftDocument(
+  document: unknown,
+  filePath: string,
+  json: boolean,
+):
+  | {
+      readonly ok: true;
+      readonly elements: readonly DraftElementInput[];
+      /** The lone element when the file holds an object rather than an array. */
+      readonly single: DraftElementInput | null;
+    }
+  | { readonly ok: false; readonly result: CliResult } {
+  const invalid = (error: z.ZodError) => ({
+    ok: false as const,
+    result: invalidFileResult("draft", filePath, "draft element", json, error),
+  });
+  if (Array.isArray(document)) {
+    const parsed = draftBatchFileSchema.safeParse(document);
+    return parsed.success
+      ? { ok: true, elements: parsed.data, single: null }
+      : invalid(parsed.error);
+  }
+  const parsed = draftElementDocumentSchema.safeParse(document);
+  return parsed.success
+    ? { ok: true, elements: [parsed.data], single: parsed.data }
+    : invalid(parsed.error);
 }
 
 /** The command `spec status` names as the next step after any draft save. */
@@ -768,36 +883,9 @@ function draftStatusNext(slug: string): string {
 
 async function draftSingleElement(
   request: DraftWriteRequest,
+  element: DraftElementInput,
 ): Promise<CliResult> {
-  const { host, flags, env, slug, filePath, document, json } = request;
-  const rawBaseVersion = request.rawBaseVersion;
-  if (rawBaseVersion === undefined) {
-    return usageFailure(
-      "spec draft requires --file <element.json> --base-version <number|new>",
-      json,
-    );
-  }
-  const baseElementVersion =
-    rawBaseVersion === "new" ? null : Number(rawBaseVersion);
-  if (
-    baseElementVersion !== null &&
-    (!Number.isInteger(baseElementVersion) || baseElementVersion <= 0)
-  ) {
-    return usageFailure(
-      "spec draft: --base-version must be a positive integer or new",
-      json,
-    );
-  }
-  const parsedFile = draftFileSchema.safeParse(document);
-  if (!parsedFile.success) {
-    return invalidFileResult(
-      "draft",
-      filePath,
-      "draft element",
-      json,
-      parsedFile.error,
-    );
-  }
+  const { host, flags, env, slug, json } = request;
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const editContext = await readEditContext(
@@ -818,11 +906,7 @@ async function draftSingleElement(
     {
       method: "POST",
       path: actionPath(resolved.context, slug, "draft-upsert"),
-      body: {
-        revisionId: revisionId.value,
-        ...parsedFile.data,
-        baseElementVersion,
-      },
+      body: { revisionId: revisionId.value, ...element },
       schema: draftResponseSchema,
       command: "draft",
     },
@@ -834,7 +918,11 @@ async function draftSingleElement(
   return mutationResult(
     json,
     {
-      changed: `saved ${label} at version ${saved.version.elementVersion}`,
+      // A revival is not a fresh save: the id was already the spec's, and the
+      // address readers know it by came back with it.
+      changed: saved.revived
+        ? `revived ${label} at version ${saved.version.elementVersion} — the element kept the number and handle it was created with`
+        : `saved ${label} at version ${saved.version.elementVersion}`,
       state: `element version ${saved.version.elementVersion} in the open draft`,
       tokens: {
         revision: revisionId.value,
@@ -857,24 +945,9 @@ async function draftSingleElement(
  */
 async function draftElementBatch(
   request: DraftWriteRequest,
+  elements: readonly DraftElementInput[],
 ): Promise<CliResult> {
-  const { host, flags, env, slug, filePath, document, json } = request;
-  if (request.rawBaseVersion !== undefined) {
-    return usageFailure(
-      "spec draft: --base-version does not apply to a batch file — every element in the array carries its own baseElementVersion (the version you last read, or null to create it)",
-      json,
-    );
-  }
-  const parsedFile = draftBatchFileSchema.safeParse(document);
-  if (!parsedFile.success) {
-    return invalidFileResult(
-      "draft",
-      filePath,
-      "draft element",
-      json,
-      parsedFile.error,
-    );
-  }
+  const { host, flags, env, slug, json } = request;
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const editContext = await readEditContext(
@@ -895,7 +968,7 @@ async function draftElementBatch(
     {
       method: "POST",
       path: actionPath(resolved.context, slug, "draft-batch"),
-      body: { revisionId: revisionId.value, elements: parsedFile.data },
+      body: { revisionId: revisionId.value, elements },
       schema: draftBatchResponseSchema,
       command: "draft",
       onRefusal: (error) => {
@@ -940,6 +1013,14 @@ export async function runSpecDraft(
   host: CliHost,
 ): Promise<CliResult> {
   const json = flags.json;
+  // Checked ahead of the allowlist so the caller learns where the version
+  // moved to, rather than reading a bare unknown-flag refusal.
+  if (values["base-version"] !== undefined) {
+    return usageFailure(
+      `spec draft: --base-version was removed — state the compare-and-swap version in the file itself as ${BASE_ELEMENT_VERSION_FIELD}, the same field every element of a batch carries`,
+      json,
+    );
+  }
   const denied = checkFlags(values, flagNamesFor("spec draft"), json);
   if (denied) return denied;
   const extra = noExtraPositionals(rest, 1, "draft", json);
@@ -948,28 +1029,25 @@ export async function runSpecDraft(
   if (!slug.ok) return slug.result;
   const filePath = values["file"];
   if (filePath === undefined) {
-    return usageFailure(
-      "spec draft requires --file <element.json> --base-version <number|new>",
-      json,
-    );
+    return usageFailure(DRAFT_FILE_USAGE, json);
   }
   const file = await readDraftFile(host, filePath, json);
   if (!file.ok) return file.result;
+  const parsed = parseDraftDocument(file.value, filePath, json);
+  if (!parsed.ok) return parsed.result;
   const request: DraftWriteRequest = {
     host,
     flags,
     env,
     slug: slug.value,
-    filePath,
-    document: file.value,
-    rawBaseVersion: values["base-version"],
     json,
   };
-  // The document's own shape selects the write: an array is a batch, an object
-  // is the single element form the batch never replaced.
-  return Array.isArray(file.value)
-    ? draftElementBatch(request)
-    : draftSingleElement(request);
+  // The document's own shape selects how the write is reported: an array is
+  // one transaction reported per index, a lone object is the element form
+  // whose refusal carries the winning content back.
+  return parsed.single === null
+    ? draftElementBatch(request, parsed.elements)
+    : draftSingleElement(request, parsed.single);
 }
 
 export async function runSpecPropose(
@@ -1014,24 +1092,84 @@ export async function runSpecPropose(
   );
   if (!response.ok) return response.result;
   const proposed = response.value.revision;
-  // A combined-approval policy can absorb the sign-off into the propose, which
-  // leaves the revision approved and nothing waiting on a human.
-  const awaitingHuman = proposed.state !== "approved";
+  // The server's post-transition projection is the only account of what the
+  // revision still owes. A blocker derived here from `proposed.authoringStage`
+  // names the stage rather than the gate, which is the wrong gate whenever an
+  // earlier stage is also consulted — and it cannot name the subject at all.
+  const block = response.value.pendingBlock;
   return mutationResult(
     json,
     {
       changed: `proposed revision ${proposed.number}`,
       state: `revision ${proposed.number} is ${proposed.state}`,
       tokens: { revision: proposed.id },
-      actsNext: awaitingHuman ? "human" : "agent",
-      blocked: awaitingHuman
-        ? `the ${proposed.authoringStage} gate needs human sign-off in Spec Studio`
-        : null,
-      next: awaitingHuman
-        ? `cctl spec request-approval ${slug.value} --gate ${proposed.authoringStage}`
-        : `cctl spec amend ${slug.value}`,
+      actsNext: block?.actsNext ?? "agent",
+      blocked: block?.display ?? null,
+      ...(block === null ? {} : { detail: pendingBlockLines(block) }),
+      next: nextActionCommand(slug.value, response.value.nextAction),
+      ...(block === null ? {} : { instruction: block.instruction }),
     },
     "proposal",
+    response.value,
+  );
+}
+
+export async function runSpecWithdrawProposal(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(
+    values,
+    flagNamesFor("spec withdraw-proposal"),
+    json,
+  );
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "withdraw-proposal", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "withdraw-proposal", json);
+  if (!slug.ok) return slug.result;
+  // The revision is the caller's compare-and-swap token, so it is never read
+  // from the server's current state: a replacement proposal that landed since
+  // the propose must fail this call, not be withdrawn by it.
+  const revisionId = values["revision"];
+  if (revisionId === undefined || revisionId.trim() === "") {
+    return usageFailure(
+      "spec withdraw-proposal requires --revision <revision-id> — the token `cctl spec propose` returned for the proposal you are taking back",
+      json,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "withdraw-proposal"),
+      body: { revisionId },
+      schema: withdrawProposalResponseSchema,
+      command: "withdraw-proposal",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  const { withdrawn, draft } = response.value;
+  return mutationResult(
+    json,
+    {
+      changed: `withdrew proposed revision ${withdrawn.number} and reopened its content as draft revision ${draft.number}`,
+      state: `draft revision ${draft.number} at ${draft.authoringStage} stage`,
+      tokens: { revision: draft.id, withdrawnRevision: withdrawn.id },
+      actsNext: "agent",
+      blocked: null,
+      next: draftNextCommand(slug.value),
+    },
+    "withdrawal",
     response.value,
   );
 }
@@ -1487,10 +1625,9 @@ export async function runSpecRequestApproval(
       json,
     );
   }
-  // An omitted --subject travels as an omission: the server resolves it (the
-  // gate itself for execution gates, the single outstanding subject for
-  // authoring gates) instead of the CLI guessing a gate-name subject the
-  // validation would refuse.
+  // An omitted --subject travels as an omission and means the whole gate; the
+  // CLI never substitutes a subject of its own, because the ask a request
+  // records is what a human is later shown.
   const subject = values["subject"];
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -1528,22 +1665,38 @@ export async function runSpecRequestApproval(
   );
   if (!response.ok) return response.result;
   const receipt = response.value;
+  const asked =
+    receipt.scope === "gate"
+      ? `the ${gate.data} gate`
+      : `${gate.data} approval for ${receipt.subject}`;
+  const outstanding =
+    receipt.scope === "item"
+      ? ""
+      : receipt.outstandingSubjects.length > 0
+        ? ` — ${receipt.outstandingSubjects.length} outstanding: ${receipt.outstandingSubjects.join(", ")}`
+        : receipt.signOffOutstanding
+          ? " — every subject is approved; the revision awaits sign-off"
+          : "";
   return mutationResult(
     json,
     {
       // An ask that was already open issued no second Needs You entry, so
       // saying "requested" would report an escalation that did not happen.
       changed: receipt.alreadyRequested
-        ? `the ${gate.data} approval request for ${receipt.subject} was already open — no second request was created`
-        : `requested ${gate.data} approval for ${receipt.subject}`,
+        ? `the request for ${asked} was already open — no second request was created${outstanding}`
+        : `requested ${asked}${outstanding}`,
       state: `${gate.data} approval request is pending`,
       tokens: {
         attention: receipt.attentionId,
         revision: receipt.revisionId,
+        scope: receipt.scope,
         ...(receipt.elementId === null ? {} : { elementId: receipt.elementId }),
       },
       actsNext: "human",
-      blocked: `a human approves the ${gate.data} gate in Spec Studio — agents request, never approve`,
+      blocked:
+        receipt.scope === "gate" && receipt.signOffOutstanding
+          ? `a human admits the ${gate.data} gate by signing the revision off in Spec Studio — agents request, never approve`
+          : `a human approves the ${gate.data} gate in Spec Studio — agents request, never approve`,
       next: `cctl spec status ${slug.value} — reports the request until it is approved`,
     },
     "request",

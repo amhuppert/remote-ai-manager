@@ -87,6 +87,7 @@ import {
   createReviewService,
   type SpecApprovalGrantNotice,
   type SpecApprovalRequestNotice,
+  type SpecApprovalRequestsClosedNotice,
 } from "./review-service";
 import {
   createSpecRouteHandlers,
@@ -197,6 +198,8 @@ export interface SpecSpineWorld {
   reviewNotifications: {
     requested: SpecApprovalRequestNotice[];
     granted: SpecApprovalGrantNotice[];
+    /** Requests that ended unanswered: a revision withdrawn or sent back. */
+    closed: SpecApprovalRequestsClosedNotice[];
     /** Notify-dial policy admissions surfaced for post-hoc review (R11.2). */
     policyAdmitted: SpecPolicyAdmissionNotice[];
   };
@@ -317,6 +320,7 @@ export function createSpecSpineWorld(): SpecSpineWorld {
   const reviewNotifications: SpecSpineWorld["reviewNotifications"] = {
     requested: [],
     granted: [],
+    closed: [],
     policyAdmitted: [],
   };
   const policyNotifier: SpecPolicyAdmissionNotifier = {
@@ -347,6 +351,9 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       },
       approvalGranted(notice) {
         reviewNotifications.granted.push(notice);
+      },
+      approvalRequestsClosed(notice) {
+        reviewNotifications.closed.push(notice);
       },
     },
     policyNotifier,
@@ -1407,16 +1414,15 @@ export async function authorSpineDraft(
   );
 
   const designRevision = await postJson<{
-    id: string;
-    authoringStage: string;
+    revision: { id: string; authoringStage: string };
   }>(world.postAction(slug, "open-amendment", {}, "agent"));
-  ids.designRevisionId = designRevision.id;
+  ids.designRevisionId = designRevision.revision.id;
   await postJson(
     world.postAction(
       slug,
       "draft-upsert",
       {
-        revisionId: designRevision.id,
+        revisionId: designRevision.revision.id,
         elementId: ids.decisionId,
         kind: "decision",
         parentElementId: null,
@@ -1438,7 +1444,7 @@ export async function authorSpineDraft(
     world.postAction(
       slug,
       "propose",
-      { revisionId: designRevision.id },
+      { revisionId: designRevision.revision.id },
       "agent",
     ),
   );
@@ -1447,7 +1453,7 @@ export async function authorSpineDraft(
       slug,
       "approve-item",
       {
-        revisionId: designRevision.id,
+        revisionId: designRevision.revision.id,
         subjectKind: "decision",
         elementId: ids.decisionId,
       },
@@ -1458,23 +1464,22 @@ export async function authorSpineDraft(
     world.postAction(
       slug,
       "sign-off",
-      { revisionId: designRevision.id },
+      { revisionId: designRevision.revision.id },
       "human",
     ),
   );
 
   const planRevision = await postJson<{
-    id: string;
-    authoringStage: string;
+    revision: { id: string; authoringStage: string };
   }>(world.postAction(slug, "open-amendment", {}, "agent"));
-  ids.draftRevisionId = planRevision.id;
+  ids.draftRevisionId = planRevision.revision.id;
 
   await postJson(
     world.postAction(
       slug,
       "draft-upsert",
       {
-        revisionId: planRevision.id,
+        revisionId: planRevision.revision.id,
         elementId: ids.taskOneId,
         kind: "task",
         parentElementId: null,
@@ -1498,7 +1503,7 @@ export async function authorSpineDraft(
       slug,
       "draft-upsert",
       {
-        revisionId: planRevision.id,
+        revisionId: planRevision.revision.id,
         elementId: ids.taskTwoId,
         kind: "task",
         parentElementId: null,

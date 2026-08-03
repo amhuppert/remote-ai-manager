@@ -29,6 +29,7 @@ import type { Db } from "@/lib/state-store/schemas";
 
 import {
   createAuthoringService,
+  SpecRevisionInReviewError,
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
@@ -412,6 +413,70 @@ describe("LinksService entry paths and read-through", () => {
     expect(updateTicketCalls).toBe(0);
   });
 
+  it("refuses to reserve an entry on a spec whose revision is under review", async () => {
+    const created = await authoring.createSpec({
+      projectPath: PROJECT_PATH,
+      slug: "graduated-ticket",
+      name: "Graduated ticket",
+      gatePolicy: { preset: "contract-bearing" },
+      initialElement: {
+        elementId: "requirement-1",
+        kind: "requirement" as const,
+        parentElementId: null,
+        position: 0,
+        payload: {
+          kind: "requirement" as const,
+          statement: "Reservations respect review.",
+          priority: "must" as const,
+          risk: "high" as const,
+        },
+      },
+      actor: AGENT,
+    });
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T17:10:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T17:11:00.000Z",
+    });
+    const { revision: amendment } = await authoring.openAmendment({
+      specId: created.spec.id,
+      actor: AGENT,
+    });
+    await specs.proposeRevision({
+      revisionId: amendment.id,
+      proposedAt: "2026-07-18T17:12:00.000Z",
+    });
+    const revisionsBefore = db
+      .prepare("SELECT COUNT(*) AS count FROM spec_revisions")
+      .get() as { count: number };
+
+    const refusal = await service
+      .graduateTicket({
+        ticket: { projectName: PROJECT_NAME, number: 1 },
+        slug: "graduated-ticket",
+        name: "Graduated ticket",
+        gatePolicy: { preset: "contract-bearing" },
+        actor: AGENT,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(refusal).toBeInstanceOf(SpecRevisionInReviewError);
+    if (!(refusal instanceof SpecRevisionInReviewError)) throw refusal;
+    expect(refusal.proposals.map(({ id }) => id)).toEqual([amendment.id]);
+    expect(refusal.approvedBase?.id).toBe(created.draft.id);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM spec_revisions").get(),
+    ).toEqual(revisionsBefore);
+    expect(linksRepo.findBySpecId(created.spec.id)).toEqual([]);
+    expect(updateTicketCalls).toBe(0);
+  });
+
   it("reuses a durable entry reservation after capture fails before source completion", async () => {
     captureFailures = 1;
     const input = {
@@ -608,7 +673,7 @@ describe("LinksService entry paths and read-through", () => {
     expect(ticket).toBeDefined();
     if (ticket === undefined) throw new Error("expected a materialized ticket");
     const before = structuredClone(ticket);
-    const amendment = await authoring.openAmendment({
+    const { revision: amendment } = await authoring.openAmendment({
       specId: created.spec.id,
       actor: AGENT,
     });
@@ -674,7 +739,7 @@ describe("LinksService entry paths and read-through", () => {
     // A later approved revision replaces the task: the linked task element is
     // in neither the current nor the approved snapshot, only its immutable
     // element row remains.
-    const amendment = await authoring.openAmendment({
+    const { revision: amendment } = await authoring.openAmendment({
       specId: created.spec.id,
       actor: AGENT,
     });

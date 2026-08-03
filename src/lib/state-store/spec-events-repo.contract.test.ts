@@ -91,6 +91,31 @@ function eventInput(
   };
 }
 
+function authoringRequest(
+  revisionId: string,
+  gate: string,
+  scope: "gate" | "item",
+  subject: string,
+  attentionId: string,
+): void {
+  repo.appendInTransaction({
+    spec_id: SPEC_ID,
+    occurred_at: "2026-07-18T13:05:00.000Z",
+    event_type: "spec-attention-changed",
+    actor_json: stableStringify({ kind: "agent", conversationId: "c-1" }),
+    payload_json: stableStringify({
+      kind: "approval-requested",
+      attentionId,
+      revisionId,
+      gate,
+      scope,
+      subject,
+      executionId: null,
+      active: true,
+    }),
+  });
+}
+
 beforeEach(() => {
   db = _createTestDb({ inMemory: true });
   seedEventParent();
@@ -181,62 +206,143 @@ describe("spec-events-repo durability contract", () => {
   });
 
   it("finds the active approval request under its logical key, ignoring every other event", () => {
-    const request = (
-      revisionId: string,
-      gate: string,
-      subject: string,
-      attentionId: string,
-    ) =>
-      repo.appendInTransaction({
-        spec_id: SPEC_ID,
-        occurred_at: "2026-07-18T13:05:00.000Z",
-        event_type: "spec-attention-changed",
-        actor_json: stableStringify({ kind: "agent", conversationId: "c-1" }),
-        payload_json: stableStringify({
-          kind: "approval-requested",
-          attentionId,
-          revisionId,
-          gate,
-          subject,
-          active: true,
-        }),
-      });
-
-    request("revision-1", "requirements", "R1", "attention-1");
-    request("revision-1", "requirements", "R2", "attention-2");
-    request("revision-2", "requirements", "R1", "attention-3");
-    request("revision-1", "design", "R1", "attention-4");
+    authoringRequest("revision-1", "requirements", "item", "R1", "attention-1");
+    authoringRequest("revision-1", "requirements", "item", "R2", "attention-2");
+    authoringRequest("revision-2", "requirements", "item", "R1", "attention-3");
+    authoringRequest("revision-1", "design", "item", "D1", "attention-4");
+    authoringRequest(
+      "revision-1",
+      "requirements",
+      "gate",
+      "requirements",
+      "attention-5",
+    );
     repo.appendInTransaction(
       eventInput("spec-attention-changed", "2026-07-18T13:06:00.000Z", 9),
     );
 
     expect(
       repo.findApprovalRequest({
+        kind: "authoring",
         specId: SPEC_ID,
         revisionId: "revision-1",
         gate: "requirements",
+        scope: "item",
         subject: "R1",
-        executionId: null,
       }),
     ).toEqual({ attentionId: "attention-1" });
+    // The gate ask is keyed without a subject: the subjects it is waiting on
+    // shrink as approvals land, and its identity must not move with them.
     expect(
       repo.findApprovalRequest({
+        kind: "authoring",
+        specId: SPEC_ID,
+        revisionId: "revision-1",
+        gate: "requirements",
+        scope: "gate",
+        subject: null,
+      }),
+    ).toEqual({ attentionId: "attention-5" });
+    expect(
+      repo.findApprovalRequest({
+        kind: "authoring",
         specId: SPEC_ID,
         revisionId: "revision-1",
         gate: "plan",
-        subject: "plan",
-        executionId: null,
+        scope: "gate",
+        subject: null,
       }),
     ).toBeNull();
     expect(
       repo.findApprovalRequest({
+        kind: "authoring",
         specId: "spec-other",
         revisionId: "revision-1",
         gate: "requirements",
+        scope: "item",
         subject: "R1",
-        executionId: null,
       }),
     ).toBeNull();
+  });
+
+  it("never reuses a request recorded before requests carried a scope", () => {
+    repo.appendInTransaction({
+      spec_id: SPEC_ID,
+      occurred_at: "2026-07-18T13:05:00.000Z",
+      event_type: "spec-attention-changed",
+      actor_json: stableStringify({ kind: "agent", conversationId: "c-1" }),
+      payload_json: stableStringify({
+        kind: "approval-requested",
+        attentionId: "attention-pre-boundary",
+        revisionId: "revision-1",
+        gate: "requirements",
+        subject: "R1",
+        active: true,
+      }),
+    });
+
+    for (const scope of ["gate", "item"] as const) {
+      expect(
+        repo.findApprovalRequest({
+          kind: "authoring",
+          specId: SPEC_ID,
+          revisionId: "revision-1",
+          gate: "requirements",
+          scope,
+          subject: scope === "item" ? "R1" : null,
+        }),
+      ).toBeNull();
+    }
+    // It stays readable as an open request until it is retired, which is what
+    // lets the review domain close its Needs You entry rather than orphan it.
+    expect(repo.listOpenApprovalRequests(SPEC_ID)).toEqual([
+      {
+        attentionId: "attention-pre-boundary",
+        revisionId: "revision-1",
+        gate: "requirements",
+        scope: null,
+        subject: "R1",
+        executionId: null,
+      },
+    ]);
+  });
+
+  it("drops a retired request from identity and from the open set, keeping its history", () => {
+    authoringRequest(
+      "revision-1",
+      "requirements",
+      "gate",
+      "requirements",
+      "a1",
+    );
+    authoringRequest("revision-1", "design", "gate", "design", "a2");
+    repo.appendInTransaction({
+      spec_id: SPEC_ID,
+      occurred_at: "2026-07-18T13:07:00.000Z",
+      event_type: "spec-attention-changed",
+      actor_json: stableStringify({ kind: "human" }),
+      payload_json: stableStringify({
+        kind: "approval-request-retired",
+        attentionId: "a1",
+        reason: "the revision it asked about was withdrawn",
+        active: false,
+      }),
+    });
+
+    expect(
+      repo.findApprovalRequest({
+        kind: "authoring",
+        specId: SPEC_ID,
+        revisionId: "revision-1",
+        gate: "requirements",
+        scope: "gate",
+        subject: null,
+      }),
+    ).toBeNull();
+    expect(
+      repo.listOpenApprovalRequests(SPEC_ID).map((row) => row.attentionId),
+    ).toEqual(["a2"]);
+    expect(repo.findBySpecId(SPEC_ID)).toHaveLength(3);
   });
 
   it("keys a per-run request by its execution, so the next run's ask is a request of its own", () => {
@@ -260,13 +366,15 @@ describe("spec-events-repo durability contract", () => {
     request("execution-1", "attention-run-1");
     request("execution-2", "attention-run-2");
 
-    const key = (executionId: string | null) => ({
-      specId: SPEC_ID,
-      revisionId: "revision-1",
-      gate: "delivery",
-      subject: "delivery",
-      executionId,
-    });
+    const key = (executionId: string) =>
+      ({
+        kind: "execution",
+        specId: SPEC_ID,
+        revisionId: "revision-1",
+        gate: "delivery",
+        subject: "delivery",
+        executionId,
+      }) as const;
     expect(repo.findApprovalRequest(key("execution-1"))).toEqual({
       attentionId: "attention-run-1",
     });
@@ -274,7 +382,18 @@ describe("spec-events-repo durability contract", () => {
       attentionId: "attention-run-2",
     });
     expect(repo.findApprovalRequest(key("execution-3"))).toBeNull();
-    expect(repo.findApprovalRequest(key(null))).toBeNull();
+    // A per-run ask predates request scope, so the run alone identifies it and
+    // an authoring key must never reach it.
+    expect(
+      repo.findApprovalRequest({
+        kind: "authoring",
+        specId: SPEC_ID,
+        revisionId: "revision-1",
+        gate: "delivery",
+        scope: "gate",
+        subject: null,
+      }),
+    ).toBeNull();
   });
 
   it("composes appendInTransaction atomically with a service mutation", () => {

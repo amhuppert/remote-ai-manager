@@ -67,7 +67,7 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 async function createSpec(
-  preset: "contract-bearing" | "exploratory",
+  preset: "contract-bearing" | "exploratory" | "fast-path",
   statement = "The transition is server-enforced.",
 ) {
   // The first requirement travels inside the create call — the durable spec
@@ -179,6 +179,127 @@ describe("AuthoringService propose transaction", () => {
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM spec_gate_admissions").get(),
     ).toEqual({ count: 0 });
+  });
+
+  /**
+   * The receipt carries the server's post-transition projection because a
+   * blocker derived from the revision's authoring stage alone names the wrong
+   * gate whenever an earlier stage is also consulted, and cannot name the
+   * subject a request needs.
+   */
+  it("embeds the post-transition pending block naming every consulted gate and its outstanding subjects", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    // The draft is pinned at the plan stage, but its requirement is new since
+    // the governance baseline, so requirements is consulted too — and it is
+    // what a human acts on first.
+    expect(result.pendingBlock?.gates).toEqual([
+      {
+        gate: "requirements",
+        dial: "gate",
+        state: "pending",
+        applicability: {
+          reason: "changed_since_governance_base",
+          governanceBaseRevisionId: null,
+        },
+        subjects: ["R1"],
+      },
+      {
+        gate: "plan",
+        dial: "gate",
+        state: "pending",
+        applicability: {
+          reason: "current_stage",
+          governanceBaseRevisionId: null,
+        },
+        subjects: ["plan"],
+      },
+    ]);
+    expect(result.pendingBlock?.outstandingSubjects).toEqual([
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+      { gate: "plan", subject: "plan", elementId: null },
+    ]);
+    expect(result.pendingBlock?.signOff).toMatchObject({
+      revisionId: created.draft.id,
+      state: "blocked",
+      outstandingSubjectCount: 2,
+    });
+    expect(result.pendingBlock?.actsNext).toBe("human");
+    // The subject a request needs is in the block, so the caller never has to
+    // guess it from the stage.
+    expect(result.pendingBlock?.instruction).toContain("R1");
+    expect(result.nextAction).toMatchObject({
+      kind: "approve_subject",
+      gate: "requirements",
+      subject: "R1",
+    });
+  });
+
+  /**
+   * R11.5: the combined dial makes the sign-off itself the approval of every
+   * item. A receipt that lists the items as outstanding subjects points the
+   * caller at `request-approval` for an act the policy collapsed, and at the
+   * same time reports the revision ready to sign off.
+   */
+  it("names the sign-off rather than per-item approvals under the combined dial", async () => {
+    const created = await createSpec("fast-path");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.pendingBlock?.outstandingSubjects).toEqual([]);
+    expect(result.pendingBlock?.signOff).toMatchObject({
+      state: "ready",
+      unmetConditions: [],
+    });
+    expect(result.pendingBlock?.actsNext).toBe("human");
+    expect(result.nextAction).toMatchObject({
+      kind: "sign_off_revision",
+      actsNext: "human",
+      gate: null,
+      subject: null,
+    });
+  });
+
+  it("carries sign-off conditions that no subject approval can clear", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    review.saveAssumption({
+      id: "assumption-1",
+      spec_id: created.spec.id,
+      number: 1,
+      element_id: "requirement-1",
+      text: "The baseline never moves.",
+      proposed_by_json: JSON.stringify(ACTOR),
+      disposition: "rejected",
+      disposed_at: "2026-07-18T13:00:00.900Z",
+      created_at: "2026-07-18T13:00:00.900Z",
+      updated_at: "2026-07-18T13:00:00.900Z",
+    });
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    if (!result.ok) throw new Error("expected successful proposal");
+    expect(result.pendingBlock?.unmetConditions).toContain(
+      "A1 was rejected but R1 still cites it.",
+    );
   });
 
   it("returns exactly the panel findings and leaves a lint-refused revision Draft", async () => {
@@ -395,7 +516,7 @@ describe("AuthoringService propose transaction", () => {
       });
     }
 
-    const amendment = await service.openAmendment({
+    const { revision: amendment } = await service.openAmendment({
       specId: created.spec.id,
       actor: ACTOR,
     });

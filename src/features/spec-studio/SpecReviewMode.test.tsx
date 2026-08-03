@@ -133,6 +133,35 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
     baseRevision: baseSnapshot,
     currentRevision: { revision: currentRevision, elements: currentElements },
     currentApprovedRevision: baseSnapshot,
+    // The server's projection for this revision, which is the one authority
+    // the review surface reads for what a human still owes.
+    status: {
+      ...detail.status,
+      applicableGates: ["requirements", "design", "plan"],
+      pendingApprovals: blocked
+        ? [
+            {
+              gate: "requirements" as const,
+              subject: "R1",
+              elementId: "requirement-1",
+            },
+            {
+              gate: "design" as const,
+              subject: "D1",
+              elementId: "decision-1",
+            },
+            { gate: "plan" as const, subject: "plan", elementId: null },
+          ]
+        : [],
+      revisionSignOff: {
+        revisionId: currentRevision.id,
+        revisionNumber: currentRevision.number,
+        state: blocked ? ("blocked" as const) : ("ready" as const),
+        outstandingSubjectCount: blocked ? 3 : 0,
+        unmetConditions: [],
+        approval: null,
+      },
+    },
     approvals: [
       {
         id: "approval-1",
@@ -743,6 +772,10 @@ describe("SpecReviewMode", () => {
     const current = detail.currentRevision;
     if (current === null) throw new Error("Fixture requires a revision");
     current.revision.authoringStage = "requirements";
+    detail.status.applicableGates = ["requirements"];
+    detail.status.pendingApprovals = [
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+    ];
     detail.comments = [];
     detail.assumptions = [];
 
@@ -766,6 +799,80 @@ describe("SpecReviewMode", () => {
     expect(
       within(screen.getByTestId("review-readiness")).getByText("0/1 approved"),
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The D3 shape: the immediate parent is a withdrawn attempt that already
+   * carried the requirement change, so the requirement is unchanged against it
+   * and changed against the nearest approved ancestor. Measuring consultation
+   * from the parent hid the subject, showed "All approved", and enabled a
+   * sign-off the server refuses.
+   */
+  it("keeps a subject the server still owes visible when its change arrived through a withdrawn parent", () => {
+    const detail = reviewDetailFixture(false);
+    const base = detail.baseRevision;
+    const current = detail.currentRevision;
+    if (base === null || current === null) {
+      throw new Error("Fixture requires both revisions");
+    }
+    base.revision.state = "withdrawn";
+    base.elements = base.elements.map((entry) =>
+      entry.element.id === "requirement-1"
+        ? {
+            ...entry,
+            version: {
+              ...entry.version,
+              payload: {
+                kind: "requirement" as const,
+                statement: "Every execution pins the exact selected scope.",
+                priority: "must" as const,
+                risk: "high" as const,
+              },
+              payloadHash: "requirement-hash-2",
+            },
+          }
+        : entry,
+    );
+    // No one approved R1 during the withdrawn attempt, so the server measures
+    // it against the last approved ancestor and still owes the approval.
+    detail.approvals = detail.approvals.filter(
+      (approval) => approval.subject_kind !== "requirement",
+    );
+    detail.status.pendingApprovals = [
+      { gate: "requirements", subject: "R1", elementId: "requirement-1" },
+    ];
+    detail.status.revisionSignOff = {
+      revisionId: current.revision.id,
+      revisionNumber: current.revision.number,
+      state: "blocked",
+      outstandingSubjectCount: 1,
+      unmetConditions: [
+        `Requirement R1 needs a valid approval for ${current.revision.id}.`,
+      ],
+      approval: null,
+    };
+
+    expect(bulkApprovalSubjects(detail, "remaining")).toEqual([
+      { subjectKind: "requirement", elementId: "requirement-1" },
+    ]);
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Approve all remaining (1)" }),
+    ).toBeInTheDocument();
+    const readiness = within(screen.getByTestId("review-readiness"));
+    expect(readiness.getByText("2/3 approved")).toBeInTheDocument();
+    expect(readiness.getByText("Approvals incomplete")).toBeInTheDocument();
+    expect(
+      readiness.getByRole("button", { name: "Sign off revision 2" }),
+    ).toBeDisabled();
   });
 
   it("enables sign-off immediately under the fast-path combined policy", async () => {

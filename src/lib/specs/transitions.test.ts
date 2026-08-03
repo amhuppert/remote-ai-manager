@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  createApprovalApplicability,
+  type ApprovalApplicability,
+} from "./approval-applicability";
 import type { RevisionElement as LintRevisionElement } from "./lint";
 import type { RevisionElement as DiffRevisionElement } from "./revision-diff";
 import type {
@@ -135,7 +139,8 @@ const contractPolicy: SpecGatePolicy = { preset: "contract-bearing" };
 function reviewSnapshot(): SignOffReviewSnapshot {
   return {
     revisionId: "revision-2",
-    baseRevisionRows: revisionRows(),
+    governanceBaseRevisionId: "revision-1",
+    governanceBaseRevisionRows: revisionRows(),
     revisionRows: revisionRows(),
     blockingThreads: [],
     approvals: [
@@ -153,6 +158,7 @@ function reviewSnapshot(): SignOffReviewSnapshot {
       },
       {
         subjectKind: "plan" as const,
+        elementId: null,
         revisionId: "revision-1",
         validity: "valid" as const,
       },
@@ -160,10 +166,43 @@ function reviewSnapshot(): SignOffReviewSnapshot {
   };
 }
 
+/**
+ * The real applicability predicate over the fixture's rows. The default
+ * lineage is the ordinary one: the current revision descends from revision-1,
+ * whose content is the review base.
+ */
+function applicabilityFor(
+  review: SignOffReviewSnapshot,
+  overrides: {
+    ancestorRevisionIds?: ReadonlySet<string>;
+    rowsByRevision?: Record<string, DiffRevisionElement[]>;
+  } = {},
+): ApprovalApplicability {
+  const rowsByRevision = overrides.rowsByRevision ?? {
+    "revision-1": review.governanceBaseRevisionRows,
+  };
+  return createApprovalApplicability({
+    revisionId: review.revisionId,
+    ancestorRevisionIds:
+      overrides.ancestorRevisionIds ?? new Set(Object.keys(rowsByRevision)),
+    revisionRows: review.revisionRows,
+    rowsForRevision: (revisionId) => rowsByRevision[revisionId] ?? null,
+  });
+}
+
+/** The review snapshot plus the applicability predicate that reads it. */
+function proposeReview(review: SignOffReviewSnapshot = reviewSnapshot()): {
+  review: SignOffReviewSnapshot;
+  approvalApplies: ApprovalApplicability;
+} {
+  return { review, approvalApplies: applicabilityFor(review) };
+}
+
 function signOffContext(
   overrides: Partial<Parameters<typeof signOffRevision>[0]> = {},
 ): Parameters<typeof signOffRevision>[0] {
   const authoringStage = overrides.authoringStage ?? "plan";
+  const review = overrides.review ?? reviewSnapshot();
   return {
     actor: human,
     revisionState: "proposed",
@@ -175,8 +214,9 @@ function signOffContext(
       elements: lintElements(),
     },
     records: {},
-    review: reviewSnapshot(),
     ...overrides,
+    review,
+    approvalApplies: overrides.approvalApplies ?? applicabilityFor(review),
   };
 }
 
@@ -440,7 +480,7 @@ describe("transition predicates", () => {
           elements: [],
         },
         records: {},
-        review: reviewSnapshot(),
+        ...proposeReview(),
       });
 
       expect(decision).toEqual({
@@ -473,7 +513,7 @@ describe("transition predicates", () => {
             elements: lintElements(),
           },
           records: {},
-          review: reviewSnapshot(),
+          ...proposeReview(),
         }),
       ).toMatchObject({
         ok: false,
@@ -505,7 +545,7 @@ describe("transition predicates", () => {
             elements: lintElements(),
           },
           records: {},
-          review: reviewSnapshot(),
+          ...proposeReview(),
         }),
       ).toEqual({ ok: true });
     });
@@ -532,7 +572,7 @@ describe("transition predicates", () => {
             elements: lintElements(),
           },
           records: {},
-          review,
+          ...proposeReview(review),
         }),
       ).toMatchObject({
         ok: false,
@@ -709,6 +749,162 @@ describe("transition predicates", () => {
         refusal: {
           unmetConditions: [
             "Execution plan needs a valid approval for revision-2.",
+          ],
+        },
+      });
+    });
+
+    /**
+     * An approval names the revision whose content a human read. A revision
+     * the current one does not descend from is a different line of content, so
+     * its approval says nothing about what is being signed off here.
+     */
+    it("refuses an approval recorded on a revision the current one does not descend from", () => {
+      const review = reviewSnapshot();
+      review.approvals = review.approvals.map((approval) =>
+        approval.subjectKind === "requirement"
+          ? { ...approval, revisionId: "revision-sibling" }
+          : approval,
+      );
+
+      expect(
+        signOffRevision(
+          signOffContext({
+            authoringStage: "requirements",
+            review,
+            approvalApplies: applicabilityFor(review, {
+              ancestorRevisionIds: new Set(["revision-1"]),
+              rowsByRevision: {
+                "revision-1": review.governanceBaseRevisionRows,
+                // The sibling's content is readable and identical, so only its
+                // absence from this revision's lineage can refuse it.
+                "revision-sibling": review.governanceBaseRevisionRows,
+              },
+            }),
+          }),
+        ),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: [
+            "Requirement R1 needs a valid approval for revision-2.",
+          ],
+        },
+      });
+    });
+
+    it("refuses an approval whose own revision can no longer be read", () => {
+      const review = reviewSnapshot();
+      // A revision with no approved ancestor owes every authoring gate, so all
+      // three subjects are consulted here.
+      review.governanceBaseRevisionId = null;
+      review.governanceBaseRevisionRows = [];
+
+      expect(
+        signOffRevision(
+          signOffContext({
+            review,
+            approvalApplies: applicabilityFor(review, {
+              ancestorRevisionIds: new Set(["revision-1"]),
+              rowsByRevision: {},
+            }),
+          }),
+        ),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: [
+            "Requirement R1 needs a valid approval for revision-2.",
+            "Decision D1 needs a valid approval for revision-2.",
+            "Execution plan needs a valid approval for revision-2.",
+          ],
+        },
+      });
+    });
+
+    /**
+     * Review semantics stay on the immediate parent: a subject a human
+     * approved during an attempt that was later withdrawn, and that nothing
+     * has touched since, is not asked for again.
+     */
+    it("carries an approval given during a withdrawn ancestor when the subject is unchanged since", () => {
+      const review = reviewSnapshot();
+      review.approvals = review.approvals.map((approval) => ({
+        ...approval,
+        revisionId: "revision-withdrawn",
+      }));
+
+      expect(
+        signOffRevision(
+          signOffContext({
+            review,
+            approvalApplies: applicabilityFor(review, {
+              ancestorRevisionIds: new Set([
+                "revision-withdrawn",
+                "revision-1",
+              ]),
+              rowsByRevision: {
+                "revision-withdrawn": review.governanceBaseRevisionRows,
+                "revision-1": review.governanceBaseRevisionRows,
+              },
+            }),
+          }),
+        ),
+      ).toEqual({ ok: true });
+    });
+
+    it("stops carrying a requirement approval when only one of its criteria changed", () => {
+      const review = reviewSnapshot();
+      review.revisionRows[1] = {
+        ...review.revisionRows[1]!,
+        payloadHash: "criterion-1-reworded",
+      };
+
+      expect(signOffRevision(signOffContext({ review }))).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: [
+            "Requirement R1 needs a valid approval for revision-2.",
+          ],
+        },
+      });
+    });
+
+    /**
+     * `payload_hash` covers the payload alone, so a replacement element that
+     * repeats the approved text carries the approved hash under a new id. The
+     * product treats that as a remove plus an add, and the approval does not
+     * travel with the text.
+     */
+    it("does not carry an approval to a replacement element that repeats the approved text", () => {
+      const review = reviewSnapshot();
+      const replaced = review.revisionRows[0]!;
+      review.revisionRows[0] = { ...replaced, elementId: "requirement-2" };
+
+      expect(
+        signOffRevision(
+          signOffContext({
+            review,
+            draft: {
+              specHandle: "native-sdd",
+              authoringStage: "plan",
+              elements: lintElements().map((element) =>
+                element.id === "requirement-1"
+                  ? { ...element, id: "requirement-2", handle: "R2" }
+                  : element,
+              ),
+            },
+          }),
+        ),
+      ).toMatchObject({
+        ok: false,
+        refusal: {
+          code: "gate_blocked",
+          unmetConditions: [
+            "Requirement R2 needs a valid approval for revision-2.",
           ],
         },
       });
@@ -1077,12 +1273,18 @@ describe("transition predicates", () => {
 
   it("is deterministic and leaves a loaded snapshot unchanged", () => {
     const input = signOffContext();
-    const before = structuredClone(input);
+    // The approval authority is a function, so only the data it reads can be
+    // cloned; leaving that data untouched is what the assertion is about.
+    const data = (context: typeof input) => ({
+      ...context,
+      approvalApplies: null,
+    });
+    const before = structuredClone(data(input));
 
     const first = signOffRevision(input);
     const second = signOffRevision(input);
 
     expect(first).toEqual(second);
-    expect(input).toEqual(before);
+    expect(data(input)).toEqual(before);
   });
 });

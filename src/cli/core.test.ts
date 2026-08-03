@@ -442,6 +442,32 @@ describe("cctl doctor", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("names the server's own cctl when the builds differ, and never calls it transient", async () => {
+    // A worktree dev server and the binary on PATH are routinely different
+    // builds. Calling that "transient across a server restart" reads as
+    // ignorable, and the agent then runs a stale command surface against
+    // fresh state. Doctor stays exit 0 — it is the diagnostic, not the gate.
+    const host = makeHost({
+      async fetch() {
+        return jsonResponse(
+          handshakeBody({
+            serverBuild: "other-tree-sha",
+            cliPath: "/tmp/wt/.config/bin/cctl",
+          }),
+        );
+      },
+    });
+
+    const result = await runCli(["doctor"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("other-tree-sha");
+    expect(result.stderr).toContain(CLI_BUILD);
+    expect(result.stderr).toContain("/tmp/wt/.config/bin/cctl");
+    expect(result.stderr).not.toContain("transient across a server restart");
+    expect(result.stdout).toContain("server cctl   /tmp/wt/.config/bin/cctl");
+  });
+
   it("sends the X-CC-CLI-Build header, bearer token, and identity query params", async () => {
     const host = makeHost();
     await runCli(["doctor"], baseEnv, host);

@@ -5,7 +5,10 @@ import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import type { SpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import type { SpecReviewRepo } from "@/lib/state-store/spec-review-repo";
-import type { SpecsRepo } from "@/lib/state-store/specs-repo";
+import type {
+  CreateDraftElementResult,
+  SpecsRepo,
+} from "@/lib/state-store/specs-repo";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
 import type {
   GraphWorkflowVisualLayout,
@@ -22,6 +25,12 @@ import {
   scopePlanFromRevision,
   specExecutionOriginSourceUri,
 } from "./compiler";
+import {
+  danglingReferenceRefusal,
+  guardedElements,
+  stageRevisionWrite,
+  validateStagedWrite,
+} from "./element-write-guard";
 import type {
   PreparedSpecEventPublication,
   SpecEventsPublisher,
@@ -1470,56 +1479,104 @@ async function captureScopeAmendment(
       "Resolve the existing draft before capturing discovered work from this execution.",
     );
   }
-  const revision =
-    existingDraft ??
-    (await deps.specsRepo.createDraftFromBase({
-      id: deps.nextId("revision"),
-      specId: execution.spec_id,
-      baseRevisionId: execution.revision_id,
-      authoringStage: openDraftAuthoringStage({
-        policy: spec.gatePolicy,
-        baseRevision: {
-          state: "approved",
-          authoringStage: baseRevision.authoringStage,
+  // The draft the task lands in carries whatever its base carries, so the
+  // discovered task is judged against that content before the draft, the task
+  // and the event are committed together. Capturing first and validating after
+  // would leave an empty amendment draft behind whenever the task is bad.
+  const taskElementId = deps.nextId("element");
+  const draftRevisionId = deps.nextId("revision");
+  const captured = await deps.specsRepo.transaction(
+    "specs.execution.capture-scope-amendment",
+    (
+      repo,
+    ): LifecycleResult<{
+      revision: SpecRevision;
+      task: CreateDraftElementResult;
+      prepared: PreparedSpecEventPublication;
+    }> => {
+      const staged = stageRevisionWrite(
+        guardedElements(
+          repo.getRevisionSnapshot(existingDraft?.id ?? execution.revision_id),
+        ),
+        [
+          {
+            op: "write",
+            elementId: taskElementId,
+            payload: { kind: "task", ...input.discoveredTask },
+            parentElementId: null,
+          },
+        ],
+      );
+      const issues = validateStagedWrite(staged);
+      if (issues.length > 0) {
+        const refusal = danglingReferenceRefusal(issues);
+        logger.warn("specs.execution.scope-amendment-refused", {
+          specExecutionId: execution.id,
+          refusalCode: refusal.code,
+          referenceCount: issues.length,
+        });
+        return { ok: false, refusal };
+      }
+
+      const revision =
+        existingDraft ??
+        repo.createDraftFromBase({
+          id: draftRevisionId,
+          specId: execution.spec_id,
+          baseRevisionId: execution.revision_id,
+          authoringStage: openDraftAuthoringStage({
+            policy: spec.gatePolicy,
+            baseRevision: {
+              state: "approved",
+              authoringStage: baseRevision.authoringStage,
+            },
+          }),
+          createdAt: deps.now(),
+        });
+      const task = repo.createDraftElement({
+        id: taskElementId,
+        specId: execution.spec_id,
+        revisionId: revision.id,
+        kind: "task",
+        parentElementId: null,
+        position: staged.finalSnapshot.length - 1,
+        payload: { kind: "task", ...input.discoveredTask },
+        createdAt: deps.now(),
+        updatedAt: deps.now(),
+      });
+      return {
+        ok: true,
+        value: {
+          revision,
+          task,
+          prepared: deps.events.appendInTransaction({
+            actor: input.actor,
+            durableEventType: "spec-revision-changed",
+            durablePayload: {
+              kind: "scope_amendment_captured",
+              revisionId: revision.id,
+              sourceExecutionId: execution.id,
+              taskElementId: task.element.id,
+              taskNumber: task.element.number,
+            },
+            sseEvent: {
+              type: "spec-revision-changed",
+              kind: "scope_amendment_captured",
+              projectPath: spec.projectPath,
+              specId: spec.id,
+              specSlug: spec.slug,
+              occurredAt: deps.now(),
+              revisionId: revision.id,
+              elementIds: [task.element.id],
+            },
+          }),
         },
-      }),
-      createdAt: deps.now(),
-    }));
-  const task = await deps.specsRepo.createDraftElement({
-    id: deps.nextId("element"),
-    specId: execution.spec_id,
-    revisionId: revision.id,
-    kind: "task",
-    parentElementId: null,
-    position:
-      (await deps.specsRepo.getRevisionSnapshot(revision.id))?.elements
-        .length ?? 0,
-    payload: { kind: "task", ...input.discoveredTask },
-    createdAt: deps.now(),
-    updatedAt: deps.now(),
-  });
-  const amendmentPrepared = deps.events.appendInTransaction({
-    actor: input.actor,
-    durableEventType: "spec-revision-changed",
-    durablePayload: {
-      kind: "scope_amendment_captured",
-      revisionId: revision.id,
-      sourceExecutionId: execution.id,
-      taskElementId: task.element.id,
-      taskNumber: task.element.number,
+      };
     },
-    sseEvent: {
-      type: "spec-revision-changed",
-      kind: "scope_amendment_captured",
-      projectPath: spec.projectPath,
-      specId: spec.id,
-      specSlug: spec.slug,
-      occurredAt: deps.now(),
-      revisionId: revision.id,
-      elementIds: [task.element.id],
-    },
-  });
-  deps.events.publishAfterCommit(amendmentPrepared);
+  );
+  if (!captured.ok) return captured;
+  const { revision, task } = captured.value;
+  deps.events.publishAfterCommit(captured.value.prepared);
 
   if (blockingReason !== undefined) {
     const abandoned = await abandonExecution(deps, {

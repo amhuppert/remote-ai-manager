@@ -20,6 +20,7 @@ import {
 import {
   computeSpecRevisionContentHash,
   SpecElementIdTakenError,
+  SpecHistoricalElementError,
   SpecRevisionImmutableError,
   StaleElementConflictError,
   StaleStageConflictError,
@@ -43,6 +44,20 @@ import type {
   SpecPolicyAdmissionNotifier,
 } from "./policy-admissions";
 import { markWaiversStaleAtSignOffInTransaction } from "./waiver-staleness";
+import {
+  authoringReviewProjection,
+  type AuthoringNextAction,
+  type AuthoringPendingBlock,
+} from "./authoring-review-projection";
+import type { ReferenceIssue } from "./element-references";
+import {
+  danglingReferenceRefusal,
+  guardedElements,
+  stageRevisionWrite,
+  validateStagedWrite,
+  type GuardedElement,
+  type StagedElementMutation,
+} from "./element-write-guard";
 import { specSlugSchema } from "./handles";
 import { lint, type LintFinding } from "./lint";
 import type { SpecMeasureEventPayload } from "./measures";
@@ -53,6 +68,11 @@ import {
   loadProposalState,
   toDiffRows,
 } from "./review-state";
+import {
+  selectOrdinaryContinuation,
+  type BlockedByProposal,
+  type OrdinaryContinuation,
+} from "./revision-lineage";
 import {
   admitDraftWrite,
   advanceAuthoringStage as evaluateAdvanceAuthoringStage,
@@ -81,6 +101,15 @@ export const draftElementWriteInputSchema = z
     position: z.number().int().nonnegative().optional(),
     payload: specElementPayloadSchema,
     baseElementVersion: z.number().int().positive().nullable(),
+    /**
+     * Brings an element id this spec already owns, but the target revision
+     * does not carry, back into the revision — with its number, handle and
+     * creation provenance intact. Pairs with `baseElementVersion: null`: there
+     * is no version in this revision to compare against. Without it a
+     * historical id refuses, because reviving an identity silently is how a
+     * reader ends up with two elements answering to the same address.
+     */
+    reintroduceHistorical: z.boolean().optional(),
     actor: actorProvenanceSchema,
   })
   .strict();
@@ -89,23 +118,46 @@ export type DraftElementWriteInput = z.infer<
 >;
 
 /**
- * One element of a batch write. Identical to a single write minus the spec and
- * revision the batch as a whole names: per-element `baseElementVersion` is the
- * concurrency boundary in a batch exactly as it is alone, so two writers
- * touching disjoint elements never conflict (R7.3).
+ * One element as a caller writes it into a draft: a single write minus the
+ * spec, revision, and actor the transport carries. Its `baseElementVersion` is
+ * the concurrency boundary whether the element travels alone or in a batch, so
+ * two writers touching disjoint elements never conflict (R7.3) — and one
+ * document shape serves both forms, which is what keeps a lone element and a
+ * one-element array from disagreeing about which fields are legal.
  */
-export const draftElementBatchItemSchema = draftElementWriteInputSchema.omit({
+export const draftElementDocumentSchema = draftElementWriteInputSchema.omit({
   specId: true,
   revisionId: true,
   actor: true,
 });
-export type DraftElementBatchItem = z.infer<typeof draftElementBatchItemSchema>;
+export type DraftElementInput = z.infer<typeof draftElementDocumentSchema>;
 
-export const draftElementBatchInputSchema = z
+/**
+ * One element the batch takes out of the revision. Removal carries the same
+ * per-element compare-and-swap a write does, so a batch that removes an
+ * element someone else moved refuses instead of dropping their edit.
+ */
+export const draftElementBatchRemovalSchema = z
+  .object({
+    elementId: z.string().min(1),
+    baseElementVersion: z.number().int().positive(),
+  })
+  .strict();
+export type DraftElementBatchRemoval = z.infer<
+  typeof draftElementBatchRemovalSchema
+>;
+
+export const draftElementBatchShapeSchema = z
   .object({
     specId: z.string().min(1),
     revisionId: z.string().min(1),
-    elements: z.array(draftElementBatchItemSchema).min(1),
+    elements: z.array(draftElementDocumentSchema),
+    /**
+     * Removals travel with the writes because a reference and its target can
+     * only be taken out together: removing either alone would leave the other
+     * dangling, so two sequential single removals have no legal order.
+     */
+    removals: z.array(draftElementBatchRemovalSchema).optional(),
     /**
      * Optional stricter mode (R7.4). Supplying it additionally requires the
      * revision to be untouched since the token was read — useful for a writer
@@ -116,6 +168,22 @@ export const draftElementBatchInputSchema = z
     actor: actorProvenanceSchema,
   })
   .strict();
+
+export const BATCH_WITHOUT_WORK_MESSAGE =
+  "A batch must write or remove at least one element.";
+
+/** Shared by the service input and the transport body, which omits identity. */
+export function batchCarriesWork(input: {
+  elements: readonly unknown[];
+  removals?: readonly unknown[];
+}): boolean {
+  return input.elements.length > 0 || (input.removals ?? []).length > 0;
+}
+
+export const draftElementBatchInputSchema = draftElementBatchShapeSchema.refine(
+  batchCarriesWork,
+  { message: BATCH_WITHOUT_WORK_MESSAGE, path: ["elements"] },
+);
 export type DraftElementBatchInput = z.infer<
   typeof draftElementBatchInputSchema
 >;
@@ -126,6 +194,9 @@ export interface DraftElementBatchEntry extends DraftElementWriteResult {
   readonly elementId: string;
 }
 
+/** Which submitted array a batch refusal is addressed against. */
+export type DraftElementBatchInputKind = "element" | "removal" | "revision";
+
 /**
  * One element that refused, addressed by its index in the submitted array so a
  * caller can see which element refused and why without diffing arrays. The
@@ -133,6 +204,7 @@ export interface DraftElementBatchEntry extends DraftElementWriteResult {
  * null element: no single element is at fault.
  */
 export interface DraftElementBatchRefusal {
+  readonly input: DraftElementBatchInputKind;
   readonly index: number;
   readonly elementId: string | null;
   readonly code: TransitionRefusal["code"];
@@ -140,6 +212,11 @@ export interface DraftElementBatchRefusal {
   readonly instruction: string;
   /** The version the element is actually at, for a stale-element refusal. */
   readonly currentElementVersion: number | null;
+  /**
+   * The references this item's write would have left unresolved, carried
+   * structurally so a writer can repair them without parsing prose.
+   */
+  readonly danglingReferences?: readonly ReferenceIssue[];
 }
 
 export type DraftElementBatchResult =
@@ -153,16 +230,14 @@ export type DraftElementBatchResult =
 /**
  * The first saved element, carried inside the create call: the durable spec
  * object is born from its first successful draft save (R4.1), so creation is
- * never a separate content-less step.
+ * never a separate content-less step. It is the draft document without a
+ * compare-and-swap version, because the revision this element opens holds no
+ * version to compare against — stating one is a draft document sent at the
+ * wrong verb, and the strict parse says so rather than ignoring it.
  */
-export const createSpecInitialElementSchema = draftElementWriteInputSchema.omit(
-  {
-    specId: true,
-    revisionId: true,
-    baseElementVersion: true,
-    actor: true,
-  },
-);
+export const createSpecInitialElementSchema = draftElementDocumentSchema.omit({
+  baseElementVersion: true,
+});
 export type CreateSpecInitialElement = z.infer<
   typeof createSpecInitialElementSchema
 >;
@@ -211,6 +286,17 @@ export const openAmendmentInputSchema = z
   .strict();
 export type OpenAmendmentInput = z.infer<typeof openAmendmentInputSchema>;
 
+/**
+ * An amendment answers with what it opened and what it could not carry: a
+ * revision withdrawn above the approved base is terminal, so its content is
+ * dropped by any continuation. Naming the dropped revisions is the only way
+ * the author learns the new revision starts short of the last thing written.
+ */
+export interface OpenAmendmentResult {
+  readonly revision: SpecRevision;
+  readonly skippedWithdrawnRevisions: readonly SpecRevision[];
+}
+
 export const renameAuthoringSpecInputSchema = z
   .object({
     specId: z.string().min(1),
@@ -249,6 +335,8 @@ export interface AuthoringSpecCreateResult {
   readonly draft: SpecRevision;
   readonly element: CreateDraftElementResult["element"];
   readonly version: SpecElementVersion;
+  /** True when the first save of an amendment revived a historical identity. */
+  readonly revived: boolean;
   readonly handle: string | null;
 }
 
@@ -270,7 +358,7 @@ export interface AuthoringService {
     input: ReorderDraftElementInput,
   ): Promise<SpecElementVersion>;
   removeDraftElement(input: RemoveDraftElementInput): Promise<void>;
-  openAmendment(input: OpenAmendmentInput): Promise<SpecRevision>;
+  openAmendment(input: OpenAmendmentInput): Promise<OpenAmendmentResult>;
   advanceAuthoringStage(
     input: AdvanceAuthoringStageInput,
   ): Promise<AdvanceAuthoringStageResult>;
@@ -313,6 +401,14 @@ export type ProposeResult =
       readonly revision: SpecRevision;
       readonly diff: RevisionDiffResult;
       readonly absorbedSignOff: boolean;
+      /**
+       * What the proposed revision still owes, read from the server's
+       * projection after invalidation and the policy admissions. Null when the
+       * transition left nothing outstanding. A caller renders this; deriving a
+       * blocker from the revision's authoring stage names the wrong gate.
+       */
+      readonly pendingBlock: AuthoringPendingBlock | null;
+      readonly nextAction: AuthoringNextAction;
     }
   | { readonly ok: false; readonly refusal: TransitionRefusal };
 
@@ -332,11 +428,18 @@ export type AdvanceAuthoringStageResult =
   | { readonly ok: true; readonly revision: SpecRevision }
   | { readonly ok: false; readonly refusal: TransitionRefusal };
 
+/**
+ * A single-element draft write the service refused. The refusal it carries is
+ * the answer, so the code is read off it rather than fixed: the same carrier
+ * reports a stage that does not admit the element and a write whose references
+ * the revision cannot resolve.
+ */
 export class StageBlockedWriteError extends Error {
-  readonly code = "stage_blocked" as const;
+  readonly code: TransitionRefusal["code"];
 
   constructor(readonly refusal: TransitionRefusal) {
     super(refusal.unmetConditions.join(" "));
+    this.code = refusal.code;
     this.name = "StageBlockedWriteError";
   }
 }
@@ -345,6 +448,130 @@ export class SpecDraftUnavailableError extends Error {
   constructor(readonly specId: string) {
     super(`spec ${specId} has no editable draft or approved revision`);
     this.name = "SpecDraftUnavailableError";
+  }
+}
+
+/** Revisions are addressed by number, so the joiner speaks only numbers. */
+function joinRevisionNumbers(numbers: readonly number[]): string {
+  if (numbers.length <= 2) return numbers.join(" and ");
+  return `${numbers.slice(0, -1).join(", ")}, and ${numbers.at(-1) ?? ""}`;
+}
+
+/**
+ * The act a caller was refused, which decides the verb and the consequence the
+ * instruction names. Telling an element write to "conclude the review before
+ * amending" describes an act its caller never attempted.
+ */
+export type RefusedRevisionAct = "amendment" | "element_write";
+
+/**
+ * The one recovery every surface teaches when a revision is under review, so a
+ * refused write and a refused amendment cannot point at each other. Revisions
+ * are addressed by number on every surface, so the reader is never handed an
+ * id where the UI, the CLI, and the other refusals all say a number — the
+ * withdrawal's compare-and-swap token stays a placeholder for that reason.
+ *
+ * Names only verbs that exist today: sign-off happens in Spec Studio, a human
+ * requesting changes ends the review from the other side, and the conversation
+ * that proposed the revision takes it back itself while no human has acted.
+ */
+export function revisionInReviewInstruction(
+  revisionNumbers: readonly number[],
+  act: RefusedRevisionAct,
+): string {
+  const plural = revisionNumbers.length > 1;
+  const joined = joinRevisionNumbers(revisionNumbers);
+  const refusedAct =
+    act === "amendment" ? "amending" : `editing ${plural ? "them" : "it"}`;
+  const consequence =
+    act === "amendment"
+      ? "Amending now would fork past the reviewed content."
+      : `Writing into ${plural ? "them" : "it"} now would change content a reviewer is reading.`;
+  return `${plural ? "Revisions" : "Revision"} ${joined} ${plural ? "are" : "is"} under review. Conclude that review before ${refusedAct}: sign off ${plural ? "revisions" : "revision"} ${joined} in Spec Studio, have a human request changes on ${plural ? "them" : "it"}, or — if this conversation proposed ${plural ? "them" : "it"} and no human has acted on ${plural ? "them" : "it"} yet — run \`cctl spec withdraw-proposal <slug> --revision <revision-id>\` to take ${plural ? "them" : "it"} back and continue in the draft ${plural ? "each" : "it"} reopens. ${consequence}`;
+}
+
+/**
+ * A write into a non-draft revision splits by the state that made it
+ * immutable. Approved and withdrawn content is continued by opening an
+ * amendment draft; a proposed revision is not, because the amendment itself
+ * refuses until the review concludes. One code for both states would point the
+ * caller at a recovery that refuses for the same reason.
+ */
+export function immutableRevisionRefusal(
+  error: SpecRevisionImmutableError,
+): Pick<TransitionRefusal, "code" | "unmetConditions" | "instruction"> {
+  return {
+    code:
+      error.state === "proposed" ? "revision_in_review" : "amendment_required",
+    unmetConditions: [error.message],
+    instruction:
+      error.state === "proposed"
+        ? revisionInReviewInstruction([error.revisionNumber], "element_write")
+        : "Open an amendment draft before changing approved content.",
+  };
+}
+
+/**
+ * The one refusal every surface renders for an element id this spec already
+ * owns. Only `reintroduction_required` is recoverable by retrying, so it is
+ * the only one that states a retry shape; the other two name the identity
+ * facts a reintroduction cannot change, which leaves a new id as the way out.
+ */
+export function historicalElementRefusal(
+  error: SpecHistoricalElementError,
+): Pick<
+  TransitionRefusal,
+  "code" | "unmetConditions" | "instruction" | "details"
+> {
+  const address = error.handle ?? error.elementId;
+  const instruction =
+    error.reason === "reintroduction_required"
+      ? `Nothing was written. Retry the same write with "reintroduceHistorical": true and "baseElementVersion": null to bring ${address} back into this revision with its number, handle and history intact, or author the new content under a different element id.`
+      : error.reason === "kind_changed"
+        ? `Nothing was written. ${address} is a ${error.kind} and comes back as one, so reintroduce it with kind ${error.kind}, or choose a different element id for the new ${error.attemptedKind}.`
+        : `Nothing was written. ${address} is contained by ${error.parentElementId ?? "no parent"} and comes back under it, so reintroduce it with that parentElementId, or choose a different element id to author it elsewhere.`;
+  return {
+    code: error.code,
+    unmetConditions: [error.message],
+    instruction,
+    details: {
+      reason: error.reason,
+      elementId: error.elementId,
+      revisionId: error.revisionId,
+      handle: error.handle,
+      kind: error.kind,
+      parentElementId: error.parentElementId,
+      attemptedKind: error.attemptedKind,
+      attemptedParentElementId: error.attemptedParentElementId,
+    },
+  };
+}
+
+/**
+ * An ordinary authoring continuation refuses while a revision is under review.
+ * Continuing from the approved base would number the new revision above the
+ * proposed one while carrying none of its content, so the revision the
+ * reviewer is reading is forked past and its element IDs are orphaned.
+ */
+export class SpecRevisionInReviewError extends Error {
+  readonly code = "revision_in_review" as const;
+  readonly proposals: readonly SpecRevision[];
+  readonly approvedBase: SpecRevision | null;
+  readonly instruction: string;
+
+  constructor(
+    readonly specId: string,
+    blocked: BlockedByProposal,
+  ) {
+    const numbers = blocked.proposals.map(({ number }) => number);
+    const plural = numbers.length > 1;
+    super(
+      `${plural ? "Revisions" : "Revision"} ${joinRevisionNumbers(numbers)} of spec ${specId} ${plural ? "are" : "is"} proposed and under review, so an amendment would fork past ${plural ? "them" : "it"}`,
+    );
+    this.name = "SpecRevisionInReviewError";
+    this.proposals = blocked.proposals;
+    this.approvedBase = blocked.approved;
+    this.instruction = revisionInReviewInstruction(numbers, "amendment");
   }
 }
 
@@ -367,6 +594,22 @@ export class SpecSlugTakenError extends Error {
   }
 }
 
+/**
+ * Every ordinary authoring continuation resolves its base here, before it
+ * writes anything, so a revision under review refuses on the first read
+ * instead of forking a new revision off the approved base.
+ */
+export function continueOrdinaryAuthoring(
+  repo: SpecsRepoTransaction,
+  specId: string,
+): Exclude<OrdinaryContinuation, BlockedByProposal> {
+  const selection = selectOrdinaryContinuation(repo.listRevisions(specId));
+  if (selection.kind === "blocked_by_proposal") {
+    throw new SpecRevisionInReviewError(specId, selection);
+  }
+  return selection;
+}
+
 function requireSpec(repo: SpecsRepoTransaction, specId: string): Spec {
   const spec = repo.findById(specId);
   if (spec === null) {
@@ -387,6 +630,42 @@ function requireOwnedRevision(
   return revision;
 }
 
+function currentGuardedElements(
+  repo: SpecsRepoTransaction,
+  revisionId: string | null,
+): GuardedElement[] {
+  return guardedElements(
+    revisionId === null ? null : repo.getRevisionSnapshot(revisionId),
+  );
+}
+
+/**
+ * The parent a written element ends up with. Containment is fixed at creation
+ * — an update carries no parent — so an upsert over an existing element keeps
+ * the row's parent rather than whatever the caller happened to send.
+ */
+function stagedParentElementId(
+  current: readonly GuardedElement[],
+  elementId: string,
+  requestedParentElementId: string | null,
+): string | null {
+  const existing = current.find((element) => element.id === elementId);
+  return existing === undefined
+    ? requestedParentElementId
+    : existing.parentElementId;
+}
+
+/**
+ * The one reference verdict every mutation owner takes: the complete result of
+ * the transaction, judged before any of it is allowed to stand.
+ */
+function stagedReferenceIssues(
+  current: readonly GuardedElement[],
+  mutations: readonly StagedElementMutation[],
+): ReferenceIssue[] {
+  return validateStagedWrite(stageRevisionWrite(current, mutations));
+}
+
 /**
  * Rolls the batch transaction back while carrying the indexed refusals out:
  * SQLite unwinds on a throw, and the refusals are the answer the caller needs,
@@ -400,12 +679,14 @@ class BatchRefusedError extends Error {
 }
 
 function batchRefusalFor(
+  input: DraftElementBatchInputKind,
   index: number,
   elementId: string,
   error: unknown,
 ): DraftElementBatchRefusal {
   if (error instanceof StaleElementConflictError) {
     return {
+      input,
       index,
       elementId,
       code: "stale_element",
@@ -416,6 +697,7 @@ function batchRefusalFor(
   }
   if (error instanceof SpecElementIdTakenError) {
     return {
+      input,
       index,
       elementId,
       code: "element_id_taken",
@@ -425,17 +707,29 @@ function batchRefusalFor(
       currentElementVersion: null,
     };
   }
-  if (error instanceof SpecRevisionImmutableError) {
+  if (error instanceof SpecHistoricalElementError) {
+    const refusal = historicalElementRefusal(error);
     return {
+      input,
       index,
       elementId,
-      code: "amendment_required",
-      unmetConditions: [error.message],
-      instruction: "Open an amendment draft before changing approved content.",
+      code: refusal.code,
+      unmetConditions: refusal.unmetConditions,
+      instruction: `${refusal.instruction} Then resubmit the batch.`,
+      currentElementVersion: null,
+    };
+  }
+  if (error instanceof SpecRevisionImmutableError) {
+    return {
+      input,
+      index,
+      elementId,
+      ...immutableRevisionRefusal(error),
       currentElementVersion: null,
     };
   }
   return {
+    input,
     index,
     elementId,
     code: "validation",
@@ -445,6 +739,64 @@ function batchRefusalFor(
     instruction: `Correct element ${index} (${elementId}) and resubmit the batch.`,
     currentElementVersion: null,
   };
+}
+
+/**
+ * Attributes each dangling reference to the batch entry that caused it: the
+ * item that wrote the offending source, or — when the source is an untouched
+ * survivor — the removal that took its target away. Grouping by entry keeps
+ * the batch contract intact, where every refusal names the input the caller
+ * has to change.
+ */
+function batchDanglingRefusals(
+  issues: readonly ReferenceIssue[],
+  sourceEntryById: ReadonlyMap<
+    string,
+    { input: DraftElementBatchInputKind; index: number }
+  >,
+  removalIndexById: ReadonlyMap<string, number>,
+): DraftElementBatchRefusal[] {
+  const grouped = new Map<string, ReferenceIssue[]>();
+  const entries = new Map<
+    string,
+    { input: DraftElementBatchInputKind; index: number; elementId: string }
+  >();
+  for (const issue of issues) {
+    const written = sourceEntryById.get(issue.sourceElementId);
+    const removalIndex = removalIndexById.get(issue.targetId);
+    const entry =
+      written !== undefined
+        ? { ...written, elementId: issue.sourceElementId }
+        : removalIndex !== undefined
+          ? {
+              input: "removal" as const,
+              index: removalIndex,
+              elementId: issue.targetId,
+            }
+          : {
+              input: "element" as const,
+              index: -1,
+              elementId: issue.sourceElementId,
+            };
+    const key = `${entry.input}:${entry.index}:${entry.elementId}`;
+    entries.set(key, entry);
+    grouped.set(key, [...(grouped.get(key) ?? []), issue]);
+  }
+
+  return [...grouped].map(([key, groupIssues]) => {
+    const entry = entries.get(key);
+    const refusal = danglingReferenceRefusal(groupIssues);
+    return {
+      input: entry?.input ?? "element",
+      index: entry?.index ?? -1,
+      elementId: entry?.elementId ?? null,
+      code: refusal.code,
+      unmetConditions: refusal.unmetConditions,
+      instruction: refusal.instruction,
+      currentElementVersion: null,
+      danglingReferences: groupIssues,
+    };
+  });
 }
 
 /**
@@ -467,10 +819,9 @@ function revisionToken(snapshot: SpecRevisionSnapshot): string {
 function writeOneElement(
   repo: SpecsRepoTransaction,
   batch: DraftElementBatchInput,
-  item: DraftElementBatchItem,
+  item: DraftElementInput,
   occurredAt: string,
-): SpecElementVersion {
-  let version: SpecElementVersion;
+): { version: SpecElementVersion; revived: boolean } {
   if (item.baseElementVersion === null) {
     const current = repo.findElementVersion(batch.revisionId, item.elementId);
     if (current !== null) {
@@ -481,7 +832,7 @@ function writeOneElement(
         current,
       );
     }
-    version = repo.createDraftElement({
+    const created = repo.createDraftElement({
       id: item.elementId,
       specId: batch.specId,
       revisionId: batch.revisionId,
@@ -489,20 +840,25 @@ function writeOneElement(
       parentElementId: item.parentElementId,
       position: item.position,
       payload: item.payload,
+      ...(item.reintroduceHistorical === undefined
+        ? {}
+        : { reintroduceHistorical: item.reintroduceHistorical }),
       createdAt: occurredAt,
       updatedAt: occurredAt,
-    }).version;
-  } else {
-    version = repo.updateDraftElement({
+    });
+    return { version: created.version, revived: created.revived };
+  }
+  return {
+    version: repo.updateDraftElement({
       revisionId: batch.revisionId,
       elementId: item.elementId,
       expectedElementVersion: item.baseElementVersion,
       payload: item.payload,
       position: item.position,
       updatedAt: occurredAt,
-    });
-  }
-  return version;
+    }),
+    revived: false,
+  };
 }
 
 /**
@@ -527,6 +883,13 @@ export function createAuthoringService(
   const newId = deps.newId ?? (() => randomUUID());
   const now = deps.now ?? (() => new Date().toISOString());
 
+  /**
+   * `revivedElementIds` travels on every write that brought a historical
+   * identity back, whatever act carried it: a batch is still a batch and a
+   * first save still opens an amendment, so the revival cannot be read off the
+   * event kind alone. Without it the durable log cannot tell a later reader
+   * that content a review had ended was re-opened.
+   */
   function appendDraftEvent(
     spec: Spec,
     revisionId: string,
@@ -534,6 +897,7 @@ export function createAuthoringService(
     actor: CreateAuthoringSpecInput["actor"],
     occurredAt: string,
     kind: string,
+    revivedElementIds: readonly string[] = [],
   ): PreparedSpecEventPublication {
     return deps.events.appendInTransaction({
       actor,
@@ -542,6 +906,9 @@ export function createAuthoringService(
         kind,
         revisionId,
         ...(elementIds === undefined ? {} : { elementIds }),
+        ...(revivedElementIds.length === 0
+          ? {}
+          : { revivedElementIds: [...revivedElementIds] }),
       },
       sseEvent: {
         type: "spec-changed",
@@ -671,6 +1038,12 @@ export function createAuthoringService(
           parentElementId: parsed.initialElement.parentElementId,
           position: parsed.initialElement.position,
           payload: parsed.initialElement.payload,
+          ...(parsed.initialElement.reintroduceHistorical === undefined
+            ? {}
+            : {
+                reintroduceHistorical:
+                  parsed.initialElement.reintroduceHistorical,
+              }),
           createdAt: occurredAt,
           updatedAt: occurredAt,
         });
@@ -680,13 +1053,44 @@ export function createAuthoringService(
         };
       }
 
+      /**
+       * The first save is one transaction like any other: spec, revision and
+       * element stand or fall together, so a reference the revision could not
+       * resolve refuses before any of the three exists.
+       */
+      function guardInitialElement(
+        repo: SpecsRepoTransaction,
+        baseRevisionId: string | null,
+      ): void {
+        const current = currentGuardedElements(repo, baseRevisionId);
+        const issues = stagedReferenceIssues(current, [
+          {
+            op: "write",
+            elementId: parsed.initialElement.elementId,
+            payload: parsed.initialElement.payload,
+            parentElementId: stagedParentElementId(
+              current,
+              parsed.initialElement.elementId,
+              parsed.initialElement.parentElementId,
+            ),
+          },
+        ]);
+        if (issues.length > 0) {
+          throw new StageBlockedWriteError(danglingReferenceRefusal(issues));
+        }
+      }
+
       const result = await deps.specs.transaction(
         "specs.authoring.create",
         (repo) => {
           const existing = repo.resolve(parsed.projectPath, parsed.slug);
           if (existing !== null) {
-            const draft = repo.findDraft(existing.id);
-            if (draft !== null) {
+            // A create that lands on a spec with an editable draft is a slug
+            // collision, diagnosed before any continuation decision: the
+            // caller asked for a new spec, so it needs the colliding spec's
+            // identity and the option of another slug rather than the recovery
+            // for continuing this spec's authoring line.
+            if (repo.findDraft(existing.id) !== null) {
               throw new SpecSlugTakenError(
                 parsed.projectPath,
                 parsed.slug,
@@ -694,11 +1098,14 @@ export function createAuthoringService(
                 existing.name,
               );
             }
-
-            const approved = repo.findLatestApproved(existing.id);
-            if (approved === null) {
+            // With no draft to collide with, the create continues the spec as
+            // an amendment, so it answers to the review guard.
+            const continuation = continueOrdinaryAuthoring(repo, existing.id);
+            if (continuation.kind !== "clone_approved") {
               throw new SpecDraftUnavailableError(existing.id);
             }
+
+            const approved = continuation.approved;
             const amendmentStage = openDraftAuthoringStage({
               policy: existing.gatePolicy,
               baseRevision: {
@@ -728,6 +1135,9 @@ export function createAuthoringService(
                 refusal: amendmentDecision.refusal,
               };
             }
+            // The amendment inherits the approved revision's content, so that
+            // is the snapshot the first element of the amendment is judged in.
+            guardInitialElement(repo, approved.id);
             const amendment = repo.createDraftFromBase({
               id: newId("revision"),
               specId: existing.id,
@@ -747,6 +1157,7 @@ export function createAuthoringService(
                 draft: amendment,
                 element: written.element,
                 version: written.version,
+                revived: written.revived,
                 handle: written.handle,
               },
               prepared: appendDraftEvent(
@@ -756,6 +1167,7 @@ export function createAuthoringService(
                 parsed.actor,
                 occurredAt,
                 "amendment-opened",
+                written.revived ? [parsed.initialElement.elementId] : [],
               ),
             };
           }
@@ -763,6 +1175,7 @@ export function createAuthoringService(
           if (!initialDecision.ok) {
             throw new StageBlockedWriteError(initialDecision.refusal);
           }
+          guardInitialElement(repo, null);
 
           // Spec, draft revision, and first element share one transaction and
           // one timestamp: the durable object is born from this first save.
@@ -794,6 +1207,7 @@ export function createAuthoringService(
               draft: created.revision,
               element: written.element,
               version: written.version,
+              revived: written.revived,
               handle: written.handle,
             },
             prepared: appendDraftEvent(
@@ -872,6 +1286,7 @@ export function createAuthoringService(
             spec,
             snapshot,
           );
+          const panelFindings = lint(loaded.draft, loaded.records);
           const decision = propose({
             revisionState: revision.state,
             authoringStage: revision.authoringStage,
@@ -879,6 +1294,7 @@ export function createAuthoringService(
             draft: loaded.draft,
             records: loaded.records,
             review: loaded.reviewSnapshot,
+            approvalApplies: loaded.approvalApplies,
           });
           const blocksPropose =
             !decision.ok &&
@@ -902,7 +1318,9 @@ export function createAuthoringService(
           }
 
           const baseRows =
-            loaded.baseSnapshot === null ? [] : toDiffRows(loaded.baseSnapshot);
+            loaded.reviewBaseSnapshot === null
+              ? []
+              : toDiffRows(loaded.reviewBaseSnapshot);
           const draftRows = toDiffRows(snapshot);
           const diff = diffRevisions(baseRows, draftRows);
           const classificationById = new Map(
@@ -953,7 +1371,7 @@ export function createAuthoringService(
             .map(({ elementId }) => elementId)
             .sort();
           const revisionMeasureEvents: SpecMeasureEventPayload[] =
-            loaded.baseSnapshot?.revision.state === "approved"
+            loaded.reviewBaseSnapshot?.revision.state === "approved"
               ? [
                   {
                     kind: "post-approval-revision-created",
@@ -970,7 +1388,7 @@ export function createAuthoringService(
           });
           const proposeGates = consultedAuthoringGates(
             revision.authoringStage,
-            loaded.reviewSnapshot.baseRevisionRows,
+            loaded.reviewSnapshot.governanceBaseRevisionRows,
             loaded.reviewSnapshot.revisionRows,
           );
           const resolvedGates = proposeGates.map((gate) => ({
@@ -1035,6 +1453,30 @@ export function createAuthoringService(
             }
           }
 
+          // Read AFTER approval invalidation and after the Notify/Off policy
+          // admissions land, so the receipt states the position the caller is
+          // actually in rather than the one the transition started from.
+          const projection = authoringReviewProjection({
+            policy: spec.gatePolicy,
+            snapshot: { ...snapshot, revision: proposed },
+            governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+            approvals: deps.review.findApprovalsBySpecId(spec.id),
+            admissions: deps.review.findGateAdmissionsByRevision(revision.id),
+            // A propose speaks for the authoring gates; the execution-scoped
+            // ones are per-run and no run exists at this transition.
+            currentExecution: null,
+            revisionNumberById: new Map(
+              repo
+                .listRevisions(spec.id)
+                .map((candidate) => [candidate.id, candidate.number]),
+            ),
+            applies: loaded.approvalApplies,
+            blockingThreads: loaded.reviewSnapshot.blockingThreads,
+            signOffFindings: panelFindings.filter(
+              (finding) => finding.severity === "blocks_signoff",
+            ),
+          });
+
           const prepared = [
             appendRevisionEvent(
               spec,
@@ -1098,6 +1540,8 @@ export function createAuthoringService(
               revision: proposed,
               diff,
               absorbedSignOff: absorbsSignOff,
+              pendingBlock: projection.pendingBlock,
+              nextAction: projection.nextAction,
             } satisfies ProposeResult,
             prepared,
             policyNotices,
@@ -1154,12 +1598,40 @@ export function createAuthoringService(
             );
             return { ok: false as const, refusal: decision.refusal };
           }
+
+          const staged = currentGuardedElements(repo, parsed.revisionId);
+          const referenceIssues = stagedReferenceIssues(staged, [
+            {
+              op: "write",
+              elementId: parsed.elementId,
+              payload: parsed.payload,
+              parentElementId: stagedParentElementId(
+                staged,
+                parsed.elementId,
+                parsed.parentElementId,
+              ),
+            },
+          ]);
+          if (referenceIssues.length > 0) {
+            const refusal = danglingReferenceRefusal(referenceIssues);
+            appendWriteIntervention(
+              spec.id,
+              revision.id,
+              parsed.elementId,
+              parsed.actor,
+              occurredAt,
+              refusal,
+            );
+            return { ok: false as const, refusal };
+          }
+
           const current = repo.findElementVersion(
             parsed.revisionId,
             parsed.elementId,
           );
 
           let version: SpecElementVersion;
+          let revived = false;
           if (parsed.baseElementVersion === null) {
             if (current !== null) {
               throw new StaleElementConflictError(
@@ -1169,7 +1641,7 @@ export function createAuthoringService(
                 current,
               );
             }
-            version = repo.createDraftElement({
+            const created = repo.createDraftElement({
               id: parsed.elementId,
               specId: parsed.specId,
               revisionId: parsed.revisionId,
@@ -1177,9 +1649,14 @@ export function createAuthoringService(
               parentElementId: parsed.parentElementId,
               position: parsed.position,
               payload: parsed.payload,
+              ...(parsed.reintroduceHistorical === undefined
+                ? {}
+                : { reintroduceHistorical: parsed.reintroduceHistorical }),
               createdAt: occurredAt,
               updatedAt: occurredAt,
-            }).version;
+            });
+            version = created.version;
+            revived = created.revived;
           } else {
             version = repo.updateDraftElement({
               revisionId: parsed.revisionId,
@@ -1203,6 +1680,7 @@ export function createAuthoringService(
           const written: DraftElementWriteResult = {
             element,
             version,
+            revived,
             handle: elementHandleInSnapshot(snapshot, parsed.elementId),
           };
 
@@ -1215,9 +1693,15 @@ export function createAuthoringService(
               [parsed.elementId],
               parsed.actor,
               occurredAt,
-              current === null
-                ? "draft-element-created"
-                : "draft-element-updated",
+              // A revival is its own act in the durable record: the element is
+              // new to this revision but not to the spec, so neither "created"
+              // nor "updated" describes what a reader is looking at.
+              revived
+                ? "draft-element-reintroduced"
+                : current === null
+                  ? "draft-element-created"
+                  : "draft-element-updated",
+              revived ? [parsed.elementId] : [],
             ),
           };
         },
@@ -1228,6 +1712,7 @@ export function createAuthoringService(
           revisionId: parsed.revisionId,
           elementId: parsed.elementId,
           elementKind: parsed.kind,
+          refusalCode: result.refusal.code,
         });
         throw new StageBlockedWriteError(result.refusal);
       }
@@ -1237,6 +1722,7 @@ export function createAuthoringService(
         revisionId: parsed.revisionId,
         elementId: parsed.elementId,
         elementVersion: result.value.version.elementVersion,
+        revived: result.value.revived,
       });
       return result.value;
     },
@@ -1267,12 +1753,13 @@ export function createAuthoringService(
               parsed.specId,
               parsed.revisionId,
             );
+            const before = repo.getRevisionSnapshot(revision.id);
             if (parsed.expectedRevisionToken !== undefined) {
-              const snapshot = repo.getRevisionSnapshot(revision.id);
-              const actual = snapshot === null ? null : revisionToken(snapshot);
+              const actual = before === null ? null : revisionToken(before);
               if (actual !== parsed.expectedRevisionToken) {
                 throw new BatchRefusedError([
                   {
+                    input: "revision",
                     index: -1,
                     elementId: null,
                     code: "stale_revision",
@@ -1286,13 +1773,37 @@ export function createAuthoringService(
                 ]);
               }
             }
+            const staged = before === null ? [] : guardedElements(before);
+            const removals = parsed.removals ?? [];
 
             const landed: {
               index: number;
               elementId: string;
               version: SpecElementVersion;
+              revived: boolean;
             }[] = [];
             const refusals: DraftElementBatchRefusal[] = [];
+            // Writing and removing the same id in one batch has no result the
+            // caller can be handed: the removal takes the write straight back
+            // out, so the batch would have to answer with an element the
+            // revision does not carry. Named as the contradiction it is.
+            const writtenIds = new Set(
+              parsed.elements.map((item) => item.elementId),
+            );
+            removals.forEach((removal, index) => {
+              if (!writtenIds.has(removal.elementId)) return;
+              refusals.push({
+                input: "removal",
+                index,
+                elementId: removal.elementId,
+                code: "validation",
+                unmetConditions: [
+                  `${removal.elementId} is both written and removed by this batch.`,
+                ],
+                instruction: `Drop ${removal.elementId} from either the elements or the removals array and resubmit the batch.`,
+                currentElementVersion: null,
+              });
+            });
             parsed.elements.forEach((item, index) => {
               const decision = writeDecision(
                 spec,
@@ -1310,6 +1821,7 @@ export function createAuthoringService(
                   refusal: decision.refusal,
                 });
                 refusals.push({
+                  input: "element",
                   index,
                   elementId: item.elementId,
                   code: decision.refusal.code,
@@ -1323,14 +1835,95 @@ export function createAuthoringService(
                 landed.push({
                   index,
                   elementId: item.elementId,
-                  version: writeOneElement(repo, parsed, item, occurredAt),
+                  ...writeOneElement(repo, parsed, item, occurredAt),
                 });
               } catch (error) {
                 // Every element is attempted so one bad version does not hide
                 // the next; the whole batch is rolled back below regardless.
-                refusals.push(batchRefusalFor(index, item.elementId, error));
+                refusals.push(
+                  batchRefusalFor("element", index, item.elementId, error),
+                );
               }
             });
+
+            removals.forEach((removal, index) => {
+              const target = before?.elements.find(
+                ({ element }) => element.id === removal.elementId,
+              );
+              if (target !== undefined) {
+                const decision = writeDecision(
+                  spec,
+                  revision,
+                  target.element.kind,
+                  target.version.payload,
+                );
+                if (!decision.ok) {
+                  blockedWrites.push({
+                    elementId: removal.elementId,
+                    refusal: decision.refusal,
+                  });
+                  refusals.push({
+                    input: "removal",
+                    index,
+                    elementId: removal.elementId,
+                    code: decision.refusal.code,
+                    unmetConditions: decision.refusal.unmetConditions,
+                    instruction: decision.refusal.instruction,
+                    currentElementVersion: null,
+                  });
+                  return;
+                }
+              }
+              try {
+                repo.removeDraftElement({
+                  revisionId: parsed.revisionId,
+                  elementId: removal.elementId,
+                  expectedElementVersion: removal.baseElementVersion,
+                });
+              } catch (error) {
+                refusals.push(
+                  batchRefusalFor("removal", index, removal.elementId, error),
+                );
+              }
+            });
+
+            // Judged against the result of the whole batch rather than each
+            // item as it lands, so a task written before the criterion it
+            // covers is legal and a target may leave alongside its last
+            // referent.
+            refusals.push(
+              ...batchDanglingRefusals(
+                stagedReferenceIssues(staged, [
+                  ...parsed.elements.map(
+                    (item): StagedElementMutation => ({
+                      op: "write",
+                      elementId: item.elementId,
+                      payload: item.payload,
+                      parentElementId: stagedParentElementId(
+                        staged,
+                        item.elementId,
+                        item.parentElementId,
+                      ),
+                    }),
+                  ),
+                  ...removals.map(
+                    (removal): StagedElementMutation => ({
+                      op: "remove",
+                      elementId: removal.elementId,
+                    }),
+                  ),
+                ]),
+                new Map(
+                  parsed.elements.map((item, index) => [
+                    item.elementId,
+                    { input: "element" as const, index },
+                  ]),
+                ),
+                new Map(
+                  removals.map((removal, index) => [removal.elementId, index]),
+                ),
+              ),
+            );
 
             if (refusals.length > 0) throw new BatchRefusedError(refusals);
 
@@ -1353,6 +1946,7 @@ export function createAuthoringService(
                 elementId: entry.elementId,
                 element,
                 version: entry.version,
+                revived: entry.revived,
                 handle: elementHandleInSnapshot(snapshot, entry.elementId),
               };
             });
@@ -1365,10 +1959,16 @@ export function createAuthoringService(
               prepared: appendDraftEvent(
                 spec,
                 revision.id,
-                parsed.elements.map((item) => item.elementId),
+                [
+                  ...parsed.elements.map((item) => item.elementId),
+                  ...removals.map((removal) => removal.elementId),
+                ],
                 parsed.actor,
                 occurredAt,
                 "draft-elements-written",
+                written
+                  .filter((entry) => entry.revived)
+                  .map((entry) => entry.elementId),
               ),
             };
           },
@@ -1677,6 +2277,24 @@ export function createAuthoringService(
               return { ok: false as const, refusal: decision.refusal };
             }
           }
+
+          const referenceIssues = stagedReferenceIssues(
+            currentGuardedElements(repo, parsed.revisionId),
+            [{ op: "remove", elementId: parsed.elementId }],
+          );
+          if (referenceIssues.length > 0) {
+            const refusal = danglingReferenceRefusal(referenceIssues);
+            appendWriteIntervention(
+              spec.id,
+              revision.id,
+              parsed.elementId,
+              parsed.actor,
+              occurredAt,
+              refusal,
+            );
+            return { ok: false as const, refusal };
+          }
+
           repo.removeDraftElement({
             revisionId: parsed.revisionId,
             elementId: parsed.elementId,
@@ -1759,13 +2377,19 @@ export function createAuthoringService(
         "specs.authoring.open-amendment",
         (repo) => {
           const spec = requireSpec(repo, parsed.specId);
-          const existing = repo.findDraft(spec.id);
-          if (existing !== null) return { revision: existing, prepared: null };
-
-          const approved = repo.findLatestApproved(spec.id);
-          if (approved === null) {
+          const continuation = continueOrdinaryAuthoring(repo, spec.id);
+          if (continuation.kind === "reuse_draft") {
+            return {
+              revision: continuation.draft,
+              skippedWithdrawnRevisions: [],
+              prepared: null,
+            };
+          }
+          if (continuation.kind === "unavailable") {
             throw new SpecDraftUnavailableError(spec.id);
           }
+
+          const approved = continuation.approved;
           const authoringStage = openDraftAuthoringStage({
             policy: spec.gatePolicy,
             baseRevision: {
@@ -1782,6 +2406,7 @@ export function createAuthoringService(
           });
           return {
             revision,
+            skippedWithdrawnRevisions: continuation.skippedWithdrawn,
             prepared: appendDraftEvent(
               spec,
               revision.id,
@@ -1798,8 +2423,14 @@ export function createAuthoringService(
         specId: parsed.specId,
         revisionId: result.revision.id,
         reused: result.prepared === null,
+        skippedWithdrawnRevisionIds: result.skippedWithdrawnRevisions.map(
+          ({ id }) => id,
+        ),
       });
-      return result.revision;
+      return {
+        revision: result.revision,
+        skippedWithdrawnRevisions: result.skippedWithdrawnRevisions,
+      };
     },
   };
 }

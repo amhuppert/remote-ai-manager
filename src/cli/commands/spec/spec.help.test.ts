@@ -77,6 +77,39 @@ describe("cctl spec help nodes", () => {
   });
 
   /**
+   * Element versions are revision-local: `spec amend` copies the approved
+   * content into the new revision at version 1. An author who reuses a version
+   * read before the amendment is writing against a version that revision never
+   * had, so both the verb that opens the revision and the verb that writes into
+   * it have to say so.
+   */
+  it("states that copied elements restart at version 1 and must be re-read", async () => {
+    for (const path of [
+      ["spec", "draft"],
+      ["spec", "amend"],
+    ]) {
+      const text = (await helpText(path)).toLowerCase();
+      expect(text, `${path.join(" ")}: no version-1 restart`).toContain(
+        "restart at 1",
+      );
+      expect(text, `${path.join(" ")}: no re-read instruction`).toContain(
+        "re-read",
+      );
+    }
+  });
+
+  /**
+   * The compare-and-swap version travels in the document now, so help that
+   * still advertises the flag teaches an invocation every form refuses.
+   */
+  it("teaches the compare-and-swap as a document field, not a flag", async () => {
+    const text = await helpText(["spec", "draft"]);
+
+    expect(text).not.toContain("--base-version");
+    expect(text).toContain("baseElementVersion");
+  });
+
+  /**
    * A refusal an agent cannot look up teaches nothing but retrying, and a
    * repeat ask that returns the existing record must not read as an escalation.
    */
@@ -95,6 +128,21 @@ describe("cctl spec help nodes", () => {
   });
 
   /**
+   * What an omitted --subject means is the whole rule an agent has to know: it
+   * asks for the gate, at twelve outstanding subjects or none, and never
+   * silently becomes "the one subject that is left". Help that leaves it
+   * implicit is what sent agents at per-item requests a gate with a dozen
+   * subjects could not make.
+   */
+  it("states that an omitted --subject asks for the gate itself", async () => {
+    const text = await helpText(["spec", "request-approval"]);
+
+    expect(text).toContain("gate as a whole");
+    expect(text).toContain("sign-off");
+    expect(text).toContain("one entry");
+  });
+
+  /**
    * The delivery example must promise exactly what the verb does — it records
    * a durable request; the gate still halts at final publish until a human
    * grants it. Wording that implied the run parks instead of halting was a
@@ -109,6 +157,192 @@ describe("cctl spec help nodes", () => {
     expect(text).toContain(
       "the gate still stops at final publish until a human grants it",
     );
+  });
+
+  /**
+   * `spec amend` has two refusals, so help naming only one misleads. An agent
+   * that reads not_found as the whole failure surface treats a review-blocked
+   * amendment as a missing spec and re-creates it.
+   */
+  it("names both amend refusals and every way the review concludes", async () => {
+    const text = await helpText(["spec", "amend"]);
+
+    expect(text).toContain("not_found");
+    expect(text).toContain("revision_in_review");
+    expect(text).toContain("sign-off");
+    // Two of the three exits are human acts on a human surface; the third is
+    // this agent's own, and an agent told only about the human ones waits.
+    expect(text).toContain("requesting changes");
+    expect(text).toContain("cctl spec withdraw-proposal");
+  });
+
+  /**
+   * Both writing verbs teach the same recovery set, so an agent refused at a
+   * draft write is not told to wait for a human it could unblock itself.
+   */
+  it("names the agent-side exit on both revision_in_review nodes", async () => {
+    for (const path of [
+      ["spec", "amend"],
+      ["spec", "draft"],
+    ]) {
+      const text = await helpText(path);
+      expect(text, `${path.join(" ")}: agent exit not named`).toContain(
+        "cctl spec withdraw-proposal",
+      );
+    }
+  });
+
+  /**
+   * The verb is guarded, and every guard is a reason an agent's call can fail
+   * after it decided to make it. Help that names the verb without its guards
+   * teaches a recovery that refuses.
+   */
+  it("teaches the withdraw-proposal guards and its compare-and-swap token", async () => {
+    const text = await helpText(["spec", "withdraw-proposal"]);
+
+    expect(text).toContain("proposal_not_owned");
+    expect(text).toContain("gate_blocked");
+    // Authorship, prior human engagement, and the one-editable-revision rule.
+    expect(text).toContain("proposed");
+    expect(text).toContain("approval");
+    expect(text).toContain("thread");
+    expect(text).toContain("--revision <revision-id>");
+    expect(text).toContain("never inferred");
+    // An open comment is explicitly not a blocker, or agents will route every
+    // commented revision back to a human.
+    expect(text).toMatch(/open .*comment/i);
+  });
+
+  it("routes propose, amend, and request-approval at the agent-side exit and back", async () => {
+    for (const path of [
+      ["spec", "propose"],
+      ["spec", "amend"],
+      ["spec", "request-approval"],
+    ]) {
+      expect(
+        await helpText(path),
+        `${path.join(" ")}: no outbound edge`,
+      ).toContain("spec withdraw-proposal");
+    }
+    const withdraw = await helpText(["spec", "withdraw-proposal"]);
+    for (const command of [
+      "spec propose",
+      "spec amend",
+      "spec draft",
+      "spec request-approval",
+    ]) {
+      expect(
+        withdraw,
+        `withdraw-proposal: no edge back to ${command}`,
+      ).toContain(command);
+    }
+  });
+
+  /**
+   * A withdrawn revision is terminal, so the amendment starts short of the
+   * last authored content. An agent that cannot learn this from the help
+   * treats the reopened draft as carrying work it does not carry.
+   */
+  it("says that a withdrawn revision's content is not carried into the amendment", async () => {
+    const text = await helpText(["spec", "amend"]);
+
+    expect(text).toContain("skippedWithdrawnRevisions");
+    expect(text).toContain("not carried");
+  });
+
+  it("routes the amend node at the verb that ends a pending review", async () => {
+    const amend = await helpText(["spec", "amend"]);
+    expect(amend).toContain("spec request-approval");
+
+    const requestApproval = await helpText(["spec", "request-approval"]);
+    expect(requestApproval).toContain("spec amend");
+  });
+
+  /**
+   * A draft write into a revision under review is a different refusal from a
+   * write into approved content, and the two recoveries contradict each other
+   * if the help teaches only "open an amendment".
+   */
+  it("separates the proposed-revision draft refusal from the approved one", async () => {
+    const text = await helpText(["spec", "draft"]);
+
+    expect(text).toContain("revision_in_review");
+    expect(text).toContain("amendment_required");
+  });
+
+  /**
+   * Every write that carries element ids is now refused at the write itself
+   * rather than at propose, so both writing verbs have to name the refusal and
+   * the fact that an empty id array is still legal — an agent told only
+   * "dangling" invents ids to satisfy the arrays.
+   */
+  it("names the dangling-reference refusal on both writing verbs", async () => {
+    for (const path of [
+      ["spec", "draft"],
+      ["spec", "capture"],
+    ]) {
+      const text = await helpText(path);
+      expect(text, `${path.join(" ")}: refusal not named`).toContain(
+        "dangling_reference",
+      );
+      expect(text, `${path.join(" ")}: empty arrays not blessed`).toContain(
+        "empty",
+      );
+    }
+  });
+
+  /**
+   * The reported recovery for an orphaned element id was renaming 20 elements
+   * around the dead ids. The draft node has to name the refusal and the retry
+   * that revives the identity, or the rename stays the only visible way out.
+   */
+  it("teaches the reintroduction retry for an orphaned element id", async () => {
+    const text = await helpText(["spec", "draft"]);
+
+    expect(text).toContain("historical_element_id");
+    expect(text).toContain("reintroduceHistorical");
+    expect(text).toContain("element_id_taken");
+  });
+
+  /**
+   * The propose receipt can send the caller at `spec status` — for a sign-off
+   * or an unmet condition no agent verb clears — so the two nodes have to point
+   * at each other rather than leaving that hop undocumented.
+   */
+  it("routes propose and status at each other", async () => {
+    const propose = await helpText(["spec", "propose"]);
+    expect(propose).toContain("spec status");
+
+    const status = await helpText(["spec", "status"]);
+    expect(status).toContain("spec propose");
+  });
+
+  /**
+   * Status reports two different outstanding things and the reason a gate is
+   * or is not consulted. Help that still promises only "gate state, pending
+   * approvals" teaches the reading ticket #42 reported as a contradiction.
+   */
+  it("says status reports subject approvals and revision sign-off separately", async () => {
+    const text = await helpText(["spec", "status"]);
+
+    expect(text).toContain("why it is or is not consulted");
+    expect(text).toContain("subject approvals still outstanding");
+    expect(text).toContain("explicit human sign-off");
+  });
+
+  /**
+   * The propose receipt names the gates and subjects itself. Help that leaves
+   * that unsaid invites the caller to derive a gate from the authoring stage,
+   * which is the wrong gate whenever an earlier stage is also consulted.
+   */
+  it("points propose at the server's pending block rather than the stage", async () => {
+    const text = await helpText(["spec", "propose"]);
+
+    expect(text).toContain("pending block");
+    expect(text).toContain(
+      "rather than inferring a gate from the revision's authoring stage",
+    );
+    expect(text).toContain("nearest approved ancestor");
   });
 
   it("offers project-wide discovery from the search node", async () => {

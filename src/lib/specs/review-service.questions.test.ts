@@ -385,7 +385,7 @@ describe("ReviewService questions, assumptions, and policy", () => {
       value: { disposition: "confirmed" },
     });
 
-    const amendment = await authoring.openAmendment({
+    const { revision: amendment } = await authoring.openAmendment({
       specId: created.spec.id,
       actor: AGENT,
     });

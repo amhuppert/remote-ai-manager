@@ -54,13 +54,14 @@ If `cctl dev ensure` did NOT produce a worktree-local `.config` (no `CC_CONFIG_D
 ## Step 1 — Environment setup
 
 1. **Get the URL with `cctl dev ensure`.** Never assume a port (3000/3002/6006): every worktree gets its own. Use the printed `localUrl`/`remoteUrl`. `cctl dev list --json` also gives `logFilePath` (the dev server's stdout/stderr — useful for startup/runtime errors and the HTTP access log).
-2. **Locate the durable state** (all under the worktree-local config dir from Step 0):
+2. **Use the dev server's own `cctl`, not the one on PATH.** Every CC server publishes a `cctl` stamped with its own build to `<its configDir>/bin/cctl`. The binary on your PATH belongs to whichever server installed it — normally the main instance — so it does **not** contain your worktree's CLI changes: new verbs are missing, removed flags still parse, and help describes the old surface. Use `<worktree>/.config/bin/cctl` for anything testing your own changes. A command that crosses the boundary now exits **4** naming both builds, and `cctl doctor --server <url>` prints that server's `cliPath`.
+3. **Locate the durable state** (all under the worktree-local config dir from Step 0):
    - SQLite DB: `<config>/command-center.db` (e.g. `sqlite3 <config>/command-center.db ".tables"`)
    - NDJSON logs: `<config>/logs/...` — use the **`debug-logs` skill** for structure, locations, `traceId` tracing, and query recipes. Don't re-derive log layout here.
    - Transcripts: `<config>/transcripts/<conversationId>.jsonl` — the source of truth for what the agent actually saw and produced.
-3. **Drive the browser with the `playwright-cli` skill**, using a named session (e.g. `playwright-cli -s=cclive open --browser=chrome <url>`). It keeps one browser across calls — right for multi-step, timing-sensitive flows. Prefer snapshots/`eval` over screenshots.
-4. **Use a scratch project** (one set aside for testing, with no real work in it). Create a throwaway session for the test.
-5. **Name test sessions/conversations so they don't collide with your greps.** If you'll grep logs for `"foo"`, don't name the session `foo-test` — every line will match. Pick an orthogonal name.
+4. **Drive the browser with the `playwright-cli` skill**, using a named session (e.g. `playwright-cli -s=cclive open --browser=chrome <url>`). It keeps one browser across calls — right for multi-step, timing-sensitive flows. Prefer snapshots/`eval` over screenshots.
+5. **Use a scratch project** (one set aside for testing, with no real work in it). Create a throwaway session for the test.
+6. **Name test sessions/conversations so they don't collide with your greps.** If you'll grep logs for `"foo"`, don't name the session `foo-test` — every line will match. Pick an orthogonal name.
 
 ## Step 2 — Drive the feature (real LLM) with Playwright
 

@@ -317,12 +317,9 @@ export function deriveNotificationOutcomes(
     (notification): notification is SpecNotification =>
       notification.source === "spec",
   );
-  // Keyed by (spec, gate, subject) rather than gateRequestId so a re-request
-  // for the same decision collapses to one item and any newer resolving row
-  // (grant, attention-resolved, policy admission) hides every duplicate.
   const latestSpecRows = latestBy(
     specRows,
-    (row) => `${row.specId}\0${row.gate}\0${row.deepLinkId}`,
+    specAskKey(specRows),
     (row) => row.createdAt,
     (row) => (isOpenSpecRequest(row) ? 0 : 1),
   );
@@ -367,4 +364,31 @@ function isOpenSpecRequest(row: SpecNotification): boolean {
     row.type === "spec-approval-requested" ||
     row.type === "spec-waiver-requested"
   );
+}
+
+/**
+ * Which ask a spec notification row belongs to, so a repeat of one ask and the
+ * row that answers it collapse into a single queue item.
+ *
+ * An approval request carries a durable identity, and every row that answers
+ * it repeats that request id, so the id is the ask. Deriving the ask from
+ * (gate, subject) instead merges two different ones wherever they share a word
+ * — at the plan gate the item subject and the gate name are both "plan" — and
+ * lets an item approval hide the ask still waiting on the revision sign-off.
+ *
+ * A waiver request has no such identity: each ask mints a new id, so repeats
+ * for one criterion are told apart only by the criterion they name.
+ */
+function specAskKey(
+  rows: readonly SpecNotification[],
+): (row: SpecNotification) => string {
+  const waiverRequestIds = new Set(
+    rows
+      .filter((row) => row.type === "spec-waiver-requested")
+      .map((row) => row.gateRequestId),
+  );
+  return (row) =>
+    waiverRequestIds.has(row.gateRequestId)
+      ? `${row.specId}\0waiver\0${row.gate}\0${row.deepLinkId}`
+      : `${row.specId}\0${row.gateRequestId}`;
 }

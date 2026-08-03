@@ -74,6 +74,7 @@ describe("ReviewService.requestApproval validation", () => {
           requested.push(notice);
         },
         approvalGranted() {},
+        approvalRequestsClosed() {},
       },
       newId: (prefix) => `${prefix}-${++idSequence}`,
       now: () => NOW,
@@ -86,7 +87,42 @@ describe("ReviewService.requestApproval validation", () => {
       .filter((event) => event.event_type === "spec-attention-changed");
   }
 
+  /**
+   * Freezes the seeded draft for review. An authoring gate asks for an act
+   * only a proposed revision can receive, so every issuable authoring request
+   * here is made against the revision in that state.
+   */
+  function proposeDraft(): void {
+    db.prepare(
+      "UPDATE spec_revisions SET state = 'proposed', content_hash = 'hash-2', proposed_at = ? WHERE id = ?",
+    ).run(NOW, DRAFT_REVISION_ID);
+  }
+
+  /**
+   * Every human review act refuses on a draft, so filing the ask here would
+   * open a Needs You entry whose only exit is the agent proposing the
+   * revision — the entry no act can clear that validation exists to prevent.
+   */
+  it("refuses an authoring-gate request while the revision is still a draft", async () => {
+    const result = await service.requestApproval({
+      specId: SPEC_ID,
+      revisionId: DRAFT_REVISION_ID,
+      gate: "requirements",
+      actor: AGENT,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: { code: "gate_not_applicable" },
+    });
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.refusal.instruction).toContain("Propose the revision");
+    expect(attentionEvents()).toHaveLength(0);
+    expect(requested).toHaveLength(0);
+  });
+
   it("issues the request for an outstanding element approval", async () => {
+    proposeDraft();
     const result = await service.requestApproval({
       specId: SPEC_ID,
       revisionId: DRAFT_REVISION_ID,
@@ -104,6 +140,7 @@ describe("ReviewService.requestApproval validation", () => {
   });
 
   it("returns the existing request instead of a second Needs You entry", async () => {
+    proposeDraft();
     const first = await service.requestApproval({
       specId: SPEC_ID,
       revisionId: DRAFT_REVISION_ID,
@@ -204,6 +241,43 @@ describe("ReviewService.requestApproval validation", () => {
     expect(attentionEvents()).toHaveLength(1);
   });
 
+  /**
+   * A withdrawn revision is terminal: `approveItem` refuses on it, so a
+   * request against it is a Needs You entry no human act can ever clear. The
+   * spec moves by amendment, not by approval.
+   */
+  it("refuses an element request against a withdrawn revision", async () => {
+    db.prepare(
+      "UPDATE spec_revisions SET state = 'proposed', content_hash = 'hash-2', proposed_at = ? WHERE id = ?",
+    ).run(NOW, DRAFT_REVISION_ID);
+    const withdrawn = await service.withdraw({
+      specId: SPEC_ID,
+      revisionId: DRAFT_REVISION_ID,
+      actor: { kind: "human" },
+    });
+    expect(withdrawn.ok).toBe(true);
+
+    const result = await service.requestApproval({
+      specId: SPEC_ID,
+      revisionId: DRAFT_REVISION_ID,
+      gate: "requirements",
+      subject: "R1",
+      actor: AGENT,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: {
+        code: "gate_not_applicable",
+        unmetConditions: [
+          `Revision ${DRAFT_REVISION_ID} was withdrawn, so no approval can be recorded against it.`,
+        ],
+      },
+    });
+    expect(attentionEvents()).toHaveLength(0);
+    expect(requested).toHaveLength(0);
+  });
+
   it("asks again for the next run at an execution-scoped gate, and only once per run", async () => {
     const requestDelivery = () =>
       service.requestApproval({
@@ -239,6 +313,7 @@ describe("ReviewService.requestApproval validation", () => {
   });
 
   it("keeps a revision-scoped request idempotent across runs, which do not scope it", async () => {
+    proposeDraft();
     const requestRequirements = () =>
       service.requestApproval({
         specId: SPEC_ID,
@@ -299,6 +374,55 @@ describe("ReviewService.requestApproval validation", () => {
     expect(attentionEvents()).toHaveLength(0);
   });
 
+  /**
+   * The gate's dial still says `gate`, so "the policy asks for no approval" is
+   * the wrong answer and "nothing is outstanding" hides why. What decides it is
+   * the governance baseline: the draft changed nothing this gate governs since
+   * the last approved revision, so it is not consulted at all.
+   */
+  it("refuses a gate whose content is unchanged since the governance baseline, naming that baseline", async () => {
+    db.prepare(
+      "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
+    ).run(DRAFT_REVISION_ID);
+    db.prepare(
+      `UPDATE spec_element_versions
+         SET payload_json = (
+           SELECT payload_json FROM spec_element_versions
+            WHERE revision_id = ? AND element_id = ?
+         ),
+         payload_hash = (
+           SELECT payload_hash FROM spec_element_versions
+            WHERE revision_id = ? AND element_id = ?
+         )
+       WHERE revision_id = ? AND element_id = ?`,
+    ).run(
+      APPROVED_REVISION_ID,
+      REQUIREMENT_ELEMENT_ID,
+      APPROVED_REVISION_ID,
+      REQUIREMENT_ELEMENT_ID,
+      DRAFT_REVISION_ID,
+      REQUIREMENT_ELEMENT_ID,
+    );
+
+    const result = await service.requestApproval({
+      specId: SPEC_ID,
+      revisionId: DRAFT_REVISION_ID,
+      gate: "requirements",
+      subject: "R1",
+      actor: AGENT,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      refusal: { code: "gate_not_applicable" },
+    });
+    if (result.ok) throw new Error("expected a refusal");
+    expect(result.refusal.unmetConditions).toEqual([
+      `The requirements gate is not consulted for revision ${DRAFT_REVISION_ID}: nothing it governs changed since revision ${APPROVED_REVISION_ID}.`,
+    ]);
+    expect(attentionEvents()).toHaveLength(0);
+  });
+
   it("refuses a gate the draft has not reached yet", async () => {
     const result = await service.requestApproval({
       specId: SPEC_ID,
@@ -315,7 +439,13 @@ describe("ReviewService.requestApproval validation", () => {
     expect(attentionEvents()).toHaveLength(0);
   });
 
-  it("resolves an omitted subject to the gate's single outstanding subject", async () => {
+  /**
+   * The one outstanding subject is NOT what an omitted subject means. If it
+   * were, the same command would ask for a different thing tomorrow, and the
+   * request's durable identity would move under the human reading it.
+   */
+  it("asks for the gate itself when the subject is omitted, even at one outstanding subject", async () => {
+    proposeDraft();
     const result = await service.requestApproval({
       specId: SPEC_ID,
       revisionId: DRAFT_REVISION_ID,
@@ -325,12 +455,18 @@ describe("ReviewService.requestApproval validation", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      value: { gate: "requirements", subject: "R1" },
+      value: {
+        gate: "requirements",
+        scope: "gate",
+        subject: "requirements",
+        outstandingSubjects: ["R1"],
+      },
     });
     expect(attentionEvents()).toHaveLength(1);
   });
 
-  it("refuses an omitted subject when several subjects are outstanding, listing them", async () => {
+  it("asks for the gate itself with several subjects outstanding, naming them in the receipt", async () => {
+    proposeDraft();
     insertElement(db, "element-requirement-2", "requirement", 2, null);
     insertVersion(db, DRAFT_REVISION_ID, "element-requirement-2", 2, {
       kind: "requirement",
@@ -347,13 +483,14 @@ describe("ReviewService.requestApproval validation", () => {
     });
 
     expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "invalid_subject" },
+      ok: true,
+      value: {
+        scope: "gate",
+        subject: "requirements",
+        outstandingSubjects: ["R1", "R2"],
+      },
     });
-    if (result.ok) throw new Error("expected a refusal");
-    expect(result.refusal.instruction).toContain("R1");
-    expect(result.refusal.instruction).toContain("R2");
-    expect(attentionEvents()).toHaveLength(0);
+    expect(attentionEvents()).toHaveLength(1);
   });
 
   it("resolves an omitted subject at an execution gate to the gate itself", async () => {
@@ -453,6 +590,7 @@ describe("ReviewService.requestApproval validation", () => {
   });
 
   it("refuses a subject that is not outstanding at the named gate", async () => {
+    proposeDraft();
     const unknown = await service.requestApproval({
       specId: SPEC_ID,
       revisionId: DRAFT_REVISION_ID,
@@ -480,6 +618,7 @@ describe("ReviewService.requestApproval validation", () => {
   });
 
   it("refuses a request for an approval that is already granted", async () => {
+    proposeDraft();
     reviewRepo.saveApproval({
       id: "approval-requirement-1",
       spec_id: SPEC_ID,
@@ -504,6 +643,60 @@ describe("ReviewService.requestApproval validation", () => {
       refusal: { code: "already_satisfied" },
     });
     expect(attentionEvents()).toHaveLength(0);
+  });
+
+  /**
+   * An approval names the revision whose content a human read. A revision the
+   * draft does not descend from is a different line of content, so its
+   * approval cannot make this subject stop asking — even when the two revisions
+   * happen to carry byte-identical text.
+   */
+  it("still requests a subject whose only approval sits on a revision outside the draft's lineage", async () => {
+    proposeDraft();
+    const siblingRevisionId = "revision-sibling";
+    db.prepare(
+      `INSERT INTO spec_revisions (
+         id, spec_id, number, state, authoring_stage, based_on_revision_id,
+         content_hash, proposed_at, approved_at, created_at
+       ) VALUES (?, ?, 3, 'withdrawn', 'requirements', ?, 'hash-3', ?, NULL, ?)`,
+    ).run(siblingRevisionId, SPEC_ID, APPROVED_REVISION_ID, NOW, NOW);
+    // The draft stays the spec's current revision; the sibling is an earlier
+    // attempt off the same approved base.
+    db.prepare("UPDATE spec_revisions SET number = 4 WHERE id = ?").run(
+      DRAFT_REVISION_ID,
+    );
+    // Byte-identical content, down to the payload hash, so nothing but the
+    // sibling's absence from the draft's lineage can refuse its approval.
+    db.prepare(
+      `INSERT INTO spec_element_versions (
+         revision_id, element_id, position, payload_json, payload_hash,
+         element_version, created_at, updated_at
+       )
+       SELECT ?, element_id, position, payload_json, payload_hash,
+              element_version, created_at, updated_at
+       FROM spec_element_versions
+       WHERE revision_id = ? AND element_id = ?`,
+    ).run(siblingRevisionId, DRAFT_REVISION_ID, REQUIREMENT_ELEMENT_ID);
+    reviewRepo.saveApproval({
+      id: "approval-requirement-sibling",
+      spec_id: SPEC_ID,
+      subject_kind: "requirement",
+      element_id: REQUIREMENT_ELEMENT_ID,
+      revision_id: siblingRevisionId,
+      approver: "operator",
+      granted_at: NOW,
+      validity: "valid",
+    });
+
+    await expect(
+      service.requestApproval({
+        specId: SPEC_ID,
+        revisionId: DRAFT_REVISION_ID,
+        gate: "requirements",
+        subject: "R1",
+        actor: AGENT,
+      }),
+    ).resolves.toMatchObject({ ok: true, value: { subject: "R1" } });
   });
 
   it("refuses a delivery request while the gate is already admitted for the run", async () => {
@@ -548,6 +741,7 @@ describe("ReviewService.requestApproval validation", () => {
   });
 
   it("names the spec, not approval authority: the receipt never records an admission", async () => {
+    proposeDraft();
     const result = await service.requestApproval({
       specId: SPEC_ID,
       revisionId: DRAFT_REVISION_ID,

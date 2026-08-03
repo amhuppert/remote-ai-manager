@@ -329,32 +329,102 @@ describe("deriveNotificationOutcomes", () => {
     expect(resolved.attention).toEqual([]);
   });
 
-  it("collapses duplicate requests for the same gate and subject, and one resolving row clears them all", () => {
-    const duplicates = [
+  it("collapses repeats of one request, and its resolving row clears them all", () => {
+    const repeats = [
       makeSpecNotification({ id: "n1", gateRequestId: "request-1" }),
       makeSpecNotification({
         id: "n2",
-        gateRequestId: "request-2",
+        gateRequestId: "request-1",
         createdAt: "2026-07-18T12:02:00.000Z",
       }),
     ];
-    const open = deriveNotificationOutcomes(duplicates, []);
+    const open = deriveNotificationOutcomes(repeats, []);
     expect(open.needsAction).toHaveLength(1);
     expect(open.needsAction[0]).toMatchObject({ id: "notification:n2" });
 
     const cleared = deriveNotificationOutcomes(
       [
-        ...duplicates,
+        ...repeats,
         makeSpecNotification({
           id: "n3",
           type: "spec-attention-resolved",
-          gateRequestId: "request-2",
+          gateRequestId: "request-1",
           createdAt: "2026-07-18T12:03:00.000Z",
         }),
       ],
       [],
     );
     expect(cleared.needsAction).toEqual([]);
+  });
+
+  /**
+   * At the plan gate the item subject and the gate name are the same word, so
+   * two different asks arrive under one deep link. Merging them would let the
+   * item approval hide the ask still waiting on the revision sign-off.
+   */
+  it("keeps two requests at one gate and subject apart, clearing only the answered one", () => {
+    const item = makeSpecNotification({
+      id: "n1",
+      gate: "plan",
+      gateRequestId: "request-item",
+      deepLinkId: "plan",
+    });
+    const gate = makeSpecNotification({
+      id: "n2",
+      gate: "plan",
+      gateRequestId: "request-gate",
+      deepLinkId: "plan",
+      createdAt: "2026-07-18T12:02:00.000Z",
+    });
+
+    expect(
+      deriveNotificationOutcomes([item, gate], []).needsAction,
+    ).toHaveLength(2);
+
+    const afterItemApproval = deriveNotificationOutcomes(
+      [
+        item,
+        gate,
+        makeSpecNotification({
+          id: "n3",
+          type: "spec-approval-granted",
+          approvalId: "approval-1",
+          gate: "plan",
+          gateRequestId: "request-item",
+          deepLinkId: "plan",
+          createdAt: "2026-07-18T12:03:00.000Z",
+        }),
+      ],
+      [],
+    );
+    expect(afterItemApproval.needsAction).toMatchObject([
+      { id: "notification:n2" },
+    ]);
+  });
+
+  /**
+   * A waiver ask mints a new id every time, so the criterion is the only thing
+   * that tells two asks for one decision apart.
+   */
+  it("collapses repeated waiver requests for one criterion", () => {
+    const first = makeSpecNotification({
+      id: "n1",
+      type: "spec-waiver-requested",
+      gate: "delivery",
+      gateRequestId: "attention-1",
+      deepLinkId: "R1.1",
+    });
+    const second = makeSpecNotification({
+      id: "n2",
+      type: "spec-waiver-requested",
+      gate: "delivery",
+      gateRequestId: "attention-2",
+      deepLinkId: "R1.1",
+      createdAt: "2026-07-18T12:02:00.000Z",
+    });
+
+    const { needsAction } = deriveNotificationOutcomes([first, second], []);
+    expect(needsAction).toMatchObject([{ id: "notification:n2" }]);
   });
 
   it("keeps requests for different subjects independent", () => {

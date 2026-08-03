@@ -1,19 +1,19 @@
 /**
  * Bridges review-service approval notices into durable spec notification rows.
  *
- * The review service reports what happened (a request was opened, a human act
- * recorded approvals); this module owns the notification consequences: it
- * creates the `spec-approval-requested` row for a request and, on a grant,
- * finds the still-open requests the act satisfies and creates the matching
- * `spec-approval-granted` rows (same gateRequestId) so the Active Work
- * "Needs You" item clears. Dedupe keys are derived from the gateRequestId, so
- * repeated grants and replays collapse to one row per request and outcome.
+ * The review service reports what happened and, for a grant, WHICH open
+ * requests the act answers; this module owns the notification consequences
+ * alone. It creates the `spec-approval-requested` row for a request and, on a
+ * grant, the matching `spec-approval-granted` rows (same gateRequestId) so the
+ * Active Work "Needs You" item clears. Dedupe keys derive from the
+ * gateRequestId, so repeated grants and replays collapse to one row per
+ * request and outcome.
  *
- * A grant satisfies a request when the request's gate is among the gates the
- * act admits (revision sign-off admits the authoring gates; a gate approval
- * admits its explicit gate) or when the request's subject exactly matches an
- * approved subject (element id, "plan", "revision"). Free-form subjects that
- * never match stay open until a gate-satisfying act clears them.
+ * Which act answers which ask is never re-derived here. A request's subject
+ * and deep link are display, not identity: a whole-gate request at the plan
+ * gate deep-links to "plan" exactly like an approval of the plan item, and
+ * matching on that is what let an item approval clear the entry that was
+ * asking for the revision sign-off.
  */
 
 import { createLogger } from "@/lib/logging";
@@ -33,6 +33,7 @@ import type {
 import type {
   SpecApprovalGrantNotice,
   SpecApprovalRequestNotice,
+  SpecApprovalRequestsClosedNotice,
   SpecReviewNotifier,
 } from "@/lib/specs/review-service";
 import type { CreateSpecNotificationInput } from "./repo";
@@ -50,6 +51,27 @@ export interface SpecApprovalNotifierDeps {
 function gateLabel(gate: SpecNotification["gate"]): string {
   const spaced = gate.replaceAll("_", " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/**
+ * What the human reads in the queue. A whole-gate entry has to name what it is
+ * asking for: one line saying "requirements" for a gate with twelve
+ * outstanding subjects is an entry nobody can act on. The subjects are the
+ * snapshot the review domain took when the ask was made — the entry is not
+ * rewritten as they are approved, so it never claims to be live.
+ */
+function requestMessage(notice: SpecApprovalRequestNotice): string {
+  if (notice.scope === "item") return `${notice.specName}: ${notice.subject}`;
+  const gate = gateLabel(notice.gate).toLowerCase();
+  const outstanding = notice.outstandingSubjects;
+  if (outstanding.length > 0) {
+    return `${notice.specName}: ${outstanding.length} ${gate} ${
+      outstanding.length === 1 ? "subject" : "subjects"
+    } outstanding — ${outstanding.join(", ")}`;
+  }
+  return notice.signOffOutstanding
+    ? `${notice.specName}: every ${gate} subject is approved; the revision awaits sign-off`
+    : `${notice.specName}: the ${gate} gate awaits admission`;
 }
 
 const OPEN_REQUEST_TYPES = new Set<SpecNotification["type"]>([
@@ -103,7 +125,7 @@ export function createSpecApprovalNotifier(
       deps.createSpecNotification({
         type: "spec-approval-requested",
         title: `${gateLabel(notice.gate)} approval requested`,
-        message: `${notice.specName}: ${notice.subject}`,
+        message: requestMessage(notice),
         projectName: deps.getProjectDisplayName(notice.projectPath),
         sessionName: null,
         specId: notice.specId,
@@ -123,17 +145,11 @@ export function createSpecApprovalNotifier(
           .filter((row) => row.type === "spec-approval-granted")
           .map((row) => row.gateRequestId),
       );
-      const satisfiedGates = new Set(notice.satisfiedGates);
-      const approvedSubjects = new Set(notice.approvedSubjects);
+      const satisfied = new Set(notice.satisfiedAttentionIds);
       for (const row of rows) {
         if (row.type !== "spec-approval-requested") continue;
         if (grantedRequestIds.has(row.gateRequestId)) continue;
-        if (
-          !satisfiedGates.has(row.gate) &&
-          !approvedSubjects.has(row.deepLinkId)
-        ) {
-          continue;
-        }
+        if (!satisfied.has(row.gateRequestId)) continue;
         deps.createSpecNotification({
           type: "spec-approval-granted",
           title: `${gateLabel(row.gate)} approval granted`,
@@ -152,6 +168,31 @@ export function createSpecApprovalNotifier(
           dedupeKey: `spec-approval-granted:${row.gateRequestId}`,
         });
         logger.info("notifications.spec-approval.granted", {
+          specId: notice.specId,
+          gate: row.gate,
+          gateRequestId: row.gateRequestId,
+        });
+      }
+    },
+
+    approvalRequestsClosed(notice: SpecApprovalRequestsClosedNotice): void {
+      const rows = deps.findSpecNotificationsBySpecId(notice.specId);
+      const resolvedRequestIds = new Set(
+        rows
+          .filter((row) => RESOLVING_TYPES.has(row.type))
+          .map((row) => row.gateRequestId),
+      );
+      const closing = new Set(notice.attentionIds);
+      for (const row of rows) {
+        if (row.type !== "spec-approval-requested") continue;
+        if (resolvedRequestIds.has(row.gateRequestId)) continue;
+        if (!closing.has(row.gateRequestId)) continue;
+        resolveOpenRequest(
+          row,
+          `${gateLabel(row.gate)} request closed`,
+          `${row.specName}: ${notice.reason}`,
+        );
+        logger.info("notifications.spec-approval.request_closed", {
           specId: notice.specId,
           gate: row.gate,
           gateRequestId: row.gateRequestId,

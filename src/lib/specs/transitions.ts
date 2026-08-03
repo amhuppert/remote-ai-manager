@@ -1,3 +1,7 @@
+import type {
+  ApprovalApplicability,
+  ApprovalRecord,
+} from "./approval-applicability";
 import {
   lint,
   type LintFinding,
@@ -6,6 +10,7 @@ import {
 } from "./lint";
 import {
   COMBINED_APPROVAL_DIAL,
+  authoringApprovalsCollapseIntoSignOff,
   dialRequiresHumanApproval,
   isExploratoryShippingRefused,
   policyChangeRequiresHardConfirmation,
@@ -22,7 +27,6 @@ import type {
   RefusalCode,
   SectionRole,
   SpecApprovalSubjectKind,
-  SpecApprovalValidity,
   SpecAuthoringStage,
   SpecElementKind,
   SpecExecutionState,
@@ -59,16 +63,19 @@ export interface ReviewThreadSnapshot {
   resolved: boolean;
 }
 
-export interface ApprovalSnapshot {
-  subjectKind: Exclude<SpecApprovalSubjectKind, "revision">;
-  elementId?: string;
-  revisionId: string;
-  validity: SpecApprovalValidity;
-}
+export type ApprovalSnapshot = ApprovalRecord;
 
 export interface SignOffReviewSnapshot {
   revisionId: string;
-  baseRevisionRows: DiffRevisionElement[];
+  /** Null when no ancestor of this revision has ever been approved. */
+  governanceBaseRevisionId: string | null;
+  /**
+   * The nearest approved ancestor's rows, empty when there is none. Governs
+   * which gates still owe an admission: an obligation introduced by a
+   * withdrawn attempt is unchanged against the immediate parent but still
+   * unadmitted against the last thing a human approved.
+   */
+  governanceBaseRevisionRows: DiffRevisionElement[];
   revisionRows: DiffRevisionElement[];
   blockingThreads: ReviewThreadSnapshot[];
   approvals: ApprovalSnapshot[];
@@ -81,6 +88,7 @@ export interface ProposeContext {
   draft: RevisionSnapshot;
   records: SpecRecords;
   review: SignOffReviewSnapshot;
+  approvalApplies: ApprovalApplicability;
 }
 
 export interface ElementApprovalContext {
@@ -97,6 +105,7 @@ export interface SignOffContext {
   draft: RevisionSnapshot;
   records: SpecRecords;
   review: SignOffReviewSnapshot;
+  approvalApplies: ApprovalApplicability;
 }
 
 export interface StartExecutionContext {
@@ -270,11 +279,9 @@ export function openDraftAuthoringStage(
     return nextAuthoringStage(base.authoringStage) ?? "plan";
   }
 
-  const dials = resolveAuthoringDials(context.policy);
-  const allCombined = authoringStages.every(
-    (stage) => dials[stage] === COMBINED_APPROVAL_DIAL,
-  );
-  return allCombined ? "plan" : "requirements";
+  return authoringApprovalsCollapseIntoSignOff(context.policy)
+    ? "plan"
+    : "requirements";
 }
 
 export function nextAuthoringStage(
@@ -303,13 +310,25 @@ export function advanceAuthoringStage(
   );
 }
 
+/**
+ * The gates a transition on this revision consults: the current authoring
+ * stage, plus every earlier stage whose content differs from the GOVERNANCE
+ * baseline — the nearest approved ancestor.
+ *
+ * The governance baseline rather than the immediate parent is what makes the
+ * set cumulative. A change that entered through an attempt a human withdrew is
+ * unchanged against that attempt, so an immediate-parent comparison drops the
+ * gate and the follow-up revision inherits an admission it never earned.
+ */
 export function consultedAuthoringGates(
   stage: SpecAuthoringStage,
-  baseRows: DiffRevisionElement[],
+  governanceBaseRows: DiffRevisionElement[],
   revisionRows: DiffRevisionElement[],
 ): AuthoringGate[] {
-  const diff = diffRevisions(baseRows, revisionRows);
-  const baseById = new Map(baseRows.map((row) => [row.elementId, row]));
+  const diff = diffRevisions(governanceBaseRows, revisionRows);
+  const baseById = new Map(
+    governanceBaseRows.map((row) => [row.elementId, row]),
+  );
   const revisionById = new Map(revisionRows.map((row) => [row.elementId, row]));
   const consulted = new Set<AuthoringGate>([stage]);
   const currentStageIndex = authoringStageIndex(stage);
@@ -342,16 +361,17 @@ function blockingFindings(
   );
 }
 
-function approvalFor(
-  review: SignOffReviewSnapshot,
+function approvalHeld(
+  approvals: readonly ApprovalSnapshot[],
+  applies: ApprovalApplicability,
   subjectKind: ApprovalSnapshot["subjectKind"],
-  elementId?: string,
-): ApprovalSnapshot | undefined {
-  return review.approvals.find(
+  elementId: string | null,
+): boolean {
+  return approvals.some(
     (approval) =>
       approval.subjectKind === subjectKind &&
       approval.elementId === elementId &&
-      approval.validity === "valid",
+      applies(approval),
   );
 }
 
@@ -359,20 +379,33 @@ function handleByElementId(draft: RevisionSnapshot): Map<string, string> {
   return new Map(draft.elements.map((element) => [element.id, element.handle]));
 }
 
-function approvalUnmetConditions(
-  policy: SpecGatePolicy,
-  authoringStage: SpecAuthoringStage,
-  draft: RevisionSnapshot,
-  review: SignOffReviewSnapshot,
+/**
+ * What `approvalUnmetConditions` reads. Stated as its own context rather than
+ * as a sign-off snapshot so the read projection can ask the same question of
+ * the same authority without inventing the review fields it does not have.
+ */
+export interface ApprovalConditionsContext {
+  policy: SpecGatePolicy;
+  authoringStage: SpecAuthoringStage;
+  revisionId: string;
+  governanceBaseRevisionRows: DiffRevisionElement[];
+  revisionRows: DiffRevisionElement[];
+  approvals: readonly ApprovalSnapshot[];
+  /** Element id to the handle the condition text addresses it by. */
+  handles: ReadonlyMap<string, string>;
+  approvalApplies: ApprovalApplicability;
+}
+
+export function approvalUnmetConditions(
+  context: ApprovalConditionsContext,
 ): string[] {
+  const { policy, authoringStage, handles, approvalApplies, revisionId } =
+    context;
   const requirementsDial = resolveDial(policy, "requirements");
   const designDial = resolveDial(policy, "design");
   const planDial = resolveDial(policy, "plan");
-  const allCombined = [requirementsDial, designDial, planDial].every(
-    (dial) => dial === COMBINED_APPROVAL_DIAL,
-  );
 
-  if (allCombined) {
+  if (authoringApprovalsCollapseIntoSignOff(policy)) {
     // The combined dial collapses per-element approvals into one human act:
     // the sign-off itself (R11.5). signOffRevision refuses non-human actors
     // before reaching these preconditions, and propose absorbs sign-off only
@@ -381,21 +414,13 @@ function approvalUnmetConditions(
     return [];
   }
 
-  const diff = diffRevisions(review.baseRevisionRows, review.revisionRows);
   const consulted = new Set(
     consultedAuthoringGates(
       authoringStage,
-      review.baseRevisionRows,
-      review.revisionRows,
+      context.governanceBaseRevisionRows,
+      context.revisionRows,
     ),
   );
-  const classifications = new Map(
-    diff.classifications.map((classification) => [
-      classification.elementId,
-      classification,
-    ]),
-  );
-  const handles = handleByElementId(draft);
   const unmetConditions: string[] = [];
 
   const requireElementApprovals = (
@@ -407,24 +432,25 @@ function approvalUnmetConditions(
       return;
     }
 
-    const elements = review.revisionRows
+    const elements = context.revisionRows
       .filter((row) => row.payload.kind === kind)
       .sort((left, right) => left.elementId.localeCompare(right.elementId));
 
     for (const element of elements) {
-      const approval = approvalFor(review, kind, element.elementId);
-      const changed =
-        classifications.get(element.elementId)?.classification !== "unchanged";
-      const validForRevision =
-        approval !== undefined &&
-        (!changed || approval.revisionId === review.revisionId);
-      if (validForRevision) {
+      if (
+        approvalHeld(
+          context.approvals,
+          approvalApplies,
+          kind,
+          element.elementId,
+        )
+      ) {
         continue;
       }
 
       const handle = handles.get(element.elementId) ?? element.elementId;
       unmetConditions.push(
-        `${label} ${handle} needs a valid approval for ${review.revisionId}.`,
+        `${label} ${handle} needs a valid approval for ${revisionId}.`,
       );
     }
   };
@@ -436,23 +462,23 @@ function approvalUnmetConditions(
     requireElementApprovals(designDial, "decision", "Decision");
   }
 
-  if (authoringStage === "plan" && dialRequiresHumanApproval(planDial)) {
-    const approval = approvalFor(review, "plan");
-    const validForRevision =
-      approval !== undefined &&
-      (!diff.planStale || approval.revisionId === review.revisionId);
-    if (!validForRevision) {
-      unmetConditions.push(
-        `Execution plan needs a valid approval for ${review.revisionId}.`,
-      );
-    }
+  if (
+    authoringStage === "plan" &&
+    dialRequiresHumanApproval(planDial) &&
+    !approvalHeld(context.approvals, approvalApplies, "plan", null)
+  ) {
+    unmetConditions.push(
+      `Execution plan needs a valid approval for ${revisionId}.`,
+    );
   }
 
   return unmetConditions;
 }
 
-function unresolvedThreadConditions(review: SignOffReviewSnapshot): string[] {
-  return review.blockingThreads
+export function unresolvedThreadConditions(
+  blockingThreads: readonly ReviewThreadSnapshot[],
+): string[] {
+  return blockingThreads
     .filter((thread) => !thread.resolved)
     .sort((left, right) => left.handle.localeCompare(right.handle))
     .map((thread) => `Blocking thread ${thread.handle} is unresolved.`);
@@ -464,15 +490,20 @@ function signOffPreconditions(
   draft: RevisionSnapshot,
   records: SpecRecords,
   review: SignOffReviewSnapshot,
+  approvalApplies: ApprovalApplicability,
 ): TransitionDecision {
   const signOffFindings = blockingFindings(draft, records, "blocks_signoff");
-  const threadConditions = unresolvedThreadConditions(review);
-  const approvalConditions = approvalUnmetConditions(
+  const threadConditions = unresolvedThreadConditions(review.blockingThreads);
+  const approvalConditions = approvalUnmetConditions({
     policy,
     authoringStage,
-    draft,
-    review,
-  );
+    revisionId: review.revisionId,
+    governanceBaseRevisionRows: review.governanceBaseRevisionRows,
+    revisionRows: review.revisionRows,
+    approvals: review.approvals,
+    handles: handleByElementId(draft),
+    approvalApplies,
+  });
   const unmetConditions = [
     ...threadConditions,
     ...signOffFindings.map((finding) => finding.message),
@@ -498,7 +529,7 @@ function proposeDials(
 ): ResolvedGateDial[] {
   return consultedAuthoringGates(
     authoringStage,
-    review.baseRevisionRows,
+    review.governanceBaseRevisionRows,
     review.revisionRows,
   ).map((gate) => resolveDial(policy, gate));
 }
@@ -543,6 +574,7 @@ export function propose(context: ProposeContext): TransitionDecision {
     context.draft,
     context.records,
     context.review,
+    context.approvalApplies,
   );
 }
 
@@ -599,6 +631,7 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
     context.draft,
     context.records,
     context.review,
+    context.approvalApplies,
   );
 }
 

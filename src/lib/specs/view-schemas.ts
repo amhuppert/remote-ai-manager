@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { revisionDiffResultSchema } from "./revision-diff";
 import { executionScopeSchema } from "./scope-validation";
 import {
   deliveryDisplaySchema,
@@ -67,10 +68,10 @@ const specCoverageSchema = z
   .strict();
 
 /**
- * Historical provenance only. `state` is computed against the current
- * revision (or the selected run); these rows say where the gate was admitted
- * before that, and deliberately carry no claim that the admission still
- * covers today's content. Renderers must not fold them into `state`.
+ * One admission row as the projection reports it. Whether it satisfies
+ * anything is said by the list it appears in — `currentAdmissions` or
+ * `priorAdmissions` — and never by the record itself. Renderers must not fold
+ * a prior admission into `state`.
  */
 const specGatePriorAdmissionSchema = z
   .object({
@@ -86,11 +87,32 @@ export type SpecGatePriorAdmission = z.infer<
   typeof specGatePriorAdmissionSchema
 >;
 
+/**
+ * Why the gate does or does not ask something of the current revision, read
+ * against the nearest APPROVED ancestor rather than the immediate parent. A
+ * change that entered through a withdrawn attempt is unchanged against that
+ * attempt and still unadmitted against the governance baseline.
+ */
+const specGateApplicabilitySchema = z
+  .object({
+    reason: z.enum([
+      "current_stage",
+      "changed_since_governance_base",
+      "unchanged_since_governance_base",
+      "dial_off",
+    ]),
+    governanceBaseRevisionId: z.string().min(1).nullable(),
+  })
+  .strict();
+
 const specGateStatusSchema = z
   .object({
     gate: specGateSchema,
     dial: resolvedGateDialSchema,
     state: z.enum(["pending", "admitted", "not_required"]),
+    applicability: specGateApplicabilitySchema,
+    /** Admissions the gate holds for the revision or run being read. */
+    currentAdmissions: z.array(specGatePriorAdmissionSchema).default([]),
     priorAdmissions: z.array(specGatePriorAdmissionSchema).default([]),
   })
   .strict();
@@ -100,6 +122,72 @@ const pendingApprovalSchema = z
     gate: specGateSchema,
     subject: z.string(),
     elementId: z.string().nullable(),
+  })
+  .strict();
+
+/**
+ * The revision's own sign-off standing, reported beside the subject approvals
+ * rather than folded into them. A consulted human gate stays pending after its
+ * last subject approval until a human signs the revision off, so "no pending
+ * approvals" and "nothing outstanding" are different answers.
+ */
+export const revisionSignOffSchema = z
+  .object({
+    revisionId: z.string().min(1),
+    revisionNumber: z.number().int().positive(),
+    state: z.enum(["blocked", "ready", "signed_off"]),
+    outstandingSubjectCount: z.number().int().nonnegative(),
+    unmetConditions: z.array(z.string()),
+    approval: specApprovalRowSchema.nullable(),
+  })
+  .strict();
+
+const pendingGateBlockSchema = z
+  .object({
+    gate: specGateSchema,
+    dial: resolvedGateDialSchema,
+    state: z.enum(["pending", "admitted", "not_required"]),
+    applicability: specGateApplicabilitySchema,
+    subjects: z.array(z.string()),
+  })
+  .strict();
+
+/**
+ * Everything a transition response says about what still blocks the revision,
+ * authored on the server. A caller renders it; deriving a blocker from the
+ * revision's authoring stage names the wrong gate whenever an earlier stage is
+ * also consulted, and cannot name the subject a request needs.
+ */
+export const authoringPendingBlockSchema = z
+  .object({
+    actsNext: z.enum(["human", "agent"]),
+    gates: z.array(pendingGateBlockSchema),
+    outstandingSubjects: z.array(pendingApprovalSchema),
+    signOff: revisionSignOffSchema.nullable(),
+    unmetConditions: z.array(z.string()),
+    display: z.string(),
+    instruction: z.string(),
+  })
+  .strict();
+export type AuthoringPendingBlockView = z.infer<
+  typeof authoringPendingBlockSchema
+>;
+
+export const authoringNextActionSchema = z
+  .object({
+    kind: z.enum([
+      "approve_subject",
+      "sign_off_revision",
+      "resolve_conditions",
+      "propose",
+      "amend",
+      "none",
+    ]),
+    actsNext: z.enum(["human", "agent"]).nullable(),
+    gate: specGateSchema.nullable(),
+    subject: z.string().nullable(),
+    elementId: z.string().nullable(),
+    instruction: z.string(),
   })
   .strict();
 
@@ -127,10 +215,26 @@ const specTaskPlanStatusSchema = z
     elementId: z.string().min(1),
     handle: z.string().min(1),
     title: z.string().min(1),
+    /** Handles of the depended-on tasks this revision carries, in payload order. */
     dependsOn: z.array(z.string().min(1)),
+    /**
+     * Depended-on task ids this revision does not carry, sorted. Rendering one
+     * raw in `dependsOn` would put an id the compiler cannot order in a field
+     * of handles, hiding the same fork the unresolved criteria expose.
+     * Defaulted so a payload from a server without the field still parses.
+     */
+    unresolvedDependsOnTaskElementIds: z.array(z.string().min(1)).default([]),
     laneGroup: z.string().min(1).nullable(),
     touchedPaths: z.array(z.string().min(1)),
+    /** Handles of the covered criteria this revision carries, in payload order. */
     criterionCoverage: z.array(z.string().min(1)),
+    /**
+     * Covered criterion ids this revision does not carry, sorted. They are
+     * counted by neither side of `coverage`, so a reader who is not told about
+     * them reads a plan pointing at lost content as fully covered. Defaulted so
+     * a payload from a server without the field still satisfies the strict parse.
+     */
+    unresolvedCriterionElementIds: z.array(z.string().min(1)).default([]),
   })
   .strict();
 
@@ -200,6 +304,13 @@ export const remainingAuthoringSequenceSchema = z
             .object({ gate: specGateSchema, dial: resolvedGateDialSchema })
             .strict(),
         ),
+        /**
+         * The gates a propose consults, measured against the nearest approved
+         * ancestor and independent of the dials. A caller previewing other
+         * dials reads them here rather than re-deriving them from the
+         * immediate parent, which drops obligations a withdrawn attempt left.
+         */
+        governanceConsultedGates: z.array(specAuthoringStageSchema),
       })
       .strict(),
   })
@@ -207,6 +318,23 @@ export const remainingAuthoringSequenceSchema = z
 export type RemainingAuthoringSequence = z.infer<
   typeof remainingAuthoringSequenceSchema
 >;
+
+/**
+ * The propose receipt. `pendingBlock` and `nextAction` are the server's
+ * post-transition projection — computed after approval invalidation and after
+ * the Notify/Off policy admissions — so a caller renders what still blocks the
+ * revision instead of inferring a gate from its authoring stage.
+ */
+export const specProposeResultViewSchema = z
+  .object({
+    revision: specRevisionSchema,
+    diff: revisionDiffResultSchema,
+    absorbedSignOff: z.boolean(),
+    pendingBlock: authoringPendingBlockSchema.nullable().default(null),
+    nextAction: authoringNextActionSchema.nullable().default(null),
+  })
+  .strict();
+export type SpecProposeResultView = z.infer<typeof specProposeResultViewSchema>;
 
 /**
  * The change-policy response (R25.5): the resulting spec plus what the open
@@ -432,6 +560,11 @@ export const specStatusViewSchema = z
       .nullable()
       .default(null),
     pendingApprovals: z.array(pendingApprovalSchema),
+    /** The gates this revision's transition consults, in gate order. */
+    applicableGates: z.array(specGateSchema).default([]),
+    revisionSignOff: revisionSignOffSchema.nullable().default(null),
+    pendingBlock: authoringPendingBlockSchema.nullable().default(null),
+    nextAction: authoringNextActionSchema.nullable().default(null),
     openQuestions: z.array(openQuestionSchema),
     assumptions: z.array(statusAssumptionSchema).default([]),
     taskPlan: z.array(specTaskPlanStatusSchema).default([]),
