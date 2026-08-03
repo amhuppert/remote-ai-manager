@@ -120,6 +120,20 @@ describe("ModelSelector", () => {
     ).toHaveAttribute("data-state", "checked");
   });
 
+  it("does not present a Claude model as a custom Codex option", async () => {
+    const user = userEvent.setup();
+    renderSelector(
+      <ModelSelector value="opus" backend="codex" onChange={vi.fn()} />,
+    );
+
+    expect(screen.getByTestId("model-selector-label")).not.toHaveTextContent(
+      "opus",
+    );
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    expect(screen.queryByRole("option", { name: /^opus$/i })).toBeNull();
+  });
+
   it("does not add an unknown Claude model to the catalog options", async () => {
     const user = userEvent.setup();
     renderSelector(

@@ -185,6 +185,28 @@ export function listBackendCatalogEntries(): readonly BackendCatalogEntry[] {
   return Object.values(CATALOG);
 }
 
+function isModelOwnedByAnotherBackend(
+  backend: AgentBackendId,
+  model: string,
+): boolean {
+  return agentBackendSchema.options.some(
+    (candidate) =>
+      candidate !== backend &&
+      getBackendCatalogEntry(candidate).models.some(
+        (option) => option.id === model,
+      ),
+  );
+}
+
+export function isModelCompatibleWithBackend(
+  backend: AgentBackendId,
+  model: string,
+): boolean {
+  return (
+    model.trim().length > 0 && !isModelOwnedByAnotherBackend(backend, model)
+  );
+}
+
 export function modelOptionsForCatalogEntry(
   entry: BackendCatalogEntry,
   configuredModel?: string,
@@ -192,7 +214,8 @@ export function modelOptionsForCatalogEntry(
   if (
     entry.id !== "codex" ||
     !configuredModel?.trim() ||
-    entry.models.some((model) => model.id === configuredModel)
+    entry.models.some((model) => model.id === configuredModel) ||
+    isModelOwnedByAnotherBackend(entry.id, configuredModel)
   ) {
     return entry.models;
   }
@@ -230,9 +253,8 @@ export function isSelectableModelForBackend(
 ): boolean {
   if (model.trim().length === 0) return false;
   const entry = getBackendCatalogEntry(backend);
-  return (
-    entry.id === "codex" || entry.models.some((option) => option.id === model)
-  );
+  if (entry.models.some((option) => option.id === model)) return true;
+  return entry.id === "codex" && isModelCompatibleWithBackend(backend, model);
 }
 
 export function getDefaultModelForBackend(backend: AgentBackendId): string {

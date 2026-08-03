@@ -2,8 +2,8 @@
 
 import { useCallback, useState } from "react";
 import {
+  getDefaultModelForBackend,
   getEffortLevelsForBackend,
-  getModelsForBackend,
   isSelectableModelForBackend,
 } from "@/lib/agent-backends/catalog";
 import {
@@ -63,8 +63,6 @@ function pickModel(
   preferred: string | undefined,
   fallback: string,
 ): string {
-  const models = getModelsForBackend(backend);
-
   if (
     preferred !== undefined &&
     isSelectableModelForBackend(backend, preferred)
@@ -73,7 +71,7 @@ function pickModel(
   }
   return isSelectableModelForBackend(backend, fallback)
     ? fallback
-    : models[0]!.id;
+    : getDefaultModelForBackend(backend);
 }
 
 function resolveModelEffortSelection({

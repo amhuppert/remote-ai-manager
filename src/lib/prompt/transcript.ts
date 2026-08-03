@@ -23,11 +23,17 @@ const transcriptLogger = createLogger("transcript");
 import { getErrorMessage } from "@/lib/shared/errors";
 import { parseJsonl } from "@/lib/shared/read-jsonl";
 import {
+  commandBlockForEntry,
   groupLogicalUnits,
   iterateLineClassifications,
+  startsNewLogicalUnit,
   type LogicalUnitEntry,
   type LogicalUnitRole,
 } from "@/lib/conversations/transcript-logical-units";
+import {
+  selectLatestExplicitTurnAgentSettings,
+  type TurnAgentSettings,
+} from "@/lib/conversations/last-turn-agent-settings";
 import { publishEvent, type PublishFn } from "@/lib/events/publication";
 import {
   messageAppendedEventSchema,
@@ -817,17 +823,11 @@ async function readConversationMessagesWithSeqImpl(
   // recent user entry's; notices carry neither). The map is keyed by the raw
   // line index the owner threads through on every part.
   const entries: LogicalUnitEntry[] = [];
-  const turnMetaBySeq = new Map<
-    number,
-    {
-      model: string | undefined;
-      effort: string | undefined;
-      codexFastMode: boolean | undefined;
-    }
-  >();
+  const turnMetaBySeq = new Map<number, TurnAgentSettings>();
   let currentModel: string | undefined;
   let currentEffort: string | undefined;
   let currentCodexFastMode: boolean | undefined;
+  let openRole: LogicalUnitRole | null = null;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex];
@@ -840,20 +840,24 @@ async function readConversationMessagesWithSeqImpl(
     }
 
     if (!isVisibleEntry(entry)) continue;
+    const opensUnit = startsNewLogicalUnit({
+      openRole,
+      entryRole: entry.role,
+      isCommand: commandBlockForEntry(entry.role, entry.content) !== null,
+    });
+    if (opensUnit) openRole = entry.role;
 
     if (entry.role === "user") {
-      if (entry.model !== undefined) {
-        currentModel = entry.model;
+      const explicitSettings = selectLatestExplicitTurnAgentSettings([entry]);
+      if (explicitSettings) {
+        currentModel = explicitSettings.model;
+        currentEffort = explicitSettings.effort;
+        currentCodexFastMode = explicitSettings.codexFastMode;
+        turnMetaBySeq.set(lineIndex, explicitSettings);
+      } else if (opensUnit) {
+        currentEffort = undefined;
+        currentCodexFastMode = undefined;
       }
-      // Always reset effort when we see a new user entry — if the entry
-      // has no effort field, the model didn't support it for this turn.
-      currentEffort = entry.effort;
-      currentCodexFastMode = entry.codexFastMode;
-      turnMetaBySeq.set(lineIndex, {
-        model: entry.model,
-        effort: entry.effort,
-        codexFastMode: entry.codexFastMode,
-      });
     } else if (entry.role === "assistant") {
       turnMetaBySeq.set(lineIndex, {
         model: currentModel,
@@ -879,7 +883,12 @@ async function readConversationMessagesWithSeqImpl(
       // already carries the parsed command block when the unit is a command).
       const content = unit.parts.flatMap((part) => part.content);
       const lastPart = unit.parts[unit.parts.length - 1]!;
-      const meta = turnMetaBySeq.get(unit.parts[0]!.seq);
+      const meta =
+        unit.role === "user"
+          ? selectLatestExplicitTurnAgentSettings(
+              unit.parts.map((part) => turnMetaBySeq.get(part.seq)),
+            )
+          : turnMetaBySeq.get(unit.parts[0]!.seq);
       return {
         ...(unit.messageId !== null ? { id: unit.messageId } : {}),
         role: unit.role,

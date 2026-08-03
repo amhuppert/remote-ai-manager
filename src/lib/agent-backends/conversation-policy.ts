@@ -1,7 +1,9 @@
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
+  getDefaultModelForBackend,
   getDefaultStallTimeoutForBackend,
   getEffortLevelsForBackend,
+  isModelCompatibleWithBackend,
 } from "./catalog";
 import { resolveConfiguredTimeoutMs } from "./timeout";
 import { effortLevelSchema, type EffortLevel } from "./schemas";
@@ -77,6 +79,23 @@ function resolveModelValidEffort(
   return supported.at(-1);
 }
 
+function resolveCompatibleModel(
+  backend: AgentBackendId,
+  candidates: readonly (string | null | undefined)[],
+  fallback: string,
+): string {
+  for (const candidate of candidates) {
+    if (
+      candidate !== null &&
+      candidate !== undefined &&
+      isModelCompatibleWithBackend(backend, candidate)
+    ) {
+      return candidate;
+    }
+  }
+  return fallback;
+}
+
 /**
  * Resolve one backend's complete runtime defaults from its independent global
  * profile. This is the sole translation from nullable persisted timeout
@@ -94,11 +113,13 @@ export function resolveAgentBackendTurnDefaults(input: {
     | undefined;
   const descriptor =
     profile === undefined ? getBackendDescriptor(backend) : undefined;
-  const modelId =
-    input.explicit?.modelId ??
-    input.scoped?.modelId ??
-    profile?.model ??
-    descriptor!.metadata.defaultModelId;
+  const modelId = resolveCompatibleModel(
+    backend,
+    [input.explicit?.modelId, input.scoped?.modelId, profile?.model],
+    profile === undefined
+      ? descriptor!.metadata.defaultModelId
+      : getDefaultModelForBackend(backend),
+  );
   const reasoningEffort =
     input.explicit?.reasoningEffort ??
     input.scoped?.reasoningEffort ??

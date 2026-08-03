@@ -857,6 +857,97 @@ describe("NotificationListener", () => {
     });
   });
 
+  it("uses the latest explicit settings when merging user appends and preserves them across metadata-less appends", async () => {
+    const client = makeClient();
+    const key = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(key, [
+      {
+        role: "user",
+        content: [{ type: "text", text: "failed attempt" }],
+        timestamp: null,
+        model: "opus",
+        effort: "high",
+        codexFastMode: true,
+        seq: 0,
+      },
+    ]);
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 1,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "successful retry" }],
+        timestamp: null,
+        model: "gpt-5.6-luna",
+        codexFastMode: false,
+      },
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<
+        Array<{
+          seq: number;
+          content: unknown[];
+          model?: string;
+          effort?: string;
+          codexFastMode?: boolean;
+        }>
+      >(key);
+      expect(cached).toHaveLength(1);
+      expect(cached?.[0]).toMatchObject({
+        seq: 1,
+        model: "gpt-5.6-luna",
+        codexFastMode: false,
+      });
+      expect(cached?.[0]?.effort).toBeUndefined();
+      expect(cached?.[0]?.content).toHaveLength(2);
+    });
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      scope: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 2,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "queued follow-up" }],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<
+        Array<{
+          seq: number;
+          content: unknown[];
+          model?: string;
+          effort?: string;
+          codexFastMode?: boolean;
+        }>
+      >(key);
+      expect(cached).toHaveLength(1);
+      expect(cached?.[0]).toMatchObject({
+        seq: 2,
+        model: "gpt-5.6-luna",
+        codexFastMode: false,
+      });
+      expect(cached?.[0]?.effort).toBeUndefined();
+      expect(cached?.[0]?.content).toHaveLength(3);
+    });
+  });
+
   it("replaces the matching entry by seq on message-updated without invalidating", async () => {
     const client = makeClient();
     const key = conversationKeys.messages("proj", "sess", "conv-1");

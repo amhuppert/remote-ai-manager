@@ -125,6 +125,29 @@ describe("resolveBackendTurnSettings", () => {
     });
   });
 
+  it("rejects an explicit Claude model for Codex", () => {
+    expect(
+      resolveBackendTurnSettings("codex", makeConfig(), "opus", null),
+    ).toEqual({
+      effectiveModel: "gpt-5.4",
+      effectiveEffort: "medium",
+    });
+  });
+
+  it("accepts an unknown custom Codex model", () => {
+    expect(
+      resolveBackendTurnSettings(
+        "codex",
+        makeConfig(),
+        "custom-codex-model",
+        "ultra",
+      ),
+    ).toEqual({
+      effectiveModel: "custom-codex-model",
+      effectiveEffort: "ultra",
+    });
+  });
+
   it("does not synthesize effort for Haiku", () => {
     const base = makeConfig();
     const config: ActorConfig = {
@@ -158,6 +181,18 @@ describe("resolveTurnModelEffort", () => {
     ).toEqual({ effectiveModel: "sonnet", effectiveEffort: "medium" });
   });
 
+  it("rejects an explicit Claude model on the actor's Codex turn path", () => {
+    expect(
+      resolveTurnModelEffort({
+        backend: "codex",
+        config: makeConfig(),
+        explicitModel: "opus",
+        explicitEffort: null,
+        priorMessages: [],
+      }),
+    ).toEqual({ effectiveModel: "gpt-5.4", effectiveEffort: "medium" });
+  });
+
   it("uses the most recent scoped selection before the backend profile", () => {
     expect(
       resolveTurnModelEffort({
@@ -175,6 +210,21 @@ describe("resolveTurnModelEffort", () => {
     ).toEqual({
       effectiveModel: "gpt-5.6-sol",
       effectiveEffort: "xhigh",
+    });
+  });
+
+  it("rejects a remembered Claude model for a Codex turn", () => {
+    expect(
+      resolveTurnModelEffort({
+        backend: "codex",
+        config: makeConfig(),
+        explicitModel: null,
+        explicitEffort: null,
+        priorMessages: [userTurn("opus")],
+      }),
+    ).toEqual({
+      effectiveModel: "gpt-5.4",
+      effectiveEffort: "medium",
     });
   });
 

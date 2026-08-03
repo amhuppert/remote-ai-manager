@@ -80,6 +80,20 @@ describe("resolveConfiguredAgentBackendDefaults", () => {
     ).toBe("high");
   });
 
+  it("rejects a Claude model configured in the Codex profile", () => {
+    const config = makeConfig({
+      codex: {
+        model: "opus",
+        reasoningEffort: "medium",
+        timeoutMs: null,
+      },
+    });
+
+    expect(resolveConfiguredAgentBackendDefaults(config, "codex").modelId).toBe(
+      "gpt-5.4",
+    );
+  });
+
   it("omits effort for a model that does not support reasoning effort", () => {
     const config = makeConfig({
       claude: {

@@ -831,6 +831,150 @@ describe("readConversationMessagesWithSeq", () => {
     expect(result[1]!.seq).toBe(3);
   });
 
+  it("uses the latest turn settings for merged consecutive user entries", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "seq-merged-user-settings.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "failed attempt" }],
+        model: "opus",
+        effort: "high",
+        codexFastMode: true,
+      }),
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "successful retry" }],
+        model: "gpt-5.6-luna",
+        effort: "medium",
+        codexFastMode: false,
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: "failed attempt" },
+        { type: "text", text: "successful retry" },
+      ],
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      codexFastMode: false,
+      seq: 1,
+    });
+    expect(result[1]).toMatchObject({
+      role: "assistant",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      codexFastMode: false,
+      seq: 2,
+    });
+  });
+
+  it("clears effort when the latest merged user entry omits it", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "seq-merged-user-cleared-effort.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "first attempt" }],
+        model: "opus",
+        effort: "high",
+        codexFastMode: true,
+      }),
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "retry without effort" }],
+        model: "gpt-5.6-luna",
+        codexFastMode: false,
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+
+    expect(result[0]).toMatchObject({
+      model: "gpt-5.6-luna",
+      codexFastMode: false,
+      seq: 1,
+    });
+    expect(result[0]!.effort).toBeUndefined();
+    expect(result[1]).toMatchObject({
+      model: "gpt-5.6-luna",
+      codexFastMode: false,
+      seq: 2,
+    });
+    expect(result[1]!.effort).toBeUndefined();
+  });
+
+  it("does not carry optional settings into a separate metadata-free user turn", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "seq-metadata-free-user-turn.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "configured turn" }],
+        model: "gpt-5.6-luna",
+        effort: "medium",
+        codexFastMode: true,
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "first response" }],
+      }),
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "metadata-free turn" }],
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "second response" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+
+    expect(result).toHaveLength(4);
+    expect(result[2]!.model).toBeUndefined();
+    expect(result[2]!.effort).toBeUndefined();
+    expect(result[2]!.codexFastMode).toBeUndefined();
+    expect(result[3]!.model).toBe("gpt-5.6-luna");
+    expect(result[3]!.effort).toBeUndefined();
+    expect(result[3]!.codexFastMode).toBeUndefined();
+  });
+
   it("does not advance seq for non-visible lines between visible entries", async () => {
     const filePath = path.join(TEST_DIR, "transcripts", "seq-skip.jsonl");
     const lines = [

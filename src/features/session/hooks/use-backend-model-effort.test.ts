@@ -176,6 +176,59 @@ describe("useBackendModelEffort", () => {
     expect(result.current.selectedEffort).toBe("ultra");
   });
 
+  it("rejects a remembered Claude model in a locked Codex conversation", () => {
+    const backendDefaults: BackendSelectionDefaultsById = {
+      claude: { modelId: "opus", effort: "high" },
+      codex: { modelId: "gpt-5.6-sol", effort: "ultra" },
+    };
+    const activeConversation = makeConversation({
+      agentBackend: "codex",
+      promptCount: 2,
+    });
+    const { result, rerender } = renderHook(
+      ({ lastUsedModelId }) =>
+        useBackendModelEffort({
+          conversationId: "c1",
+          activeConversation,
+          backendDefaults,
+          lastUsedModelId,
+          lastUsedEffort: "ultra",
+        }),
+      { initialProps: { lastUsedModelId: "gpt-5.6-luna" } },
+    );
+
+    expect(result.current.selectedModel).toBe("gpt-5.6-luna");
+
+    rerender({ lastUsedModelId: "opus" });
+
+    expect(result.current.selectedBackend).toBe("codex");
+    expect(result.current.selectedModel).toBe("gpt-5.6-sol");
+  });
+
+  it("uses the canonical Codex default when remembered and configured models belong to Claude", () => {
+    const backendDefaults: BackendSelectionDefaultsById = {
+      claude: { modelId: "opus", effort: "high" },
+      codex: { modelId: "opus", effort: "ultra" },
+    };
+    const activeConversation = makeConversation({
+      agentBackend: "codex",
+      promptCount: 2,
+    });
+
+    const { result } = renderHook(() =>
+      useBackendModelEffort({
+        conversationId: "c1",
+        activeConversation,
+        backendDefaults,
+        lastUsedModelId: "opus",
+        lastUsedEffort: "ultra",
+      }),
+    );
+
+    expect(result.current.selectedBackend).toBe("codex");
+    expect(result.current.selectedModel).toBe("gpt-5.4");
+  });
+
   it("rejects a non-catalog last-used Claude model", () => {
     const { result } = renderHook(() =>
       useBackendModelEffort({

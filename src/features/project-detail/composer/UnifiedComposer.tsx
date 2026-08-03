@@ -10,8 +10,9 @@ import { useVoiceWiring } from "@/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/hooks/use-clear-input-hotkey";
 import {
   backendSupportsFastMode,
+  getDefaultModelForBackend,
   getEffortLevelsForBackend,
-  getModelsForBackend,
+  isSelectableModelForBackend,
 } from "@/lib/agent-backends/catalog";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { Button } from "@/components/ui/Button";
@@ -117,14 +118,16 @@ function modelForBackend(
   preferred: string | undefined,
   backendDefaults: BackendSelectionDefaultsById,
 ): string {
-  const modelOptions = getModelsForBackend(backend).map((m) => m.id);
   if (
     preferred !== undefined &&
-    (backend === "codex" || modelOptions.includes(preferred))
+    isSelectableModelForBackend(backend, preferred)
   ) {
     return preferred;
   }
-  return backendDefaults[backend].modelId;
+  const fallback = backendDefaults[backend].modelId;
+  return isSelectableModelForBackend(backend, fallback)
+    ? fallback
+    : getDefaultModelForBackend(backend);
 }
 
 function parseEffort(value: string | undefined): EffortLevel | undefined {

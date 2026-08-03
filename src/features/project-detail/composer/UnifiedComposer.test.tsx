@@ -336,6 +336,54 @@ describe("UnifiedComposer model settings", () => {
       input: { backend: "codex", modelId: customModel, effort: "ultra" },
     });
   });
+
+  it("rejects a remembered Claude model for an initialized Codex conversation", () => {
+    renderComposer({
+      agentBackend: "codex",
+      activeConversation: makeConversation({
+        agentBackend: "codex",
+        promptCount: 2,
+      }),
+      lastUsedModelId: "opus",
+      lastUsedEffort: "ultra",
+    });
+
+    expect(screen.getByTitle(/Model: GPT-5.6 Sol/)).toBeInTheDocument();
+    expect(screen.getByTestId("model-selector-label")).not.toHaveTextContent(
+      "opus",
+    );
+  });
+
+  it("does not submit a Claude model configured as the Codex default", async () => {
+    const onSendPrompt = vi.fn(async () => "accepted" as const);
+    renderComposer({
+      agentBackend: "codex",
+      activeConversation: makeConversation({
+        agentBackend: "codex",
+        promptCount: 2,
+      }),
+      backendDefaults: {
+        claude: { modelId: "sonnet", effort: "medium" },
+        codex: { modelId: "opus", effort: "ultra" },
+      },
+      initialDocument: { prompt: "run it", images: [] },
+      onSendPrompt,
+    });
+
+    await waitFor(() =>
+      expect(
+        document.querySelector(".prompt-editor__content .ProseMirror"),
+      ).toHaveTextContent("run it"),
+    );
+    fireEvent.click(screen.getByTestId("prompt-send"));
+
+    expect(onSendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        backend: "codex",
+        modelId: "gpt-5.4",
+      }),
+    );
+  });
 });
 
 describe("UnifiedComposer Codex speed", () => {

@@ -9,6 +9,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { addSseListener } from "@/lib/api/sse";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { selectLatestExplicitTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import {
   askQuestionEventSchema,
   conversationArchivedEventSchema,
@@ -113,8 +114,13 @@ function appendMessageToQuery(
       Array.isArray((last as { content: unknown }).content) &&
       (last as { role: unknown }).role === entry.role
     ) {
+      const agentSettings = selectLatestExplicitTurnAgentSettings([
+        last as object,
+        entry,
+      ]);
       const merged = {
         ...(last as object),
+        ...(agentSettings ?? {}),
         content: [
           ...(last as { content: unknown[] }).content,
           ...entry.content,

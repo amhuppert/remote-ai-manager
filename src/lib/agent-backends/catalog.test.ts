@@ -12,6 +12,9 @@ import {
   backendLabel,
   backendSupportsFastMode,
   backendToneToken,
+  isModelCompatibleWithBackend,
+  isSelectableModelForBackend,
+  modelOptionsForCatalogEntry,
 } from "./catalog";
 import { getBackendDescriptor } from "./registry";
 
@@ -59,6 +62,40 @@ describe("backendSupportsFastMode", () => {
     expect(backendSupportsFastMode("codex")).toBe(true);
     expect(backendSupportsFastMode("claude")).toBe(false);
   });
+});
+
+describe("backend model ownership", () => {
+  it.each(getBackendCatalogEntry("claude").models)(
+    "rejects the Claude $id model for Codex",
+    ({ id }) => {
+      expect(isSelectableModelForBackend("codex", id)).toBe(false);
+    },
+  );
+
+  it("does not reject custom Codex models", () => {
+    expect(isSelectableModelForBackend("codex", "custom-codex-model")).toBe(
+      true,
+    );
+  });
+
+  it("keeps unknown provider model ids runtime-compatible without accepting known foreign models", () => {
+    expect(isModelCompatibleWithBackend("claude", "claude-haiku-4-5")).toBe(
+      true,
+    );
+    expect(isModelCompatibleWithBackend("codex", "opus")).toBe(false);
+  });
+
+  it.each(getBackendCatalogEntry("claude").models)(
+    "does not present the Claude $id model as a custom Codex option",
+    ({ id }) => {
+      const options = modelOptionsForCatalogEntry(
+        getBackendCatalogEntry("codex"),
+        id,
+      );
+
+      expect(options.map((option) => option.id)).not.toContain(id);
+    },
+  );
 });
 
 describe("unknown backend ids", () => {
