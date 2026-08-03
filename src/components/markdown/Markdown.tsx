@@ -11,8 +11,21 @@ import {
   type RefAttributes,
 } from "react";
 
+import { buildMarkdownDiffSource } from "./markdown-diff";
+
 export type MarkdownProps = Readonly<{
   content: string;
+}>;
+
+/**
+ * The comparison adapter's contract. It is deliberately NOT a variant of
+ * `MarkdownProps`: a diff renders two revisions of one body, not one document
+ * with rendering options, so the extra prop is a second document rather than a
+ * configuration escape hatch.
+ */
+export type MarkdownDiffProps = Readonly<{
+  before: string | null;
+  after: string | null;
 }>;
 
 type MarkdownIntent = "document" | "message" | "compact";
@@ -20,6 +33,7 @@ type RendererProps = {
   content: string;
   intent: MarkdownIntent;
   sourceMapped: boolean;
+  diff: boolean;
 };
 type Renderer = ForwardRefExoticComponent<
   RendererProps & RefAttributes<HTMLDivElement>
@@ -64,7 +78,8 @@ function MarkdownFallback({
 function DeferredMarkdown({
   content,
   intent,
-}: MarkdownProps & { intent: "message" | "compact" }) {
+  diff = false,
+}: MarkdownProps & { intent: "message" | "compact"; diff?: boolean }) {
   const [LoadedRenderer, setLoadedRenderer] = useState<Renderer | null>(null);
 
   useEffect(() => {
@@ -82,7 +97,12 @@ function DeferredMarkdown({
   }
 
   return (
-    <LoadedRenderer content={content} intent={intent} sourceMapped={false} />
+    <LoadedRenderer
+      content={content}
+      intent={intent}
+      sourceMapped={false}
+      diff={diff}
+    />
   );
 }
 
@@ -95,6 +115,7 @@ export function DocumentMarkdown({ content }: MarkdownProps): ReactNode {
         content={content}
         intent="document"
         sourceMapped={false}
+        diff={false}
       />
     </Suspense>
   );
@@ -113,6 +134,7 @@ export const SourceMappedDocumentMarkdown = forwardRef<
         content={content}
         intent="document"
         sourceMapped
+        diff={false}
       />
     </Suspense>
   );
@@ -124,4 +146,23 @@ export function MessageMarkdown({ content }: MarkdownProps): ReactNode {
 
 export function CompactMarkdown({ content }: MarkdownProps): ReactNode {
   return <DeferredMarkdown content={content} intent="compact" />;
+}
+
+/**
+ * Renders two revisions of one body as a single formatted document whose
+ * changed spans carry the added/removed colour. Passing the same string twice
+ * (or one side alone) is well defined: an unchanged body renders as ordinary
+ * Markdown, a one-sided body renders wholly marked.
+ */
+export function CompactMarkdownDiff({
+  before,
+  after,
+}: MarkdownDiffProps): ReactNode {
+  return (
+    <DeferredMarkdown
+      content={buildMarkdownDiffSource(before, after)}
+      intent="compact"
+      diff
+    />
+  );
 }

@@ -15,7 +15,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/AlertDialog";
 import { MultilineInput } from "@/components/MultilineInput";
-import { CompactMarkdown } from "@/components/markdown/Markdown";
+import {
+  CompactMarkdown,
+  CompactMarkdownDiff,
+} from "@/components/markdown/Markdown";
 import { CheckIcon, ChevronDownIcon } from "@/components/icons";
 import { Button } from "@/components/ui/Button";
 import { CheckboxField } from "@/components/ui/Checkbox";
@@ -1761,25 +1764,28 @@ function ReviewChangeCard({
   );
 }
 
-function RevisionValue({
+function RevisionPane({
   label,
-  body,
+  children,
 }: {
   label: string;
-  body: string;
+  children: React.ReactNode;
 }): React.JSX.Element {
   return (
     <div className="min-w-0 bg-bg-base px-md py-sm">
       <span className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
         {label}
       </span>
-      <div className="mt-sm">
-        <CompactMarkdown content={body} />
-      </div>
+      <div className="mt-sm">{children}</div>
     </div>
   );
 }
 
+/**
+ * One formatted body carrying its own revision history: unchanged prose renders
+ * as ordinary Markdown, and the spans this revision changed take the added or
+ * removed colour on top of whatever formatting they already had.
+ */
 function RevisionComparison({
   base,
   current,
@@ -1791,41 +1797,37 @@ function RevisionComparison({
   baseRevisionNumber: number | null;
   currentRevisionNumber: number;
 }): React.JSX.Element | null {
-  if (
-    base !== null &&
-    current !== null &&
-    base.body !== current.body &&
-    baseRevisionNumber !== null
-  ) {
+  const display = current ?? base;
+  if (display === null) return null;
+
+  // The first revision has nothing to compare against, so colouring all of it
+  // as added would say nothing about what a reviewer is being asked to read.
+  const compared = baseRevisionNumber !== null && base?.body !== current?.body;
+  if (!compared) {
     return (
-      <div
-        role="group"
-        aria-label="Revision comparison"
-        className="grid grid-cols-2 gap-px bg-border-dim max-768:grid-cols-1"
+      <RevisionPane
+        label={`Revision ${current === null && baseRevisionNumber !== null ? baseRevisionNumber : currentRevisionNumber}`}
       >
-        <RevisionValue
-          label={`Revision ${baseRevisionNumber}`}
-          body={base.body}
-        />
-        <RevisionValue
-          label={`Revision ${currentRevisionNumber}`}
-          body={current.body}
-        />
-      </div>
+        <CompactMarkdown content={display.body} />
+      </RevisionPane>
     );
   }
 
-  const display = current ?? base;
-  if (display === null) return null;
   return (
-    <RevisionValue
+    <RevisionPane
       label={
-        current === null && baseRevisionNumber !== null
-          ? `Revision ${baseRevisionNumber}`
-          : `Revision ${currentRevisionNumber}`
+        current === null
+          ? `Revision ${baseRevisionNumber} — removed`
+          : base === null
+            ? `Revision ${currentRevisionNumber} — added`
+            : `Revision ${baseRevisionNumber} → ${currentRevisionNumber}`
       }
-      body={display.body}
-    />
+    >
+      <CompactMarkdownDiff
+        before={base?.body ?? null}
+        after={current?.body ?? null}
+      />
+    </RevisionPane>
   );
 }
 

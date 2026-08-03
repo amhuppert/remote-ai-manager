@@ -387,12 +387,11 @@ describe("SpecReviewMode", () => {
     expect(
       within(requirement).getAllByRole("button", { name: "Approve item" }),
     ).toHaveLength(1);
-    expect(
-      await within(requirement).findByText(
+    await waitFor(() => {
+      expect(requirement.querySelector("p")).toHaveTextContent(
         "Every execution pins the exact selected scope.",
-        { selector: "p" },
-      ),
-    ).toBeVisible();
+      );
+    });
     await user.click(
       within(requirement).getByRole("button", {
         name: /modified requirement/i,
@@ -414,21 +413,68 @@ describe("SpecReviewMode", () => {
     expect(screen.getByText(/--- revision-1/)).toBeVisible();
   });
 
+  it("colours the words a revision changed and keeps their Markdown formatting", async () => {
+    const detail = reviewDetailFixture();
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    const requirement = current.elements.find(
+      (entry) => entry.element.id === "requirement-1",
+    );
+    if (requirement === undefined) throw new Error("Fixture requires R1");
+    requirement.version.payload = {
+      kind: "requirement",
+      statement: "Every execution records the **exact selected** scope.",
+      priority: "must",
+      risk: "high",
+    };
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const card = screen.getByTestId("review-change-requirement-1");
+    expect(
+      await within(card).findByText("pins", { selector: "del" }),
+    ).toBeVisible();
+    expect(
+      within(card).getByText("records the", { selector: "ins" }),
+    ).toBeVisible();
+    // The rewritten phrase is emphasised in the new revision: it has to stay
+    // bold and take the added colour, not fall back to raw asterisks.
+    expect(
+      within(card).getByText("exact selected", { selector: "strong ins" }),
+    ).toBeVisible();
+    expect(within(card).getByText("Revision 1 → 2")).toBeVisible();
+  });
+
   it("presents the approved execution graph metadata for each changed task", async () => {
     const user = userEvent.setup();
     renderReview();
 
     const task = screen.getByTestId("review-change-task-1");
-    const currentRevision = within(task).getByText("Revision 2").parentElement;
-    if (currentRevision === null) throw new Error("Current revision missing");
+    const body = within(task).getByText("Revision 1 → 2").parentElement;
+    if (body === null) throw new Error("Current revision missing");
+    // The plan metadata is what this revision added, so each value reads as an
+    // addition against the approved revision.
     await waitFor(() => {
-      expect(currentRevision).toHaveTextContent("Dependencies: T2");
-      expect(currentRevision).toHaveTextContent("Lane group: persistence");
-      expect(currentRevision).toHaveTextContent(
-        "Touched surfaces: src/lib/specs, src/lib/state-store",
-      );
-      expect(currentRevision).toHaveTextContent("Criterion coverage: R1.1");
+      expect(body).toHaveTextContent("Dependencies:");
+      expect(within(body).getByText("T2", { selector: "ins" })).toBeVisible();
     });
+    expect(
+      within(body).getByText("persistence", { selector: "ins" }),
+    ).toBeVisible();
+    expect(
+      within(body).getByText("src/lib/specs, src/lib/state-store", {
+        selector: "ins",
+      }),
+    ).toBeVisible();
+    // Criterion coverage did not move between the two revisions, so it stays
+    // uncoloured alongside the values that did.
+    expect(body).toHaveTextContent("Criterion coverage: R1.1");
 
     await user.click(screen.getByRole("tab", { name: "Raw diff" }));
     expect(screen.getByText(/Dependencies:\*\* T2/)).toBeVisible();
@@ -672,9 +718,9 @@ describe("SpecReviewMode", () => {
     );
 
     const requirement = screen.getByTestId("review-change-requirement-1");
-    expect(
-      await within(requirement).findByText("pins", { selector: "strong" }),
-    ).toBeVisible();
+    await waitFor(() => {
+      expect(requirement.querySelector("strong")).toHaveTextContent("pins");
+    });
   });
 
   it("formats paragraph-only sections and review questions without a dense raw headline", async () => {
@@ -727,11 +773,16 @@ describe("SpecReviewMode", () => {
       name: "Added section: Runtime contract",
     });
     expect(sectionToggle).not.toHaveTextContent("First paragraph.");
+    // The section is new in this revision, so its formatted paragraphs read as
+    // added prose rather than as a wall of unattributed text.
+    await waitFor(() => {
+      expect(section.querySelectorAll("p")).toHaveLength(2);
+    });
+    const paragraphs = section.querySelectorAll("p");
+    expect(paragraphs[0]).toHaveTextContent("First paragraph.");
+    expect(paragraphs[1]).toHaveTextContent("Second paragraph.");
     expect(
-      await within(section).findByText("First paragraph.", { selector: "p" }),
-    ).toBeVisible();
-    expect(
-      within(section).getByText("Second paragraph.", { selector: "p" }),
+      within(section).getByText("First paragraph.", { selector: "ins" }),
     ).toBeVisible();
 
     const reviewQuestions = screen.getByRole("region", {

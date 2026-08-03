@@ -1478,17 +1478,23 @@ describe("Spec Studio routes and inventory", () => {
       ),
     ).toBeInTheDocument();
     const change = screen.getByTestId("review-change-requirement-1");
+    // Both revisions of the statement stay readable in one formatted body: the
+    // retired wording struck through, the wording that replaced it added.
     expect(
-      await within(change).findByText(
-        "Every spec used a session-bound address.",
-        { selector: "p" },
-      ),
+      await within(change).findByText("used", { selector: "del" }),
     ).toBeInTheDocument();
     expect(
-      await within(change).findByText("Every spec has a stable address.", {
-        selector: "p",
-      }),
+      within(change).getByText("session-bound", { selector: "del" }),
     ).toBeInTheDocument();
+    expect(
+      within(change).getByText("has", { selector: "ins" }),
+    ).toBeInTheDocument();
+    expect(
+      within(change).getByText("stable", { selector: "ins" }),
+    ).toBeInTheDocument();
+    expect(change.querySelector("p")).toHaveTextContent(
+      "Every spec used has a session-bound stable address.",
+    );
     expect(within(change).getByText("Approval stale")).toBeInTheDocument();
     expect(within(change).getByRole("link", { name: "R1" })).toHaveAttribute(
       "href",

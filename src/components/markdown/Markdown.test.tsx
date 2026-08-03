@@ -11,9 +11,11 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import * as MarkdownApi from "./Markdown";
 import {
   CompactMarkdown,
+  CompactMarkdownDiff,
   DocumentMarkdown,
   MessageMarkdown,
   SourceMappedDocumentMarkdown,
+  type MarkdownDiffProps,
   type MarkdownProps,
 } from "./Markdown";
 import {
@@ -36,9 +38,10 @@ afterEach(() => {
 });
 
 describe("canonical Markdown public API", () => {
-  it("exports only the four fixed adapters", () => {
+  it("exports only the fixed product-intent adapters", () => {
     expect(Object.keys(MarkdownApi).sort()).toEqual([
       "CompactMarkdown",
+      "CompactMarkdownDiff",
       "DocumentMarkdown",
       "MessageMarkdown",
       "SourceMappedDocumentMarkdown",
@@ -65,6 +68,121 @@ describe("canonical Markdown public API", () => {
     expectTypeOf<
       Exclude<keyof SourceMappedProps, "content" | "ref" | "key">
     >().toBeNever();
+  });
+
+  it("gives the diff adapter a two-revision contract and nothing else", () => {
+    expectTypeOf<keyof MarkdownDiffProps>().toEqualTypeOf<"before" | "after">();
+    expectTypeOf<MarkdownDiffProps["before"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<MarkdownDiffProps["after"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<
+      ComponentPropsWithoutRef<typeof CompactMarkdownDiff>
+    >().toEqualTypeOf<MarkdownDiffProps>();
+  });
+});
+
+describe("canonical Markdown revision diff", () => {
+  async function renderDiff(before: string | null, after: string | null) {
+    const { container } = render(
+      <CompactMarkdownDiff before={before} after={after} />,
+    );
+    await waitFor(() => {
+      expect(markdownRoot(container, "compact")).not.toBeNull();
+    });
+    const root = markdownRoot(container, "compact");
+    if (root === null) throw new Error("Compact renderer never mounted");
+    return root;
+  }
+
+  it("colours only the changed words and leaves the rest of the prose plain", async () => {
+    const root = await renderDiff(
+      "Every execution pins scope.",
+      "Every execution records the exact selected scope.",
+    );
+
+    expect(root.querySelector("del")).toHaveTextContent("pins");
+    expect(root.querySelector("ins")).toHaveTextContent(
+      "records the exact selected",
+    );
+    expect(root.querySelector("p")?.textContent).toBe(
+      "Every execution pins records the exact selected scope.",
+    );
+  });
+
+  it("keeps the Markdown rendering of a changed span and overrides its colour", async () => {
+    const root = await renderDiff(
+      "The **worker one** owns retries.",
+      "The **worker two** owns retries.",
+    );
+
+    const strong = root.querySelector("strong");
+    expect(strong).not.toBeNull();
+    // The change sits inside emphasis: the span must stay bold *and* take the
+    // diff colour, which only holds when the mark wraps the parsed inline node.
+    expect(strong?.querySelector("ins")).toHaveTextContent("two");
+    expect(strong?.querySelector("del")).toHaveTextContent("one");
+    expect(root.querySelector("ins")).toHaveClass("text-green");
+    expect(root.querySelector("del")).toHaveClass("text-red-text");
+  });
+
+  it("keeps a changed list item a list item", async () => {
+    const root = await renderDiff(
+      "- Alpha stays\n- Beta pins scope",
+      "- Alpha stays\n- Beta records scope",
+    );
+
+    const items = root.querySelectorAll("li");
+    expect(items).toHaveLength(2);
+    expect(items[1]?.querySelector("del")).toHaveTextContent("pins");
+    expect(items[1]?.querySelector("ins")).toHaveTextContent("records");
+  });
+
+  it("marks a one-sided element whole and distinguishes the two kinds", async () => {
+    const added = await renderDiff(null, "New requirement.");
+    expect(added.querySelector("ins")).toHaveTextContent("New requirement.");
+    expect(added.querySelector("ins")).toHaveAttribute("data-diff", "added");
+    expect(added.querySelector("del")).toBeNull();
+
+    const removed = await renderDiff("Retired requirement.", null);
+    expect(removed.querySelector("del")).toHaveTextContent(
+      "Retired requirement.",
+    );
+    expect(removed.querySelector("del")).toHaveAttribute(
+      "data-diff",
+      "removed",
+    );
+    expect(removed.querySelector("ins")).toBeNull();
+  });
+
+  it("leaves an unchanged body free of diff marks", async () => {
+    const root = await renderDiff(
+      "Stable **statement**.",
+      "Stable **statement**.",
+    );
+
+    expect(root.querySelector("ins")).toBeNull();
+    expect(root.querySelector("del")).toBeNull();
+    expect(root.querySelector("strong")).toHaveTextContent("statement");
+  });
+
+  it("renders a changed code block as the current revision without stray marks", async () => {
+    const root = await renderDiff(
+      "Run it:\n\n```ts\nconst a = 1;\n```",
+      "Run it:\n\n```ts\nconst a = 2;\n```",
+    );
+
+    expect(root.textContent).toContain("const a = 2;");
+    expect(root.textContent).not.toContain("const a = 1;");
+    expect(root.querySelector("ins")).toBeNull();
+    expect(root.querySelector("del")).toBeNull();
+  });
+
+  it("never leaks a sentinel into the rendered text", async () => {
+    const root = await renderDiff(
+      "Every execution pins scope.",
+      "Every execution records **the exact** selected scope.",
+    );
+
+    expect(root.textContent).not.toMatch(/[\uE000-\uE003]/);
   });
 });
 

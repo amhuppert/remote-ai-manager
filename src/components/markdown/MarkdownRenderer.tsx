@@ -16,6 +16,7 @@ import remarkGfm from "remark-gfm";
 import type { Element, Nodes } from "hast";
 import MarkdownLink from "./MarkdownLink";
 import { cn } from "@/lib/ui/cn";
+import { DIFF_KIND_PROPERTY, rehypeDiffMarks } from "./markdown-diff";
 import {
   CC_HEADING_ATTR,
   CC_LINE_ATTR,
@@ -33,6 +34,7 @@ interface MarkdownRendererProps {
   content: string;
   intent: MarkdownIntent;
   sourceMapped: boolean;
+  diff: boolean;
 }
 
 const ROOT_CLASSES: Record<MarkdownIntent, string> = {
@@ -178,6 +180,18 @@ const CODE_PRE_CLASSES: Record<MarkdownIntent, string> = {
 
 const LINK_CLASSES =
   "break-words font-medium text-cyan underline decoration-current underline-offset-2 [overflow-wrap:anywhere] hover:text-cyan-dim focus-visible:rounded-sm focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
+
+/**
+ * Revision marks sit *inside* whatever Markdown element the changed span
+ * belongs to, so their colour lands on the innermost element and wins over the
+ * heading/emphasis/link colour it replaces without needing an override.
+ */
+// A replacement puts the removed run directly against the run that replaced it,
+// and at the end of a phrase the two carry no separating space of their own.
+const DIFF_ADDED_CLASSES =
+  "rounded-sm bg-green-glow text-green no-underline [del+&]:ml-2xs";
+const DIFF_REMOVED_CLASSES =
+  "rounded-sm bg-red-glow text-red-text line-through decoration-current";
 
 const THEMATIC_BREAK_CLASSES: Record<MarkdownIntent, string> = {
   document:
@@ -701,10 +715,22 @@ function createMarkdownComponents(intent: MarkdownIntent): Components {
     em({ node: _node, className, ...props }) {
       return <em {...props} className={cn("text-text-secondary", className)} />;
     },
-    del({ node: _node, className, ...props }) {
+    del({ node, className, ...props }) {
+      // Two sources produce `<del>`: authored `~~strikethrough~~` and a removed
+      // revision span. Only the latter carries the diff colour.
+      const removed = node?.properties[DIFF_KIND_PROPERTY] === "removed";
       return (
-        <del {...props} className={cn("decoration-text-tertiary", className)} />
+        <del
+          {...props}
+          className={cn(
+            removed ? DIFF_REMOVED_CLASSES : "decoration-text-tertiary",
+            className,
+          )}
+        />
       );
+    },
+    ins({ node: _node, className, ...props }) {
+      return <ins {...props} className={cn(DIFF_ADDED_CLASSES, className)} />;
     },
     img({ node: _node, className, alt, ...props }) {
       return (
@@ -761,19 +787,26 @@ const COMPONENTS_BY_INTENT: Record<MarkdownIntent, Components> = {
 // render the "\n" text nodes between sibling blocks as blank lines.
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const SOURCE_MAP_PLUGINS = [rehypeStampSourcePosition];
+const DIFF_PLUGINS = [rehypeDiffMarks];
+
+function rehypePlugins(sourceMapped: boolean, diff: boolean) {
+  if (diff) return DIFF_PLUGINS;
+  return sourceMapped ? SOURCE_MAP_PLUGINS : undefined;
+}
 
 const MarkdownRenderer = forwardRef<HTMLDivElement, MarkdownRendererProps>(
-  function MarkdownRenderer({ content, intent, sourceMapped }, ref) {
+  function MarkdownRenderer({ content, intent, sourceMapped, diff }, ref) {
     return (
       <div
         ref={ref}
         data-markdown-intent={intent}
         data-markdown-source-mapped={sourceMapped || undefined}
+        data-markdown-diff={diff || undefined}
         className={ROOT_CLASSES[intent]}
       >
         <ReactMarkdown
           remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={sourceMapped ? SOURCE_MAP_PLUGINS : undefined}
+          rehypePlugins={rehypePlugins(sourceMapped, diff)}
           components={COMPONENTS_BY_INTENT[intent]}
         >
           {content}
