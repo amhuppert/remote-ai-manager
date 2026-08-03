@@ -1442,7 +1442,7 @@ describe("Spec Studio routes and inventory", () => {
     expect(await screen.findByText("All delivery waived")).toBeInTheDocument();
   });
 
-  it("renders inline semantic review changes with re-approval and raw diff secondary", async () => {
+  it("renders formatted semantic review values with re-approval and raw diff secondary", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -1479,10 +1479,15 @@ describe("Spec Studio routes and inventory", () => {
     ).toBeInTheDocument();
     const change = screen.getByTestId("review-change-requirement-1");
     expect(
-      within(change).getByText("used a session-bound", { selector: "del" }),
+      await within(change).findByText(
+        "Every spec used a session-bound address.",
+        { selector: "p" },
+      ),
     ).toBeInTheDocument();
     expect(
-      within(change).getByText("has a stable", { selector: "ins" }),
+      await within(change).findByText("Every spec has a stable address.", {
+        selector: "p",
+      }),
     ).toBeInTheDocument();
     expect(within(change).getByText("Approval stale")).toBeInTheDocument();
     expect(within(change).getByRole("link", { name: "R1" })).toHaveAttribute(

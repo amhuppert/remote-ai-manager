@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
 import {
@@ -373,9 +374,9 @@ function CriterionProofCard({
           <span className="font-mono text-[0.7rem] font-semibold text-cyan">
             {criterion.handle}
           </span>
-          <p className="mt-xs mb-0 font-mono text-[0.78rem] leading-relaxed text-text-primary">
-            {criterion.text}
-          </p>
+          <div className="mt-xs min-w-0">
+            <CompactMarkdown content={criterion.text} />
+          </div>
         </div>
         <StatusChip tone={state.tone}>{state.label}</StatusChip>
       </div>
@@ -398,9 +399,9 @@ function CriterionProofCard({
       </div>
 
       {criterion.validationStrategy.note !== undefined && (
-        <p className="m-0 font-mono text-[0.7rem] leading-relaxed text-text-secondary">
-          {criterion.validationStrategy.note}
-        </p>
+        <div className="min-w-0">
+          <CompactMarkdown content={criterion.validationStrategy.note} />
+        </div>
       )}
       {criterion.isPending && (
         <p
@@ -1091,9 +1092,9 @@ function TraceInspector({
         <h3 className="m-0 font-mono text-[0.9rem] font-semibold text-text-primary">
           {title}
         </h3>
-        <p className="mt-sm mb-0 font-mono text-[0.76rem] leading-relaxed text-text-secondary">
-          {node.data.label}
-        </p>
+        <div className="mt-sm min-w-0">
+          <CompactMarkdown content={node.data.label} />
+        </div>
       </div>
       <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
         {chainSize} {chainSize === 1 ? "node" : "nodes"} in the selected chain

@@ -195,6 +195,22 @@ const criterionDispositions = [
 ];
 
 describe("SpecEvidencePanel", () => {
+  it("renders criterion and validation prose as markdown", async () => {
+    const criteria = proofViews();
+    criteria[0]!.text = "The **alias** remains resolvable.";
+    criteria[0]!.validationStrategy.note = "Run the `alias` test.";
+
+    render(<SpecEvidencePanel criteria={criteria} initialFilter="all" />);
+
+    const proof = screen.getByRole("article", { name: "R1.1 proof" });
+    expect(
+      await within(proof).findByText("alias", { selector: "strong" }),
+    ).toBeVisible();
+    expect(
+      await within(proof).findByText("alias", { selector: "code" }),
+    ).toBeVisible();
+  });
+
   it("renders proof state per criterion and an explicit nothing-proves-it state", () => {
     render(<SpecEvidencePanel criteria={proofViews()} initialFilter="all" />);
 
@@ -540,6 +556,31 @@ describe("TraceabilityGraph", () => {
     expect(
       screen.queryByRole("article", { name: /Evidence/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders the selected requirement's full prose as markdown in the inspector", async () => {
+    const user = userEvent.setup();
+    render(
+      <TraceabilityGraph
+        input={{
+          ...input,
+          requirements: input.requirements.map((requirement) => ({
+            ...requirement,
+            label: "References **remain stable**",
+          })),
+        }}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Select requirement R1" }),
+    );
+    const inspector = screen.getByRole("group", { name: "Trace inspector" });
+    expect(
+      await within(inspector).findByText("remain stable", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
   });
 
   it("selects a trace chain, exposes an inspector deep link, and provides non-graph navigation", async () => {

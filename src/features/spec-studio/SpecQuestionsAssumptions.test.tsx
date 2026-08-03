@@ -119,9 +119,9 @@ describe("SpecQuestionsAssumptions", () => {
       throw new Error("Expected bare-handle DOM ids for Q/A records");
     }
 
-    expect(within(q1).getByText("Which retention window applies?")).toHaveClass(
-      "text-[0.875rem]",
-    );
+    expect(
+      within(q1).getByText("Which retention window applies?"),
+    ).toBeVisible();
     expect(within(q1).getByText("Open")).toBeInTheDocument();
     expect(within(q2).getByText("Answered")).toBeInTheDocument();
     expect(
@@ -134,6 +134,44 @@ describe("SpecQuestionsAssumptions", () => {
     // as the current value of the disposition select.
     expect(within(a2).getAllByText("Rejected")).not.toHaveLength(0);
     expect(within(a2).getByText("Spec-level")).toBeInTheDocument();
+  });
+
+  it("renders question, answer, and assumption prose as markdown", async () => {
+    renderStudio({
+      questions: [
+        questionFixture({ text: "Which **retention** window applies?" }),
+        questionFixture({
+          id: "question-2",
+          number: 2,
+          handle: "Q2",
+          text: "Which environments are covered?",
+          status: "answered",
+          answer: "- Production\n- **Staging**",
+          answeredAt: NOW,
+        }),
+      ],
+      assumptions: [
+        assumptionFixture({ text: "Retention defaults to `30 days`." }),
+      ],
+    });
+
+    const q1 = document.getElementById("Q1");
+    const q2 = document.getElementById("Q2");
+    const a1 = document.getElementById("A1");
+    if (q1 === null || q2 === null || a1 === null) {
+      throw new Error("Expected Q/A cards");
+    }
+
+    expect(
+      await within(q1).findByText("retention", { selector: "strong" }),
+    ).toBeVisible();
+    expect(await within(q2).findAllByRole("listitem")).toHaveLength(2);
+    expect(
+      await within(q2).findByText("Staging", { selector: "strong" }),
+    ).toBeVisible();
+    expect(
+      await within(a1).findByText("30 days", { selector: "code" }),
+    ).toBeVisible();
   });
 
   it("fires dispose-assumption with the chosen disposition", async () => {

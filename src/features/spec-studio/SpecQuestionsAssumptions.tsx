@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import { CopyReferenceControl } from "@/components/references/SpecRefChips";
 import { Button } from "@/components/ui/Button";
 import { FormGroup, FormInput, FormLabel } from "@/components/ui/FormField";
@@ -251,9 +252,9 @@ function QuestionCard({
               </span>
             )}
           </div>
-          <p className="mt-xs mb-0 text-[0.875rem] leading-[1.65] text-text-secondary">
-            {question.text}
-          </p>
+          <div className="mt-xs min-w-0">
+            <CompactMarkdown content={question.text} />
+          </div>
         </div>
         <CopyReferenceControl
           referenceType="question"
@@ -277,9 +278,9 @@ function QuestionCard({
           <span className="font-mono text-[0.64rem] tracking-[0.06em] text-text-tertiary uppercase">
             Answer
           </span>
-          <p className="mt-xs mb-0 text-[0.875rem] leading-[1.65] text-text-primary">
-            {question.answer}
-          </p>
+          <div className="mt-xs min-w-0">
+            <CompactMarkdown content={question.answer ?? ""} />
+          </div>
         </div>
       ) : readOnly ? (
         <p className="mt-md mb-0 rounded-md border border-solid border-border-dim bg-bg-surface px-md py-sm text-[0.8125rem] leading-relaxed text-text-secondary">
@@ -371,9 +372,9 @@ function AssumptionCard({
               </span>
             )}
           </div>
-          <p className="mt-xs mb-0 text-[0.875rem] leading-[1.65] text-text-secondary">
-            {assumption.text}
-          </p>
+          <div className="mt-xs min-w-0">
+            <CompactMarkdown content={assumption.text} />
+          </div>
         </div>
         <CopyReferenceControl
           referenceType="assumption"

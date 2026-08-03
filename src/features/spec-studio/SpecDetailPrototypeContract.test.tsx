@@ -104,10 +104,12 @@ function prototypeDetailFixture(): SpecDetailView {
   };
 }
 
-function renderPrototypeDetail(): void {
+function renderPrototypeDetail(
+  detail: SpecDetailView = prototypeDetailFixture(),
+): void {
   renderWithQuery(
     <SpecDetailContent
-      detail={prototypeDetailFixture()}
+      detail={detail}
       projectName="command-center"
       requestedSlug="native-sdd"
       view="overview"
@@ -190,6 +192,44 @@ describe("Spec detail prototype structure", () => {
     expect(
       within(requirements).getByRole("button", { name: "Collapse R1" }),
     ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("renders expanded structure rail prose as markdown", async () => {
+    const user = userEvent.setup();
+    const detail = prototypeDetailFixture();
+    const snapshot = detail.currentRevision;
+    if (snapshot === null)
+      throw new Error("Fixture requires a current revision");
+    for (const entry of snapshot.elements) {
+      const payload = entry.version.payload;
+      if (payload.kind === "requirement") {
+        payload.statement = "Every **execution** pins scope.";
+      } else if (payload.kind === "criterion") {
+        payload.text = "The selected `task` is pinned.";
+      } else if (payload.kind === "task") {
+        payload.instructions = "- Read the snapshot\n- **Verify** the scope";
+      }
+    }
+    detail.assumptions[0]!.text = "Approval uses the **review surface**.";
+    renderPrototypeDetail(detail);
+
+    const rail = screen.getByRole("complementary", { name: "Spec structure" });
+    await user.click(
+      within(rail).getByRole("button", { name: "Expand all structure items" }),
+    );
+
+    expect(
+      await within(rail).findByText("execution", { selector: "strong" }),
+    ).toBeVisible();
+    expect(
+      await within(rail).findByText("task", { selector: "code" }),
+    ).toBeVisible();
+    expect(
+      await within(rail).findByText("Verify", { selector: "strong" }),
+    ).toBeVisible();
+    expect(
+      await within(rail).findByText("review surface", { selector: "strong" }),
+    ).toBeVisible();
   });
 
   it("offers one expand-all control for the internally scrollable rail", async () => {

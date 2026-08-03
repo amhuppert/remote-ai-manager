@@ -8,6 +8,68 @@ import { SpecElementReader } from "./SpecElementReader";
 afterEach(cleanup);
 
 describe("SpecElementReader", () => {
+  it("renders authored prose as markdown across requirement, decision, and task readers", async () => {
+    const detail = specElementReaderDetailFixture();
+    const snapshot = detail.currentRevision;
+    if (snapshot === null)
+      throw new Error("Reader fixture requires a revision");
+    for (const entry of snapshot.elements) {
+      const payload = entry.version.payload;
+      if (payload.kind === "requirement") {
+        payload.statement = "Every **execution** pins scope.";
+      } else if (payload.kind === "criterion") {
+        payload.text = "- Pin the selected `task`\n- Pin the criterion";
+        payload.validationStrategy.note = "Run the **scope test**.";
+      } else if (payload.kind === "decision") {
+        payload.chosenApproach = "Persist the **selected scope**.";
+        payload.reason = "1. Keep runs reproducible\n2. Keep review auditable";
+        payload.rejectedAlternatives[0]!.reason =
+          "The source `revision` could change.";
+      } else if (payload.kind === "task" && entry.element.id === "task-2") {
+        payload.instructions = "- Read the pinned snapshot\n- **Verify** it";
+      }
+    }
+
+    const requirementView = render(
+      <SpecElementReader detail={detail} kind="requirements" />,
+    );
+    const decisionView = render(
+      <SpecElementReader detail={detail} kind="decisions" />,
+    );
+    const taskView = render(<SpecElementReader detail={detail} kind="tasks" />);
+
+    expect(
+      await within(requirementView.container).findByText("execution", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(requirementView.container).findByText("task", {
+        selector: "code",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(requirementView.container).findByText("scope test", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(decisionView.container).findByText("selected scope", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(decisionView.container).findByText("revision", {
+        selector: "code",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(taskView.container).findByText("Verify", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
+  });
+
   it("reads requirements from the current revision with their criteria and status", () => {
     const detail = specElementReaderDetailFixture();
     const approved = detail.currentApprovedRevision;
@@ -51,7 +113,7 @@ describe("SpecElementReader", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Revision 2")).toBeInTheDocument();
     const requirement = screen.getByRole("article", {
-      name: /R1 Every execution pins the full immutable scope/i,
+      name: "R1 requirement",
     });
     expect(document.getElementById("R1")).toBe(requirement);
     expect(requirement).toHaveAttribute("tabindex", "-1");

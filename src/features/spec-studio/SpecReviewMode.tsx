@@ -66,10 +66,6 @@ import {
 import { cn } from "@/lib/ui/cn";
 
 import { reanchorSpecThread, type SpecThreadAnchorState } from "./reanchor";
-import {
-  formatInlineReviewDiff,
-  type InlineReviewDiffSegment,
-} from "./SpecReviewDiff";
 import SpecReadOnlyNotice from "./SpecReadOnlyNotice";
 
 const logger = createClientLogger("spec-studio-review");
@@ -1027,9 +1023,9 @@ function ReviewQuestionsPanel({
                 <span className="w-[34px] shrink-0 font-mono text-[0.72rem] font-bold text-cyan-dim">
                   {question.handle}
                 </span>
-                <span className="min-w-0 grow font-mono text-[0.76rem] leading-relaxed text-text-secondary">
-                  {question.text}
-                </span>
+                <div className="min-w-0 grow">
+                  <CompactMarkdown content={question.text} />
+                </div>
                 <StatusChip tone={status.tone}>{status.label}</StatusChip>
               </div>
             );
@@ -1044,9 +1040,9 @@ function ReviewQuestionsPanel({
                 <span className="w-[34px] shrink-0 font-mono text-[0.72rem] font-bold text-cyan-dim">
                   {assumption.handle}
                 </span>
-                <span className="min-w-0 grow font-mono text-[0.76rem] leading-relaxed text-text-secondary">
-                  {assumption.text}
-                </span>
+                <div className="min-w-0 grow">
+                  <CompactMarkdown content={assumption.text} />
+                </div>
                 <StatusChip tone={status.tone}>{status.label}</StatusChip>
               </div>
             );
@@ -1342,11 +1338,7 @@ function ReviewChangeCard({
   const current = viewForElement(currentSnapshot, change.elementId);
   const display = current ?? base;
   const handle = display?.handle ?? change.elementId;
-  const headlineBefore = reviewHeadline(base);
-  const headlineAfter = reviewHeadline(current);
-  const inlineDiff = formatInlineReviewDiff(headlineBefore, headlineAfter);
-  const expandedBody = current ?? base;
-  const showExpandedBody = shouldShowExpandedBody(expandedBody);
+  const controlLabel = reviewChangeControlLabel(change);
   const approvalTarget = approvalTargetFor(
     current ?? base,
     currentSnapshot,
@@ -1564,13 +1556,12 @@ function ReviewChangeCard({
           <CollapsibleTrigger asChild>
             <button
               type="button"
-              aria-label={change.summary}
+              aria-label={controlLabel}
               className="group flex min-h-[32px] min-w-0 cursor-pointer items-start gap-sm border-0 bg-transparent p-0 text-left font-mono text-[0.82rem] leading-relaxed text-text-primary hover:text-cyan focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:col-span-2 max-768:row-start-2 max-768:min-h-[44px]"
             >
-              <InlineReviewDiff
-                segments={inlineDiff}
-                fallback={change.summary}
-              />
+              <span className="min-w-0 grow [overflow-wrap:anywhere]">
+                {controlLabel}
+              </span>
               <ChevronDownIcon
                 size={14}
                 className="shrink-0 text-text-tertiary transition-transform duration-150 group-data-[state=open]:rotate-180"
@@ -1645,16 +1636,12 @@ function ReviewChangeCard({
             hidden={!expanded}
             className="border-x-0 border-t border-b-0 border-solid border-border-subtle data-[state=closed]:hidden"
           >
-            {showExpandedBody && expandedBody !== null && (
-              <RevisionValue
-                label={
-                  current === null && baseSnapshot !== null
-                    ? `Revision ${baseSnapshot.revision.number}`
-                    : `Revision ${currentSnapshot.revision.number}`
-                }
-                body={expandedBody.body}
-              />
-            )}
+            <RevisionComparison
+              base={base}
+              current={current}
+              baseRevisionNumber={baseSnapshot?.revision.number ?? null}
+              currentRevisionNumber={currentSnapshot.revision.number}
+            />
             {criteria.length > 0 && (
               <div className="border-x-0 border-t border-b-0 border-solid border-border-dim bg-bg-base px-lg py-md max-768:px-md">
                 <p className="mt-0 mb-sm font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
@@ -1694,13 +1681,18 @@ function ReviewChangeCard({
                           >
                             {criterionDisplay.handle}
                           </Link>
-                          <InlineReviewDiff
-                            segments={formatInlineReviewDiff(
-                              reviewHeadline(criterion.base),
-                              reviewHeadline(criterion.current),
-                            )}
-                            fallback={criterionDisplay.body}
-                          />
+                          <div className="min-w-0 grow">
+                            <RevisionComparison
+                              base={criterion.base}
+                              current={criterion.current}
+                              baseRevisionNumber={
+                                baseSnapshot?.revision.number ?? null
+                              }
+                              currentRevisionNumber={
+                                currentSnapshot.revision.number
+                              }
+                            />
+                          </div>
                           <StatusChip
                             tone={criterionTone[criterion.change]}
                             layoutClassName="ml-auto"
@@ -1769,67 +1761,6 @@ function ReviewChangeCard({
   );
 }
 
-function InlineReviewDiff({
-  segments,
-  fallback,
-}: {
-  segments: InlineReviewDiffSegment[];
-  fallback: string;
-}): React.JSX.Element {
-  return (
-    <span className="min-w-0 grow [overflow-wrap:anywhere] whitespace-pre-wrap">
-      {segments.length === 0
-        ? fallback
-        : segments.map((segment, index) => {
-            if (segment.kind === "added") {
-              return (
-                <ins
-                  key={`${segment.kind}-${index}`}
-                  className="rounded-sm bg-green-glow text-green no-underline"
-                >
-                  {segment.text}
-                </ins>
-              );
-            }
-            if (segment.kind === "removed") {
-              return (
-                <del
-                  key={`${segment.kind}-${index}`}
-                  className="rounded-sm bg-red-glow text-red-text line-through"
-                >
-                  {segment.text}
-                </del>
-              );
-            }
-            return <span key={`${segment.kind}-${index}`}>{segment.text}</span>;
-          })}
-    </span>
-  );
-}
-
-function reviewHeadline(view: ReviewElementView | null): string | null {
-  if (view === null) return null;
-  const payload = view.entry.version.payload;
-  switch (payload.kind) {
-    case "section":
-      return payload.body;
-    case "requirement":
-      return payload.statement;
-    case "criterion":
-      return payload.text;
-    case "decision":
-      return payload.title;
-    case "task":
-      return payload.title;
-  }
-}
-
-function shouldShowExpandedBody(view: ReviewElementView | null): boolean {
-  if (view === null) return false;
-  if (view.body !== reviewHeadline(view)) return true;
-  return /(\*\*|__|`|\[[^\]]+\]\(|^#{1,6}\s|^\s*[-*+]\s)/m.test(view.body);
-}
-
 function RevisionValue({
   label,
   body,
@@ -1847,6 +1778,67 @@ function RevisionValue({
       </div>
     </div>
   );
+}
+
+function RevisionComparison({
+  base,
+  current,
+  baseRevisionNumber,
+  currentRevisionNumber,
+}: {
+  base: ReviewElementView | null;
+  current: ReviewElementView | null;
+  baseRevisionNumber: number | null;
+  currentRevisionNumber: number;
+}): React.JSX.Element | null {
+  if (
+    base !== null &&
+    current !== null &&
+    base.body !== current.body &&
+    baseRevisionNumber !== null
+  ) {
+    return (
+      <div
+        role="group"
+        aria-label="Revision comparison"
+        className="grid grid-cols-2 gap-px bg-border-dim max-768:grid-cols-1"
+      >
+        <RevisionValue
+          label={`Revision ${baseRevisionNumber}`}
+          body={base.body}
+        />
+        <RevisionValue
+          label={`Revision ${currentRevisionNumber}`}
+          body={current.body}
+        />
+      </div>
+    );
+  }
+
+  const display = current ?? base;
+  if (display === null) return null;
+  return (
+    <RevisionValue
+      label={
+        current === null && baseRevisionNumber !== null
+          ? `Revision ${baseRevisionNumber}`
+          : `Revision ${currentRevisionNumber}`
+      }
+      body={display.body}
+    />
+  );
+}
+
+function reviewChangeControlLabel(change: SemanticChange): string {
+  if (change.kind === "requirement") {
+    return change.summary.startsWith("Modified requirement criteria:")
+      ? "Modified requirement criteria"
+      : `${capitalize(change.change)} requirement`;
+  }
+  if (change.kind === "criterion") {
+    return `${capitalize(change.change)} acceptance criterion`;
+  }
+  return change.summary;
 }
 
 function ReviewThreads({

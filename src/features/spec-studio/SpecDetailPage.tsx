@@ -9,6 +9,7 @@ import AnnotatedMarkdown, {
   type CreateCommentInput,
   type ResolvedComment,
 } from "@/components/document-viewer/AnnotatedMarkdown";
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import CopyTicketReferenceButton from "@/components/references/CopyTicketReferenceButton";
 import {
   EmptyState,
@@ -1423,9 +1424,9 @@ function SpecStructureRail({
                     </span>
                     {expanded && (
                       <div className="basis-full border-x-0 border-t border-b-0 border-solid border-border-dim px-[44px] pt-sm pb-xs">
-                        <p className="m-0 text-[0.875rem] leading-relaxed whitespace-pre-wrap text-text-primary">
-                          {item.name}
-                        </p>
+                        <div className="min-w-0">
+                          <CompactMarkdown content={item.name} />
+                        </div>
                         {item.criteria !== undefined &&
                           item.criteria.length > 0 && (
                             <div
@@ -1444,9 +1445,9 @@ function SpecStructureRail({
                                   <span className="font-mono text-[0.64rem] font-semibold text-cyan-dim">
                                     {criterion.handle}
                                   </span>
-                                  <span className="text-[0.8125rem] leading-relaxed text-text-secondary">
-                                    {criterion.name}
-                                  </span>
+                                  <div className="min-w-0">
+                                    <CompactMarkdown content={criterion.name} />
+                                  </div>
                                   <span
                                     className={cn(
                                       "font-mono text-[0.6rem] font-semibold tracking-[0.05em] uppercase",
@@ -1464,9 +1465,9 @@ function SpecStructureRail({
                             <span className="font-mono text-[0.62rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
                               {detail.label}
                             </span>
-                            <p className="mt-2xs mb-0 text-[0.8125rem] leading-relaxed whitespace-pre-wrap text-text-secondary">
-                              {detail.text}
-                            </p>
+                            <div className="mt-2xs min-w-0">
+                              <CompactMarkdown content={detail.text} />
+                            </div>
                           </div>
                         ))}
                       </div>

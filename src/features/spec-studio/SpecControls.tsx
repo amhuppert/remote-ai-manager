@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -2038,12 +2039,9 @@ function CriterionExecutionControls({
         <span className="font-mono text-[0.7rem] font-bold text-cyan">
           {handle}
         </span>
-        <p
-          className="m-0 truncate text-[0.7rem] text-text-secondary"
-          title={text}
-        >
-          {text}
-        </p>
+        <div className="min-w-0">
+          <CompactMarkdown content={text} />
+        </div>
         <span className="inline-flex flex-wrap items-center justify-end gap-[6px]">
           {projection?.strategyKinds.map((kind) => (
             <span

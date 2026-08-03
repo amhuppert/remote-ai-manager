@@ -366,7 +366,7 @@ describe("SpecReviewMode", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("groups acceptance criteria inside their requirement card and keeps raw diff secondary", async () => {
+  it("groups formatted acceptance criteria inside their requirement card and keeps raw diff secondary", async () => {
     const user = userEvent.setup();
     renderReview();
 
@@ -388,9 +388,10 @@ describe("SpecReviewMode", () => {
       within(requirement).getAllByRole("button", { name: "Approve item" }),
     ).toHaveLength(1);
     expect(
-      within(requirement).getByText("the exact selected", {
-        selector: "ins",
-      }),
+      await within(requirement).findByText(
+        "Every execution pins the exact selected scope.",
+        { selector: "p" },
+      ),
     ).toBeVisible();
     await user.click(
       within(requirement).getByRole("button", {
@@ -673,6 +674,76 @@ describe("SpecReviewMode", () => {
     const requirement = screen.getByTestId("review-change-requirement-1");
     expect(
       await within(requirement).findByText("pins", { selector: "strong" }),
+    ).toBeVisible();
+  });
+
+  it("formats paragraph-only sections and review questions without a dense raw headline", async () => {
+    const detail = reviewDetailFixture();
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    current.elements.push({
+      element: {
+        id: "section-markdown",
+        specId: detail.spec.id,
+        kind: "section",
+        number: null,
+        parentElementId: null,
+        createdAt: NOW,
+      },
+      version: {
+        revisionId: current.revision.id,
+        elementId: "section-markdown",
+        position: 0,
+        payload: {
+          kind: "section",
+          role: "design_narrative",
+          title: "Runtime contract",
+          body: "First paragraph.\n\nSecond paragraph.",
+        },
+        payloadHash: "section-markdown-hash",
+        elementVersion: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    });
+    const question = detail.questions[0];
+    const assumption = detail.assumptions[0];
+    if (question === undefined || assumption === undefined) {
+      throw new Error("Fixture requires a question and assumption");
+    }
+    question.text = "Which **runtime** owns the contract?";
+    assumption.text = "The `worker` owns it.";
+
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const section = screen.getByTestId("review-change-section-markdown");
+    const sectionToggle = within(section).getByRole("button", {
+      name: "Added section: Runtime contract",
+    });
+    expect(sectionToggle).not.toHaveTextContent("First paragraph.");
+    expect(
+      await within(section).findByText("First paragraph.", { selector: "p" }),
+    ).toBeVisible();
+    expect(
+      within(section).getByText("Second paragraph.", { selector: "p" }),
+    ).toBeVisible();
+
+    const reviewQuestions = screen.getByRole("region", {
+      name: "Questions and assumptions in this revision",
+    });
+    expect(
+      await within(reviewQuestions).findByText("runtime", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(reviewQuestions).findByText("worker", { selector: "code" }),
     ).toBeVisible();
   });
 

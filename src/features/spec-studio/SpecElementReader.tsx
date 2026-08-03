@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from "react";
 
+import { CompactMarkdown } from "@/components/markdown/Markdown";
 import {
   EmptyState,
   EmptyStateDesc,
@@ -232,14 +233,14 @@ function RequirementDocument({
             <div className="flex flex-col gap-md">
               <h3
                 id={headingId}
-                aria-label={`${handle} ${textOrDash(payload.statement)}`}
-                className="flex items-start gap-sm text-[0.875rem] leading-[1.65] font-semibold text-text-primary max-768:flex-col"
+                aria-label={`${handle} requirement`}
+                className="text-[0.875rem] leading-[1.65] font-semibold text-text-primary"
               >
                 <StatusChip tone="cyan">{handle}</StatusChip>
-                <span className="[overflow-wrap:anywhere]">
-                  {textOrDash(payload.statement)}
-                </span>
               </h3>
+              <div className="min-w-0">
+                <CompactMarkdown content={textOrDash(payload.statement)} />
+              </div>
               <div className="flex flex-wrap items-center gap-sm">
                 <StatusChip tone={proof.tone}>{proof.label}</StatusChip>
                 <StatusChip tone={approval.tone}>{approval.label}</StatusChip>
@@ -303,9 +304,11 @@ function CriteriaList({
                   {handleFor(criterion, snapshot)}
                 </StatusChip>
                 <div className="flex min-w-0 flex-1 flex-col gap-sm">
-                  <p className="text-[0.875rem] leading-[1.65] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary">
-                    {textOrDash(criterion.version.payload.text)}
-                  </p>
+                  <div className="min-w-0">
+                    <CompactMarkdown
+                      content={textOrDash(criterion.version.payload.text)}
+                    />
+                  </div>
                   <div className="flex flex-wrap items-center gap-xs text-[0.72rem] text-text-tertiary">
                     <span className="tracking-[0.08em] uppercase">
                       Validation
@@ -320,9 +323,13 @@ function CriteriaList({
                   </div>
                   {criterion.version.payload.validationStrategy.note ===
                   undefined ? null : (
-                    <p className="text-[0.78rem] leading-[1.5] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-secondary">
-                      {criterion.version.payload.validationStrategy.note}
-                    </p>
+                    <div className="min-w-0">
+                      <CompactMarkdown
+                        content={
+                          criterion.version.payload.validationStrategy.note
+                        }
+                      />
+                    </div>
                   )}
                 </div>
               </li>
@@ -387,11 +394,11 @@ function DecisionDocument({
               </div>
             </div>
             <DocumentSection title="Chosen approach">
-              <DocumentText>{textOrDash(payload.chosenApproach)}</DocumentText>
+              <DocumentText content={textOrDash(payload.chosenApproach)} />
             </DocumentSection>
             {payload.reason.trim().length === 0 ? null : (
               <DocumentSection title="Rationale">
-                <DocumentText>{payload.reason}</DocumentText>
+                <DocumentText content={payload.reason} />
               </DocumentSection>
             )}
             {payload.rejectedAlternatives.length === 0 ? null : (
@@ -405,9 +412,11 @@ function DecisionDocument({
                       <p className="text-[0.875rem] leading-[1.65] font-semibold [overflow-wrap:anywhere] text-text-primary">
                         {textOrDash(alternative.label)}
                       </p>
-                      <p className="mt-xs text-[0.875rem] leading-[1.65] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-secondary">
-                        {textOrDash(alternative.reason)}
-                      </p>
+                      <div className="mt-xs min-w-0">
+                        <CompactMarkdown
+                          content={textOrDash(alternative.reason)}
+                        />
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -527,7 +536,7 @@ function TaskDocument({
               </div>
             </div>
             <DocumentSection title="Instructions">
-              <DocumentText>{textOrDash(payload.instructions)}</DocumentText>
+              <DocumentText content={textOrDash(payload.instructions)} />
             </DocumentSection>
             <MetadataList rows={rows} />
           </article>
@@ -554,15 +563,11 @@ function DocumentSection({
   );
 }
 
-function DocumentText({
-  children,
-}: {
-  children: ReactNode;
-}): React.JSX.Element {
+function DocumentText({ content }: { content: string }): React.JSX.Element {
   return (
-    <p className="text-[0.875rem] leading-[1.65] [overflow-wrap:anywhere] whitespace-pre-wrap text-text-primary">
-      {children}
-    </p>
+    <div className="min-w-0">
+      <CompactMarkdown content={content} />
+    </div>
   );
 }
 

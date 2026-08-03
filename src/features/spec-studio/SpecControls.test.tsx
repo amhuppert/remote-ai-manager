@@ -538,6 +538,47 @@ describe("RenameSpecDialog", () => {
 });
 
 describe("ExecutionPanel", () => {
+  it("renders scoped acceptance-criterion prose as markdown", async () => {
+    const detail = detailFixture("running");
+    const snapshot = detail.executionRevisionSnapshots[0];
+    const criterion = snapshot?.elements.find(
+      (entry) => entry.element.id === "criterion-1",
+    );
+    if (criterion?.version.payload.kind !== "criterion") {
+      throw new Error("Execution fixture requires criterion-1");
+    }
+    criterion.version.payload.text =
+      "The **selected task** remains pinned through `aliases`.";
+
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onStart={vi.fn()}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    const mergeGate = screen.getByRole("region", {
+      name: "Merge gate for execution-1",
+    });
+    expect(
+      await within(mergeGate).findByText("selected task", {
+        selector: "strong",
+      }),
+    ).toBeVisible();
+    expect(
+      await within(mergeGate).findByText("aliases", { selector: "code" }),
+    ).toBeVisible();
+  });
+
   it("keeps execution locked until the approved revision reaches Plan", () => {
     const detail = detailFixture();
     const approved = detail.currentApprovedRevision;
