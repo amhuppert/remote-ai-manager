@@ -1,7 +1,9 @@
 import { createLogger } from "@/lib/logging";
 import type { StateMigration } from "./types";
 
-const logger = createLogger("state-store/migrations/0002-split-graph-workflow-history");
+const logger = createLogger(
+  "state-store/migrations/0002-split-graph-workflow-history",
+);
 
 interface SessionRow {
   project_path: string;

@@ -34,5 +34,13 @@
     ".next/dev/types/**/*.ts",
     ".next/dev/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules", ".design-sync", ".worktrees", "memory-bank"]
+  "exclude": [
+    "node_modules",
+    ".design-sync",
+    ".ds-sync",
+    "ds-bundle",
+    "claude-design",
+    ".worktrees",
+    "memory-bank"
+  ]
 }

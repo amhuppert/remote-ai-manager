@@ -18,10 +18,7 @@ import {
   PLAN_REPAIR_DEFAULT_AGENT,
   type GraphWorkflowAgentConfig,
 } from "../config-schemas";
-import type {
-  GraphWorkflowExecution,
-  PlanRepairRound,
-} from "../schemas";
+import type { GraphWorkflowExecution, PlanRepairRound } from "../schemas";
 import type {
   GraphWorkflowEventDelivery,
   PublishPlanRepairInput,

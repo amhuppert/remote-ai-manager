@@ -7,6 +7,8 @@ bun.lock
 package-lock.json
 *.md
 .design-sync/
+.ds-sync/
+ds-bundle/
 claude-design/
 .worktrees/
 storybook-static/

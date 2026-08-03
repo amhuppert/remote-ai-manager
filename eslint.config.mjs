@@ -280,13 +280,14 @@ const eslintConfig = defineConfig([
     "build/**",
     "dist/**",
     "storybook-static/**",
+    // Design-sync inputs, tooling, and generated bundle exports are not product code.
     ".design-sync/**",
+    ".ds-sync/**",
+    "ds-bundle/**",
     "claude-design/**",
     ".worktrees/**",
     "memory-bank/**",
     "redesign-session-page-handoff/**",
-    // Generated Claude Design bundles (design-sync exports, not product code).
-    "claude-design/**",
     "next-env.d.ts",
   ]),
   ...storybook.configs["flat/recommended"],

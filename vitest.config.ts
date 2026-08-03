@@ -88,6 +88,9 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/.design-sync/**",
+      "**/.ds-sync/**",
+      "**/ds-bundle/**",
+      "**/claude-design/**",
       "**/.worktrees/**",
       "**/dist/**",
     ],

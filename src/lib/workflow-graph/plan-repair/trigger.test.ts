@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "../test-fixtures";
-import type {
-  GraphWorkflowExecution,
-  PlanRepairRound,
-} from "../schemas";
+import type { GraphWorkflowExecution, PlanRepairRound } from "../schemas";
 import { evaluatePlanRepairTrigger } from "./trigger";
 
 function round(

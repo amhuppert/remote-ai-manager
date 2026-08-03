@@ -134,9 +134,7 @@ describe("applyLiveEditsToActiveExecution", () => {
       .workingDefinition.executionContexts.find(
         (entry) => entry.id === "context-implement",
       );
-    expect(context?.acceptanceCriteria).toBe(
-      "Clarified, satisfiable criteria",
-    );
+    expect(context?.acceptanceCriteria).toBe("Clarified, satisfiable criteria");
   });
 
   it("records a plan-repair-sourced charter amendment and rewrites the session charter.md", async () => {
