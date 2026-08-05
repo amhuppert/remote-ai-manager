@@ -55,6 +55,7 @@ export function buildConversation(
     id: input.id,
     scope: input.scope,
     name: input.name,
+    nameOrigin: "default",
     transcriptPath: input.transcriptPath ?? null,
     status: "new",
     promptCount: 0,

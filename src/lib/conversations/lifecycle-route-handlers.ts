@@ -28,8 +28,20 @@ import {
   conversationCreatedEventSchema,
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
+  generateConversationNameRequestSchema,
+  generateConversationNameResponseSchema,
   renameConversationRequestSchema,
 } from "@/lib/conversations/schemas";
+import {
+  generateAndApplyConversationName as defaultGenerateAndApplyConversationName,
+  type GenerateConversationNameInput,
+} from "@/lib/conversations/name-generation";
+import {
+  resolveConversationNamingContent as defaultResolveConversationNamingContent,
+  resolveMessageNamingContent as defaultResolveMessageNamingContent,
+  type ConversationNamingContentInput,
+  type MessageNamingContentInput,
+} from "@/lib/conversations/naming-context";
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import {
   publishEvent,
@@ -68,6 +80,15 @@ export interface ConversationRouteDeps {
     conversationId: string,
     name: string,
   ): Promise<void>;
+  resolveConversationNamingContent(
+    input: ConversationNamingContentInput,
+  ): Promise<string | null>;
+  resolveMessageNamingContent(
+    input: MessageNamingContentInput,
+  ): Promise<string | null>;
+  generateAndApplyConversationName(
+    input: GenerateConversationNameInput,
+  ): Promise<string | null>;
   setConversationArchived(
     projectPath: string,
     sessionName: string,
@@ -83,6 +104,9 @@ const defaultDeps: ConversationRouteDeps = {
   getSession: defaultGetSession,
   createConversation: defaultCreateConversation,
   renameConversation: defaultRenameConversation,
+  resolveConversationNamingContent: defaultResolveConversationNamingContent,
+  resolveMessageNamingContent: defaultResolveMessageNamingContent,
+  generateAndApplyConversationName: defaultGenerateAndApplyConversationName,
   setConversationArchived: defaultSetConversationArchived,
   broadcast: publishEvent,
 };
@@ -229,6 +253,73 @@ export function createConversationRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
+  async function POST_GENERATE_NAME(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId, conversation } =
+      resolved.value;
+
+    const parsed = await parseJsonBody(
+      request,
+      generateConversationNameRequestSchema,
+      "source must be conversation or message with a non-negative messageIndex",
+    );
+    if (!parsed.ok) return parsed.response;
+
+    let content: string | null;
+    try {
+      content =
+        parsed.value.source === "conversation"
+          ? await deps.resolveConversationNamingContent({
+              conversationId,
+              transcriptPath: conversation.transcriptPath,
+            })
+          : await deps.resolveMessageNamingContent({
+              transcriptPath: conversation.transcriptPath,
+              messageIndex: parsed.value.messageIndex,
+            });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to resolve conversation naming content";
+      return jsonError(message, 500);
+    }
+
+    if (content === null) {
+      return jsonError(
+        "Conversation naming content could not be resolved",
+        422,
+      );
+    }
+
+    try {
+      const name = await deps.generateAndApplyConversationName({
+        projectPath,
+        projectName: deps.getProjectDisplayName(projectPath),
+        sessionName,
+        conversationId,
+        content,
+        trigger: "explicit",
+      });
+      if (name === null) {
+        return jsonError("Failed to generate conversation name", 500);
+      }
+      return NextResponse.json(
+        generateConversationNameResponseSchema.parse({ name }),
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to generate conversation name";
+      return jsonError(message, 500);
+    }
+  }
+
   async function PATCH_ARCHIVE(
     request: Request,
     context: RouteContext,
@@ -334,6 +425,7 @@ export function createConversationRouteHandlers(
   return {
     POST_CREATE,
     PATCH_RENAME,
+    POST_GENERATE_NAME,
     PATCH_ARCHIVE,
     POST_ARCHIVE_OTHERS,
   };
@@ -361,4 +453,7 @@ export const archiveOtherConversations = withTracing(
 );
 export const renameConversation = withTracing(
   _defaultConversationHandlers.PATCH_RENAME,
+);
+export const generateConversationName = withTracing(
+  _defaultConversationHandlers.POST_GENERATE_NAME,
 );

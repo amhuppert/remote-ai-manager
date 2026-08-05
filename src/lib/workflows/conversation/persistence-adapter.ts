@@ -7,7 +7,7 @@
  *
  *   - `durable` — today's behavior. Owns every durable side effect of the
  *     conversation lifecycle: derived-field sync, resume-token snapshot
- *     persistence, the mark-read / mark-unread transitions, the
+ *     persistence, automatic naming, the mark-read / mark-unread transitions, the
  *     project-conversation status notification, and the gating of the invoked
  *     child actors' own durable write seams (`gateActorDurableWrites`).
  *   - `ephemeral` — inert. Every method is a no-op, so a runtime with no backing
@@ -26,7 +26,11 @@
 import type { Snapshot } from "xstate";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import {
+  conversationEventScopeFields,
+  isProjectSentinel,
+} from "@/lib/conversations/project-conversation-scope";
+import type { GenerateConversationNameInput } from "@/lib/conversations/name-generation";
 import type {
   ConversationContext,
   ActiveTurn,
@@ -43,6 +47,7 @@ import type { ActorDurableWriteSeams } from "./actor-implementations";
 // Shares the `conversation-manager` log-module key so an adapter warning groups
 // with the actor's lifecycle events under one module filter.
 const logger = createLogger("conversation-manager");
+const conversationNamingLogger = createLogger("conversation-naming");
 
 // ============================================================
 // Derived-field mapping (pure)
@@ -137,6 +142,8 @@ export interface ConversationPersistenceAdapter {
   ): void;
   /** Clear the unread flag when the user starts a turn. */
   markReadOnUserTurnStart(context: ConversationContext): void;
+  /** Queue background naming when the active turn is the first user turn. */
+  triggerAutoNaming(context: ConversationContext): void;
   /** Set the unread flag when an agent returns control to the user. */
   markUnreadOnFinish(context: ConversationContext): void;
   /**
@@ -183,15 +190,41 @@ export interface ConversationPersistenceAdapterDeps {
     mutate: (conversation: ConversationState) => void | Promise<void>,
   ): Promise<void>;
   publishSessionStatus(event: ConversationUnreadEvent): { delivered: boolean };
+  queueAutoName(input: Omit<GenerateConversationNameInput, "trigger">): void;
 }
 
 let _deps: ConversationPersistenceAdapterDeps | null = null;
+
+const productionQueueAutoName: ConversationPersistenceAdapterDeps["queueAutoName"] =
+  (input) => {
+    void import("@/lib/conversations/name-generation")
+      .then(({ generateAndApplyConversationName }) =>
+        generateAndApplyConversationName({ ...input, trigger: "auto" }),
+      )
+      .catch((error: unknown) => {
+        conversationNamingLogger.warn("conversation_naming.generation_failed", {
+          ...conversationEventScopeFields(
+            input.projectName,
+            input.sessionName,
+            input.conversationId,
+          ),
+          trigger: "auto",
+          stage: "background",
+          failureKind: "unhandled",
+          errorType: error instanceof Error ? error.name : typeof error,
+        });
+      });
+  };
 
 async function resolveDeps(): Promise<ConversationPersistenceAdapterDeps> {
   if (_deps) return _deps;
   const { mutateConversation } = await import("@/lib/state-store");
   const { publishEvent } = await import("@/lib/events/publication");
-  return { mutateConversation, publishSessionStatus: publishEvent };
+  return {
+    mutateConversation,
+    publishSessionStatus: publishEvent,
+    queueAutoName: productionQueueAutoName,
+  };
 }
 
 export function setConversationPersistenceAdapterDeps(
@@ -259,6 +292,25 @@ export const durableConversationPersistence: ConversationPersistenceAdapter = {
         });
       }
     })();
+  },
+
+  triggerAutoNaming(context) {
+    const activeTurn = context.activeTurn;
+    if (activeTurn?.kind !== "conversation_turn") return;
+    if (activeTurn.autonomous === true) return;
+    if (context.role !== null) return;
+    if (context.promptCount !== 0) return;
+    if (context.forkedFrom !== null) return;
+    if (activeTurn.promptText.trim().length === 0) return;
+
+    const queueAutoName = _deps?.queueAutoName ?? productionQueueAutoName;
+    queueAutoName({
+      projectPath: context.projectPath,
+      projectName: context.projectName,
+      sessionName: context.sessionName,
+      conversationId: context.conversationId,
+      content: activeTurn.promptText.slice(0, 4_000),
+    });
   },
 
   markUnreadOnFinish(context) {
@@ -353,6 +405,7 @@ export const ephemeralConversationPersistence: ConversationPersistenceAdapter =
     syncDerivedFields() {},
     persistSnapshot() {},
     markReadOnUserTurnStart() {},
+    triggerAutoNaming() {},
     markUnreadOnFinish() {},
     notifyProjectStatus() {},
     gateActorDurableWrites<T extends ActorDurableWriteSeams>(deps: T): T {

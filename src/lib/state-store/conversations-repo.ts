@@ -160,6 +160,7 @@ const conversationsTableRowSchema = z.object({
   project_path: z.string(),
   session_name: z.string(),
   name: z.string().nullable(),
+  name_origin: z.string(),
   transcript_path: z.string().nullable(),
   status: z.string(),
   prompt_count: z.number().int(),
@@ -197,6 +198,7 @@ interface SqlBindRow {
   project_path: string;
   session_name: string;
   name: string | null;
+  name_origin: string;
   transcript_path: string | null;
   status: string;
   prompt_count: number;
@@ -328,6 +330,7 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "project_path",
   "session_name",
   "name",
+  "name_origin",
   "transcript_path",
   "status",
   "prompt_count",
@@ -450,7 +453,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
   // consistency with the parent-row UPSERT rule (sessions/projects).
   const upsertStmt = db.prepare(
     `INSERT INTO conversations (
-       id, project_path, session_name, name, transcript_path, status,
+       id, project_path, session_name, name, name_origin, transcript_path, status,
        prompt_count, created_at, last_activity_at, source, summary, archived,
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
@@ -458,7 +461,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, pending_queue, last_seen_alignment_version, pending_agent_notices
      ) VALUES (
-       @id, @project_path, @session_name, @name, @transcript_path, @status,
+       @id, @project_path, @session_name, @name, @name_origin, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
@@ -470,6 +473,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        project_path               = excluded.project_path,
        session_name               = excluded.session_name,
        name                       = excluded.name,
+       name_origin                = excluded.name_origin,
        transcript_path            = excluded.transcript_path,
        status                     = excluded.status,
        prompt_count               = excluded.prompt_count,

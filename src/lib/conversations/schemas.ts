@@ -220,10 +220,19 @@ export const conversationScopeSchema = z
   .default("session");
 export type ConversationScope = z.infer<typeof conversationScopeSchema>;
 
+// Provenance of a conversation's display name. Automatic naming may only
+// replace a name while the origin is still "default"; a "manual" origin marks
+// a user-chosen name the auto path must never overwrite (the explicit
+// regenerate action may). Rows persisted before this field existed decode as
+// "default" — harmless, because auto-naming only fires on a first turn.
+export const nameOriginSchema = z.enum(["default", "auto", "manual"]);
+export type NameOrigin = z.infer<typeof nameOriginSchema>;
+
 export const conversationStateSchema = z.object({
   id: conversationIdSchema,
   scope: conversationScopeSchema,
   name: z.string().nullable().default(null),
+  nameOrigin: nameOriginSchema.default("default"),
   transcriptPath: z.string().nullable(),
   status: conversationStatusSchema,
   promptCount: z.number(),
@@ -523,6 +532,21 @@ export type MessageRefAttrs = z.infer<typeof messageRefAttrsSchema>;
 
 export const renameConversationRequestSchema = z.object({
   name: z.string().trim().min(1).max(200),
+});
+
+export const generateConversationNameRequestSchema = z.discriminatedUnion(
+  "source",
+  [
+    z.object({ source: z.literal("conversation") }),
+    z.object({
+      source: z.literal("message"),
+      messageIndex: z.number().int().min(0),
+    }),
+  ],
+);
+
+export const generateConversationNameResponseSchema = z.object({
+  name: z.string(),
 });
 
 export const forkRequestSchema = z.object({

@@ -5,6 +5,7 @@ import { sessionKeys } from "@/lib/sessions/query-keys";
 import {
   conversationStateSchema,
   forkResponseSchema,
+  generateConversationNameResponseSchema,
   type ConversationState,
   type AskQuestionAnswer,
 } from "./schemas";
@@ -16,11 +17,12 @@ import {
   createOptimisticMutation,
   type OptimisticCacheUpdate,
 } from "@/lib/api/optimistic";
+import { pushToast } from "@/stores/toast.store";
 
-function renamedInActive(
+export function renamedInActive(
   active: ActiveConversationsResponse | undefined,
   conversationId: string,
-  name: string,
+  name: string | null,
 ): ActiveConversationsResponse | undefined {
   if (active === undefined) return undefined;
   return {
@@ -68,6 +70,13 @@ type GenericRenameConversationVariables =
   | GenericSessionRenameConversationVariables
   | GenericProjectRenameConversationVariables;
 
+type WithoutName<T> = T extends { name: string } ? Omit<T, "name"> : never;
+
+type GenericGenerateConversationNameVariables =
+  WithoutName<GenericRenameConversationVariables> & {
+    messageIndex?: number;
+  };
+
 type GenericSessionArchiveConversationVariables =
   GenericSessionMutationScope & {
     archived: boolean;
@@ -84,19 +93,21 @@ type GenericArchiveConversationVariables =
 
 type GenericConversationMutationVariables =
   | GenericRenameConversationVariables
+  | GenericGenerateConversationNameVariables
   | GenericArchiveConversationVariables;
 
 function isProjectMutationScope(
   variables: GenericConversationMutationVariables,
 ): variables is
   | GenericProjectRenameConversationVariables
+  | Extract<GenericGenerateConversationNameVariables, { scope: "project" }>
   | GenericProjectArchiveConversationVariables {
   return variables.scope === "project";
 }
 
 function genericConversationMutationPath(
   variables: GenericConversationMutationVariables,
-  action: "archive" | "rename",
+  action: "archive" | "generate-name" | "rename",
 ): string {
   const projectName = encodeURIComponent(variables.projectName);
   const conversationId = encodeURIComponent(variables.conversationId);
@@ -124,6 +135,10 @@ function genericConversationUpdates<
     old: ActiveConversationsResponse | undefined,
     vars: TVars,
   ) => ActiveConversationsResponse | undefined,
+  projectListUpdate?: (
+    old: ConversationState[] | undefined,
+    vars: TVars,
+  ) => ConversationState[] | undefined,
 ): ReadonlyArray<OptimisticCacheUpdate<TVars>> {
   const active = cacheUpdate<TVars, ActiveConversationsResponse>({
     key: () => conversationKeys.active(),
@@ -131,6 +146,15 @@ function genericConversationUpdates<
   });
   const wide: GenericConversationMutationVariables = vars;
   if (isProjectMutationScope(wide)) {
+    if (projectListUpdate !== undefined) {
+      return [
+        cacheUpdate<TVars, ConversationState[]>({
+          key: () => projectConversationKeys.list(wide.projectName),
+          update: projectListUpdate,
+        }),
+        active,
+      ];
+    }
     return [active];
   }
   const listKey = conversationKeys.list(wide.projectName, wide.sessionName);
@@ -597,4 +621,51 @@ export function useGenericRenameConversationMutation() {
       invalidateKeys: (vars) => genericConversationInvalidateKeys(vars),
     }),
   );
+}
+
+export function useGenerateConversationNameMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (variables: GenericGenerateConversationNameVariables) =>
+      mutationFetch(
+        genericConversationMutationPath(variables, "generate-name"),
+        "generate-conversation-name",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            variables.messageIndex === undefined
+              ? { source: "conversation" }
+              : { source: "message", messageIndex: variables.messageIndex },
+          ),
+        },
+        generateConversationNameResponseSchema,
+      ),
+    onSuccess: ({ name }, variables) => {
+      const patchList = (old: ConversationState[] | undefined) =>
+        old?.map((conversation) =>
+          conversation.id === variables.conversationId
+            ? { ...conversation, name }
+            : conversation,
+        );
+      const updates = genericConversationUpdates(
+        variables,
+        patchList,
+        (old) => renamedInActive(old, variables.conversationId, name),
+        patchList,
+      );
+      for (const update of updates) {
+        update.apply(queryClient, variables);
+      }
+    },
+    onError: () => {
+      pushToast("Couldn't generate a conversation name");
+    },
+    onSettled: (_data, _error, variables) => {
+      for (const queryKey of genericConversationInvalidateKeys(variables)) {
+        void queryClient.invalidateQueries({ queryKey });
+      }
+    },
+  });
 }

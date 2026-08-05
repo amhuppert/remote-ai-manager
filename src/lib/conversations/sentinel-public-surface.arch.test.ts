@@ -134,6 +134,12 @@ const SENTINEL_IMPORTERS: ReadonlyMap<string, SentinelRole> = new Map([
   // variant, so a sentinel-keyed row is listed as `scope: "project"` with no
   // `sessionName` field at all.
   ["lib/conversations/cross-project-list.ts", "scope-derivation"],
+  // The naming service is handed the session-keyed store name (the sentinel
+  // for project conversations) only to address state-store writes; everything
+  // it EMITS — `conversation_naming.*` log fields and the conversation-renamed
+  // event — is built from `conversationEventScopeFields`, so the project
+  // variant carries no `sessionName` field at all.
+  ["lib/conversations/name-generation.ts", "scope-derivation"],
 
   ["lib/shared/route-resolution.ts", "refusal-guard"],
   // Rejects the sentinel as a session NAME. Classified a refusal guard rather

@@ -101,6 +101,7 @@ const projectConversationsTableRowSchema = z.object({
   id: z.string(),
   project_path: z.string(),
   name: z.string().nullable(),
+  name_origin: z.string(),
   transcript_path: z.string().nullable(),
   status: z.string(),
   prompt_count: z.number().int(),
@@ -145,6 +146,7 @@ interface ProjectSqlBindRow {
   project_path: string;
   open: number;
   name: string | null;
+  name_origin: string;
   transcript_path: string | null;
   status: string;
   prompt_count: number;
@@ -200,6 +202,7 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "id",
   "project_path",
   "name",
+  "name_origin",
   "transcript_path",
   "status",
   "prompt_count",
@@ -349,7 +352,7 @@ export function createProjectConversationsRepo(
   );
   const upsertStmt = db.prepare(
     `INSERT INTO project_conversations (
-       id, project_path, name, transcript_path, status,
+       id, project_path, name, name_origin, transcript_path, status,
        prompt_count, created_at, last_activity_at, source, summary, archived, open,
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
@@ -358,7 +361,7 @@ export function createProjectConversationsRepo(
        unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices,
        creation_request_id
      ) VALUES (
-       @id, @project_path, @name, @transcript_path, @status,
+       @id, @project_path, @name, @name_origin, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived, @open,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
@@ -370,6 +373,7 @@ export function createProjectConversationsRepo(
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
        name                       = excluded.name,
+       name_origin                = excluded.name_origin,
        transcript_path            = excluded.transcript_path,
        status                     = excluded.status,
        prompt_count               = excluded.prompt_count,

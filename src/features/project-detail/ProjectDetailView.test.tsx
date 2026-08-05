@@ -154,6 +154,7 @@ const makeProjectConversation = (
 ): ConversationState => ({
   id: "project-convo-1",
   scope: "project",
+  nameOrigin: "default",
   name: "Project conversation",
   transcriptPath: null,
   status: "awaiting",

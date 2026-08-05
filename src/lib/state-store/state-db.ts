@@ -1066,6 +1066,7 @@ const SCHEMA_DDL = `
     project_path          TEXT NOT NULL,
     session_name          TEXT NOT NULL,
     name                  TEXT,
+    name_origin           TEXT NOT NULL DEFAULT 'default' CHECK (name_origin IN ('default', 'auto', 'manual')),
     transcript_path       TEXT,
     status                TEXT NOT NULL,
     prompt_count          INTEGER NOT NULL DEFAULT 0,
@@ -1107,6 +1108,7 @@ const SCHEMA_DDL = `
     id                    TEXT PRIMARY KEY,
     project_path          TEXT NOT NULL,
     name                  TEXT,
+    name_origin           TEXT NOT NULL DEFAULT 'default' CHECK (name_origin IN ('default', 'auto', 'manual')),
     transcript_path       TEXT,
     status                TEXT NOT NULL,
     prompt_count          INTEGER NOT NULL DEFAULT 0,
@@ -1623,6 +1625,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "spec_executions",
     column: "workflow_definition_revision",
     type: "INTEGER CHECK (workflow_definition_revision > 0)",
+  },
+  {
+    table: "conversations",
+    column: "name_origin",
+    type: "TEXT NOT NULL DEFAULT 'default' CHECK (name_origin IN ('default', 'auto', 'manual'))",
+  },
+  {
+    table: "project_conversations",
+    column: "name_origin",
+    type: "TEXT NOT NULL DEFAULT 'default' CHECK (name_origin IN ('default', 'auto', 'manual'))",
   },
 ];
 

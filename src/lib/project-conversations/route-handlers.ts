@@ -17,7 +17,21 @@ import {
 } from "@/lib/prompt/sdk-driver";
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
 import { runPromptRequestSchema } from "@/lib/prompt/schemas";
-import { renameConversationRequestSchema } from "@/lib/conversations/schemas";
+import {
+  generateConversationNameRequestSchema,
+  generateConversationNameResponseSchema,
+  renameConversationRequestSchema,
+} from "@/lib/conversations/schemas";
+import {
+  generateAndApplyConversationName as defaultGenerateAndApplyConversationName,
+  type GenerateConversationNameInput,
+} from "@/lib/conversations/name-generation";
+import {
+  resolveConversationNamingContent as defaultResolveConversationNamingContent,
+  resolveMessageNamingContent as defaultResolveMessageNamingContent,
+  type ConversationNamingContentInput,
+  type MessageNamingContentInput,
+} from "@/lib/conversations/naming-context";
 import {
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
@@ -80,6 +94,15 @@ export interface ProjectConversationRouteDeps {
     conversationId: string,
     name: string,
   ): Promise<void>;
+  resolveConversationNamingContent(
+    input: ConversationNamingContentInput,
+  ): Promise<string | null>;
+  resolveMessageNamingContent(
+    input: MessageNamingContentInput,
+  ): Promise<string | null>;
+  generateAndApplyConversationName(
+    input: GenerateConversationNameInput,
+  ): Promise<string | null>;
   setProjectConversationArchived(
     projectPath: string,
     conversationId: string,
@@ -119,6 +142,9 @@ function defaultDeps(): ProjectConversationRouteDeps {
     readConversationMessagesWithSeq: defaultReadConversationMessagesWithSeq,
     renameProjectConversation: (projectPath, id, name) =>
       service.renameProjectConversation(projectPath, id, name),
+    resolveConversationNamingContent: defaultResolveConversationNamingContent,
+    resolveMessageNamingContent: defaultResolveMessageNamingContent,
+    generateAndApplyConversationName: defaultGenerateAndApplyConversationName,
     setProjectConversationArchived: (projectPath, id, archived) =>
       service.setProjectConversationArchived(projectPath, id, archived),
     setProjectConversationOpen: (projectPath, id, open) =>
@@ -385,6 +411,72 @@ export function createProjectConversationRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
+  async function generateNamePOST(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId, conversation } = resolved.value;
+
+    const parsed = await parseJsonBody(
+      request,
+      generateConversationNameRequestSchema,
+      "source must be conversation or message with a non-negative messageIndex",
+    );
+    if (!parsed.ok) return parsed.response;
+
+    let content: string | null;
+    try {
+      content =
+        parsed.value.source === "conversation"
+          ? await deps.resolveConversationNamingContent({
+              conversationId,
+              transcriptPath: conversation.transcriptPath,
+            })
+          : await deps.resolveMessageNamingContent({
+              transcriptPath: conversation.transcriptPath,
+              messageIndex: parsed.value.messageIndex,
+            });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to resolve conversation naming content";
+      return jsonError(message, 500);
+    }
+
+    if (content === null) {
+      return jsonError(
+        "Conversation naming content could not be resolved",
+        422,
+      );
+    }
+
+    try {
+      const name = await deps.generateAndApplyConversationName({
+        projectPath,
+        projectName: deps.getProjectDisplayName(projectPath),
+        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        conversationId,
+        content,
+        trigger: "explicit",
+      });
+      if (name === null) {
+        return jsonError("Failed to generate conversation name", 500);
+      }
+      return NextResponse.json(
+        generateConversationNameResponseSchema.parse({ name }),
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to generate conversation name";
+      return jsonError(message, 500);
+    }
+  }
+
   async function archivePATCH(
     request: Request,
     context: RouteContext,
@@ -519,6 +611,7 @@ export function createProjectConversationRouteHandlers(
     firstPromptPOST,
     promptPOST,
     renamePATCH,
+    generateNamePOST,
     archivePATCH,
     openPATCH,
     markReadPOST,
@@ -535,6 +628,9 @@ export const projectFirstPromptPOST = withTracing(_handlers.firstPromptPOST);
 export const projectConversationPromptPOST = withTracing(_handlers.promptPOST);
 export const projectConversationRenamePATCH = withTracing(
   _handlers.renamePATCH,
+);
+export const projectConversationGenerateNamePOST = withTracing(
+  _handlers.generateNamePOST,
 );
 export const projectConversationArchivePATCH = withTracing(
   _handlers.archivePATCH,

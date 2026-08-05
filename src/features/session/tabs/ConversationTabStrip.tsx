@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import {
   useGenericRenameConversationMutation,
+  useGenerateConversationNameMutation,
   useGenericArchiveConversationMutation,
   useArchiveOtherConversationsMutation,
 } from "@/lib/conversations/mutations";
@@ -65,6 +66,7 @@ export default function ConversationTabStrip({
 }: ConversationTabStripProps): React.JSX.Element {
   const router = useRouter();
   const renameMutation = useGenericRenameConversationMutation();
+  const generateNameMutation = useGenerateConversationNameMutation();
   const archiveMutation = useGenericArchiveConversationMutation();
   const archiveOthersMutation = useArchiveOtherConversationsMutation();
   const archiveSessionMutation = useGenericArchiveSessionMutation();
@@ -148,6 +150,13 @@ export default function ConversationTabStrip({
             void copyConversationRefToClipboard(conversation.id);
           },
           onRename: () => startRename(conversation),
+          onRegenerateName: () => {
+            generateNameMutation.mutate({
+              projectName: conversation.projectName,
+              sessionName: conversation.sessionName,
+              conversationId: conversation.id,
+            });
+          },
           onToggleArchived: () => {
             archiveMutation.mutate({
               projectName: conversation.projectName,
@@ -176,6 +185,7 @@ export default function ConversationTabStrip({
       activeListFilter,
       archiveMutation,
       archiveOthersMutation,
+      generateNameMutation,
       onActivate,
       router,
       setActiveListFilter,

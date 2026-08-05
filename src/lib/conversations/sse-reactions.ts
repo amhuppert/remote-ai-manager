@@ -7,7 +7,7 @@
  */
 
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
-import { addSseListener } from "@/lib/api/sse";
+import { addSseListener, type SseEventTarget } from "@/lib/api/sse";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { selectLatestExplicitTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import {
@@ -29,6 +29,7 @@ import type {
   ConversationState,
 } from "@/lib/conversations/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
+import { renamedInActive } from "@/lib/conversations/mutations";
 import { isTerminalQueuedMessageStatus } from "@/lib/conversations/message-queue-schemas";
 import { createTurnEndArtifactInvalidator } from "@/lib/context-artifacts/sse-cache";
 import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
@@ -215,7 +216,7 @@ function sameBackgroundActivity(
 }
 
 export function registerConversationSseReactions(
-  es: EventSource,
+  es: SseEventTarget,
   deps: ConversationSseReactionDeps,
 ): void {
   const { queryClient } = deps;
@@ -399,6 +400,14 @@ export function registerConversationSseReactions(
               : c,
           );
         },
+      );
+      // Background auto-naming is fire-and-forget and can land after the
+      // turn's final conversation-status event, so this event is the only
+      // signal that ever carries the name to the active rail and tab strip.
+      queryClient.setQueryData(
+        conversationKeys.active(),
+        (prev: ActiveConversationsResponse | undefined) =>
+          renamedInActive(prev, d.conversationId, d.name),
       );
     },
   );

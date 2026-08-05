@@ -52,6 +52,7 @@ function sseResponse(frames: string[], status = 200): Response {
 const okConversation: ConversationState = {
   id: "c1",
   scope: "project",
+  nameOrigin: "default",
   name: "c1",
   transcriptPath: null,
   status: "new",

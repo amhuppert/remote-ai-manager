@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   createProjectConversationRouteHandlers,
   type ProjectConversationRouteDeps,
@@ -15,8 +15,9 @@ function makeConv(
   return {
     id: overrides.id,
     scope: "project",
+    nameOrigin: "default",
     name: overrides.name ?? "Repo chat",
-    transcriptPath: null,
+    transcriptPath: "/tmp/project-conv.jsonl",
     status: "new",
     promptCount: 0,
     createdAt: "2025-01-01T00:00:00.000Z",
@@ -83,6 +84,13 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
       const c = store.get(id);
       if (c) c.name = name;
     },
+    resolveConversationNamingContent: vi.fn(
+      async () => "Whole project conversation basis",
+    ),
+    resolveMessageNamingContent: vi.fn(async () => "Project message basis"),
+    generateAndApplyConversationName: vi.fn(
+      async () => "Generated Project Name",
+    ),
     setProjectConversationArchived: async (_p, id, archived) => {
       const c = store.get(id);
       if (c) c.archived = archived;
@@ -113,6 +121,7 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
   };
   return {
     handlers: createProjectConversationRouteHandlers(deps),
+    deps,
     broadcasts,
     store,
   };
@@ -397,6 +406,131 @@ describe("project conversation route handlers", () => {
     expect(await res.json()).toEqual({ ok: true });
     expect(h.broadcasts[0]?.type).toBe("conversation-renamed");
     expect((h.broadcasts[0] as { scope?: string }).scope).toBe("project");
+  });
+
+  it("generateNamePOST generates a name from the whole project conversation", async () => {
+    const h = harness();
+    h.store.set("c1", makeConv({ id: "c1" }));
+
+    const res = await h.handlers.generateNamePOST(
+      jsonRequest({ source: "conversation" }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ name: "Generated Project Name" });
+    expect(h.deps.resolveConversationNamingContent).toHaveBeenCalledWith({
+      conversationId: "c1",
+      transcriptPath: "/tmp/project-conv.jsonl",
+    });
+    expect(h.deps.generateAndApplyConversationName).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      projectName: "demo",
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      conversationId: "c1",
+      content: "Whole project conversation basis",
+      trigger: "explicit",
+    });
+  });
+
+  it("generateNamePOST generates a name from the addressed message", async () => {
+    const h = harness();
+    h.store.set("c1", makeConv({ id: "c1" }));
+
+    const res = await h.handlers.generateNamePOST(
+      jsonRequest({ source: "message", messageIndex: 2 }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ name: "Generated Project Name" });
+    expect(h.deps.resolveMessageNamingContent).toHaveBeenCalledWith({
+      transcriptPath: "/tmp/project-conv.jsonl",
+      messageIndex: 2,
+    });
+    expect(h.deps.generateAndApplyConversationName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Project message basis",
+        trigger: "explicit",
+      }),
+    );
+  });
+
+  it.each([{ source: "unknown" }, { source: "message", messageIndex: -1 }])(
+    "generateNamePOST returns 400 for malformed body %#",
+    async (body) => {
+      const h = harness();
+      h.store.set("c1", makeConv({ id: "c1" }));
+
+      const res = await h.handlers.generateNamePOST(
+        jsonRequest(body),
+        ctx({ name: "demo", conversationId: "c1" }),
+      );
+
+      expect(res.status).toBe(400);
+      expect(h.deps.generateAndApplyConversationName).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { name: "ghost", conversationId: "c1" },
+    { name: "demo", conversationId: "missing" },
+  ])("generateNamePOST returns 404 for unknown route %#", async (params) => {
+    const h = harness();
+
+    const res = await h.handlers.generateNamePOST(
+      jsonRequest({ source: "conversation" }),
+      ctx(params),
+    );
+
+    expect(res.status).toBe(404);
+    expect(h.deps.generateAndApplyConversationName).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      body: { source: "conversation" },
+      overrides: {
+        resolveConversationNamingContent: vi.fn(async () => null),
+      } satisfies Partial<ProjectConversationRouteDeps>,
+    },
+    {
+      body: { source: "message", messageIndex: 99 },
+      overrides: {
+        resolveMessageNamingContent: vi.fn(async () => null),
+      } satisfies Partial<ProjectConversationRouteDeps>,
+    },
+  ])(
+    "generateNamePOST returns 422 for unresolved content %#",
+    async (testCase) => {
+      const h = harness(testCase.overrides);
+      h.store.set("c1", makeConv({ id: "c1" }));
+
+      const res = await h.handlers.generateNamePOST(
+        jsonRequest(testCase.body),
+        ctx({ name: "demo", conversationId: "c1" }),
+      );
+
+      expect(res.status).toBe(422);
+      expect(h.deps.generateAndApplyConversationName).not.toHaveBeenCalled();
+    },
+  );
+
+  it("generateNamePOST returns 500 with the generation error", async () => {
+    const h = harness({
+      generateAndApplyConversationName: vi.fn(async () => {
+        throw new Error("project naming failed");
+      }),
+    });
+    h.store.set("c1", makeConv({ id: "c1" }));
+
+    const res = await h.handlers.generateNamePOST(
+      jsonRequest({ source: "conversation" }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "project naming failed" });
   });
 
   it("archivePATCH broadcasts scope=project conversation-archived", async () => {

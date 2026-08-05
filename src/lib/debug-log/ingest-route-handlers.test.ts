@@ -8,6 +8,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 const BASE_CONVERSATION: ConversationState = {
   id: "conv-1",
   scope: "session",
+  nameOrigin: "default",
   status: "awaiting",
   transcriptPath: "/tmp/transcript.jsonl",
   totalCostUsd: 0,

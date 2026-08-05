@@ -222,6 +222,7 @@ function makeMissingConversationDeps(): {
     deps: {
       mutateConversation: mutate,
       publishSessionStatus: () => ({ delivered: true }),
+      queueAutoName: () => {},
     },
   };
 }
@@ -480,6 +481,7 @@ describe("ephemeral runtime — zero database writes (contract, real actors + fa
     setConversationPersistenceAdapterDeps({
       mutateConversation: fixture.store.mutateConversation,
       publishSessionStatus: () => ({ delivered: true }),
+      queueAutoName: () => {},
     });
     setConversationQueueDeps({
       claimNextTurnBatch: async () => null,

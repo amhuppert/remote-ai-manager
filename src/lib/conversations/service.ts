@@ -295,6 +295,8 @@ export function createConversationService(
         }
 
         conversation.name = name;
+        // A user-chosen name: automatic naming must never overwrite it.
+        conversation.nameOrigin = "manual";
       },
     );
   }

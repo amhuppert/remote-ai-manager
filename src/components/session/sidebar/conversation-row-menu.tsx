@@ -56,6 +56,7 @@ export interface ConversationRowMenuHandlers {
   onCopyContext?: () => void;
   onCopyReference?: () => void;
   onRename: () => void;
+  onRegenerateName?: () => void;
   onToggleArchived: () => void;
   onArchiveOthers?: () => void;
   onArchiveSession?: () => void;
@@ -159,6 +160,15 @@ export function buildConversationRowMenuItems(
       label: "Rename…",
       onSelect: handlers.onRename,
     },
+    ...(handlers.onRegenerateName
+      ? [
+          {
+            kind: "item" as const,
+            label: "Regenerate Name",
+            onSelect: handlers.onRegenerateName,
+          },
+        ]
+      : []),
     ...(target.approvalGatePending
       ? []
       : [

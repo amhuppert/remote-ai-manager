@@ -83,16 +83,21 @@ function makeContext(
 interface RecordingDeps extends ConversationPersistenceAdapterDeps {
   mutateCalls: Array<{ conversationId: string; label: string }>;
   publishCalls: Array<{ unread: boolean }>;
+  queueAutoNameCalls: Array<
+    Parameters<ConversationPersistenceAdapterDeps["queueAutoName"]>[0]
+  >;
   applied: ConversationState[];
 }
 
 function makeRecordingDeps(): RecordingDeps {
   const mutateCalls: RecordingDeps["mutateCalls"] = [];
   const publishCalls: RecordingDeps["publishCalls"] = [];
+  const queueAutoNameCalls: RecordingDeps["queueAutoNameCalls"] = [];
   const applied: ConversationState[] = [];
   return {
     mutateCalls,
     publishCalls,
+    queueAutoNameCalls,
     applied,
     async mutateConversation(_p, _s, conversationId, label, mutate) {
       mutateCalls.push({ conversationId, label });
@@ -106,7 +111,33 @@ function makeRecordingDeps(): RecordingDeps {
       publishCalls.push({ unread: event.unread });
       return { delivered: true };
     },
+    queueAutoName(input) {
+      queueAutoNameCalls.push(input);
+    },
   };
+}
+
+function makeFirstTurnContext(
+  overrides: Partial<ConversationContext> = {},
+): ConversationContext {
+  return makeContext({
+    promptCount: 0,
+    forkedFrom: null,
+    role: null,
+    activeTurn: {
+      kind: "conversation_turn",
+      promptText: "Name this conversation",
+      images: [],
+      backend: "claude",
+      modelId: null,
+      effort: null,
+      codexFastMode: null,
+      autonomous: undefined,
+      startedAt: null,
+      streamId: "stream-1",
+    } as unknown as ConversationContext["activeTurn"],
+    ...overrides,
+  });
 }
 
 /** Flush the fire-and-forget async work the adapter schedules. */
@@ -203,6 +234,82 @@ describe("conversation persistence facet", () => {
         expect(getPersistedSnapshot).toHaveBeenCalledTimes(1),
       );
     });
+
+    it("queues automatic naming once from the first user turn with bounded content", () => {
+      const promptText = "x".repeat(4_500);
+
+      durableConversationPersistence.triggerAutoNaming(
+        makeFirstTurnContext({
+          promptCount: 0,
+          activeTurn: {
+            ...makeFirstTurnContext().activeTurn,
+            promptText,
+          } as ConversationContext["activeTurn"],
+        }),
+      );
+
+      expect(deps.queueAutoNameCalls).toEqual([
+        {
+          projectPath: "/p",
+          projectName: "proj",
+          sessionName: "sess",
+          conversationId: "conv-1",
+          content: "x".repeat(4_000),
+        },
+      ]);
+    });
+
+    it.each([
+      ["the conversation already has a prompt", { promptCount: 1 }],
+      [
+        "the turn is autonomous",
+        {
+          activeTurn: {
+            ...makeFirstTurnContext().activeTurn,
+            autonomous: true,
+          },
+        },
+      ],
+      [
+        "the active turn is a task run",
+        {
+          activeTurn: {
+            kind: "task_run" as const,
+            promptText: "workflow task",
+            backend: "claude" as const,
+            modelId: null,
+            effort: null,
+            startedAt: null,
+          },
+        },
+      ],
+      ["the conversation has a workflow role", { role: "iteration" as const }],
+      [
+        "the conversation is a fork",
+        {
+          forkedFrom: {
+            sourceConversationId: "parent-conv",
+            messageIndex: 1,
+            forkMode: "synthetic" as const,
+          },
+        },
+      ],
+      [
+        "the prompt is whitespace only",
+        {
+          activeTurn: {
+            ...makeFirstTurnContext().activeTurn,
+            promptText: "  \n\t ",
+          },
+        },
+      ],
+    ])("does not queue automatic naming when %s", (_label, overrides) => {
+      durableConversationPersistence.triggerAutoNaming(
+        makeFirstTurnContext(overrides as Partial<ConversationContext>),
+      );
+
+      expect(deps.queueAutoNameCalls).toEqual([]);
+    });
   });
 
   describe("ephemeral adapter", () => {
@@ -236,10 +343,14 @@ describe("conversation persistence facet", () => {
         getPersistedSnapshot,
       });
       ephemeralConversationPersistence.notifyProjectStatus(ctx);
+      ephemeralConversationPersistence.triggerAutoNaming(
+        makeFirstTurnContext(),
+      );
       await flush();
 
       expect(deps.mutateCalls).toHaveLength(0);
       expect(deps.publishCalls).toHaveLength(0);
+      expect(deps.queueAutoNameCalls).toHaveLength(0);
       expect(getPersistedSnapshot).not.toHaveBeenCalled();
     });
   });

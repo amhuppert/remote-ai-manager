@@ -25,6 +25,8 @@ const target: ContextArtifactTarget = {
 const LIST_URL =
   "/api/projects/p1/sessions/s1/conversations/c1/context-artifacts";
 const DETAIL_URL = `${LIST_URL}/art-1`;
+const GENERATE_NAME_URL =
+  "/api/projects/p1/sessions/s1/conversations/c1/generate-name";
 
 const toolContent: MessageContentBlock[] = [
   { type: "text", text: "ran the suite" },
@@ -62,6 +64,9 @@ function routeFetch(listRows: ContextArtifactListItem[]) {
     }
     if (url === DETAIL_URL && method === "GET") {
       return jsonResponse(buildArtifactDetail());
+    }
+    if (url === GENERATE_NAME_URL && method === "POST") {
+      return jsonResponse({ name: "Generated Name" });
     }
     throw new Error(`unexpected ${method} ${url}`);
   });
@@ -307,5 +312,72 @@ describe("MessageActions copy-reference action", () => {
       findMessageRefs(writeText.mock.calls[0]![0])[0]!.attrs,
     );
     expect(attrs.role).toBe("user");
+  });
+});
+
+describe("MessageActions generate-name action", () => {
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(["user", "assistant"] as const)(
+    "renders for a %s message when a target is present",
+    async (role) => {
+      routeFetch([]);
+      renderActions({ role });
+
+      expect(
+        await screen.findByRole("button", {
+          name: "Name conversation from this message",
+        }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("is absent without a target", () => {
+    renderActions({ compactionTarget: undefined });
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Name conversation from this message",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("POSTs the row message index", async () => {
+    routeFetch([]);
+    renderActions({ role: "user" });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Name conversation from this message",
+      }),
+    );
+
+    await waitFor(() => expect(postCalls()).toHaveLength(1));
+    expect(postCalls()[0]?.[0]).toBe(GENERATE_NAME_URL);
+    expect(
+      JSON.parse(String((postCalls()[0]?.[1] as RequestInit).body)),
+    ).toEqual({ source: "message", messageIndex: 3 });
+  });
+
+  it("shows a disabled pending state while generation is in flight", async () => {
+    fetchSpy.mockImplementation(() => new Promise<Response>(() => {}));
+    renderActions({ role: "user" });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Name conversation from this message",
+      }),
+    );
+
+    const pending = await screen.findByRole("button", {
+      name: "Generating name…",
+    });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
   });
 });

@@ -21,6 +21,7 @@ function makeProjectConversation(id: string): ConversationState {
   return {
     id,
     scope: "project",
+    nameOrigin: "default",
     name: null,
     transcriptPath: null,
     status: "new",

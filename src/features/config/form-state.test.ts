@@ -117,6 +117,20 @@ describe("ALL_FIELD_PATHS", () => {
     }
   });
 
+  it("tracks the editable conversation naming fields so they are dirty-tracked and saved", () => {
+    // Without these paths, changes in NamingSection would never be detected
+    // as dirty nor written by buildSavePayload.
+    for (const path of [
+      "conversationNaming.enabled",
+      "conversationNaming.backend",
+      "conversationNaming.model",
+      "conversationNaming.effort",
+      "conversationNaming.timeoutMs",
+    ]) {
+      expect(ALL_FIELD_PATHS).toContain(path);
+    }
+  });
+
   it("tracks every push notification trigger so they are dirty-tracked and saved", () => {
     // A trigger key missing here renders in NotificationsSection but never
     // dirties the form nor enters buildSavePayload, so the toggle silently

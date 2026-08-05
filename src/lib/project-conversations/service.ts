@@ -131,6 +131,11 @@ export function createProjectConversationService(
         ? { creationRequestId: opts.creationRequestId }
         : {}),
     });
+    if (opts?.name !== undefined) {
+      // The caller chose this name, so it carries the same protection as a
+      // rename; the counter placeholder keeps "default" and stays replaceable.
+      conversation.nameOrigin = "manual";
+    }
 
     await deps.createProjectConversationRecord(projectPath, conversation);
     logger.info("project-conversation.created", {
@@ -152,6 +157,8 @@ export function createProjectConversationService(
       "renameProjectConversation",
       (conversation) => {
         conversation.name = name;
+        // A user-chosen name: automatic naming must never overwrite it.
+        conversation.nameOrigin = "manual";
       },
     );
   }

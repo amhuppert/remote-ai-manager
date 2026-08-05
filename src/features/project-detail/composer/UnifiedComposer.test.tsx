@@ -32,6 +32,7 @@ function makeConversation(
   return {
     id: "plc-1",
     scope: "project",
+    nameOrigin: "default",
     name: "chat",
     transcriptPath: null,
     status: "new",

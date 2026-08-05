@@ -23,6 +23,7 @@ describe("buildConversation", () => {
       id: "conv-1",
       scope: "session",
       name: "sess 1",
+      nameOrigin: "default",
       status: "new",
       promptCount: 0,
       createdAt: NOW,

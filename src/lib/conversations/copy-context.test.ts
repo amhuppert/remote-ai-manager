@@ -11,6 +11,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: "conv-1",
     scope: "session",
+    nameOrigin: "default",
     name: null,
     transcriptPath: "/tmp/transcripts/conv-1.jsonl",
     status: "awaiting" as const,

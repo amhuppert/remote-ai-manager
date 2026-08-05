@@ -23,6 +23,7 @@ import { CapabilitiesSection } from "./sections/CapabilitiesSection";
 import { CompactionSection } from "./sections/CompactionSection";
 import { GeneralSection } from "./sections/GeneralSection";
 import { LimitsSection } from "./sections/LimitsSection";
+import { NamingSection } from "./sections/NamingSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 import { WorkflowSection } from "./sections/WorkflowSection";
 import { useConfigForm } from "./use-config-form";
@@ -35,6 +36,7 @@ type ConfigNavSection =
   | "backends"
   | "workflow"
   | "compaction"
+  | "naming"
   | "limits"
   | "notifications";
 
@@ -44,6 +46,7 @@ const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
   { id: "capabilities", label: "Capabilities" },
   { id: "workflow", label: "Workflow defaults" },
   { id: "compaction", label: "Compaction" },
+  { id: "naming", label: "Naming" },
   { id: "limits", label: "Limits & timeouts" },
   { id: "notifications", label: "Notifications" },
 ];
@@ -198,6 +201,14 @@ export default function ConfigPage(): React.JSX.Element {
               >
                 <div className={CONTENT_CLASS}>
                   <CompactionSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="naming"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className={CONTENT_CLASS}>
+                  <NamingSection controller={controller} />
                 </div>
               </TabsContent>
               <TabsContent

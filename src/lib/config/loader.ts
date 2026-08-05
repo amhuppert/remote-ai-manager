@@ -199,6 +199,13 @@ function defaultConfig(): GlobalConfig {
       effort: "medium",
       timeoutMs: 180_000,
     },
+    conversationNaming: {
+      enabled: true,
+      backend: "claude",
+      model: "haiku",
+      effort: "low",
+      timeoutMs: null,
+    },
   };
 }
 

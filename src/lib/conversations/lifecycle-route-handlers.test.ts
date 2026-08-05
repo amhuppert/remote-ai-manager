@@ -17,7 +17,7 @@ function makeConversation(
   return {
     id: "conv-1",
     name: null,
-    transcriptPath: null,
+    transcriptPath: "/tmp/conv-1.jsonl",
     status: "new",
     promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
@@ -68,6 +68,11 @@ function makeDeps(overrides: Partial<ConversationRouteDeps> = {}) {
     getSession: vi.fn(async () => session),
     createConversation: vi.fn(async () => conversation),
     renameConversation: vi.fn(async () => {}),
+    resolveConversationNamingContent: vi.fn(
+      async () => "Whole conversation basis",
+    ),
+    resolveMessageNamingContent: vi.fn(async () => "Message basis"),
+    generateAndApplyConversationName: vi.fn(async () => "Generated Name"),
     setConversationArchived: vi.fn(async () => {}),
     broadcast: vi.fn(),
     ...overrides,
@@ -248,6 +253,159 @@ describe("PATCH_RENAME — conversation-renamed broadcast", () => {
     expect(response.status).toBe(400);
     expect(deps.broadcast).not.toHaveBeenCalled();
     expect(deps.renameConversation).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// POST_GENERATE_NAME
+// ============================================================================
+
+describe("POST_GENERATE_NAME", () => {
+  it("generates a name from the whole conversation", async () => {
+    const { deps } = makeDeps();
+    const { POST_GENERATE_NAME } = createConversationRouteHandlers(deps);
+
+    const response = await POST_GENERATE_NAME(
+      jsonRequest({ source: "conversation" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ name: "Generated Name" });
+    expect(deps.resolveConversationNamingContent).toHaveBeenCalledWith({
+      conversationId: "conv-1",
+      transcriptPath: "/tmp/conv-1.jsonl",
+    });
+    expect(deps.generateAndApplyConversationName).toHaveBeenCalledWith({
+      projectPath: "/repos/demo",
+      projectName: "demo",
+      sessionName: "s1",
+      conversationId: "conv-1",
+      content: "Whole conversation basis",
+      trigger: "explicit",
+    });
+  });
+
+  it("generates a name from the addressed message", async () => {
+    const { deps } = makeDeps();
+    const { POST_GENERATE_NAME } = createConversationRouteHandlers(deps);
+
+    const response = await POST_GENERATE_NAME(
+      jsonRequest({ source: "message", messageIndex: 3 }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ name: "Generated Name" });
+    expect(deps.resolveMessageNamingContent).toHaveBeenCalledWith({
+      transcriptPath: "/tmp/conv-1.jsonl",
+      messageIndex: 3,
+    });
+    expect(deps.generateAndApplyConversationName).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Message basis",
+        trigger: "explicit",
+      }),
+    );
+  });
+
+  it.each([{ source: "unknown" }, { source: "message", messageIndex: -1 }])(
+    "returns 400 for malformed body %#",
+    async (body) => {
+      const { deps } = makeDeps();
+      const { POST_GENERATE_NAME } = createConversationRouteHandlers(deps);
+
+      const response = await POST_GENERATE_NAME(
+        jsonRequest(body),
+        context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(deps.generateAndApplyConversationName).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      label: "project",
+      overrides: {
+        resolveProjectPath: vi.fn(async () => null),
+      } satisfies Partial<ConversationRouteDeps>,
+      params: { name: "missing", session: "s1", conversationId: "conv-1" },
+    },
+    {
+      label: "session",
+      overrides: {
+        getSession: vi.fn(async () => null),
+      } satisfies Partial<ConversationRouteDeps>,
+      params: { name: "demo", session: "missing", conversationId: "conv-1" },
+    },
+    {
+      label: "conversation",
+      overrides: {
+        getSession: vi.fn(async () => makeSession([])),
+      } satisfies Partial<ConversationRouteDeps>,
+      params: { name: "demo", session: "s1", conversationId: "missing" },
+    },
+  ])("returns 404 for an unknown $label", async ({ overrides, params }) => {
+    const { deps } = makeDeps(overrides);
+    const { POST_GENERATE_NAME } = createConversationRouteHandlers(deps);
+
+    const response = await POST_GENERATE_NAME(
+      jsonRequest({ source: "conversation" }),
+      context(params),
+    );
+
+    expect(response.status).toBe(404);
+    expect(deps.generateAndApplyConversationName).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      body: { source: "conversation" },
+      overrides: {
+        resolveConversationNamingContent: vi.fn(async () => null),
+      } satisfies Partial<ConversationRouteDeps>,
+    },
+    {
+      body: { source: "message", messageIndex: 99 },
+      overrides: {
+        resolveMessageNamingContent: vi.fn(async () => null),
+      } satisfies Partial<ConversationRouteDeps>,
+    },
+  ])(
+    "returns 422 when naming content cannot be resolved %#",
+    async (testCase) => {
+      const { deps } = makeDeps(testCase.overrides);
+      const { POST_GENERATE_NAME } = createConversationRouteHandlers(deps);
+
+      const response = await POST_GENERATE_NAME(
+        jsonRequest(testCase.body),
+        context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(deps.generateAndApplyConversationName).not.toHaveBeenCalled();
+    },
+  );
+
+  it("returns 500 with the generation error", async () => {
+    const { deps } = makeDeps({
+      generateAndApplyConversationName: vi.fn(async () => {
+        throw new Error("naming backend unavailable");
+      }),
+    });
+    const { POST_GENERATE_NAME } = createConversationRouteHandlers(deps);
+
+    const response = await POST_GENERATE_NAME(
+      jsonRequest({ source: "conversation" }),
+      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "naming backend unavailable",
+    });
   });
 });
 

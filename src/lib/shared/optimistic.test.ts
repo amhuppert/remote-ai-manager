@@ -19,6 +19,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
       {
         id: "conv-1",
         scope: "session",
+        nameOrigin: "default",
         name: "fix-login-bug 1",
         transcriptPath: null,
         status: "new",

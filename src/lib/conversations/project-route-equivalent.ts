@@ -45,6 +45,7 @@ export const PROJECT_CONVERSATION_ROUTE_OPERATIONS: ReadonlySet<string> =
     "archive",
     "ask",
     "context-artifacts",
+    "generate-name",
     "mark-read",
     "messages",
     "notifications",

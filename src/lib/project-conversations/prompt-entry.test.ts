@@ -21,6 +21,7 @@ function makeConv(
   return {
     id: overrides.id,
     scope: "project",
+    nameOrigin: "default",
     name: overrides.name ?? "Repo chat",
     transcriptPath: null,
     status: overrides.status ?? "new",

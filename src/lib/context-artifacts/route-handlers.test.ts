@@ -52,6 +52,7 @@ function makeConvo(
   return {
     id: "convo-1",
     scope: "session",
+    nameOrigin: "default",
     name: null,
     transcriptPath: "/tmp/convo-1.jsonl",
     status: "new",

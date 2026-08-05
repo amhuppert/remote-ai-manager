@@ -20,6 +20,7 @@ import CopyMessageButton, { msgActionBtnClass } from "./CopyMessageButton";
 import CopyMessageRefButton, {
   type MessageRefMeta,
 } from "./CopyMessageRefButton";
+import GenerateNameFromMessageButton from "./GenerateNameFromMessageButton";
 
 interface MessageActionsProps {
   /** The 0-based index of this message in the conversation */
@@ -206,6 +207,12 @@ function ActionBar({
           messageIndex={messageIndex}
           role={role}
           meta={messageRef}
+        />
+      )}
+      {compactionTarget && (
+        <GenerateNameFromMessageButton
+          target={compactionTarget}
+          messageIndex={messageIndex}
         />
       )}
       {onFork && (

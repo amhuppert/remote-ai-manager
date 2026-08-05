@@ -21,6 +21,7 @@ import {
   useRenameConversationMutation,
   useGenericArchiveConversationMutation,
   useGenericRenameConversationMutation,
+  useGenerateConversationNameMutation,
   useAnswerQuestionMutation,
   useForkConversationMutation,
   useMarkConversationReadMutation,
@@ -368,6 +369,7 @@ function ConversationSidebar({
   const genericArchiveMutation = useGenericArchiveConversationMutation();
   const archiveOthersMutation = useArchiveOtherConversationsMutation();
   const genericRenameMutation = useGenericRenameConversationMutation();
+  const generateNameMutation = useGenerateConversationNameMutation();
   const genericArchiveSessionMutation = useGenericArchiveSessionMutation();
   const markReadMutation = useMarkConversationReadMutation();
   const markProjectReadMutation = useMarkProjectConversationReadMutation();
@@ -754,6 +756,9 @@ function ConversationSidebar({
               actionScope,
             );
           },
+          onRegenerateName: () => {
+            generateNameMutation.mutate(actionScope);
+          },
           onToggleArchived: () => {
             handleArchive(row.id, !archived, actionScope);
           },
@@ -785,6 +790,7 @@ function ConversationSidebar({
       handleArchive,
       handleCopyContext,
       handleRenameStart,
+      generateNameMutation,
       onMobileClose,
       onOpenInTab,
       onOpenInPane,

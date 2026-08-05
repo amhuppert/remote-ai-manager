@@ -406,6 +406,7 @@ describe("conversations-repo upsertWithSessionTouch atomicity", () => {
 describe("conversations-repo updateChangedColumnsWithSessionTouch", () => {
   const ALL_COLUMNS = [
     "name",
+    "name_origin",
     "transcript_path",
     "status",
     "prompt_count",
@@ -1347,6 +1348,7 @@ function buildMaximalConversation(): ConversationState {
   return conversationStateSchema.parse({
     id: "c-maximal",
     name: "Maximal conversation",
+    nameOrigin: "auto",
     transcriptPath: "/tmp/transcripts/c-maximal.jsonl",
     status: "running",
     promptCount: 42,

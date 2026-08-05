@@ -42,6 +42,7 @@ function buildMaximalProjectConversation(): ConversationState {
     id: "plc-maximal",
     scope: "project",
     name: "Maximal project conversation",
+    nameOrigin: "auto",
     transcriptPath: "/tmp/transcripts/plc-maximal.jsonl",
     status: "running",
     promptCount: 42,

@@ -384,6 +384,10 @@ vi.mock("@/lib/conversations/mutations", () => ({
     mutate: vi.fn(),
     isPending: false,
   }),
+  useGenerateConversationNameMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
   useMarkConversationReadMutation: () => ({ mutate: vi.fn() }),
   useAnswerQuestionMutation: () => ({
     mutateAsync: vi.fn(async () => ({ status: "ok" as const })),
@@ -438,6 +442,7 @@ const baseSession: SessionState = {
     {
       id: "conv-1",
       scope: "session",
+      nameOrigin: "default",
       name: null,
       transcriptPath: null,
       status: "new",

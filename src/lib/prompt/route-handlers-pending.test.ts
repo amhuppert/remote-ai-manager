@@ -17,6 +17,7 @@ function makeConvo(
   return {
     id: "convo-1",
     scope: "session",
+    nameOrigin: "default",
     name: null,
     transcriptPath: null,
     status: "new",

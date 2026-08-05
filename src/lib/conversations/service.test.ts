@@ -173,6 +173,7 @@ function makeConvo(
   return {
     id: crypto.randomUUID(),
     scope: "session",
+    nameOrigin: "default",
     name: null,
     transcriptPath: null,
     status: "new",

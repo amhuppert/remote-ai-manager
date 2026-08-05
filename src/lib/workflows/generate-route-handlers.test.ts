@@ -47,6 +47,7 @@ function makePlannerSession(
       {
         id: conversationId,
         scope: "session",
+        nameOrigin: "default",
         name: `${PLANNER_SESSION_NAME} 1`,
         transcriptPath: null,
         status: "new",

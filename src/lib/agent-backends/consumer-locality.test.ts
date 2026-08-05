@@ -161,6 +161,7 @@ function makeConversationRecord(
   return {
     id,
     scope: "session",
+    nameOrigin: "default",
     name: null,
     transcriptPath: null,
     status: "awaiting",

@@ -231,6 +231,7 @@ export const conversationMachine = setup({
     dispatchPushNotification: () => {},
     markUnreadOnFinish: () => {},
     markReadOnUserTurnStart: () => {},
+    triggerAutoNaming: () => {},
     drainPendingQueue: () => {},
     cancelDebugCleanupVerification: ({ context }) => {
       const runtime = getConversationRuntime(
@@ -557,6 +558,7 @@ export const conversationMachine = setup({
         "syncDerivedFields",
         "broadcastConversationStatus",
         "markReadOnUserTurnStart",
+        "triggerAutoNaming",
       ],
       invoke: {
         src: "prepareTurn",

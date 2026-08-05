@@ -209,7 +209,7 @@ export function getActorRegistry(): Map<string, ConversationActorRef> {
 // ============================================================
 
 /**
- * Build the production-provided machine. The four durable-write actions are
+ * Build the production-provided machine. The durable-side-effect actions are
  * delegated to the injected {@link ConversationPersistenceAdapter}, so this
  * block no longer imports `mutateConversation` or the state store directly —
  * the adapter (durable or ephemeral) owns every durable side effect. The
@@ -360,6 +360,10 @@ export function createProvidedMachine(adapter: ConversationPersistenceAdapter) {
 
       markReadOnUserTurnStart: ({ context }) => {
         adapter.markReadOnUserTurnStart(context);
+      },
+
+      triggerAutoNaming: ({ context }) => {
+        adapter.triggerAutoNaming(context);
       },
 
       drainPendingQueue: ({ context, self }) => {

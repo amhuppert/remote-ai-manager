@@ -10,6 +10,7 @@ import {
   conversationRoleSchema,
   conversationStatusSchema,
   forkedFromSchema,
+  nameOriginSchema,
 } from "@/lib/conversations/schemas";
 import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
 import { debugModeStateSchema } from "@/lib/debug-log/schemas";
@@ -147,6 +148,7 @@ function logRefColumnQuarantine(
  */
 export interface SharedConversationRawColumns {
   name: string | null;
+  name_origin: string;
   transcript_path: string | null;
   status: string;
   prompt_count: number;
@@ -198,6 +200,11 @@ export function decodeSharedConversationColumns(
   const sourceResult = z.enum(["cc", "imported"]).safeParse(row.source);
   if (!sourceResult.success) {
     return throwConversationValidationError(id, sourceResult.error.issues);
+  }
+
+  const nameOriginResult = nameOriginSchema.safeParse(row.name_origin);
+  if (!nameOriginResult.success) {
+    return throwConversationValidationError(id, nameOriginResult.error.issues);
   }
 
   const backendResult = agentBackendSchema.safeParse(row.agent_backend);
@@ -326,6 +333,7 @@ export function decodeSharedConversationColumns(
 
   const candidate: Record<string, unknown> = {
     name: row.name,
+    nameOrigin: nameOriginResult.data,
     transcriptPath: row.transcript_path,
     status: statusResult.data,
     promptCount: row.prompt_count,
@@ -547,6 +555,7 @@ function encodeForkedFromColumn(
  */
 export interface SharedConversationBindColumns {
   name: string | null;
+  name_origin: string;
   transcript_path: string | null;
   status: string;
   prompt_count: number;
@@ -583,6 +592,7 @@ export function encodeSharedConversationColumns(
 ): SharedConversationBindColumns {
   return {
     name: conversation.name,
+    name_origin: conversation.nameOrigin,
     transcript_path: conversation.transcriptPath,
     status: conversation.status,
     prompt_count: conversation.promptCount,
@@ -636,6 +646,7 @@ export function encodeSharedConversationColumns(
  */
 const CONVERSATION_COLUMN_MAP = [
   ["name", "name", (c: ConversationState) => c.name],
+  ["nameOrigin", "name_origin", (c: ConversationState) => c.nameOrigin],
   [
     "transcriptPath",
     "transcript_path",

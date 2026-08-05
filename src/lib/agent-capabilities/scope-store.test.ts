@@ -45,6 +45,7 @@ function projectConversation(id: string): ConversationState {
   return {
     id,
     scope: "project",
+    nameOrigin: "default",
     name: null,
     transcriptPath: null,
     status: "awaiting",
@@ -94,6 +95,7 @@ function stateWithAllScopes(): ManagerState {
               {
                 id: CONVERSATION_ID,
                 scope: "session",
+                nameOrigin: "default",
                 name: null,
                 transcriptPath: null,
                 status: "awaiting",

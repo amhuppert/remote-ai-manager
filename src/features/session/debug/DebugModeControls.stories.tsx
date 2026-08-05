@@ -16,6 +16,7 @@ function makeConversation(
   return {
     id: "conv-123",
     scope: "session",
+    nameOrigin: "default",
     name: null,
     status: "awaiting",
     transcriptPath: "/tmp/test.jsonl",

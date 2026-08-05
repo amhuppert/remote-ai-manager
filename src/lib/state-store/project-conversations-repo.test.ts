@@ -16,6 +16,7 @@ function makeProjectConversation(
   return {
     id: overrides.id,
     scope: "project",
+    nameOrigin: "default",
     name: overrides.name ?? null,
     transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",

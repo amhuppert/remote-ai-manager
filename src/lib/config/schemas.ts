@@ -86,6 +86,36 @@ const rawCompactionConfigSchema = z.object({
 });
 
 // ============================================================
+// Conversation Naming Config
+// ============================================================
+
+export const conversationNamingConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  backend: agentBackendSchema.default("claude"),
+  model: z.string().default("haiku"),
+  effort: effortLevelSchema.default("low"),
+  // No default: an unset (or null) timeout falls back to the service's bounded
+  // 60s default at the task-run boundary — naming is never unbounded.
+  timeoutMs: z.number().int().positive().nullable().optional(),
+});
+export type ConversationNamingConfig = z.infer<
+  typeof conversationNamingConfigSchema
+>;
+
+const rawConversationNamingConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  backend: agentBackendSchema.optional(),
+  model: z.string().optional(),
+  effort: effortLevelSchema.optional(),
+  timeoutMs: z.number().int().positive().nullable().optional(),
+});
+
+export const resolveConversationNamingConfig = (
+  config: GlobalConfig,
+): ConversationNamingConfig =>
+  conversationNamingConfigSchema.parse(config.conversationNaming ?? {});
+
+// ============================================================
 // Global Config
 // ============================================================
 
@@ -110,6 +140,7 @@ export const globalConfigSchema = z.object({
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.default("claude"),
   compaction: compactionConfigSchema.optional(),
+  conversationNaming: conversationNamingConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -169,6 +200,7 @@ export const rawGlobalConfigSchema = z.object({
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.optional(),
   compaction: rawCompactionConfigSchema.optional(),
+  conversationNaming: rawConversationNamingConfigSchema.optional(),
 });
 export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 

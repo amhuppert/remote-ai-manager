@@ -120,6 +120,16 @@ export const CompactAvailable = {
   decorators: [seededDecorator([])],
 } satisfies Story;
 
+/** Per-message conversation naming is available for user and assistant rows. */
+export const NameFromMessage = {
+  args: {
+    ...compactionArgs,
+    role: "user",
+    content: meta.args.content,
+  },
+  decorators: [seededDecorator([])],
+} satisfies Story;
+
 /** Artifact pending → disabled action with a spinner. */
 export const CompactPending = {
   args: compactionArgs,

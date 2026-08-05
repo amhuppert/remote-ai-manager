@@ -79,6 +79,7 @@ function makeConversation(
   return {
     id: "conv-123",
     scope: "session",
+    nameOrigin: "default",
     name: null,
     transcriptPath: null,
     status: "new" as const,

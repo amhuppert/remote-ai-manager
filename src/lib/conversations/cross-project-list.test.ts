@@ -46,6 +46,7 @@ function makeConversation(
   return {
     id: overrides.id,
     scope: overrides.scope ?? "session",
+    nameOrigin: "default",
     name: overrides.name ?? null,
     transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",

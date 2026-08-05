@@ -50,6 +50,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: CONVERSATION_ID,
     scope: "session" as const,
+    nameOrigin: "default" as const,
     name: null,
     transcriptPath: null,
     status: "awaiting" as const,

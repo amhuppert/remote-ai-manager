@@ -37,4 +37,55 @@ describe("buildConversationRowMenuItems", () => {
 
     expect(action(items, "Copy context").hotkey).toBeUndefined();
   });
+
+  it("places Regenerate Name immediately after Rename when registered", () => {
+    const onRegenerateName = vi.fn();
+    const items = buildConversationRowMenuItems(
+      {
+        scope: "project",
+        worktreePath: "/tmp/worktree",
+        archived: false,
+        approvalGatePending: false,
+      },
+      {
+        onOpenConversation: vi.fn(),
+        onOpenProjectPage: vi.fn(),
+        onRename: vi.fn(),
+        onRegenerateName,
+        onToggleArchived: vi.fn(),
+      },
+    );
+    const labels = items.flatMap((item) =>
+      item.kind === "item" ? [item.label] : [],
+    );
+
+    const renameIndex = labels.indexOf("Rename…");
+    expect(labels[renameIndex + 1]).toBe("Regenerate Name");
+
+    action(items, "Regenerate Name").onSelect();
+    expect(onRegenerateName).toHaveBeenCalledOnce();
+  });
+
+  it("hides Regenerate Name when no handler is registered", () => {
+    const items = buildConversationRowMenuItems(
+      {
+        scope: "project",
+        worktreePath: "/tmp/worktree",
+        archived: false,
+        approvalGatePending: false,
+      },
+      {
+        onOpenConversation: vi.fn(),
+        onOpenProjectPage: vi.fn(),
+        onRename: vi.fn(),
+        onToggleArchived: vi.fn(),
+      },
+    );
+
+    expect(
+      items.some(
+        (item) => item.kind === "item" && item.label === "Regenerate Name",
+      ),
+    ).toBe(false);
+  });
 });

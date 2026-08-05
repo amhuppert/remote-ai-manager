@@ -32,6 +32,7 @@ function makeConv(
 ): ConversationState {
   return {
     scope: "project",
+    nameOrigin: "default",
     name: "Repo chat",
     transcriptPath: null,
     status: "running",
@@ -203,6 +204,9 @@ function projectRouteDeps(
     listProjectConversations: async () => [...store.values()],
     readConversationMessagesWithSeq: async () => [],
     renameProjectConversation: async () => {},
+    resolveConversationNamingContent: async () => null,
+    resolveMessageNamingContent: async () => null,
+    generateAndApplyConversationName: async () => null,
     setProjectConversationArchived: async () => {},
     setProjectConversationOpen: async () => {},
     markProjectConversationRead: async () => {},

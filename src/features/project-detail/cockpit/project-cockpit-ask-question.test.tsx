@@ -65,6 +65,7 @@ function makeConversation(
   return {
     id,
     scope: "project",
+    nameOrigin: "default",
     name: id,
     transcriptPath: null,
     status: "new",

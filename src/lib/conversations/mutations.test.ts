@@ -10,6 +10,7 @@ import {
   useAnswerQuestionMutation,
   useMarkConversationReadMutation,
   useGenericRenameConversationMutation,
+  useGenerateConversationNameMutation,
   useGenericArchiveConversationMutation,
   useArchiveOtherConversationsMutation,
 } from "@/lib/conversations/mutations";
@@ -26,6 +27,7 @@ import type {
   SessionActiveConversation,
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 
 function activeConvo(
   overrides: Partial<SessionActiveConversation> & { id: string },
@@ -122,6 +124,7 @@ function conversation(
   return {
     id: overrides.id,
     scope: overrides.scope ?? "session",
+    nameOrigin: "default",
     name: overrides.name ?? null,
     transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",
@@ -594,6 +597,187 @@ describe("useGenericRenameConversationMutation", () => {
       expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(false);
     });
+  });
+});
+
+describe("useGenerateConversationNameMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    useToastStoreForTesting.setState({ toasts: [] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useToastStoreForTesting.setState({ toasts: [] });
+  });
+
+  it("POSTs a whole-conversation request to the session-scoped endpoint", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ name: "Generated Name" }));
+    const client = makeClient();
+    const { result } = renderHook(() => useGenerateConversationNameMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    await result.current.mutateAsync({
+      projectName: "project one",
+      sessionName: "session one",
+      conversationId: "conversation one",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/project%20one/sessions/session%20one/conversations/conversation%20one/generate-name",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ source: "conversation" }),
+      }),
+    );
+  });
+
+  it("POSTs a whole-conversation request to the project-scoped endpoint", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ name: "Generated Name" }));
+    const client = makeClient();
+    const { result } = renderHook(() => useGenerateConversationNameMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    await result.current.mutateAsync({
+      scope: "project",
+      projectName: "project one",
+      conversationId: "conversation one",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/project%20one/conversations/conversation%20one/generate-name",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ source: "conversation" }),
+      }),
+    );
+  });
+
+  it("POSTs the selected message index as a message source", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ name: "Generated Name" }));
+    const client = makeClient();
+    const { result } = renderHook(() => useGenerateConversationNameMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    await result.current.mutateAsync({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      messageIndex: 7,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/sessions/s/conversations/c1/generate-name",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ source: "message", messageIndex: 7 }),
+      }),
+    );
+  });
+
+  it("does not write optimistically and patches session list plus active caches from the response", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", name: "placeholder" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", name: "placeholder" })]),
+    );
+
+    let resolveFetch: (response: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((resolve) => (resolveFetch = resolve)),
+    );
+    const { result } = renderHook(() => useGenerateConversationNameMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => expect(result.current.isPending).toBe(true));
+    expect(client.getQueryData<ConversationState[]>(listKey)?.[0]?.name).toBe(
+      "placeholder",
+    );
+    expect(
+      client.getQueryData<ActiveConversationsResponse>(activeKey)
+        ?.conversations[0]?.name,
+    ).toBe("placeholder");
+
+    resolveFetch(jsonResponse({ name: "Generated Name" }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(client.getQueryData<ConversationState[]>(listKey)?.[0]?.name).toBe(
+      "Generated Name",
+    );
+    expect(
+      client.getQueryData<ActiveConversationsResponse>(activeKey)
+        ?.conversations[0]?.name,
+    ).toBe("Generated Name");
+  });
+
+  it("patches the project list and active cache from the response", async () => {
+    const client = makeClient();
+    const listKey = projectConversationKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", scope: "project", name: "placeholder" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeProjectConvo({ id: "c1", name: "placeholder" })]),
+    );
+    fetchSpy.mockResolvedValue(jsonResponse({ name: "Generated Name" }));
+    const { result } = renderHook(() => useGenerateConversationNameMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    await result.current.mutateAsync({
+      scope: "project",
+      projectName: "p",
+      conversationId: "c1",
+    });
+
+    expect(client.getQueryData<ConversationState[]>(listKey)?.[0]?.name).toBe(
+      "Generated Name",
+    );
+    expect(
+      client.getQueryData<ActiveConversationsResponse>(activeKey)
+        ?.conversations[0]?.name,
+    ).toBe("Generated Name");
+  });
+
+  it("shows an error toast when generation fails", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+    const client = makeClient();
+    const { result } = renderHook(() => useGenerateConversationNameMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(useToastStoreForTesting.getState().toasts).toEqual([
+      expect.objectContaining({
+        message: "Couldn't generate a conversation name",
+      }),
+    ]);
   });
 });
 

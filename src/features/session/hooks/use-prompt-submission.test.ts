@@ -20,6 +20,7 @@ function makeConversation(
     lastActivityAt: "2024-01-01T00:00:00Z",
     promptCount: 0,
     scope: "session",
+    nameOrigin: "default",
     role: null,
     activeTurnSource: null,
     name: null,

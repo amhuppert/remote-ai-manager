@@ -49,6 +49,7 @@ function stateWithAllScopes(): ManagerState {
               {
                 id: CONVERSATION_ID,
                 scope: "session",
+                nameOrigin: "default",
                 name: null,
                 transcriptPath: null,
                 status: "awaiting",

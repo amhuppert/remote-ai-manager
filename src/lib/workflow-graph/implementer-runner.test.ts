@@ -31,6 +31,7 @@ function makeConversation(
   return {
     id: "conversation-1",
     scope: "session",
+    nameOrigin: "default",
     name: "Conversation 1",
     transcriptPath: null,
     status: "new",

@@ -14,6 +14,7 @@ function makeConversation(
   return {
     id: "c1",
     scope: "session",
+    nameOrigin: "default",
     name: "chat",
     transcriptPath: null,
     status: "awaiting",

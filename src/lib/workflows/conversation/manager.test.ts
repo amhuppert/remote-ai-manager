@@ -563,6 +563,7 @@ describe("conversation manager", () => {
       const conv = {
         id: "conv-1",
         scope: "session" as const,
+        nameOrigin: "default" as const,
         name: null,
         transcriptPath: null,
         status: "new" as const,

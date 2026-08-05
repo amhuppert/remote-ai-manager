@@ -72,6 +72,7 @@ describe("projectRouteForSessionRequestPath", () => {
       "prompt",
       "messages",
       "rename",
+      "generate-name",
       "abort",
     ]) {
       expect(

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   compactionConfigSchema,
+  conversationNamingConfigSchema,
   globalConfigSchema,
+  perRepoConfigSchema,
   rawGlobalConfigSchema,
+  resolveConversationNamingConfig,
 } from "./schemas";
 
 describe("commandCenterProjectName config", () => {
@@ -159,6 +162,123 @@ describe("agent backend config", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("conversationNamingConfigSchema", () => {
+  it("materializes enabled/backend/model/effort defaults but leaves timeout unset", () => {
+    const result = conversationNamingConfigSchema.parse({});
+
+    expect(result).toEqual({
+      enabled: true,
+      backend: "claude",
+      model: "haiku",
+      effort: "low",
+    });
+    // No default timeout: the service resolves an unset timeout to 60s.
+    expect(result.timeoutMs).toBeUndefined();
+  });
+
+  it("keeps explicit fields while defaulting the rest", () => {
+    const result = conversationNamingConfigSchema.parse({
+      backend: "codex",
+      model: "gpt-5.4",
+    });
+
+    expect(result.backend).toBe("codex");
+    expect(result.model).toBe("gpt-5.4");
+    expect(result.enabled).toBe(true);
+    expect(result.effort).toBe("low");
+  });
+
+  it("accepts an explicit numeric timeout and a null sentinel", () => {
+    expect(
+      conversationNamingConfigSchema.parse({ timeoutMs: 30_000 }).timeoutMs,
+    ).toBe(30_000);
+    expect(
+      conversationNamingConfigSchema.parse({ timeoutMs: null }).timeoutMs,
+    ).toBeNull();
+  });
+
+  it("rejects invalid backend and effort values", () => {
+    expect(
+      conversationNamingConfigSchema.safeParse({ backend: "gpt" }).success,
+    ).toBe(false);
+    expect(
+      conversationNamingConfigSchema.safeParse({ effort: "invalid" }).success,
+    ).toBe(false);
+  });
+
+  it("is retained partially by the raw disk schema without materializing defaults", () => {
+    expect(
+      rawGlobalConfigSchema.parse({
+        conversationNaming: { model: "sonnet" },
+      }),
+    ).toEqual({ conversationNaming: { model: "sonnet" } });
+  });
+
+  it("is accepted by the normalized global schema", () => {
+    const parsed = globalConfigSchema.parse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 60_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
+      conversationNaming: { enabled: false },
+    });
+
+    expect(parsed.conversationNaming).toEqual({
+      enabled: false,
+      backend: "claude",
+      model: "haiku",
+      effort: "low",
+    });
+  });
+
+  it("resolveConversationNamingConfig returns defaults when the block is absent", () => {
+    const config = globalConfigSchema.parse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 60_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
+    });
+
+    expect(resolveConversationNamingConfig(config)).toEqual({
+      enabled: true,
+      backend: "claude",
+      model: "haiku",
+      effort: "low",
+    });
+  });
+
+  // The block is global-only (charter invariant global-config-only): the
+  // per-repo schema must not carry it. Zod objects strip unknown keys, so
+  // "not accepted" is observable as the key being absent from the parse.
+  it("is not accepted by the per-repo schema", () => {
+    const parsed: Record<string, unknown> = perRepoConfigSchema.parse({
+      conversationNaming: { enabled: false },
+    });
+
+    expect("conversationNaming" in parsed).toBe(false);
   });
 });
 
