@@ -101,6 +101,7 @@ function buildAttachmentService(
         capturedAt: "2026-07-10T02:00:00.000Z",
         coveredEndSeq: 0,
       }),
+    resolveConversation: (input) => Promise.resolve(input),
     conversationExists: () => Promise.resolve(true),
     getSessionOverview: () =>
       Promise.resolve({

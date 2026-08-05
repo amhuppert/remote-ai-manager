@@ -51,6 +51,9 @@ flags — `cctl` never silently *acts on* a different session than its env
 identity. The exception is the read-only `cctl conversation` group, which
 auto-resolves a conversation's owning project/session from its **id** alone
 (see that section), so reading a `<conversation-ref>` needs no flags.
+`cctl ticket attach conversation <ticket> <id>` uses that same global lookup
+for its read of the source conversation; the mutation still targets only the
+ticket identified by `<ticket>`.
 
 ## Exit codes
 
@@ -560,8 +563,10 @@ a `cctl ticket get <project>#<number>` follow command.
   descriptions are the index): `file <path>` snapshots bytes at attach time
   (survives source deletion; `--media-type` optional); `conversation
   [<conversationId>]` snapshots the conversation's compaction (defaults to the
-  current conversation from `CC_CONVERSATION_ID`); `session <sessionName>` and
-  `ticket <ref>` are live pointers; `note "<markdown>"` is inline markdown.
+  current conversation from `CC_CONVERSATION_ID`; an explicit id globally
+  resolves its owning project and session, so no `--session` flag is needed);
+  `session <sessionName>` and `ticket <ref>` are live pointers; `note
+  "<markdown>"` is inline markdown.
 - `attachment get` — resolve full content per kind (file content, compaction
   markdown with read commands, session state, related-ticket detail plus its
   own index, note body). `attachment update` edits `--description` (any kind)

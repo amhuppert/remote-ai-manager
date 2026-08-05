@@ -7,6 +7,7 @@ import { BUILD_INFO } from "@/lib/build-info";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import { getConfigDirPath, readConfig } from "@/lib/config/loader";
 import { compactionEnvelopeToMarkdown } from "@/lib/context-artifacts/render-markdown";
+import { findConversationById } from "@/lib/conversations/cross-project-list";
 import { createFirstTurnDispatcher } from "@/lib/prompt/first-turn-dispatch";
 import { executePromptStream } from "@/lib/prompt/sdk-driver";
 import { isConversationBusy } from "@/lib/prompt/single-flight";
@@ -359,6 +360,52 @@ async function conversationExists(
   return conversation !== null;
 }
 
+async function resolveAttachmentConversation(
+  input: EnsureConversationCompactionInput,
+): Promise<EnsureConversationCompactionInput | null> {
+  if (input.sessionName !== null) {
+    const conversation = await lookupConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    logger.debug("tickets.service_factory.attachment_conversation_resolved", {
+      conversationId: input.conversationId,
+      resolution: "explicit_session",
+      found: conversation !== null,
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+    });
+    return conversation === null ? null : input;
+  }
+
+  const conversation = await findConversationById(input.conversationId);
+  if (conversation === null) {
+    logger.debug("tickets.service_factory.attachment_conversation_resolved", {
+      conversationId: input.conversationId,
+      resolution: "global_lookup",
+      found: false,
+    });
+    return null;
+  }
+
+  const resolved = {
+    projectPath: conversation.projectPath,
+    projectName: conversation.projectName,
+    sessionName:
+      conversation.scope === "session" ? conversation.sessionName : null,
+    conversationId: conversation.conversationId,
+  };
+  logger.debug("tickets.service_factory.attachment_conversation_resolved", {
+    conversationId: resolved.conversationId,
+    resolution: "global_lookup",
+    found: true,
+    projectPath: resolved.projectPath,
+    sessionName: resolved.sessionName,
+  });
+  return resolved;
+}
+
 /**
  * Create-if-missing conversation compaction shared by attachment adds, ticket
  * starts, and the `/ticket` runner; `trigger` is the audit tag stamped on the
@@ -462,6 +509,7 @@ export function getTicketAttachmentService(): TicketAttachmentService {
         );
       },
       getLiveCompaction: getLiveCompactionForProduction,
+      resolveConversation: resolveAttachmentConversation,
       conversationExists,
       async getSessionOverview(projectPath, sessionName) {
         const session = await getSession(projectPath, sessionName);

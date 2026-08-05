@@ -143,6 +143,12 @@ beforeEach(async () => {
         capturedAt: "2026-07-10T02:00:00.000Z",
         coveredEndSeq: 0,
       }),
+    resolveConversation: (input) =>
+      Promise.resolve(
+        input.sessionName === null
+          ? { ...input, sessionName: "owner-session" }
+          : input,
+      ),
     conversationExists: () => Promise.resolve(true),
     getSessionOverview: () =>
       Promise.resolve({
@@ -560,6 +566,40 @@ describe("cctl ticket against the real route handlers", () => {
   });
 
   describe("attachments over the real handlers and content store", () => {
+    it("attaches a conversation owned by a different session than the caller env", async () => {
+      const host = makeHost();
+      await runCli(
+        ["ticket", "create", "--title", "Host", "--type", "bug"],
+        makeEnv(),
+        host,
+      );
+
+      const attached = await runCli(
+        [
+          "ticket",
+          "attach",
+          "conversation",
+          "1",
+          "owner-conversation",
+          "--description",
+          "cross-session investigation",
+          "--json",
+        ],
+        makeEnv({
+          CC_SESSION: "caller-session",
+          CC_CONVERSATION_ID: "caller-conversation",
+        }),
+        host,
+      );
+
+      expect(attached.exitCode).toBe(0);
+      expect(JSON.parse(attached.stdout).attachment.payload).toMatchObject({
+        kind: "conversation",
+        sessionName: "owner-session",
+        conversationId: "owner-conversation",
+      });
+    });
+
     /** Creates ticket cc#1 plus a related cc#2, attaches all five kinds to #1. */
     async function seedTicketWithAllKinds(host: CliHost): Promise<void> {
       await runCli(

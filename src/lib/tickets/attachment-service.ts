@@ -163,6 +163,9 @@ export interface TicketAttachmentServiceDeps {
   ): Promise<EnsureConversationCompactionResult>;
   /** Current compaction artifact markdown, if one exists. */
   getLiveCompaction(conversationId: string): Promise<LiveCompaction | null>;
+  resolveConversation(
+    input: EnsureConversationCompactionInput,
+  ): Promise<EnsureConversationCompactionInput | null>;
   conversationExists(
     projectPath: string,
     sessionName: string | null,
@@ -357,23 +360,19 @@ export function createTicketAttachmentService(
             `unknown project: ${payload.projectName}`,
           );
         }
-        const exists = await deps.conversationExists(
-          projectPath,
-          payload.sessionName,
-          payload.conversationId,
-        );
-        if (!exists) {
-          return validationFailed(
-            "payload.conversationId",
-            `unknown conversation: ${payload.conversationId}`,
-          );
-        }
-        const ensured = await deps.ensureConversationCompaction({
+        const conversation = await deps.resolveConversation({
           projectPath,
           projectName: payload.projectName,
           sessionName: payload.sessionName,
           conversationId: payload.conversationId,
         });
+        if (conversation === null) {
+          return validationFailed(
+            "payload.conversationId",
+            `unknown conversation: ${payload.conversationId}`,
+          );
+        }
+        const ensured = await deps.ensureConversationCompaction(conversation);
         if (!ensured.ok) {
           return fail({
             code: "context_preparation_failed",
@@ -391,8 +390,8 @@ export function createTicketAttachmentService(
           ok: true,
           value: {
             kind: "conversation",
-            projectPath,
-            sessionName: payload.sessionName,
+            projectPath: conversation.projectPath,
+            sessionName: conversation.sessionName,
             conversationId: payload.conversationId,
             snapshotKey: snapshot.snapshotKey,
             snapshotCapturedAt: ensured.capturedAt,

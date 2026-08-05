@@ -322,7 +322,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
     path: ["ticket", "attach", "conversation"],
     summary: "attach a conversation's compaction snapshot",
     description:
-      "Attach a conversation by id — CC ensures a compaction exists and snapshots its markdown. With no <conversationId>, attaches the current conversation from the env identity.",
+      "Attach a conversation by id — CC globally resolves an explicit id to its owning project and session, ensures a compaction exists, and snapshots its markdown. With no <conversationId>, attaches the current conversation from the env identity.",
     usage: [
       `cctl ticket attach conversation ${REF_PLACEHOLDER} [<conversationId>] --description "<what and why>"`,
     ],
@@ -340,7 +340,7 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         kind: "value",
         valuePlaceholder: "<name>",
         description:
-          "session recorded with the attachment (defaults to CC_SESSION only when attaching the current conversation)",
+          "optional owning-session override (omit to resolve an explicit conversation id globally; defaults to CC_SESSION only when attaching the current conversation)",
       },
     ],
     examples: [
@@ -348,6 +348,12 @@ export const ticketHelpEntries: CommandHelpEntry[] = [
         invocation:
           'cctl ticket attach conversation 12 --description "design discussion that produced this ticket"',
         explanation: "attaches the current conversation's compaction snapshot",
+      },
+      {
+        invocation:
+          'cctl ticket attach conversation 12 2542e6ad-6245-436f-a849-7b2da728129d --description "investigation from another session"',
+        explanation:
+          "resolves the conversation's owning project and session from its id; no --session flag is needed",
       },
     ],
     related: [

@@ -131,6 +131,8 @@ function makeService(
       return Promise.resolve(ensureResult);
     },
     getLiveCompaction: () => Promise.resolve(liveCompaction),
+    resolveConversation: (input) =>
+      Promise.resolve(conversationExistsResult ? input : null),
     conversationExists: () => Promise.resolve(conversationExistsResult),
     getSessionOverview: () => Promise.resolve(sessionOverview),
     isTicketStartActive: () => startActive,
@@ -509,6 +511,49 @@ describe("add file", () => {
 });
 
 describe("add conversation", () => {
+  it("resolves an omitted session from the conversation id", async () => {
+    const ticket = await createTicket();
+    const resolverDeps = {
+      conversationExists: () => Promise.resolve(false),
+      resolveConversation: () =>
+        Promise.resolve({
+          projectPath: PROJECT_PATH,
+          projectName: PROJECT_NAME,
+          sessionName: "owning-session",
+          conversationId: CONVERSATION_ID,
+        }),
+    };
+    const service = makeService(resolverDeps);
+
+    const result = await service.add({
+      projectName: PROJECT_NAME,
+      number: ticket.number,
+      description: "investigation from another session",
+      payload: {
+        kind: "conversation",
+        projectName: PROJECT_NAME,
+        sessionName: null,
+        conversationId: CONVERSATION_ID,
+      },
+    });
+
+    const attachment = expectOk(result);
+    expect(ensureCalls).toEqual([
+      {
+        projectPath: PROJECT_PATH,
+        projectName: PROJECT_NAME,
+        sessionName: "owning-session",
+        conversationId: CONVERSATION_ID,
+      },
+    ]);
+    expect(attachment.payload).toMatchObject({
+      kind: "conversation",
+      projectPath: PROJECT_PATH,
+      sessionName: "owning-session",
+      conversationId: CONVERSATION_ID,
+    });
+  });
+
   it("ensures a compaction and snapshots its markdown with source coordinates", async () => {
     const ticket = await createTicket();
     const service = makeService();

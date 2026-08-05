@@ -130,6 +130,7 @@ describe("ticket operations racing project deletion", () => {
         capturedAt: now(),
       }),
       getLiveCompaction: async () => null,
+      resolveConversation: async () => null,
       conversationExists: async () => false,
       getSessionOverview: async () => null,
       isTicketStartActive: () => false,
