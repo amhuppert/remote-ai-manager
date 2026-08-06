@@ -14,6 +14,19 @@ set -euo pipefail
 # Enable AI-optimized output for tools that detect this (e.g., vitest.config.ts)
 export CLAUDECODE=1
 
+# Isolate every child from the operator's live Command Center state.
+# `next build` evaluates route modules to collect their config, and
+# src/lib/state-store/index.ts opens command-center.db at module scope, so an
+# un-isolated build opens the real database; src/app/tickets parses the real
+# config.json the same way. Both are shared by every branch and session on the
+# machine, so live state can be AHEAD of the tree under validation — a neighbour
+# that applies a migration and publishes the fail-closed compatibility barrier
+# would otherwise fail this gate for every other branch. Scoping CC_CONFIG_DIR
+# to a per-run scratch dir makes the gate depend only on the tree it validates.
+CC_SCRATCH_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cc-premerge-config.XXXXXX")"
+trap 'rm -rf "$CC_SCRATCH_CONFIG_DIR"' EXIT
+export CC_CONFIG_DIR="$CC_SCRATCH_CONFIG_DIR"
+
 # Resolve where this branch diverged from its merge target so we only lint/format/
 # test what it actually introduces or changes. TARGET_BRANCH is supplied by CC's
 # merge workflow; default to main for standalone runs.
