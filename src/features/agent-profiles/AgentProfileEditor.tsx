@@ -128,6 +128,16 @@ export default function AgentProfileEditor({
   const patch = (next: Partial<AgentProfileDraft>) =>
     onDraftChange({ ...draft, ...next });
 
+  const submitDraft = (instructions = draft.instructions) => {
+    if (readOnly || saving) return;
+    const nextValidation =
+      instructions === draft.instructions
+        ? validation
+        : validateAgentProfileDraft({ ...draft, instructions });
+    if (!nextValidation.ok) return;
+    onSave(nextValidation.content);
+  };
+
   const toggleAudience = (audience: AgentProfileAudience, on: boolean) =>
     patch({
       recommendedFor: on
@@ -183,9 +193,11 @@ export default function AgentProfileEditor({
         <MultilineInput
           id={`${fieldId}-instructions`}
           rows={8}
+          className="box-border w-full resize-y rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] font-mono text-[0.82rem] text-text-primary outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
           value={draft.instructions}
           disabled={readOnly}
           onValueChange={(instructions) => patch({ instructions })}
+          onPrimaryAction={submitDraft}
         />
         {errors.instructions !== undefined && (
           <FormError>{errors.instructions}</FormError>
@@ -259,9 +271,7 @@ export default function AgentProfileEditor({
             variant="primary"
             size="sm"
             disabled={!validation.ok || saving}
-            onClick={() => {
-              if (validation.ok) onSave(validation.content);
-            }}
+            onClick={() => submitDraft()}
           >
             {saving ? "Saving…" : ref_ === null ? "Create profile" : "Save"}
           </Button>

@@ -9,6 +9,7 @@
  * the request the page actually issues rather than a hand-wired callback.
  */
 
+import * as matchers from "@testing-library/jest-dom/matchers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -28,6 +29,8 @@ import type {
 } from "@/lib/agent-profiles/schemas";
 
 import AgentsLibraryPage from "./AgentsLibraryPage";
+
+expect.extend(matchers);
 
 const PROJECT = "my-app";
 

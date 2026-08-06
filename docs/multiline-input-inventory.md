@@ -19,6 +19,7 @@ Every editable production multiline control is classified below. Storybook demos
 | Workflow execution task instructions | Baseline | Existing task save/add action | Execution context | Existing panel behavior |
 | Workflow-builder task instructions and parameter defaults | Baseline | Save workflow definition | Project builder context; global templates explicitly show voice unavailable because transcription requires a project worktree | Existing inspector behavior |
 | Workflow builder focus-sheet markdown | Baseline | Save workflow definition | Project builder context; same explicit global-template limitation | Dialog close |
+| Agent profile instructions | Baseline | Save profile | Agent library project route | Existing page behavior |
 | Ticket description editor | Baseline | Save ticket description | Ticket project props | Cancel edit |
 | Ticket creation description | Baseline | Create ticket | Selected project | Dialog close |
 | Ticket attachment dialog description and markdown | Baseline | Add attachment | Ticket project props | Dialog close |
