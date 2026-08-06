@@ -18,8 +18,6 @@ import {
   addTaskToContext,
   clearContextBlockOverride,
   clearWorkflowConfigOverride,
-  disableContextValidator,
-  enableContextValidator,
   moveTaskWithinContext,
   removeTask,
   setContextBlockOverride,
@@ -33,9 +31,8 @@ import type { WorkflowDefaults } from "@/lib/config/schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
-  ContextValidatorOverride,
-  GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
+  AgentAssignment,
+  ValidatorCohort,
   GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowHumanApprovalGateConfig,
@@ -63,11 +60,15 @@ import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schem
 import {
   CircuitBreakerEditor,
   CollaborationEditor,
-  ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
   PlanRepairEditor,
 } from "@/components/workflow-config/FieldEditors";
+import {
+  CohortEditor,
+  toggleCohortEnabled,
+  type CohortCascadeProvenance,
+} from "@/components/workflow-config/CohortEditor";
 import InspectorFocusSheet from "./InspectorFocusSheet";
 import {
   ApprovalGlyphIcon,
@@ -136,6 +137,11 @@ interface WorkflowInspectorPanelProps {
   activeTab?: InspectorTab;
   onTabChange?: (tab: InspectorTab) => void;
   voiceProjectName?: string | null;
+  /**
+   * Scopes the agent-profile listing the assignment pickers offer: builtin +
+   * global + this project's own profiles.
+   */
+  libraryProjectName?: string | null;
   /**
    * Reports whether the context tab holds output-schema text the draft
    * definition cannot represent. The panel gates its OWN Save on this, but the
@@ -302,15 +308,16 @@ function summarizePlanRepair(policy: GraphWorkflowPlanRepairPolicy): string {
 
 type ResolvedContextCascade = {
   implementer: {
-    value: GraphWorkflowAgentConfig;
+    value: AgentAssignment;
     source: InspectorConfigBlockSource;
   };
-  contextValidator:
-    | {
-        value: GraphWorkflowAgentValidatorConfig;
-        source: Exclude<InspectorConfigBlockSource, "disabled">;
-      }
-    | { source: "disabled" };
+  // No `disabled` source: with a cohort, "off" is the value's own `enabled`
+  // flag, not a tier. That is what lets a disabled cohort keep its assignments
+  // and still report which tier supplied them.
+  contextValidator: {
+    value: ValidatorCohort;
+    source: Exclude<InspectorConfigBlockSource, "disabled">;
+  };
   scriptValidator: {
     value: GraphWorkflowScriptValidatorConfig;
     source: Exclude<InspectorConfigBlockSource, "disabled">;
@@ -382,11 +389,9 @@ function computeContextCascade(
   }
 
   let validator: ResolvedContextCascade["contextValidator"];
-  if (context.contextValidator?.kind === "disabled") {
-    validator = { source: "disabled" };
-  } else if (context.contextValidator?.kind === "use") {
+  if (context.contextValidator !== undefined) {
     validator = {
-      value: context.contextValidator.value,
+      value: context.contextValidator,
       source: "context-override",
     };
   } else if (workflowConfig.contextValidator !== undefined) {
@@ -463,16 +468,16 @@ function ResolvedSetupStrip({
       className="flex flex-shrink-0 flex-wrap items-center gap-[6px] border-b border-solid border-border-dim bg-bg-base px-lg py-[10px]"
       data-section="resolved-setup"
     >
-      <BackendChip backend={implementer.backend}>
-        {implementerChipLabel(implementer)}
+      <BackendChip backend={implementer.agent.backend}>
+        {implementerChipLabel(implementer.agent)}
       </BackendChip>
-      {validator.source !== "disabled" && validator.value.enabled ? (
-        <BackendChip
-          backend={validator.value.type === "codex" ? "codex" : "claude"}
-        >
-          Validator · {validatorChipLabel(validator.value)}
-        </BackendChip>
-      ) : null}
+      {validator.value.enabled
+        ? validator.value.assignments.map((assignment) => (
+            <BackendChip key={assignment.id} backend={assignment.agent.backend}>
+              Validator · {validatorChipLabel(assignment)}
+            </BackendChip>
+          ))
+        : null}
       {cascade.scriptValidator.value.enabled ? (
         <GateChip tone="neutral" icon={<ScriptGlyphIcon size={13} />}>
           Script
@@ -502,11 +507,11 @@ function ResolvedSetupStrip({
 
 type WorkflowCascade = {
   implementer: {
-    value: GraphWorkflowAgentConfig;
+    value: AgentAssignment;
     source: "global" | "context-override";
   };
   contextValidator: {
-    value: GraphWorkflowAgentValidatorConfig;
+    value: ValidatorCohort;
     source: "global" | "context-override";
   };
   scriptValidator: {
@@ -584,6 +589,35 @@ function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/**
+ * The cohort editor's provenance line for a resolved cascade entry.
+ *
+ * The block header already carries the source badge; this restates it INSIDE
+ * the editor because a cohort is the one block whose body is a list the author
+ * can reorder and extend — the affordances have to say, next to themselves,
+ * which tier they are editing.
+ */
+function cohortCascadeProvenance(
+  source: Exclude<InspectorConfigBlockSource, "disabled">,
+  tierLabel: string,
+  enabled: boolean,
+): CohortCascadeProvenance {
+  const origin =
+    source === "global"
+      ? "global defaults"
+      : source === "workflow"
+        ? "this workflow"
+        : tierLabel;
+  // "Disabled" is the cohort's own flag rather than a tier, which is exactly
+  // what lets a switched-off cohort still report which tier its dormant
+  // assignments came from.
+  if (!enabled) return { state: "disabled", origin };
+  return {
+    state: source === "context-override" ? "use" : "inherit",
+    origin,
+  };
+}
+
 export default function WorkflowInspectorPanel({
   onSave,
   onDelete,
@@ -592,6 +626,7 @@ export default function WorkflowInspectorPanel({
   activeTab: controlledActiveTab,
   onTabChange,
   voiceProjectName,
+  libraryProjectName,
   onOutputSchemaBlockedChange,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
   const defaults = globalDefaults ?? SEEDED_WORKFLOW_DEFAULTS;
@@ -783,6 +818,7 @@ export default function WorkflowInspectorPanel({
                 }}
                 onPrimaryAction={handleSave}
                 voiceProjectName={voiceProjectName}
+                libraryProjectName={libraryProjectName}
                 onSetOverride={(block, value) => {
                   updateDefinition(
                     setWorkflowConfigOverride(draftDefinition, block, value),
@@ -851,22 +887,6 @@ export default function WorkflowInspectorPanel({
                       ),
                     );
                   }}
-                  onDisableValidator={() => {
-                    updateDefinition(
-                      disableContextValidator(
-                        draftDefinition,
-                        selectedContext.id,
-                      ),
-                    );
-                  }}
-                  onEnableValidator={() => {
-                    updateDefinition(
-                      enableContextValidator(
-                        draftDefinition,
-                        selectedContext.id,
-                      ),
-                    );
-                  }}
                   onAddTask={() => {
                     const result = addTaskToContext(
                       draftDefinition,
@@ -904,6 +924,7 @@ export default function WorkflowInspectorPanel({
                   onDelete={() => onDelete(selectedContext.id)}
                   onPrimaryAction={handleSave}
                   voiceProjectName={voiceProjectName}
+                  libraryProjectName={libraryProjectName}
                 />
               </TabsContent>
             ) : null}
@@ -922,6 +943,7 @@ function WorkflowTabBody({
   onParametersChange,
   onPrimaryAction,
   voiceProjectName,
+  libraryProjectName,
   onSetOverride,
   onClearOverride,
 }: {
@@ -932,6 +954,7 @@ function WorkflowTabBody({
   onParametersChange: (next: ParameterDeclaration[]) => void;
   onPrimaryAction: (force?: boolean) => void;
   voiceProjectName?: string | null;
+  libraryProjectName?: string | null;
   onSetOverride: <K extends keyof WorkflowConfigOverride>(
     block: K,
     value: NonNullable<WorkflowConfigOverride[K]>,
@@ -963,8 +986,8 @@ function WorkflowTabBody({
           <InspectorConfigBlock
             label="Implementer"
             chip={
-              <BackendChip backend={cascade.implementer.value.backend}>
-                {implementerChipLabel(cascade.implementer.value)}
+              <BackendChip backend={cascade.implementer.value.agent.backend}>
+                {implementerChipLabel(cascade.implementer.value.agent)}
               </BackendChip>
             }
             source={cascade.implementer.source}
@@ -976,6 +999,7 @@ function WorkflowTabBody({
             <ImplementerEditor
               value={cascade.implementer.value}
               onChange={(next) => onSetOverride("implementer", next)}
+              libraryProjectName={libraryProjectName}
               readOnly={!isWorkflowOverride(cascade.implementer.source)}
             />
           </InspectorConfigBlock>
@@ -1017,11 +1041,7 @@ function WorkflowTabBody({
             label="Context validator"
             chip={
               validatorValue.enabled ? (
-                <BackendChip
-                  backend={validatorValue.type === "codex" ? "codex" : "claude"}
-                >
-                  {validatorChipLabel(validatorValue)}
-                </BackendChip>
+                <CohortChips cohort={validatorValue} />
               ) : undefined
             }
             summary={validatorValue.enabled ? undefined : "off"}
@@ -1030,10 +1050,10 @@ function WorkflowTabBody({
             headerSwitch={{
               checked: validatorValue.enabled,
               onCheckedChange: (enabled) =>
-                onSetOverride("contextValidator", {
-                  ...deepClone(validatorValue),
-                  enabled,
-                }),
+                onSetOverride(
+                  "contextValidator",
+                  toggleCohortEnabled(validatorValue, enabled),
+                ),
               ariaLabel: "Workflow context validator enabled",
             }}
             onOverride={() =>
@@ -1041,9 +1061,15 @@ function WorkflowTabBody({
             }
             onReset={() => onClearOverride("contextValidator")}
           >
-            <ContextValidatorEditor
+            <CohortEditor
               value={validatorValue}
               onChange={(next) => onSetOverride("contextValidator", next)}
+              cascade={cohortCascadeProvenance(
+                cascade.contextValidator.source,
+                "this workflow",
+                validatorValue.enabled,
+              )}
+              libraryProjectName={libraryProjectName}
               readOnly={!isWorkflowOverride(cascade.contextValidator.source)}
             />
           </InspectorConfigBlock>
@@ -1237,8 +1263,6 @@ function ContextTabBody({
   onSchemaTextValidChange,
   onSetContextOverride,
   onClearContextOverride,
-  onDisableValidator,
-  onEnableValidator,
   onAddTask,
   onUpdateTask,
   onRemoveTask,
@@ -1247,6 +1271,7 @@ function ContextTabBody({
   onDelete,
   onPrimaryAction,
   voiceProjectName,
+  libraryProjectName,
 }: {
   context: GraphWorkflowExecutionContextDefinition;
   tasks: GraphWorkflowTaskDefinition[];
@@ -1267,8 +1292,6 @@ function ContextTabBody({
     value: NonNullable<GraphWorkflowExecutionContextDefinition[K]>,
   ) => void;
   onClearContextOverride: (block: ContextBlock) => void;
-  onDisableValidator: () => void;
-  onEnableValidator: () => void;
   onAddTask: () => void;
   onUpdateTask: (
     taskId: string,
@@ -1280,6 +1303,7 @@ function ContextTabBody({
   onDelete: () => void;
   onPrimaryAction: (force?: boolean) => void;
   voiceProjectName?: string | null;
+  libraryProjectName?: string | null;
 }): React.JSX.Element {
   const cascade = computeContextCascade(
     context,
@@ -1381,8 +1405,8 @@ function ContextTabBody({
           <InspectorConfigBlock
             label="Implementer"
             chip={
-              <BackendChip backend={cascade.implementer.value.backend}>
-                {implementerChipLabel(cascade.implementer.value)}
+              <BackendChip backend={cascade.implementer.value.agent.backend}>
+                {implementerChipLabel(cascade.implementer.value.agent)}
               </BackendChip>
             }
             source={cascade.implementer.source}
@@ -1397,6 +1421,7 @@ function ContextTabBody({
             <ImplementerEditor
               value={cascade.implementer.value}
               onChange={(next) => onSetContextOverride("implementer", next)}
+              libraryProjectName={libraryProjectName}
               readOnly={cascade.implementer.source !== "context-override"}
             />
           </InspectorConfigBlock>
@@ -1436,23 +1461,14 @@ function ContextTabBody({
         <div className="flex flex-col gap-sm">
           <ContextValidatorBlock
             cascade={cascade.contextValidator}
-            onOverride={(value) => {
-              const override: ContextValidatorOverride = {
-                kind: "use",
-                value: deepClone(value),
-              };
-              onSetContextOverride("contextValidator", override);
-            }}
-            onChange={(value) => {
-              const override: ContextValidatorOverride = {
-                kind: "use",
-                value,
-              };
-              onSetContextOverride("contextValidator", override);
-            }}
+            libraryProjectName={libraryProjectName}
+            onOverride={(value) =>
+              onSetContextOverride("contextValidator", deepClone(value))
+            }
+            onChange={(value) =>
+              onSetContextOverride("contextValidator", value)
+            }
             onReset={() => onClearContextOverride("contextValidator")}
-            onDisable={onDisableValidator}
-            onEnable={onEnableValidator}
           />
 
           <ScriptValidatorBlock
@@ -1771,81 +1787,64 @@ const VALIDATOR_DESCRIPTION =
 
 function ContextValidatorBlock({
   cascade,
+  libraryProjectName,
   onOverride,
   onChange,
   onReset,
-  onDisable,
-  onEnable,
 }: {
   cascade: ResolvedContextCascade["contextValidator"];
-  onOverride: (value: GraphWorkflowAgentValidatorConfig) => void;
-  onChange: (value: GraphWorkflowAgentValidatorConfig) => void;
+  libraryProjectName?: string | null;
+  onOverride: (value: ValidatorCohort) => void;
+  onChange: (value: ValidatorCohort) => void;
   onReset: () => void;
-  onDisable: () => void;
-  onEnable: () => void;
 }): React.JSX.Element {
-  if (cascade.source === "disabled") {
-    return (
-      <InspectorConfigBlock
-        label="Context validator"
-        summary="disabled"
-        source="disabled"
-        onOverride={() => {
-          // Re-enable then transition to override with seeded claude validator
-          const seedValidator: GraphWorkflowAgentValidatorConfig = {
-            type: "claude",
-            enabled: true,
-            continuity: { enabled: true },
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
-            },
-          };
-          onOverride(seedValidator);
-        }}
-        onToggleDisabled={onEnable}
-      >
-        <ReadonlyBlockPreview
-          entries={[["status", "disabled for this context"]]}
-        />
-      </InspectorConfigBlock>
-    );
-  }
-
-  const validator = cascade.value;
+  const cohort = cascade.value;
 
   return (
     <InspectorConfigBlock
       label="Context validator"
-      chip={
-        validator.enabled ? (
-          <BackendChip
-            backend={validator.type === "codex" ? "codex" : "claude"}
-          >
-            {validatorChipLabel(validator)}
-          </BackendChip>
-        ) : undefined
-      }
-      summary={validator.enabled ? undefined : "off"}
+      chip={cohort.enabled ? <CohortChips cohort={cohort} /> : undefined}
+      summary={cohort.enabled ? undefined : "off"}
       source={cascade.source}
       description={VALIDATOR_DESCRIPTION}
       headerSwitch={{
-        checked: validator.enabled,
+        checked: cohort.enabled,
         onCheckedChange: (enabled) =>
-          onChange({ ...deepClone(validator), enabled }),
+          onChange(toggleCohortEnabled(cohort, enabled)),
         ariaLabel: "Context validator enabled",
       }}
-      onOverride={() => onOverride(validator)}
+      onOverride={() => onOverride(cohort)}
       onReset={cascade.source === "context-override" ? onReset : undefined}
-      onToggleDisabled={onDisable}
     >
-      <ContextValidatorEditor
-        value={validator}
+      <CohortEditor
+        value={cohort}
         onChange={onChange}
+        cascade={cohortCascadeProvenance(
+          cascade.source,
+          "this context",
+          cohort.enabled,
+        )}
+        libraryProjectName={libraryProjectName}
         readOnly={cascade.source !== "context-override"}
       />
     </InspectorConfigBlock>
+  );
+}
+
+/** One identity chip per cohort assignment, in configured order. */
+function CohortChips({
+  cohort,
+}: {
+  cohort: ValidatorCohort;
+}): React.JSX.Element {
+  return (
+    <>
+      {cohort.assignments.map((assignment) => (
+        <BackendChip key={assignment.id} backend={assignment.agent.backend}>
+          {validatorChipLabel(assignment)}
+        </BackendChip>
+      ))}
+    </>
   );
 }
 
@@ -1993,26 +1992,5 @@ function AgentTaskAddBlock({
       }}
       onReset={cascade.source === "context-override" ? onReset : undefined}
     />
-  );
-}
-
-function ReadonlyBlockPreview({
-  entries,
-}: {
-  entries: Array<[string, string]>;
-}): React.JSX.Element {
-  return (
-    <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-md gap-y-[3px] p-0 font-mono">
-      {entries.map(([key, value]) => (
-        <div className="[display:contents]" key={key}>
-          <dt className="min-w-0 overflow-hidden text-[0.7rem] font-medium tracking-normal text-ellipsis whitespace-nowrap text-text-tertiary normal-case">
-            {key}
-          </dt>
-          <dd className="m-0 min-w-0 justify-self-end text-right text-[0.72rem] font-medium [overflow-wrap:anywhere] text-text-primary">
-            {value}
-          </dd>
-        </div>
-      ))}
-    </dl>
   );
 }

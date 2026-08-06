@@ -63,6 +63,8 @@ function makeConversation(
   o: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",

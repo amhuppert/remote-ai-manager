@@ -3,6 +3,11 @@
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import {
+  parseAgentProfilePickerValue,
+  STANDARD_AGENT_PROFILE_VALUE,
+} from "@/components/agent-profiles/agent-profile-picker-state";
 import BackendToggle from "@/components/BackendToggle";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
@@ -78,6 +83,9 @@ export default function StartTicketDialog({
   const [reasoningEffort, setReasoningEffort] = useState<EffortLevel>(
     initialDefaults.effort,
   );
+  const [profileValue, setProfileValue] = useState(
+    STANDARD_AGENT_PROFILE_VALUE,
+  );
   const [error, setError] = useState<string | null>(null);
   const [preparedSessionName, setPreparedSessionName] = useState<string | null>(
     null,
@@ -106,6 +114,7 @@ export default function StartTicketDialog({
       setBackend(defaultBackend);
       setModel(defaults.model);
       setReasoningEffort(defaults.effort);
+      setProfileValue(STANDARD_AGENT_PROFILE_VALUE);
       setError(null);
       setPreparedSessionName(null);
     }
@@ -116,11 +125,15 @@ export default function StartTicketDialog({
     setError(null);
     const generation = requestGeneration.capture();
     const effortLevels = getEffortLevelsForBackend(backend, model);
+    const profile = parseAgentProfilePickerValue(profileValue) ?? undefined;
     startMutation.mutate(
       {
         projectName,
         number,
         mode,
+        // Identity applies to both modes: a prepared session's first manual
+        // turn runs under the same profile an agent start would have used.
+        ...(profile === undefined ? {} : { profile }),
         ...(mode === "agent"
           ? {
               backend,
@@ -223,6 +236,16 @@ export default function StartTicketDialog({
                   description="Context is materialized, then the session waits for your first prompt."
                 />
               </RadioGroup>
+            </FormGroup>
+
+            <FormGroup>
+              <FieldGroupLabel>Agent profile</FieldGroupLabel>
+              <AgentProfilePicker
+                projectName={projectName}
+                value={profileValue}
+                onChange={(selection) => setProfileValue(selection.value)}
+                disabled={pending}
+              />
             </FormGroup>
 
             {mode === "agent" && (

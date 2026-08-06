@@ -115,6 +115,48 @@ export function reachableLanesFrom(
   return visited;
 }
 
+/**
+ * Every context whose committed output is present in this lane's branch: the
+ * contexts that ran on the lane, plus the contexts a succeeded join has
+ * already merged into it, transitively through chained merges.
+ *
+ * A join moves commits into its target branch but never writes the merged
+ * contexts into the target lane's `includedContextIds` — that field records
+ * only what RAN on the lane. Reachability covers the gap in the source →
+ * target direction, so a context still on the source lane can see the target.
+ * It does not help a lane FORKED from the target afterwards: the fork's branch
+ * carries the merged work, but it is neither a source nor a target of any
+ * join, so nothing connects it to the merged upstream. Seeding a fork's
+ * included set from this function closes that hole at fork time, when the
+ * answer is a fact about the branch being copied.
+ */
+export function contextsPresentInLane(
+  laneId: string,
+  execution: GraphWorkflowExecution,
+): string[] {
+  const present = new Set<string>();
+  const visitedLanes = new Set<string>([laneId]);
+  const queue: string[] = [laneId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const contextId of execution.executionLanes[current]
+      ?.includedContextIds ?? []) {
+      present.add(contextId);
+    }
+    for (const join of Object.values(execution.joins ?? {})) {
+      if (join.targetLaneId !== current) continue;
+      for (const sourceLaneId of join.mergedSourceLaneIds) {
+        if (visitedLanes.has(sourceLaneId)) continue;
+        visitedLanes.add(sourceLaneId);
+        queue.push(sourceLaneId);
+      }
+    }
+  }
+
+  return [...present];
+}
+
 export type ContextSchedulability =
   | {
       kind: "schedulable";

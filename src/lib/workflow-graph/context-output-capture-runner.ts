@@ -74,14 +74,14 @@ export function createGraphWorkflowOutputCaptureRunner(
         : {}),
     });
     const timeoutMs = await deps.resolveTimeoutMs?.(
-      context.implementer.backend,
+      context.implementer.agent.backend,
     );
 
     logger.info("graph-workflow.output_capture.turn_started", {
       executionId: input.execution.id,
       contextId: input.contextId,
       conversationId: input.conversationId,
-      backend: context.implementer.backend,
+      backend: context.implementer.agent.backend,
       retry: input.previousRejection !== undefined,
     });
 
@@ -95,8 +95,8 @@ export function createGraphWorkflowOutputCaptureRunner(
       // document, so anything less than the whole schema would validate a
       // different contract than the author wrote.
       outputFormat: { type: "json_schema", schema: input.outputSchema },
-      modelId: context.implementer.model,
-      effort: context.implementer.reasoningEffort,
+      modelId: context.implementer.agent.model,
+      effort: context.implementer.agent.reasoningEffort,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(input.executionTarget !== undefined
         ? { worktreePath: input.executionTarget.worktreePath }
@@ -169,7 +169,7 @@ function toCaptureOutcome(
       engine:
         input.execution.workingDefinition.executionContexts.find(
           (entry) => entry.id === input.contextId,
-        )?.implementer.backend ?? "claude",
+        )?.implementer.agent.backend ?? "claude",
       cause: result.aborted ? "abort" : "sdk_error",
       originalMessage: result.error,
     });

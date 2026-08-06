@@ -7,6 +7,7 @@ import {
 } from "./schemas";
 import { graphWorkflowResolvedContextSchema } from "./definition-schemas";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import { makeProfileSnapshot } from "./test-fixtures";
 
 describe("graphWorkflowPlanRepairPolicySchema", () => {
   it("defaults to enabled with two attempts per context (F4: default ON)", () => {
@@ -110,11 +111,12 @@ describe("resolved context schema — planRepair", () => {
       title: "Context",
       acceptanceCriteria: "must pass",
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
       },
-      contextValidator: null,
+      contextValidator: { enabled: false, assignments: [] },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },

@@ -7,6 +7,7 @@ import {
 } from "./schema-cutover-guard";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { validateJsonSchemaSubset } from "@/lib/workflows/primitives/output-schema-subset";
+import { makeProfileSnapshot } from "./test-fixtures";
 
 const timestamp = "2026-04-04T00:00:00.000Z";
 
@@ -34,9 +35,13 @@ function makeValidDefinitionRecord() {
           title: "Plan",
           acceptanceCriteria: "All tasks complete",
           implementer: {
-            backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "high",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -76,11 +81,16 @@ function makeValidExecution() {
           title: "Plan",
           acceptanceCriteria: "All tasks complete",
           implementer: {
-            backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "high",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -555,6 +565,109 @@ describe("assertNoLegacyWorkflowFields", () => {
         type: "object",
         properties: { taskValidation: { type: "string" } },
         required: ["taskValidation"],
+      };
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).not.toThrow();
+  });
+});
+
+// The agent-assignment hard cutover (migration 0011). Every legacy holder was
+// rewritten once; anything still carrying a singleton shape afterwards is a
+// stale writer, and it must be told exactly where and what to write instead.
+describe("post-cutover refusal of legacy singleton agent shapes", () => {
+  it("refuses a legacy implementer triple, locating the use site and the expected form", () => {
+    const record = makeValidDefinitionRecord();
+    record.definition.executionContexts[0]!.implementer = {
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+    } as never;
+
+    expect(() => assertDefinitionRecordSupported(record)).toThrow(
+      LegacyWorkflowSchemaError,
+    );
+    try {
+      assertDefinitionRecordSupported(record);
+      throw new Error("expected a refusal");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("definition.executionContexts.0.implementer");
+      expect(message).toContain("profile");
+    }
+  });
+
+  it("refuses a legacy provider-named singleton validator on the workflow tier", () => {
+    const record = makeValidDefinitionRecord();
+    (
+      record.definition.workflowConfig as Record<string, unknown>
+    ).contextValidator = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+    };
+
+    try {
+      assertDefinitionRecordSupported(record);
+      throw new Error("expected a refusal");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LegacyWorkflowSchemaError);
+      const message = (error as Error).message;
+      expect(message).toContain("definition.workflowConfig.contextValidator");
+      expect(message).toContain("assignments");
+    }
+  });
+
+  it("refuses the legacy context-tier {kind} validator wrapper", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (
+      definition.executionContexts[0]! as Record<string, unknown>
+    ).contextValidator = { kind: "disabled" };
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).toThrow(LegacyWorkflowSchemaError);
+  });
+
+  it("accepts the current assignment and cohort shapes", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (
+      definition.executionContexts[0]! as Record<string, unknown>
+    ).contextValidator = {
+      enabled: true,
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
+    };
+
+    expect(() =>
+      assertNoLegacyWorkflowFields(definition, "Workflow definition (save)"),
+    ).not.toThrow();
+  });
+
+  it("does not treat a declared outputSchema property named contextValidator as a legacy shape", () => {
+    const definition = makeValidDefinitionRecord().definition;
+    (definition.executionContexts[0]! as Record<string, unknown>).outputSchema =
+      {
+        type: "object",
+        properties: {
+          contextValidator: {
+            type: "object",
+            properties: { type: { type: "string" } },
+          },
+        },
       };
 
     expect(() =>

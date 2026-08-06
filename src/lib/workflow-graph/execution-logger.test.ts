@@ -201,10 +201,10 @@ describe("writePrompt", () => {
 });
 
 describe("writeValidatorResponse", () => {
-  it("writes structured JSON to contexts/<contextId>/prompts/", () => {
+  it("writes structured JSON under the reviewing assignment's directory", () => {
     const logger = createTestLogger();
     logger.writeValidatorResponse(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       "task-validation-setup-auth-response.json",
       {
         raw: '{"pass": true}',
@@ -222,7 +222,8 @@ describe("writeValidatorResponse", () => {
         logger.logDir,
         "contexts",
         "ctx-1",
-        "prompts",
+        "validators",
+        "general",
         "task-validation-setup-auth-response.json",
       ),
     ) as Record<string, unknown>;
@@ -231,13 +232,48 @@ describe("writeValidatorResponse", () => {
       parsePath: "structured_output",
     });
   });
+
+  // R8.1: a cohort's evidence must survive the round. Keyed by lane kind alone,
+  // the second specialist's response overwrote the first's.
+  it("keeps two assignments' responses for the same context side by side", () => {
+    const logger = createTestLogger();
+    for (const assignmentId of ["reviewer-a", "reviewer-b"]) {
+      logger.writeValidatorResponse(
+        { contextId: "ctx-1", assignmentId },
+        "context-validator.json",
+        {
+          raw: `{"reviewer":"${assignmentId}"}`,
+          parsed: { reviewer: assignmentId },
+          parsePath: "structured_output",
+        },
+      );
+    }
+
+    const read = (assignmentId: string) =>
+      readJson(
+        path.join(
+          logger.logDir,
+          "contexts",
+          "ctx-1",
+          "validators",
+          assignmentId,
+          "context-validator.json",
+        ),
+      ) as Record<string, unknown>;
+    expect(read("reviewer-a")).toMatchObject({
+      raw: '{"reviewer":"reviewer-a"}',
+    });
+    expect(read("reviewer-b")).toMatchObject({
+      raw: '{"reviewer":"reviewer-b"}',
+    });
+  });
 });
 
 describe("writeValidatorTranscript", () => {
   it("appends a begin-marker followed by one item event per entry", () => {
     const logger = createTestLogger();
     logger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: "codex" },
       [
         {
@@ -260,6 +296,8 @@ describe("writeValidatorTranscript", () => {
         logger.logDir,
         "contexts",
         "ctx-1",
+        "validators",
+        "general",
         "validation-transcript.jsonl",
       ),
     );
@@ -293,12 +331,12 @@ describe("writeValidatorTranscript", () => {
       raw: { type: "agent_message", text: "x" },
     };
     logger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: "codex" },
       [entry],
     );
     logger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: "codex" },
       [entry],
     );
@@ -308,6 +346,8 @@ describe("writeValidatorTranscript", () => {
         logger.logDir,
         "contexts",
         "ctx-1",
+        "validators",
+        "general",
         "validation-transcript.jsonl",
       ),
     ).filter((e) => e.event === "validator.transcript_begin");
@@ -327,7 +367,7 @@ describe("writeValidatorTranscript", () => {
       now: fixedNow,
     });
     firstLogger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: "codex" },
       [entry],
     );
@@ -337,7 +377,7 @@ describe("writeValidatorTranscript", () => {
       now: fixedNow,
     });
     resumedLogger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: "codex" },
       [entry],
     );
@@ -347,6 +387,8 @@ describe("writeValidatorTranscript", () => {
         resumedLogger.logDir,
         "contexts",
         "ctx-1",
+        "validators",
+        "general",
         "validation-transcript.jsonl",
       ),
     ).filter((e) => e.event === "validator.transcript_begin");
@@ -356,7 +398,7 @@ describe("writeValidatorTranscript", () => {
   it("writes nothing when there are no entries", () => {
     const logger = createTestLogger();
     logger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: "claude" },
       [],
     );
@@ -367,6 +409,8 @@ describe("writeValidatorTranscript", () => {
           logger.logDir,
           "contexts",
           "ctx-1",
+          "validators",
+          "general",
           "validation-transcript.jsonl",
         ),
       ),
@@ -445,7 +489,7 @@ describe("silent failure", () => {
       logger.decision("test.event");
       logger.writePrompt("ctx-1", "test.md", "content");
       logger.writeValidatorTranscript(
-        "ctx-1",
+        { contextId: "ctx-1", assignmentId: "general" },
         { lane: "context_validator", engine: "codex" },
         [{ seq: 0, backend: "codex", type: "agent_message", raw: {} }],
       );

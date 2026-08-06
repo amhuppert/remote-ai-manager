@@ -18,6 +18,7 @@ import {
   agentSessionRefSchema,
 } from "@/lib/shared/schemas";
 import { agentTranscriptEntrySchema } from "@/lib/agent-backends/transcript";
+import { fsWritePolicySchema } from "@/lib/agent-backends/task";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import { continuationDispositionSchema } from "@/lib/agent-backends/errors";
 import { messageContentBlockSchema } from "@/lib/conversations/message-content-schemas";
@@ -111,6 +112,10 @@ export const agentCallRequestSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("task_run"),
     backend: agentBackendIdShapeSchema,
+    // Task-path only: the envelope is established by the task runner's native
+    // sandbox mechanism. Declaring it on the shared base would let a
+    // conversation turn carry a policy no dispatch path can honour.
+    fsWritePolicy: fsWritePolicySchema.optional(),
     ...baseRequestFields,
   }),
 ]);

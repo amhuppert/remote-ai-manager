@@ -403,6 +403,54 @@ describe("executeWorkflowTaskRun", () => {
     expect(result.kind).toBe("text");
   });
 
+  it("forwards the server-derived fsWritePolicy through SUBMIT_TASK_RUN into the runTaskRun input", async () => {
+    const fsWritePolicy = {
+      mode: "allowlist" as const,
+      allowWrite: [
+        "/private/tmp/lane/scratch",
+        "/private/tmp/lane/scratch/tmp",
+      ],
+      denyWrite: ["/private/repo/worktree"],
+    };
+
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "restricted turn",
+      timeoutMs: 5000,
+      fsWritePolicy,
+    });
+
+    const invocation = await nextPendingInvocation();
+    // The machine event fold and the actor invoke input are two distinct hops;
+    // a policy dropped at either one leaves the lane unrestricted with no other
+    // signal, so the assertion is on the value the actor actually receives.
+    expect(invocation.input.fsWritePolicy).toEqual(fsWritePolicy);
+    invocation.resolve(defaultResult());
+
+    const result = await callPromise;
+    expect(result.kind).toBe("text");
+  });
+
+  it("leaves the runTaskRun input unrestricted when no fsWritePolicy is supplied", async () => {
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "implementer turn",
+      timeoutMs: 5000,
+    });
+
+    const invocation = await nextPendingInvocation();
+    expect(invocation.input.fsWritePolicy).toBeUndefined();
+    invocation.resolve(defaultResult());
+
+    await callPromise;
+  });
+
   it("forwards the structured-output transcript field into the runTaskRun input", async () => {
     const callPromise = executeWorkflowTaskRun({
       projectPath: PROJECT_PATH,

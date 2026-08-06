@@ -109,6 +109,40 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     expect(input.prompt).toContain("lint: 1 error");
   });
 
+  /**
+   * The agent used to be barred from running any check itself. That works for
+   * an error whose remedy is legible in its own message, and fails for the
+   * ones that are not: a seam/architecture rule whose sanctioned fix is a new
+   * module rather than the edit the message suggests, or a ratchet reporting
+   * only a count. Those need the agent to re-run the check to know whether it
+   * actually resolved. The bar stays on the FULL validation script, which
+   * rebuilds and runs the whole suite — the caller re-runs that and feeds any
+   * remainder back.
+   */
+  it("lets the agent re-run lint and typecheck, but not the full validation script", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    await fixValidationErrors({
+      worktreePath: "/tmp/worktree",
+      validationOutput: "lint: 1 error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    const instructions = input.systemInstructions ?? "";
+    expect(instructions).toMatch(/run the project's linter/i);
+    expect(instructions).toMatch(/full validation script/i);
+    // The old blanket prohibition, which also covered the linter.
+    expect(instructions).not.toMatch(/not run the validation script yourself/i);
+  });
+
   it("uses the first-attempt prompt when isRetry is false", async () => {
     const executeWorkflowTaskRun = vi
       .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
@@ -190,6 +224,33 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     if (result.status === "failed") {
       expect(result.error).toContain("SDK fail");
     }
+  });
+
+  /**
+   * Session names are free text — a ticket session is named after its ticket
+   * title, which routinely carries "/" (and on Windows "\"). Those reach the
+   * scratch filename, where an unescaped separator makes the write target a
+   * directory that was never created and the fix agent dies before its first
+   * turn, halting the merge on a validation failure it could have fixed.
+   */
+  it("dispatches the fix turn for a session name containing path separators", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    const result = await fixValidationErrors({
+      worktreePath: "/tmp/worktree",
+      validationOutput: "lint: 1 error",
+      projectPath: PROJECT_PATH,
+      sessionName: "Ticket: roadmap D0-D2 delivered; pick up at D3/D4",
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+    });
+
+    expect(result).toEqual({ status: "fixed" });
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
   });
 
   it("threads validationCommand into the prompt when provided", async () => {

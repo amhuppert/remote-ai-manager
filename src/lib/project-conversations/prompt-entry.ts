@@ -16,6 +16,7 @@ import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
@@ -33,7 +34,11 @@ export interface ExecuteProjectPromptStreamDeps {
   getProjectDisplayName(projectPath: string): string;
   createProjectConversation(
     projectPath: string,
-    opts?: { agentBackend?: AgentBackendId; creationRequestId?: string },
+    opts?: {
+      agentBackend?: AgentBackendId;
+      creationRequestId?: string;
+      profile?: AgentProfileRef;
+    },
   ): Promise<ConversationState>;
   getProjectConversation(
     projectPath: string,
@@ -96,6 +101,12 @@ export interface ExecuteProjectPromptStreamInput {
    * conversation: the client already named that one.
    */
   creationRequestId?: string;
+  /**
+   * Profile for the conversation this entry creates. Ignored when the turn
+   * targets an existing conversation — that one's profile is already resolved,
+   * and changing it goes through the profile PATCH route while it is unlocked.
+   */
+  profile?: AgentProfileRef;
 }
 
 function defaultDeps(): ExecuteProjectPromptStreamDeps {
@@ -178,6 +189,7 @@ export function createProjectPromptExecutor(
         ...(input.creationRequestId !== undefined
           ? { creationRequestId: input.creationRequestId }
           : {}),
+        ...(input.profile !== undefined ? { profile: input.profile } : {}),
       });
       logger.info("project-conversation.first_turn_created", {
         projectPath,

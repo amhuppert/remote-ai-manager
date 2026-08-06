@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
-  agentBackendIdShapeSchema,
-  type AgentBackendId,
-} from "@/lib/shared/schemas";
+  agentProfileIdSchema,
+  agentProfileTierSchema,
+} from "@/lib/agent-profiles/schemas";
 import {
   contextOutputSchemaSchema,
   graphWorkflowContextStatusSchema,
@@ -19,7 +19,9 @@ import {
   graphWorkflowExecutionJoinKindSchema,
   graphWorkflowExecutionJoinStatusSchema,
   graphWorkflowHaltReasonSchema,
-  graphWorkflowLaneKindSchema,
+  graphWorkflowValidationReviewArtifactSchema,
+  graphWorkflowValidationSessionRefSchema,
+  type GraphWorkflowValidationReviewArtifact,
 } from "./schemas";
 
 const graphWorkflowExecutionLaneIdSchema = z.string().trim().min(1);
@@ -143,151 +145,83 @@ export type GraphWorkflowTaskStatusEvent = z.infer<
   typeof graphWorkflowTaskStatusEventSchema
 >;
 
-function normalizeLegacyValidationEventSessionRef(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  if (record.backend !== undefined) {
-    if (record.lane !== undefined && record.refKind !== undefined) return value;
-    return {
-      ...record,
-      lane: record.lane ?? "context_validator",
-      refKind: record.refKind ?? "backend",
-    };
-  }
-
-  if (record.engine === "claude") {
-    return {
-      backend: record.engine,
-      ref: record.conversationId,
-      lane: record.lane,
-      refKind: "conversation",
-      workflowConversationId: record.conversationId,
-    };
-  }
-  if (record.engine === "codex") {
-    return {
-      backend: record.engine,
-      ref: record.threadId,
-      lane: record.lane,
-      refKind: "backend",
-    };
-  }
-  return value;
-}
-
-export const graphWorkflowValidationEventSessionRefSchema = z.preprocess(
-  normalizeLegacyValidationEventSessionRef,
-  z.object({
-    backend: agentBackendIdShapeSchema,
-    ref: z.string().trim().min(1),
-    lane: graphWorkflowLaneKindSchema,
-    refKind: z.enum(["conversation", "backend"]),
-    workflowConversationId: z.string().trim().min(1).optional(),
-  }),
-);
-export type GraphWorkflowValidationEventSessionRef = z.infer<
-  typeof graphWorkflowValidationEventSessionRefSchema
+/**
+ * One lane's spend, hoisted out of its review artifact.
+ *
+ * The artifact's own usage is shaped by HOW the lane ran — a conversation
+ * reports turns and cost, a task run reports tokens — so a cost audit over a
+ * cohort would otherwise branch per entry before it could add anything up. One
+ * shape with absent figures nulled makes the sum a projection instead.
+ */
+const graphWorkflowValidationSpecialistUsageSchema = z
+  .object({
+    inputTokens: z.number().int().min(0).nullable().default(null),
+    cachedInputTokens: z.number().int().min(0).nullable().default(null),
+    outputTokens: z.number().int().min(0).nullable().default(null),
+    costUsd: z.number().nullable().default(null),
+    /** Conversation-strategy validators only; token counts are not projected. */
+    apiTurns: z.number().int().min(0).nullable().default(null),
+  })
+  .strict();
+export type GraphWorkflowValidationSpecialistUsage = z.infer<
+  typeof graphWorkflowValidationSpecialistUsageSchema
 >;
-
-const graphWorkflowValidationReviewUsageSchema = z.object({
-  inputTokens: z.number().int().min(0),
-  cachedInputTokens: z.number().int().min(0),
-  outputTokens: z.number().int().min(0),
-  /** Estimated from token usage because providers do not report USD. */
-  costUsd: z.number().nullable().default(null),
-});
 
 /**
- * Usage for conversation-strategy validators, derived from the conversation
- * transcript after the turn. Token counts are not projected from transcripts,
- * so this carries the billable figures the transcript does report — without
- * it every conversation-validator decision is unpriced in cost audits.
+ * What ONE cohort member decided, and who it was.
+ *
+ * Provenance lives on the entry rather than at the top of the aggregate: a
+ * round has one candidate but many reviewers, so a single top-level session ref
+ * could only ever name one of them. Identity is the frozen roster's, not the
+ * live library's — `revision` and `resolvedInstructionHash` say which bytes
+ * this reviewer actually received, which is what makes a verdict auditable
+ * after the profile is edited.
  */
-const graphWorkflowValidationConversationUsageSchema = z.object({
-  costUsd: z.number().nullable().default(null),
-  apiTurns: z.number().int().min(0).nullable().default(null),
+export const graphWorkflowValidationSpecialistEntrySchema = z.object({
+  assignmentId: z.string().trim().min(1),
+  profile: z.object({
+    tier: agentProfileTierSchema,
+    id: agentProfileIdSchema,
+    revision: z.number().int().positive(),
+  }),
+  resolvedInstructionHash: z.string().trim().min(1),
+  pass: z.boolean(),
+  summary: z.string(),
+  issues: z.array(graphWorkflowValidationIssueSchema).default([]),
+  sessionRef: graphWorkflowValidationSessionRefSchema.nullable().default(null),
+  reviewArtifact: graphWorkflowValidationReviewArtifactSchema
+    .nullable()
+    .default(null),
+  usage: graphWorkflowValidationSpecialistUsageSchema.nullable().default(null),
 });
-export type GraphWorkflowValidationConversationUsage = z.infer<
-  typeof graphWorkflowValidationConversationUsageSchema
+export type GraphWorkflowValidationSpecialistEntry = z.infer<
+  typeof graphWorkflowValidationSpecialistEntrySchema
 >;
 
-function normalizeLegacyValidationReviewArtifact(value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const record = value as Record<string, unknown>;
-  if (record.backend !== undefined) return value;
-
-  if (record.engine === "claude") {
+/**
+ * A specialist entry's usage, read off whichever artifact the lane produced.
+ * Null when the lane produced no artifact at all — the honest answer, rather
+ * than a row of zeroes that would understate a cohort's real cost.
+ */
+export function deriveGraphWorkflowValidationSpecialistUsage(
+  artifact: GraphWorkflowValidationReviewArtifact | null,
+): GraphWorkflowValidationSpecialistUsage | null {
+  if (artifact === null || artifact.usage === null) return null;
+  if (artifact.kind === "conversation") {
     return {
-      backend: record.engine,
-      kind: "conversation",
-      ref: record.conversationId,
-    };
-  }
-  if (record.engine === "codex") {
-    return {
-      backend: record.engine,
-      kind: "response",
-      ref: record.threadId,
-      response: record.response,
-      usage: record.usage,
-    };
-  }
-  return value;
-}
-
-export const graphWorkflowValidationReviewArtifactSchema = z.preprocess(
-  normalizeLegacyValidationReviewArtifact,
-  z.discriminatedUnion("kind", [
-    z.object({
-      backend: agentBackendIdShapeSchema,
-      kind: z.literal("conversation"),
-      ref: z.string().trim().min(1),
-      usage: graphWorkflowValidationConversationUsageSchema
-        .nullable()
-        .default(null),
-    }),
-    z.object({
-      backend: agentBackendIdShapeSchema,
-      kind: z.literal("response"),
-      ref: z.string().trim(),
-      response: z.string(),
-      usage: graphWorkflowValidationReviewUsageSchema.nullable().default(null),
-    }),
-  ]),
-);
-export type GraphWorkflowValidationReviewArtifact = z.infer<
-  typeof graphWorkflowValidationReviewArtifactSchema
->;
-
-export function buildGraphWorkflowValidationReviewArtifact(input: {
-  backend: AgentBackendId;
-  strategy: "conversation" | "task";
-  ref: string | null;
-  response: string;
-  usage: {
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-    costUsd: number | null;
-  } | null;
-  /** Transcript-derived usage for conversation-strategy validators. */
-  conversationUsage?: GraphWorkflowValidationConversationUsage | null;
-}): GraphWorkflowValidationReviewArtifact | null {
-  if (input.ref === null) return null;
-  if (input.strategy === "conversation") {
-    return {
-      backend: input.backend,
-      kind: "conversation",
-      ref: input.ref,
-      usage: input.conversationUsage ?? null,
+      inputTokens: null,
+      cachedInputTokens: null,
+      outputTokens: null,
+      costUsd: artifact.usage.costUsd,
+      apiTurns: artifact.usage.apiTurns,
     };
   }
   return {
-    backend: input.backend,
-    kind: "response",
-    ref: input.ref,
-    response: input.response,
-    usage: input.usage,
+    inputTokens: artifact.usage.inputTokens,
+    cachedInputTokens: artifact.usage.cachedInputTokens,
+    outputTokens: artifact.usage.outputTokens,
+    costUsd: artifact.usage.costUsd,
+    apiTurns: null,
   };
 }
 
@@ -341,15 +275,118 @@ export const graphWorkflowValidationResultEventSchema = z.object({
    * carry no snapshot, and readers fall back to the context's contract.
    */
   rejectedAgainstSchema: contextOutputSchemaSchema.nullable().optional(),
-  sessionRef: graphWorkflowValidationEventSessionRefSchema
-    .nullable()
-    .optional(),
+  /**
+   * The single reviewer's session and artifact. Null for a multi-specialist
+   * round: several reviewers each have their own, so naming one at the top
+   * would attribute the round to an arbitrary member. The per-lane refs live on
+   * `specialists`, and `producerForEvent` in evidence ingestion already falls
+   * back to the execution when this is absent.
+   */
+  sessionRef: graphWorkflowValidationSessionRefSchema.nullable().optional(),
   reviewArtifact: graphWorkflowValidationReviewArtifactSchema
     .nullable()
     .optional(),
+  /**
+   * Which round produced this verdict, and what each of its members decided —
+   * in configured cohort order.
+   *
+   * Additive in the strict sense: ABSENT, not defaulted, on every publication
+   * that belongs to no round. A defaulted field would rewrite the bytes of the
+   * `output_schema` gate rejection and of every row written before rounds
+   * existed, which is exactly the compatibility this pair of fields is required
+   * not to disturb (D12). The fields above keep their existing types and carry
+   * the deterministic aggregate, so a consumer that never learned about cohorts
+   * reads what it read before either way.
+   */
+  roundSeq: z.number().int().positive().nullable().optional(),
+  specialists: z.array(graphWorkflowValidationSpecialistEntrySchema).optional(),
 });
 export type GraphWorkflowValidationResultEvent = z.infer<
   typeof graphWorkflowValidationResultEventSchema
+>;
+
+/**
+ * One cohort member's verdict, published on its own as the round accepts it.
+ *
+ * Separate from the aggregate because the two answer different questions at
+ * different times: this one says "this reviewer has reported" while the round
+ * is still running, and the aggregate says "the round concluded". A surface
+ * that wants live per-lane detail subscribes here; evidence ingestion, which
+ * records concluded reviews, filters this out by type and never sees it.
+ */
+export const graphWorkflowValidationSpecialistResultEventSchema = z.object({
+  type: z.literal("graph-workflow-validation-specialist-result"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  roundSeq: z.number().int().positive(),
+  specialist: graphWorkflowValidationSpecialistEntrySchema,
+});
+export type GraphWorkflowValidationSpecialistResultEvent = z.infer<
+  typeof graphWorkflowValidationSpecialistResultEventSchema
+>;
+
+/**
+ * A validation round that ended without anyone judging the work.
+ *
+ * Deliberately a separate event type from `graph-workflow-validation-result`:
+ * an infrastructure outcome is not a verdict, and a surface that renders the two
+ * the same way would let "the tree moved" read as "the reviewer said no". A
+ * consumer counting failures reads validation results; a consumer diagnosing a
+ * stuck context reads these.
+ */
+export const graphWorkflowValidationIncidentEventSchema = z.object({
+  type: z.literal("graph-workflow-validation-incident"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  /**
+   * What happened that was not a verdict.
+   *
+   * Round-level: `candidate_mismatch` — the tree moved (or stopped being
+   * readable) under the cohort; `roster_drift` — the cohort the definition now
+   * declares is not the one the round froze.
+   *
+   * Lane-level: `infra_failure` — one admitted dispatch failed and the lane
+   * retries against the unchanged candidate; `infra_exhausted` — a required
+   * specialist spent every attempt on infrastructure failures, so the round has
+   * no verdict from it and cannot conclude at all; `stale_result_rejected` — a
+   * result came back carrying another round's token, so it judged a candidate
+   * this round cannot vouch for; `round_superseded` — a lane answered into a
+   * round record that is no longer the one it started in, so its write is
+   * dropped rather than landing on a stranger's round.
+   */
+  incident: z.enum([
+    "candidate_mismatch",
+    "roster_drift",
+    "infra_failure",
+    "infra_exhausted",
+    "stale_result_rejected",
+    "round_superseded",
+  ]),
+  roundSeq: z.number().int().positive(),
+  /** Which re-verification point caught it. */
+  stage: z.enum([
+    "post_script",
+    "diff_render",
+    "specialist_result",
+    "aggregate",
+  ]),
+  /** The specialist whose result was rejected; null for round-level checks. */
+  assignmentId: z.string().nullable().default(null),
+  /**
+   * Admitted dispatches the named specialist spent. Zero for every incident
+   * except an exhaustion, and zero there too when the queue never admitted it.
+   */
+  attempts: z.number().int().min(0).default(0),
+  /** What diverged: candidate components, or the drifted roster seats. */
+  driftedComponents: z.string(),
+  message: z.string(),
+});
+export type GraphWorkflowValidationIncidentEvent = z.infer<
+  typeof graphWorkflowValidationIncidentEventSchema
 >;
 
 export const graphWorkflowCircuitBreakerEventSchema = z.object({
@@ -571,6 +608,8 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowContextStatusEventSchema,
   graphWorkflowTaskStatusEventSchema,
   graphWorkflowValidationResultEventSchema,
+  graphWorkflowValidationSpecialistResultEventSchema,
+  graphWorkflowValidationIncidentEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,

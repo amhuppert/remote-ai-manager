@@ -20,11 +20,13 @@ import {
   type GraphWorkflowExecutionLoopWorkflowManager,
 } from "./execution-loop";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import { laneStateKey } from "./lane-identity";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   createUserInputGateService,
   type UserInputGateService,
 } from "./user-input-gate";
+import { createGraphWorkflowManager } from "./workflow-manager";
 
 /**
  * Task 6.2 — Prove the awaiting-user-input lifecycle and its edge flows against
@@ -75,6 +77,7 @@ function parkedRecord(conversationId: string): GraphWorkflowPendingUserInput {
     questionBatchId: `batch-${conversationId}`,
     questions: structuredClone(QUESTIONS),
     requestedAt: "2026-07-03T20:59:00.000Z",
+    roundSeq: null,
     answers: null,
   };
 }
@@ -130,7 +133,7 @@ function buildParkedExecution(input: {
       completedTaskCount: 0,
       iterationCount: isParked ? 1 : 0,
       consecutiveFailureCount: 0,
-      pendingUserInput: record,
+      pendingUserInputs: record === null ? {} : { implementer: record },
     };
     execution.taskStates[taskIdFor(contextId)] = {
       ...structuredClone(baseTask),
@@ -143,6 +146,39 @@ function buildParkedExecution(input: {
   execution.status = "running";
   execution.activeContextIds = [];
   execution.laneStates = {};
+  return execution;
+}
+
+const SECURITY_LANE_KEY = laneStateKey(
+  "context_validator",
+  "security-reviewer",
+);
+const PERF_LANE_KEY = laneStateKey("context_validator", "perf-reviewer");
+const SECURITY_CONVERSATION = "conv-security-reviewer";
+const PERF_CONVERSATION = "conv-perf-reviewer";
+
+/**
+ * One context whose cohort has TWO validator lanes parked at once — the shape
+ * `buildParkedExecution`'s single implementer record cannot express, and the
+ * one R9.1 is about. No round is open, so each record's round token is null and
+ * both answers are live.
+ */
+function buildCohortParkedExecution(): GraphWorkflowExecution {
+  const execution = buildParkedExecution({
+    contextIds: ["context-plan"],
+    parked: ["context-plan"],
+  });
+  const contextState = execution.contextStates["context-plan"]!;
+  contextState.pendingUserInputs = {
+    [SECURITY_LANE_KEY]: {
+      ...parkedRecord(SECURITY_CONVERSATION),
+      lane: "context_validator",
+    },
+    [PERF_LANE_KEY]: {
+      ...parkedRecord(PERF_CONVERSATION),
+      lane: "context_validator",
+    },
+  };
   return execution;
 }
 
@@ -394,7 +430,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       "awaiting_user_input",
     );
     expect(
-      restored.contextStates["context-plan"]?.pendingUserInput,
+      restored.contextStates["context-plan"]?.pendingUserInputs["implementer"],
     ).toMatchObject({
       conversationId: "conv-context-plan",
       questionBatchId: "batch-conv-context-plan",
@@ -428,9 +464,9 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
 
     const finalState = await reload();
     expect(finalState.contextStates["context-plan"]?.status).toBe("completed");
-    expect(
-      finalState.contextStates["context-plan"]?.pendingUserInput,
-    ).toBeNull();
+    expect(finalState.contextStates["context-plan"]?.pendingUserInputs).toEqual(
+      {},
+    );
   });
 
   it("applies answers recorded while paused immediately on re-entry without re-waiting (Req 7.1, 7.3)", async () => {
@@ -466,9 +502,9 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     expect(waitForUserInputProgress).not.toHaveBeenCalled();
     expect(result.status).toBe("completed");
     const finalState = await reload();
-    expect(
-      finalState.contextStates["context-plan"]?.pendingUserInput,
-    ).toBeNull();
+    expect(finalState.contextStates["context-plan"]?.pendingUserInputs).toEqual(
+      {},
+    );
     expect(finalState.contextStates["context-plan"]?.status).toBe("completed");
   });
 
@@ -608,12 +644,12 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
 
     const mid = await reload();
     expect(mid.contextStates["context-plan"]?.status).toBe("completed");
-    expect(mid.contextStates["context-plan"]?.pendingUserInput).toBeNull();
+    expect(mid.contextStates["context-plan"]?.pendingUserInputs).toEqual({});
     expect(mid.contextStates["context-implement"]?.status).toBe(
       "awaiting_user_input",
     );
     expect(
-      mid.contextStates["context-implement"]?.pendingUserInput,
+      mid.contextStates["context-implement"]?.pendingUserInputs["implementer"],
     ).not.toBeNull();
 
     // Unwind.
@@ -671,19 +707,27 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     });
 
     await pollStarted;
-    await repository.mutateActive(PROJECT_PATH, SESSION_NAME, (execution) => ({
-      ...execution,
-      status: "aborted",
-    }));
+    // Abort through the real manager rather than by stamping the status: the
+    // withdrawal rides that transition, and the transition also retires the
+    // running loop's generation. Hand-stamping the status would skip both and
+    // leave the scenario unable to fail the way production can.
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      userInputGateService: gate,
+    });
+    await manager.send(PROJECT_PATH, SESSION_NAME, { type: "abort" });
     releasePoll();
     const result = await runPromise;
     expect(result.status).toBe("aborted");
 
     // The abort path withdrew the record, cleared the marker, published withdrawn.
     const finalState = await reload();
-    expect(
-      finalState.contextStates["context-plan"]?.pendingUserInput,
-    ).toBeNull();
+    expect(finalState.contextStates["context-plan"]?.pendingUserInputs).toEqual(
+      {},
+    );
     expect(clearedConversations).toEqual(["conv-context-plan"]);
     expect(
       broadcasted.some(
@@ -692,6 +736,92 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
           e.resolution === "withdrawn",
       ),
     ).toBe(true);
+  });
+
+  it("resumes an answered validator lane while its sibling is still unanswered (R9.1)", async () => {
+    const eventPublisher = buildEventPublisher();
+    const repository = buildRepository(eventPublisher);
+    const gate = buildGate(repository, eventPublisher);
+    await seedExecution(buildCohortParkedExecution());
+
+    // One answer per poll, so the first resume necessarily happens while the
+    // sibling's question is still standing.
+    let polls = 0;
+    const waitForUserInputProgress = vi.fn(async () => {
+      polls += 1;
+      const conversationId =
+        polls === 1 ? SECURITY_CONVERSATION : PERF_CONVERSATION;
+      await gate.recordAnswers({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId,
+        questionBatchId: `batch-${conversationId}`,
+        answers: makeAnswers(),
+      });
+    });
+
+    const iterations: Array<{
+      resumedLaneKeys: string[];
+      stillWaitingLaneKeys: string[];
+    }> = [];
+    const deps = buildLoopDeps({
+      repository,
+      eventPublisher,
+      gate,
+      iterationOrchestrator: {
+        async runIteration(runInput): Promise<GraphWorkflowIterationResult> {
+          const atEntry = await reload();
+          const contextState = atEntry.contextStates[runInput.contextId]!;
+          iterations.push({
+            resumedLaneKeys: (runInput.resumeUserInputs ?? []).map(
+              (entry) => entry.laneKey,
+            ),
+            stillWaitingLaneKeys: Object.entries(contextState.pendingUserInputs)
+              .filter(([, record]) => record.answers === null)
+              .map(([laneKey]) => laneKey),
+          });
+          // The first resume runs the answered lane only; the cohort's other
+          // lane is still parked, so the context stays parked and the loop
+          // goes back to waiting on it.
+          if (contextState.status === "awaiting_user_input") {
+            return {
+              conversationId: SECURITY_CONVERSATION,
+              execution: atEntry,
+              shouldContinueInContext: false,
+            };
+          }
+          return {
+            conversationId: PERF_CONVERSATION,
+            execution: await fixtureRepoMutateComplete(runInput.contextId),
+            shouldContinueInContext: false,
+          };
+        },
+      },
+      waitForUserInputProgress,
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(deps);
+    const result = await loop.run({
+      projectPath: PROJECT_PATH,
+      projectName: "repo",
+      sessionName: SESSION_NAME,
+      execution: await reload(),
+    });
+
+    // The answered lane resumed on its own, with the sibling's question intact
+    // and still waiting — not held behind it.
+    expect(iterations).toEqual([
+      {
+        resumedLaneKeys: [SECURITY_LANE_KEY],
+        stillWaitingLaneKeys: [PERF_LANE_KEY],
+      },
+      { resumedLaneKeys: [PERF_LANE_KEY], stillWaitingLaneKeys: [] },
+    ]);
+    expect(result.status).toBe("completed");
+    const finalState = await reload();
+    expect(finalState.contextStates["context-plan"]?.pendingUserInputs).toEqual(
+      {},
+    );
   });
 
   it("skips the park when answers were already recorded (fast answer, Req 5.4)", async () => {
@@ -738,7 +868,7 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       contextId: "context-plan",
-      lane: "implementer",
+      laneKey: "implementer",
       conversationId: "conv-fast",
       questionBatchId: "batch-fast",
       questions: structuredClone(QUESTIONS),
@@ -748,8 +878,8 @@ describe("user-input lifecycle against real persistence (task 6.2)", () => {
     const finalState = await reload();
     expect(finalState.contextStates["context-plan"]?.status).toBe("running");
     expect(
-      finalState.contextStates["context-plan"]?.pendingUserInput?.answers
-        ?.byQuestionId,
+      finalState.contextStates["context-plan"]?.pendingUserInputs["implementer"]
+        ?.answers?.byQuestionId,
     ).toEqual(makeAnswers());
   });
 });

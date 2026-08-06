@@ -13,6 +13,8 @@ import {
   EmptyStateDesc,
 } from "@/components/ui/EmptyState";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
+import NewConversationProfileButton from "@/components/agent-profiles/NewConversationProfileButton";
 import { CloseIcon } from "@/components/icons";
 import {
   deriveSessionStatus,
@@ -187,15 +189,24 @@ export default function ConversationList({
     [session, projectName, sessionName, graphWorkflowExecutionQuery.data],
   );
 
-  const handleNewConversation = useCallback(() => {
-    if (createConvoMutation.isPending || isFinished) return;
-    createConvoMutation.mutate(undefined, {
-      onSuccess: (convo) => {
-        router.push(conversationsPageHref({ conversationId: convo.id }));
-      },
-    });
-  }, [createConvoMutation, isFinished, projectName, sessionName, router]);
-  useAppHotkey("newConversation", handleNewConversation, {
+  // Identity is a per-creation choice, so the one-click control (and its
+  // hotkey) stays on the Standard Agent the server resolves for an omitted
+  // selection, and the picker beside it names one when the user wants one.
+  const handleNewConversation = useCallback(
+    (profile?: AgentProfileRef) => {
+      if (createConvoMutation.isPending || isFinished) return;
+      createConvoMutation.mutate(
+        profile === undefined ? undefined : { profile },
+        {
+          onSuccess: (convo) => {
+            router.push(conversationsPageHref({ conversationId: convo.id }));
+          },
+        },
+      );
+    },
+    [createConvoMutation, isFinished, router],
+  );
+  useAppHotkey("newConversation", () => handleNewConversation(), {
     enabled: !createConvoMutation.isPending && !isFinished,
   });
 
@@ -393,18 +404,33 @@ export default function ConversationList({
                       Archived ({archivedCount})
                     </button>
                   )}
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    touch
-                    onClick={handleNewConversation}
-                    disabled={createConvoMutation.isPending || isFinished}
+                  {/* The one-click control and its profile companion are one
+                      affordance; naming the pair is what lets a caller address
+                      this header's picker rather than the rail's. */}
+                  <div
+                    role="group"
+                    aria-label="Start a conversation"
+                    className="flex items-center gap-2xs"
                   >
-                    <span className="text-[1em]">+</span>
-                    {createConvoMutation.isPending
-                      ? "Creating..."
-                      : "New Conversation"}
-                  </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      touch
+                      onClick={() => handleNewConversation()}
+                      disabled={createConvoMutation.isPending || isFinished}
+                    >
+                      <span className="text-[1em]">+</span>
+                      {createConvoMutation.isPending
+                        ? "Creating..."
+                        : "New Conversation"}
+                    </Button>
+                    <NewConversationProfileButton
+                      projectName={projectName}
+                      onCreate={handleNewConversation}
+                      pending={createConvoMutation.isPending}
+                      disabled={isFinished}
+                    />
+                  </div>
                 </div>
               </div>
             )}

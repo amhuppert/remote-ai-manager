@@ -60,6 +60,7 @@ describe("capabilityViewFromDescriptor", () => {
         transcript: {
           projectAssistantMetadata: () => null,
         },
+        fsWriteRestriction: "enforced",
       },
       managedSkills: { conversations: "hermetic", tasks: "hermetic" },
       mcp: claudeMcpCapabilities,

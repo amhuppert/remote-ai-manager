@@ -617,8 +617,13 @@ export function getTicketStartService(): TicketStartService {
         if (session === null) return null;
         return { createdAt: session.createdAt, finished: session.finished };
       },
-      async provisionSession(projectPath, sessionName) {
-        const session = await createSessionNormal(projectPath, sessionName);
+      async provisionSession(projectPath, sessionName, profile) {
+        const session = await createSessionNormal(
+          projectPath,
+          sessionName,
+          undefined,
+          profile === undefined ? undefined : { profile },
+        );
         const conversationId = session.conversations[0]?.id;
         if (conversationId === undefined) {
           throw new Error(

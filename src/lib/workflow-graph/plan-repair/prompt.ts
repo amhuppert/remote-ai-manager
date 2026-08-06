@@ -23,6 +23,60 @@ export interface PlanRepairValidationVerdict {
    *  `output_schema` rejection (D2) is one of the impossible-contract failures
    *  this agent exists to repair, and it carries no task. */
   issues: readonly GraphWorkflowValidationIssue[];
+  /**
+   * Each cohort member's own verdict, when several reviewed the round.
+   *
+   * A flat list of findings from a three-validator round reads as one reviewer
+   * repeating itself, which is exactly the wrong diagnosis: "three specialists
+   * with different lenses each found one thing" and "one specialist found three
+   * things" call for different repairs. Absent for a single-reviewer round,
+   * where the flat list already says everything.
+   */
+  specialists?: readonly PlanRepairSpecialistVerdict[];
+}
+
+/** One cohort member's verdict, with the profile identity that produced it. */
+export interface PlanRepairSpecialistVerdict {
+  assignmentId: string;
+  profile: { tier: string; id: string; revision: number };
+  pass: boolean;
+  summary: string;
+  issues: readonly GraphWorkflowValidationIssue[];
+}
+
+/**
+ * The validation history as the repair agent needs it, read off the aggregate
+ * events the log already carries. Lives here rather than at the composition
+ * site so the prompt's evidence contract has one owner.
+ */
+export function toPlanRepairValidationVerdict(event: {
+  pass: boolean;
+  summary: string;
+  issues: readonly GraphWorkflowValidationIssue[];
+  specialists?: readonly {
+    assignmentId: string;
+    profile: { tier: string; id: string; revision: number };
+    pass: boolean;
+    summary: string;
+    issues: readonly GraphWorkflowValidationIssue[];
+  }[];
+}): PlanRepairValidationVerdict {
+  return {
+    pass: event.pass,
+    summary: event.summary,
+    issues: event.issues,
+    ...(event.specialists && event.specialists.length > 0
+      ? {
+          specialists: event.specialists.map((specialist) => ({
+            assignmentId: specialist.assignmentId,
+            profile: specialist.profile,
+            pass: specialist.pass,
+            summary: specialist.summary,
+            issues: specialist.issues,
+          })),
+        }
+      : {}),
+  };
 }
 
 export interface PlanRepairPromptInput {
@@ -125,13 +179,29 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
   const history = input.validationHistory.slice(-VALIDATION_HISTORY_LIMIT);
   if (history.length > 0) {
     const rendered = history.map((verdict, index) => {
-      const issueLines = verdict.issues.map(
-        (issue) =>
-          `    - ${issue.taskId ?? issue.path ?? "context"}: ${issue.title} — ${issue.description}`,
-      );
+      const specialists = verdict.specialists ?? [];
+      // Grouped by assignment when a cohort reviewed the round: WHICH reviewer
+      // raised WHAT is the difference between "one approach is failing" and
+      // "several lenses each found something", and only the second is likely a
+      // planning defect (R14).
+      const body =
+        specialists.length > 0
+          ? specialists.map((specialist) =>
+              [
+                `  - ${specialist.assignmentId} (${specialist.profile.tier}/${specialist.profile.id} rev ${specialist.profile.revision}) [${specialist.pass ? "pass" : "fail"}]: ${specialist.summary}`,
+                ...specialist.issues.map(
+                  (issue) =>
+                    `      - ${issue.taskId ?? issue.path ?? "context"}: ${issue.title} — ${issue.description}`,
+                ),
+              ].join("\n"),
+            )
+          : verdict.issues.map(
+              (issue) =>
+                `    - ${issue.taskId ?? issue.path ?? "context"}: ${issue.title} — ${issue.description}`,
+            );
       return [
         `${index + 1}. [${verdict.pass ? "pass" : "fail"}] ${verdict.summary}`,
-        ...issueLines,
+        ...body,
       ].join("\n");
     });
     sections.push(

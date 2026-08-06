@@ -3,12 +3,13 @@ import { conversationKeys } from "./query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import {
-  conversationStateSchema,
+  publicConversationStateSchema,
   forkResponseSchema,
   generateConversationNameResponseSchema,
   type ConversationState,
   type AskQuestionAnswer,
 } from "./schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
@@ -182,6 +183,11 @@ function genericConversationInvalidateKeys(
   ];
 }
 
+/**
+ * Create a session conversation. The profile is optional on the wire — the
+ * route resolves the Standard Agent when nothing is named (R7) — so a caller
+ * with no picker in play keeps posting an empty body.
+ */
 export function useCreateConversationMutation(
   projectName: string,
   sessionName: string,
@@ -189,12 +195,20 @@ export function useCreateConversationMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (variables?: { profile?: AgentProfileRef }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
         "create-conversation",
-        { method: "POST" },
-        conversationStateSchema,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            variables?.profile === undefined
+              ? {}
+              : { profile: variables.profile },
+          ),
+        },
+        publicConversationStateSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
@@ -405,6 +419,11 @@ export function useAnswerQuestionMutation(
 /**
  * Fork a conversation at a message index.
  *
+ * `profile` applies to a fork at index 0 only: that fork derives from no
+ * session, so the conversation it creates is a fresh one and carries its own
+ * identity. Every later index inherits the source snapshot verbatim, and the
+ * route ignores a selection there — so callers send none (R7).
+ *
  * Awaits the session-detail cache invalidation in onSuccess so callers that
  * navigate to the newly created conversation can rely on it being present
  * in the cache by the time the destination page mounts.
@@ -419,9 +438,11 @@ export function useForkConversationMutation(
     mutationFn: ({
       conversationId,
       messageIndex,
+      profile,
     }: {
       conversationId: string;
       messageIndex: number;
+      profile?: AgentProfileRef;
     }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/fork`,
@@ -429,7 +450,10 @@ export function useForkConversationMutation(
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messageIndex }),
+          body: JSON.stringify({
+            messageIndex,
+            ...(profile === undefined ? {} : { profile }),
+          }),
         },
         forkResponseSchema,
       ),

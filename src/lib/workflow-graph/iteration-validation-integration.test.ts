@@ -7,6 +7,8 @@ import type {
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  makeProfileSnapshot,
+  stubValidationRoundService,
 } from "./test-fixtures";
 import {
   createGraphWorkflowIterationOrchestrator,
@@ -110,14 +112,21 @@ function createContextValidatorExecution(
             acceptanceCriteria:
               "The plan must include implementation steps, rollback notes, and test coverage.",
             contextValidator: {
-              type: "claude",
               enabled: true,
-              continuity: { enabled: true },
-              agent: {
-                backend: "claude",
-                model: "sonnet",
-                reasoningEffort: "medium",
-              },
+              assignments: [
+                {
+                  id: "general",
+                  profile: { tier: "builtin", id: "general-reviewer" },
+                  profileSnapshot: makeProfileSnapshot(),
+                  strategy: "conversation",
+                  agent: {
+                    backend: "claude",
+                    model: "sonnet",
+                    reasoningEffort: "medium",
+                  },
+                  continuity: { enabled: true },
+                },
+              ],
             },
           }
         : context,
@@ -217,6 +226,7 @@ describe("graph workflow iteration context validation integration", () => {
         "Context validation blocked completion.\nThe plan document is missing rollback notes.\nReopened tasks:\n- task-plan-2\n- Missing rollback notes: Add rollback guidance to the plan.",
       issues: [
         {
+          assignmentId: "general",
           title: "Missing rollback notes",
           description: "Add rollback guidance to the plan.",
           taskId: "task-plan-2",
@@ -228,6 +238,7 @@ describe("graph workflow iteration context validation integration", () => {
     }));
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -306,6 +317,7 @@ describe("graph workflow iteration context validation integration", () => {
     const validateContextCompletion = vi.fn();
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -355,15 +367,16 @@ describe("graph workflow iteration context validation integration", () => {
 
     let toolInput: GraphWorkflowIterationToolServerInput | null = null;
     const validateContextCompletion = vi.fn(async () => ({
-      kind: "infra_error" as const,
+      kind: "infra_exhausted" as const,
+      assignmentId: "general",
+      attempts: 3,
       reason: "exception" as const,
       message: "Codex API rate limit exceeded",
       engine: "codex" as const,
-      sessionRef: null,
-      reviewArtifact: null,
     }));
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -432,6 +445,7 @@ describe("graph workflow iteration context validation integration", () => {
         "Context validation blocked completion.\nRollback notes are still missing.\nReopened tasks:\n- task-plan-2\n- Missing rollback notes: Add rollback guidance to the plan.",
       issues: [
         {
+          assignmentId: "general",
           title: "Missing rollback notes",
           description: "Add rollback guidance to the plan.",
           taskId: "task-plan-2",
@@ -443,6 +457,7 @@ describe("graph workflow iteration context validation integration", () => {
     }));
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -539,6 +554,7 @@ describe("graph workflow iteration context validation integration", () => {
       }));
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,

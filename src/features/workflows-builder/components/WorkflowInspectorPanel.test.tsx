@@ -15,6 +15,7 @@ import {
 import { OUTPUT_SCHEMA_TEMPLATE } from "@/components/workflow-config/OutputSchemaField";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 function render(ui: React.ReactElement) {
   const client = new QueryClient({
@@ -92,10 +93,15 @@ function footButtons(block: HTMLElement): HTMLButtonElement[] {
 // Inherited blocks render collapsed and the Radix-backed disclosure unmounts the
 // closed body (footer included). Expand before reading footer buttons; a no-op if
 // already open.
+//
+// The disclosure trigger is identified by the section label it wraps, not by
+// `aria-expanded` alone: an expanded body contains comboboxes (the profile
+// picker) that carry the same attribute, and clicking one of those would open a
+// Radix listbox that hides the rest of the tree from the accessibility tree.
 function expandBlock(block: HTMLElement): HTMLElement {
-  const head = block.querySelector<HTMLElement>(
-    "button[aria-expanded='false']",
-  );
+  const head = Array.from(
+    block.querySelectorAll<HTMLElement>("button[aria-expanded='false']"),
+  ).find((candidate) => candidate.querySelector("[data-section-label]"));
   if (head) fireEvent.click(head);
   return block;
 }
@@ -608,139 +614,114 @@ describe("WorkflowInspectorPanel — context tab body", () => {
   });
 });
 
-describe("WorkflowInspectorPanel — validator three-state footer", () => {
-  it("inherited → Override creates a use-kind override, Disable creates disabled marker", () => {
-    resetStore();
+describe("WorkflowInspectorPanel — validator cohort override footer", () => {
+  // Turning validation off is a property of the cohort VALUE (`enabled:false`),
+  // not a third cascade state, so the footer is the same two-state
+  // Override/Reset every other block uses and the header switch carries on/off.
+  const OVERRIDE_COHORT = {
+    enabled: true,
+    assignments: [
+      {
+        id: "security" as const,
+        profile: { tier: "builtin" as const, id: "general-reviewer" },
+        strategy: "conversation" as const,
+        agent: {
+          backend: "claude" as const,
+          model: "sonnet" as const,
+          reasoningEffort: "medium" as const,
+        },
+        continuity: { enabled: true },
+      },
+    ],
+  };
+
+  function definitionWithPlanValidator(
+    cohort: typeof OVERRIDE_COHORT | undefined,
+  ) {
     const def = createWorkflowDefinition();
-    const withoutValidator = {
+    return {
       ...def,
       executionContexts: def.executionContexts.map((ctx) =>
-        ctx.id === "context-plan"
-          ? { ...ctx, contextValidator: undefined }
-          : ctx,
+        ctx.id === "context-plan" ? { ...ctx, contextValidator: cohort } : ctx,
       ),
     };
+  }
+
+  it("Override pins the inherited cohort onto the context as a whole unit", () => {
+    resetStore();
     setupStore({
       selectedContextId: "context-plan",
-      definition: withoutValidator,
+      definition: definitionWithPlanValidator(undefined),
     });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const block = expandBlock(
       findBlockByLabel(container, "Context validator")!,
     );
-    const buttons = footButtons(block);
-    const override = buttons.find((b) => b.textContent === "Override")!;
-    const disable = buttons.find(
-      (b) => b.textContent === "Disable for this context",
+    const override = footButtons(block).find(
+      (b) => b.textContent === "Override",
     )!;
-    expect(override).toBeDefined();
-    expect(disable).toBeDefined();
-
     fireEvent.click(override);
-    let ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidator?.kind).toBe("use");
 
-    // Reset back to inherit, then click Disable
-    act(() => {
-      _useGraphWorkflowBuilderStore.setState({
-        draftDefinition: withoutValidator,
-      });
-    });
-    const block2 = findBlockByLabel(container, "Context validator")!;
-    const disable2 = footButtons(block2).find(
-      (b) => b.textContent === "Disable for this context",
-    )!;
-    fireEvent.click(disable2);
-
-    ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidator?.kind).toBe("disabled");
+    expect(planContext()?.contextValidator).toEqual(
+      SEEDED_WORKFLOW_DEFAULTS.contextValidator,
+    );
   });
 
-  it("overridden validator shows Reset to inherit + Disable for this context", () => {
+  it("the header switch turns the cohort off while keeping its assignments", () => {
     resetStore();
-    const def = createWorkflowDefinition();
-    const overridden = {
-      ...def,
-      executionContexts: def.executionContexts.map((ctx) =>
-        ctx.id === "context-plan"
-          ? {
-              ...ctx,
-              contextValidator: {
-                kind: "use" as const,
-                value: {
-                  type: "claude" as const,
-                  enabled: true,
-                  continuity: { enabled: true },
-                  agent: {
-                    backend: "claude" as const,
-                    model: "sonnet" as const,
-                    reasoningEffort: "medium" as const,
-                  },
-                },
-              },
-            }
-          : ctx,
-      ),
-    };
     setupStore({
       selectedContextId: "context-plan",
-      definition: overridden,
+      definition: definitionWithPlanValidator(OVERRIDE_COHORT),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Context validator")!;
+    fireEvent.click(within(block).getByLabelText("Context validator enabled"));
+
+    expect(planContext()?.contextValidator).toEqual({
+      enabled: false,
+      assignments: OVERRIDE_COHORT.assignments,
+    });
+  });
+
+  it("re-enabling an emptied cohort seeds a reviewer rather than enabling a vacuous set", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanValidator({
+        enabled: false,
+        assignments: [],
+      } as unknown as typeof OVERRIDE_COHORT),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Context validator")!;
+    fireEvent.click(within(block).getByLabelText("Context validator enabled"));
+
+    const cohort = planContext()?.contextValidator;
+    expect(cohort?.enabled).toBe(true);
+    expect(cohort?.assignments).toHaveLength(1);
+  });
+
+  it("Reset to inherit drops the context override entirely", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanValidator(OVERRIDE_COHORT),
     });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const block = findBlockByLabel(container, "Context validator")!;
     const texts = footButtons(block).map((b) => b.textContent);
     expect(texts).toContain("Reset to inherit");
-    expect(texts).toContain("Disable for this context");
+    expect(texts).not.toContain("Disable for this context");
 
-    const reset = footButtons(block).find(
-      (b) => b.textContent === "Reset to inherit",
-    )!;
-    fireEvent.click(reset);
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidator).toBeUndefined();
-  });
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
+    );
 
-  it("disabled validator shows Re-enable (inherit) + Override with custom validator", () => {
-    resetStore();
-    const def = createWorkflowDefinition();
-    const disabled = {
-      ...def,
-      executionContexts: def.executionContexts.map((ctx) =>
-        ctx.id === "context-plan"
-          ? {
-              ...ctx,
-              contextValidator: { kind: "disabled" as const },
-            }
-          : ctx,
-      ),
-    };
-    setupStore({
-      selectedContextId: "context-plan",
-      definition: disabled,
-    });
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-
-    const block = findBlockByLabel(container, "Context validator")!;
-    const texts = footButtons(block).map((b) => b.textContent);
-    expect(texts).toContain("Re-enable (inherit)");
-    expect(texts).toContain("Override with custom validator");
-
-    const reenable = footButtons(block).find(
-      (b) => b.textContent === "Re-enable (inherit)",
-    )!;
-    fireEvent.click(reenable);
-    const ctx = _useGraphWorkflowBuilderStore
-      .getState()
-      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.contextValidator).toBeUndefined();
+    expect(planContext()?.contextValidator).toBeUndefined();
   });
 });
 
@@ -1062,5 +1043,171 @@ describe("WorkflowInspectorPanel — upstream inputs", () => {
         .getAllByTestId("upstream-input-row")
         .map((row) => row.dataset.contextId),
     ).toEqual(["context-plan", "context-implement"]);
+  });
+});
+
+/**
+ * The cohort editor on the workflow-DEFINITION surface (R12.1). The same
+ * component is asserted on the Settings surface in
+ * `src/features/config/sections/WorkflowSection.test.tsx`; between them they
+ * cover every cascade state a cohort can be in.
+ */
+describe("WorkflowInspectorPanel — validator cohort editor", () => {
+  function cohortBlock(container: HTMLElement): HTMLElement {
+    return expandBlock(findBlockByLabel(container, "Context validator")!);
+  }
+
+  function renderContextTab() {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    return render(<WorkflowInspectorPanel {...defaultProps} />);
+  }
+
+  function overrideCohort(container: HTMLElement): HTMLElement {
+    const block = cohortBlock(container);
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Override")!,
+    );
+    return cohortBlock(container);
+  }
+
+  function contextCohort() {
+    const context = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition!.executionContexts.find((c) => c.id === "context-plan")!;
+    return context.contextValidator;
+  }
+
+  it("reports an unoverridden cohort as inherited from the global defaults", () => {
+    const { container } = renderContextTab();
+    const provenance = within(cohortBlock(container)).getByTestId(
+      "cohort-cascade",
+    );
+    expect(provenance).toHaveAttribute("data-cascade-state", "inherit");
+    expect(provenance.textContent).toContain("global defaults");
+  });
+
+  it("reports a cohort authored on this context as in use here", () => {
+    const { container } = renderContextTab();
+    const provenance = within(overrideCohort(container)).getByTestId(
+      "cohort-cascade",
+    );
+    expect(provenance).toHaveAttribute("data-cascade-state", "use");
+    expect(provenance.textContent).toContain("this context");
+  });
+
+  it("shows each assignment's profile tier badge", () => {
+    const { container } = renderContextTab();
+    const badges = within(cohortBlock(container)).getAllByTestId(
+      "cohort-tier-badge",
+    );
+    expect(badges.map((badge) => badge.textContent)).toEqual(["Built-in"]);
+  });
+
+  it("adds a second validator and reorders the cohort", () => {
+    const { container } = renderContextTab();
+    fireEvent.click(
+      within(overrideCohort(container)).getByRole("button", {
+        name: "Add validator",
+      }),
+    );
+    const added = contextCohort()!.assignments.map((a) => a.id);
+    expect(added).toHaveLength(2);
+    expect(added[0]).toBe("general");
+
+    fireEvent.click(
+      within(cohortBlock(container)).getByLabelText(`Move ${added[1]} up`),
+    );
+    expect(contextCohort()!.assignments.map((a) => a.id)).toEqual([
+      added[1],
+      added[0],
+    ]);
+  });
+
+  it("edits one assignment's focus and runtime", () => {
+    const { container } = renderContextTab();
+    const block = overrideCohort(container);
+
+    fireEvent.change(within(block).getByLabelText("Focus for general"), {
+      target: { value: "auth boundaries" },
+    });
+    expect(contextCohort()!.assignments[0]?.focus).toBe("auth boundaries");
+
+    fireEvent.click(
+      within(within(block).getByTestId("cohort-assignment-general")).getByRole(
+        "button",
+        { name: /codex/i },
+      ),
+    );
+    expect(contextCohort()!.assignments[0]?.agent.backend).toBe("codex");
+  });
+
+  it("keeps a switched-off cohort's assignments dormant and restores them", () => {
+    const { container } = renderContextTab();
+    const block = overrideCohort(container);
+    fireEvent.click(
+      within(block).getByRole("button", { name: "Add validator" }),
+    );
+    const authored = contextCohort()!.assignments.map((a) => a.id);
+    expect(authored).toHaveLength(2);
+
+    const toggle = within(cohortBlock(container)).getByRole("switch", {
+      name: "Context validator enabled",
+    });
+    fireEvent.click(toggle);
+
+    expect(contextCohort()!.enabled).toBe(false);
+    expect(contextCohort()!.assignments.map((a) => a.id)).toEqual(authored);
+
+    const disabledBlock = cohortBlock(container);
+    expect(within(disabledBlock).getByTestId("cohort-cascade")).toHaveAttribute(
+      "data-cascade-state",
+      "disabled",
+    );
+    expect(
+      within(disabledBlock).getByTestId("cohort-dormant-notice"),
+    ).toBeVisible();
+    expect(
+      within(disabledBlock)
+        .getAllByTestId(/^cohort-assignment-/)
+        .map((row) => row.getAttribute("data-dormant")),
+    ).toEqual(["true", "true"]);
+
+    fireEvent.click(
+      within(cohortBlock(container)).getByRole("switch", {
+        name: "Context validator enabled",
+      }),
+    );
+    expect(contextCohort()!.enabled).toBe(true);
+    expect(contextCohort()!.assignments.map((a) => a.id)).toEqual(authored);
+  });
+
+  it("authors the cohort on the workflow tab too", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = expandBlock(
+      findBlockByLabel(container, "Context validator")!,
+    );
+    expect(within(block).getByTestId("cohort-cascade")).toHaveAttribute(
+      "data-cascade-state",
+      "inherit",
+    );
+
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Override")!,
+    );
+    const overridden = expandBlock(
+      findBlockByLabel(container, "Context validator")!,
+    );
+    fireEvent.click(
+      within(overridden).getByRole("button", { name: "Add validator" }),
+    );
+
+    const workflowCohort =
+      _useGraphWorkflowBuilderStore.getState().draftDefinition!.workflowConfig
+        .contextValidator;
+    expect(workflowCohort?.assignments).toHaveLength(2);
   });
 });

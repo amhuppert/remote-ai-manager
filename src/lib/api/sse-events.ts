@@ -5,6 +5,7 @@ import type {
   MessageAppendedEvent,
   MessageUpdatedEvent,
   ConversationCreatedEvent,
+  ConversationProfileChangedEvent,
   ConversationRenamedEvent,
   ConversationArchivedEvent,
   ConversationUnreadEvent,
@@ -39,6 +40,8 @@ import type {
   GraphWorkflowUserInputPendingEvent,
   GraphWorkflowUserInputResolvedEvent,
   GraphWorkflowValidationResultEvent,
+  GraphWorkflowValidationSpecialistResultEvent,
+  GraphWorkflowValidationIncidentEvent,
 } from "@/lib/workflow-graph/event-schemas";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
 import type {
@@ -57,6 +60,7 @@ import type { SpawnResultEvent } from "@/lib/chat-spawning/schemas";
 import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
 import type { ContextArtifactStatusEvent } from "@/lib/context-artifacts/schemas";
 import type { TicketChangedEvent } from "@/lib/tickets/schemas";
+import type { AgentProfileLibraryChangedEvent } from "@/lib/agent-profiles/schemas";
 
 // ============================================================
 // Scoped Status SSE Event (StatusBus → SSE bridge)
@@ -197,6 +201,7 @@ export type SSEEvent =
   | ConversationRenamedEvent
   | ConversationArchivedEvent
   | ConversationUnreadEvent
+  | ConversationProfileChangedEvent
   | ConversationBackgroundActivityEvent
   | AskQuestionEvent
   | JobStatusEvent
@@ -209,6 +214,8 @@ export type SSEEvent =
   | GraphWorkflowContextStatusEvent
   | GraphWorkflowTaskStatusEvent
   | GraphWorkflowValidationResultEvent
+  | GraphWorkflowValidationSpecialistResultEvent
+  | GraphWorkflowValidationIncidentEvent
   | GraphWorkflowCircuitBreakerEvent
   | GraphWorkflowSharedDocumentsUpdatedEvent
   | GraphWorkflowPendingHaltReasonEvent
@@ -237,4 +244,5 @@ export type SSEEvent =
   | SessionAlignmentUpdatedEvent
   | ContextArtifactStatusEvent
   | TicketChangedEvent
+  | AgentProfileLibraryChangedEvent
   | SpecSseEvent;

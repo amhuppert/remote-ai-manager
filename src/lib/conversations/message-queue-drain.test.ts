@@ -2,7 +2,7 @@
  * Tests for the conversation message-queue drain engine.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   drainConversationQueue,
   queuedBatchToSubmitPrompt,
@@ -16,6 +16,11 @@ import { createMessageQueueService } from "@/lib/conversations/message-queue-ser
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "@/lib/conversations/profile-admission";
+import type { ConversationState } from "@/lib/conversations/schemas";
 
 // Infrastructure mock — createLogger is called at module level
 vi.mock("@/lib/logging", () => ({
@@ -26,6 +31,25 @@ vi.mock("@/lib/logging", () => ({
     debug: vi.fn(),
   }),
 }));
+
+/**
+ * The drain settles the conversation's agent profile before it sends. These
+ * cases exercise the queue engine, not the store, so the seam answers as a
+ * legacy conversation would — no profile, no lock, no write.
+ */
+beforeEach(() => {
+  setConversationProfileAdmissionDeps({
+    mutateConversation: async (_p, _s, _c, _label, mutate) =>
+      mutate({
+        profileSnapshot: null,
+        profileLockedAt: null,
+      } as unknown as ConversationState),
+  });
+});
+
+afterEach(() => {
+  _resetConversationProfileAdmissionDepsForTesting();
+});
 
 const DRAIN_CONTEXT = {
   projectPath: "/test/project",

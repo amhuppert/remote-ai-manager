@@ -95,3 +95,38 @@ export const RunningTurn: Story = {
     diffSurface: <FakeDiff />,
   },
 };
+
+/** The conversation runs under a library profile, named in the header (R6.5). */
+export const WithAgentProfile: Story = {
+  args: {
+    agentBackend: "claude",
+    projectName: "cc-app",
+    redactedProfileSnapshot: {
+      tier: "project",
+      id: "security-reviewer",
+      name: "Security reviewer",
+      revision: 3,
+      sourceContentHash: `sha256:${"a".repeat(64)}`,
+      resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+    },
+    transcript: <FakeTranscript />,
+    composer: <FakeComposer />,
+    diffSurface: <FakeDiff />,
+  },
+};
+
+/**
+ * A conversation from before the profile library: the header states that it has
+ * no profile rather than omitting the chip, so "nothing here" reads as
+ * deliberate (R6.5).
+ */
+export const LegacyNoProfile: Story = {
+  args: {
+    agentBackend: "claude",
+    projectName: "cc-app",
+    redactedProfileSnapshot: null,
+    transcript: <FakeTranscript />,
+    composer: <FakeComposer />,
+    diffSurface: <FakeDiff />,
+  },
+};

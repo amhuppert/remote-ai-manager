@@ -4,7 +4,7 @@ import { render, screen, cleanup } from "@testing-library/react";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   graphWorkflowAgentConfigSchema,
-  graphWorkflowAgentValidatorConfigSchema,
+  validatorAssignmentSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import {
   BackendChip,
@@ -36,24 +36,33 @@ describe("implementerChipLabel / validatorChipLabel", () => {
     ).toBe("Codex gpt-5.4 · medium");
   });
 
-  it("labels validators with the catalog backend label", () => {
+  it("leads with the assignment id so two cohort entries stay distinguishable", () => {
+    const parse = (id: string, agent: Record<string, string>) =>
+      validatorAssignmentSchema.parse({
+        id,
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "conversation",
+        agent,
+      });
+
     expect(
       validatorChipLabel(
-        graphWorkflowAgentValidatorConfigSchema.parse({
-          type: "claude",
-          agent: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
-          },
+        parse("security", {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
         }),
       ),
-    ).toBe("Claude sonnet");
+    ).toBe("security · Claude sonnet");
     expect(
       validatorChipLabel(
-        graphWorkflowAgentValidatorConfigSchema.parse({ type: "codex" }),
+        parse("performance", {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+        }),
       ),
-    ).toBe("Codex default");
+    ).toBe("performance · Codex gpt-5.4");
   });
 });
 

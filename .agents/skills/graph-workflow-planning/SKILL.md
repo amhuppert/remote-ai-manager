@@ -25,8 +25,8 @@ Create workflows with default implementer and validator settings unless the user
 - Omit per-context `implementer`, `contextValidator`, `scriptValidator`, `iterationPolicy`, `circuitBreaker`, and `mutability` unless a non-default value is intentionally required.
 - `acceptanceCriteria` is required on every execution context and must live on the context, not on the validator.
 - Minimal payloads are preferred because global and workflow defaults cascade into each context at execution seed time.
-- To opt out of inherited agent validation for a context, set `contextValidator: { kind: "disabled" }`.
-- To override the inherited agent validator, set `contextValidator: { kind: "use", value: ... }` with a valid validator config.
+- To opt out of inherited agent validation for a context, set `contextValidator: { "enabled": false, "assignments": [] }`.
+- To staff a context's reviewers explicitly, set `contextValidator` to an enabled cohort of assignments — see [Staffing Assignments](#staffing-assignments-from-the-agent-profile-library).
 - To override deterministic validation for a context, set `scriptValidator: { enabled: true }` or `scriptValidator: { enabled: false }`.
 - If a running execution already exists, changing a saved workflow definition may not mutate that active execution. Tell the user when a fresh execution or reset is needed.
 - Exception to the "use defaults unless explicitly directed otherwise" rule: Enable `scriptValidator` for the **final** execution context, unless there is a specific reason to disable it.
@@ -97,11 +97,67 @@ Do not write acceptance criteria that:
 - Use vague phrases like "retryable diagnostics", "fully wired", or "complete lifecycle" without spelling out the exact states and paths.
 - Use existence verbs — "exists", "is exported", "types are defined", "adapters surface" — for capabilities that must be runtime-reachable. Existence is satisfiable by dead code with green unit tests; require the production caller, or name the downstream context that owns the wiring.
 
+## Staffing Assignments from the Agent Profile Library
+
+Who runs a context is an **assignment**: a stable use-site id, a reference to a profile in the shared agent profile library, an optional focus, and the concrete runtime. A context has exactly one implementer assignment and an ordered **cohort** of validator assignments.
+
+A profile is prompt identity only — a name, a description, and instructions. It carries no backend, model, effort, or tool policy; those live on the assignment, so the same profile can be staffed at different runtimes at different use sites.
+
+### Discover profiles before staffing
+
+The library is machine-discoverable — never invent a reference:
+
+1. `cctl agent list` — every profile reachable from this project across all three tiers, each with its qualified `tier:id`, name, description, revision, advisory `recommendedFor`, and tags. Pick by reading descriptions.
+2. `cctl agent get <tier:id>` — one profile's full instructions, when the description is not enough to judge fit. The qualified spelling is mandatory; a bare id is refused.
+
+Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:reviewer`, and `project:reviewer` are three different profiles. `recommendedFor` is advisory — prefer a profile recommended for the role, but never refuse one on that basis alone.
+
+### The assignment shape
+
+```jsonc
+{
+  "implementer": {
+    "id": "implementer",                                   // stable, kebab-case, unique at its use site
+    "profile": { "tier": "builtin", "id": "general-implementer" },
+    "focus": "state-store persistence",                    // optional use-site steer
+    "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" }
+  },
+  "contextValidator": {
+    "enabled": true,
+    "assignments": [
+      {
+        "id": "security",                                  // unique WITHIN the cohort
+        "profile": { "tier": "global", "id": "security-reviewer" },
+        "strategy": "conversation",
+        "agent": { "backend": "codex", "model": "gpt-5.6", "reasoningEffort": "high" }
+      }
+    ]
+  }
+}
+```
+
+- The assignment `id` is the durable use-site identity findings are grouped under. Keep it stable across revisions; renaming it is a new use site, not a rename.
+- `focus` narrows a general profile at one use site ("auth boundaries", "hot paths"). Durable behaviour belongs in the profile itself — if every use site repeats the same focus, the profile is wrong.
+- `strategy` is validator-only and independent of backend: `conversation` or `task`.
+- Two assignments may name the SAME profile under different ids and focuses. That is the normal way to get two specialist passes from one general reviewer.
+
+### Cohort rules
+
+- An enabled cohort needs at least one assignment — validation over an empty cohort would pass vacuously, so it is refused.
+- Assignment ids must be unique within a cohort.
+- A disabled cohort **retains** its assignments. Turning validation off and back on is lossless, so do not strip assignments to disable a context's review. Retained assignments still show up on the staffing surfaces, marked `(cohort disabled)`, and their references are still checked at save — a dangling one is refused even though nothing dispatches it.
+- Assignments replace as **whole units** at every cascade boundary (global → workflow → context). A context that sets `contextValidator` replaces the inherited cohort entirely; there is no field merging. Restate every assignment you want.
+- Keep the default single general reviewer unless a context genuinely needs a second specialist lens. Every extra assignment is another full review of the same candidate.
+
+### Reference scope
+
+A **global-scope** document (a cross-project template, or the global `workflowDefaults`) may reference only `builtin` and `global` profiles. A `project`-tier reference is unresolvable in every other project and is refused — validate with `--tier global` to catch that before saving rather than at save time.
+
 ## Validators
 
 Graph workflows have two independent validators:
 
-- `contextValidator`: an LLM validator that judges the intent of the context acceptance criteria. It respects context scope boundaries and should not fail a context for work intentionally assigned downstream.
+- `contextValidator`: an ordered cohort of LLM validator assignments that judge the intent of the context acceptance criteria. Every enabled assignment reviews the same frozen candidate and all must pass; findings stay grouped by assignment id. Validators respect context scope boundaries and should not fail a context for work intentionally assigned downstream.
 - `scriptValidator`: a deterministic validator that runs the project's `preMergeCommand` after all tasks in the context complete. If it fails, the output is saved under `.cc/workflow/<executionId>/pre-merge-<timestamp>.log` and a remediation task is added.
 
 Script validation runs before agent validation. If script validation fails, agent validation is skipped for that iteration. Both failures consume iteration budget and feed the circuit breaker.
@@ -230,14 +286,14 @@ A plan is a JSON object the validate, create, and replace endpoints all accept:
 
 Run these from the session (the CLI reads its project/session identity from the environment):
 
-1. `cctl workflow validate --file .cc/temp/plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Fix the file and re-run until it prints the create hint.
+1. `cctl workflow validate --file .cc/temp/plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) plus resolution of every agent profile reference the plan names, and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Assignment issues read the same way whichever check produced them: the path locates the offending field (`definition.executionContexts.2.contextValidator.assignments.1.profile`) and the message names the qualified `tier:id` and the exact use site. Fix the file and re-run until it prints the create hint. Add `--tier global` when the plan is destined for the cross-project template library, so the global-document reference rule is applied here rather than at save.
 2. `cctl workflow create --file .cc/temp/plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
 3. `cctl workflow start <id>` — starts execution.
 
 To revise a saved definition after user feedback, prefer **targeted edits** — cost proportional to the change, not the whole plan:
 
-1. `cctl workflow get <id>` — read the compact **outline** (context/task ids, deps, prose sizes, and the current `revision`). Pull only the piece you will change with `--task <id>` / `--context <id>` / `--charter` / `--config` / `--params`.
-2. Author `.cc/temp/ops.json` — `{ "baseRevision": <the revision the outline showed>, "operations": [ … ] }` — using the domain ops (`update-task`, `add-context`, `add-task` with a relative `position`, `add-edge`, `update-workflow-config`, a config field set to `null` clears an override, …). The batch is ordered, atomic, and lands behind the **same** accept-time validation as `create`.
+1. `cctl workflow get <id>` — read the compact **outline** (context/task ids, deps, prose sizes, the current `revision`, and a `staffing (references)` block listing every authored assignment by scope, role, id, qualified profile ref, strategy, and runtime). Pull only the piece you will change with `--task <id>` / `--context <id>` / `--charter` / `--config` / `--params`.
+2. Author `.cc/temp/ops.json` — `{ "baseRevision": <the revision the outline showed>, "operations": [ … ] }` — using the domain ops (`update-task`, `add-context`, `add-task` with a relative `position`, `add-edge`, `update-workflow-config`, a config field set to `null` clears an override, …). The batch is ordered, atomic, and lands behind the **same** accept-time validation as `create` — including profile-reference resolution, so a batch that stages a dangling assignment is refused whole, with the same located `tier:id` and use site `validate` would have printed.
 3. `cctl workflow edit <id> --file .cc/temp/ops.json` (add `--dry-run` to pre-flight a risky batch). A stale `baseRevision` exits with `revision_conflict` — re-read and retry.
 
 Use `cctl workflow replace <id> --file .cc/temp/plan.json` only for a **wholesale recomposition** — get it first with `cctl workflow get <id> --full`, submit the complete graph, re-validate first. Editing (or replacing) a saved definition does NOT mutate a running execution — it uses its own working copy; tell the user when a fresh execution or reset is needed.
@@ -250,6 +306,7 @@ Use `cctl workflow replace <id> --file .cc/temp/plan.json` only for a **wholesal
 - Every runtime capability the plan introduces has a producer context whose acceptance criteria require the production call site, or a criterion naming the downstream context that owns the wiring.
 - Cross-cutting rules are declared once in `charter.invariants` rather than repeated inconsistently (or omitted) across contexts.
 - Optional implementer and validator settings are omitted unless the user requested them or a specific context requires them.
+- Every agent profile reference was read from `cctl agent list`, not invented, and a context that overrides a cohort restates every assignment it wants (assignments replace whole, never merge).
 - Any enabled `scriptValidator` runs only after contexts expected to leave the codebase valid.
 - Essential context is included in task instructions or produced as an upstream shared artifact.
 - Parallel branches are truly independent or have an explicit foundation edge.

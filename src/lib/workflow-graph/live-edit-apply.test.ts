@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createWorkflowExecution } from "./test-fixtures";
+import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
+import {
+  createWorkflowExecution,
+  makeProfileSnapshot,
+  makeValidatorAssignment,
+} from "./test-fixtures";
 import {
   applyLiveEditsToActiveExecution,
   type LiveEditApplyRequest,
   type LiveEditApplyServiceDeps,
 } from "./live-edit-apply";
+import { prepareLiveEditAssignmentSnapshots } from "./live-edit-preparation";
 import type { LiveEditDeps, ResolvedContextConfig } from "./runtime-edits";
 import type { GraphWorkflowExecution } from "./schemas";
 import type {
@@ -15,8 +21,13 @@ import type { MutateActiveResult } from "./execution-repository";
 import type { SessionState } from "@/lib/sessions/schemas";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
-  implementer: { backend: "claude", model: "opus", reasoningEffort: "medium" },
-  contextValidator: null,
+  implementer: {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    profileSnapshot: makeProfileSnapshot(),
+    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  },
+  contextValidator: { enabled: false, assignments: [] },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
@@ -35,9 +46,17 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   },
 };
 
+/** A hash shaped like the real thing — the execution schema pins the format. */
+function hash(seed: string): string {
+  return `sha256:${seed.repeat(64).slice(0, 64)}`;
+}
+const SECURITY_V1 = hash("a");
+const SECURITY_V2 = hash("b");
+
 const LIVE_EDIT_DEPS: LiveEditDeps = {
   createTaskId: () => "task-minted-1",
   resolvedGlobalDefaults: () => RESOLVED_DEFAULTS,
+  snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
   hasPreMergeCommand: () => true,
   now: () => "2026-07-29T00:00:00.000Z",
 };
@@ -49,6 +68,13 @@ interface Harness {
   charterUpdated: PublishCharterUpdatedInput[];
   charterWrites: { worktreePath: string; markdown: string }[];
   mutations: number;
+  /** Profile id -> the instruction hash the library would compose right now. */
+  library: Map<string, string>;
+  prepareCalls: number;
+  /** Runs inside `mutateActive`, before the reducer — the race window. */
+  beforeMutation: (() => void) | null;
+  /** Simulate a concurrent edit committing against the stored execution. */
+  bumpLiveRevision(): void;
 }
 
 function makeHarness(initial: GraphWorkflowExecution): Harness {
@@ -62,15 +88,43 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
     charterUpdated,
     charterWrites,
     mutations: 0,
+    library: new Map([
+      ["general-implementer", hash("1")],
+      ["general-reviewer", hash("2")],
+      ["security-reviewer", SECURITY_V1],
+    ]),
+    prepareCalls: 0,
+    beforeMutation: null,
+    bumpLiveRevision: () => {
+      execution = { ...execution, liveRevision: execution.liveRevision + 1 };
+    },
     deps: {
       getActiveExecution: () => Promise.resolve(execution),
       mutateActive: (_projectPath, _sessionName, fn) => {
         harness.mutations += 1;
+        harness.beforeMutation?.();
         const result = fn(execution) as
           | MutateActiveResult
           | GraphWorkflowExecution;
         execution = "execution" in result ? result.execution : result;
         return Promise.resolve(execution);
+      },
+      prepareAssignmentSnapshots: (_projectPath, operations) => {
+        harness.prepareCalls += 1;
+        return prepareLiveEditAssignmentSnapshots({
+          operations,
+          composeSnapshot: async (assignment) => {
+            const hash = harness.library.get(assignment.profile.id);
+            if (hash === undefined) {
+              throw new AgentProfileNotResolvableError(assignment.profile);
+            }
+            return makeProfileSnapshot({
+              tier: assignment.profile.tier,
+              id: assignment.profile.id,
+              resolvedInstructionHash: hash,
+            });
+          },
+        });
       },
       buildLiveEditDeps: () => Promise.resolve(LIVE_EDIT_DEPS),
       publishLiveEditApplied: (input) => {
@@ -211,6 +265,158 @@ describe("applyLiveEditsToActiveExecution", () => {
     expect(outcome.failure.status).toBe(409);
     expect(harness.current().liveRevision).toBe(1);
     expect(harness.liveEditApplied).toHaveLength(0);
+  });
+
+  it("commits the prepared snapshot verbatim when the profile is deleted between preparation and commit", async () => {
+    const harness = makeHarness(createWorkflowExecution({ status: "paused" }));
+    // The operator's library edit lands inside the write queue's window, after
+    // the bytes were composed and shown. The edit pins what it prepared.
+    harness.beforeMutation = () => {
+      harness.library.delete("security-reviewer");
+    };
+
+    const outcome = await applyLiveEditsToActiveExecution(
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        request: makeRequest({
+          operations: [
+            {
+              type: "update-context",
+              contextId: "context-implement",
+              contextValidator: {
+                enabled: true,
+                assignments: [
+                  makeValidatorAssignment({
+                    id: "security",
+                    profile: { tier: "project", id: "security-reviewer" },
+                  }),
+                ],
+              },
+            },
+          ],
+        }),
+      },
+      harness.deps,
+    );
+
+    expect(outcome.ok).toBe(true);
+    const cohort = harness
+      .current()
+      .workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-implement",
+      )?.contextValidator;
+    expect(
+      cohort?.assignments[0]?.profileSnapshot.resolvedInstructionHash,
+    ).toBe(SECURITY_V1);
+  });
+
+  it("rejects a dangling profile reference at preparation, before the mutation opens", async () => {
+    const harness = makeHarness(createWorkflowExecution({ status: "paused" }));
+    harness.library.delete("security-reviewer");
+
+    const outcome = await applyLiveEditsToActiveExecution(
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        request: makeRequest({
+          operations: [
+            { type: "remove-task", taskId: "task-implement-1" },
+            {
+              type: "update-context",
+              contextId: "context-implement",
+              contextValidator: {
+                enabled: true,
+                assignments: [
+                  makeValidatorAssignment({
+                    id: "security",
+                    profile: { tier: "project", id: "security-reviewer" },
+                  }),
+                ],
+              },
+            },
+          ],
+        }),
+      },
+      harness.deps,
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || outcome.kind !== "rejected") return;
+    expect(outcome.failure.status).toBe(400);
+    expect(outcome.failure.code).toBe("invalid_edit");
+    expect(outcome.failure.issues).toEqual([
+      expect.objectContaining({
+        code: "profile-unresolvable",
+        operationIndex: 1,
+        contextId: "context-implement",
+        field: "contextValidator.assignments[0]",
+      }),
+    ]);
+    expect(harness.mutations).toBe(0);
+    expect(harness.current().liveRevision).toBe(1);
+  });
+
+  it("returns the typed 409 when liveRevision moves under the prepared edit, and the retry re-prepares", async () => {
+    const harness = makeHarness(createWorkflowExecution({ status: "paused" }));
+    const request = makeRequest({
+      operations: [
+        {
+          type: "update-context",
+          contextId: "context-implement",
+          contextValidator: {
+            enabled: true,
+            assignments: [
+              makeValidatorAssignment({
+                id: "security",
+                profile: { tier: "project", id: "security-reviewer" },
+              }),
+            ],
+          },
+        },
+      ],
+    });
+
+    // A concurrent edit commits after this request prepared its snapshots but
+    // before its own mutation runs, and it bumps the revision this batch was
+    // authored against — and re-renders the profile while it is at it.
+    harness.beforeMutation = () => {
+      harness.beforeMutation = null;
+      harness.library.set("security-reviewer", SECURITY_V2);
+      harness.bumpLiveRevision();
+    };
+
+    const conflicted = await applyLiveEditsToActiveExecution(
+      { projectPath: "/p", sessionName: "s", request },
+      harness.deps,
+    );
+    expect(conflicted.ok).toBe(false);
+    if (conflicted.ok || conflicted.kind !== "rejected") return;
+    expect(conflicted.failure.code).toBe("revision_conflict");
+    expect(conflicted.failure.status).toBe(409);
+    expect(conflicted.failure.currentLiveRevision).toBe(2);
+    expect(harness.prepareCalls).toBe(1);
+    expect(harness.liveEditApplied).toHaveLength(0);
+
+    const retried = await applyLiveEditsToActiveExecution(
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        request: { ...request, baseLiveRevision: 2 },
+      },
+      harness.deps,
+    );
+
+    expect(retried.ok).toBe(true);
+    if (!retried.ok) return;
+    // The retry composed again rather than reusing the first attempt's bytes.
+    expect(harness.prepareCalls).toBe(2);
+    const cohort = retried.execution?.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    )?.contextValidator;
+    expect(
+      cohort?.assignments[0]?.profileSnapshot.resolvedInstructionHash,
+    ).toBe(SECURITY_V2);
   });
 
   it("reports a missing active execution distinctly", async () => {

@@ -6,14 +6,11 @@ import type {
   WorkflowCollaborationConfig,
   WorkflowCollaborationConfigOverride,
 } from "@/lib/workflow-graph/collaboration-schemas";
-import {
-  DEFAULT_PLAN_REPAIR_POLICY,
-  type GraphWorkflowAgentValidatorConfig,
-} from "@/lib/workflow-graph/config-schemas";
+import { DEFAULT_PLAN_REPAIR_POLICY } from "@/lib/workflow-graph/config-schemas";
 import type {
+  CascadeWorkflowSemanticDefinition,
+  GraphWorkflowCascadeContext,
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowResolvedContext,
-  ResolvedWorkflowSemanticDefinition,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
@@ -28,19 +25,32 @@ export type ResolvedWorkflowConfig = WorkflowDefaults;
  */
 export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   implementer: {
-    backend: "claude",
-    model: "opus",
-    reasoningEffort: "medium",
-  },
-  contextValidator: {
-    type: "claude",
-    enabled: true,
-    continuity: { enabled: true },
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
     agent: {
       backend: "claude",
-      model: "sonnet",
+      model: "opus",
       reasoningEffort: "medium",
     },
+  },
+  // Exactly one reviewer: the cohort is an ordered set, but the seeded default
+  // stays a single general reviewer so an unconfigured workflow keeps today's
+  // one-invocation-per-round cost profile (R2).
+  contextValidator: {
+    enabled: true,
+    assignments: [
+      {
+        id: "general",
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "conversation",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: true },
+      },
+    ],
   },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
@@ -143,7 +153,7 @@ export function resolveContext(
   globalDefaults: WorkflowDefaults,
   workflowConfig: WorkflowConfigOverride,
   context: GraphWorkflowExecutionContextDefinition,
-): GraphWorkflowResolvedContext {
+): GraphWorkflowCascadeContext {
   const defaults = coerceGlobalDefaults(globalDefaults);
   const workflow: WorkflowConfigOverride = workflowConfig ?? {};
 
@@ -219,23 +229,25 @@ export function resolveContext(
   };
 }
 
+/**
+ * Whole-cohort selection: the nearest tier that declares a cohort supplies it
+ * entire. Nothing is merged across tiers — a context that names one reviewer
+ * replaces the workflow's three rather than adding a fourth — and "off" is a
+ * cohort with `enabled: false`, not an absent one, so the dormant assignments
+ * survive the cascade.
+ */
 function resolveContextValidator(
   globalValidator: WorkflowDefaults["contextValidator"],
   workflowValidator: WorkflowConfigOverride["contextValidator"],
   contextOverride: GraphWorkflowExecutionContextDefinition["contextValidator"],
-): GraphWorkflowResolvedContext["contextValidator"] {
-  if (contextOverride) {
-    if (contextOverride.kind === "disabled") return null;
-    return contextOverride.value;
-  }
-  if (workflowValidator) return workflowValidator;
-  return globalValidator;
+): GraphWorkflowCascadeContext["contextValidator"] {
+  return contextOverride ?? workflowValidator ?? globalValidator;
 }
 
 export function resolveWorkflowDefinition(
   global: GlobalConfig,
   definition: WorkflowSemanticDefinition,
-): ResolvedWorkflowSemanticDefinition {
+): CascadeWorkflowSemanticDefinition {
   const defaults = coerceGlobalDefaults(global.workflowDefaults);
   const workflowConfig = definition.workflowConfig ?? {};
 
@@ -260,23 +272,14 @@ export function resolveWorkflowDefinition(
   };
 }
 
-// The backend a (resolved, enabled) context-validator runs on: a `codex`
-// validator is fixed to the codex backend; a `claude` validator carries an
-// explicit `agent.backend`.
-function validatorBackend(
-  validator: GraphWorkflowAgentValidatorConfig,
-): AgentBackendId {
-  return validator.type === "codex" ? "codex" : validator.agent.backend;
-}
-
 /**
  * The distinct set of agent backends the resolved workflow actually uses
  * (R5.2a). For every execution context, resolve it through the same config
  * cascade the run uses (per-context → workflow → global) and collect the
- * implementer's backend (always present) plus the context-validator's backend
- * when that validator is non-null AND enabled. A disabled validator does not
- * run, so its backend is NOT "used"; a `disabled`/null validator and a script
- * validator contribute no backend.
+ * implementer's backend (always present) plus the backend of every assignment
+ * in an ENABLED validator cohort. A disabled cohort does not run, so its
+ * dormant assignments' backends are NOT "used"; a script validator contributes
+ * no backend.
  *
  * Backends are not a parameterizable field, so this set is computed from the
  * RAW resolved definition before any `{{...}}` substitution — substitution only
@@ -295,9 +298,11 @@ export function computeUsedBackends(
 
   for (const context of definition.executionContexts) {
     const resolved = resolveContext(defaults, workflowConfig, context);
-    backends.add(resolved.implementer.backend);
-    if (resolved.contextValidator && resolved.contextValidator.enabled) {
-      backends.add(validatorBackend(resolved.contextValidator));
+    backends.add(resolved.implementer.agent.backend);
+    if (resolved.contextValidator.enabled) {
+      for (const assignment of resolved.contextValidator.assignments) {
+        backends.add(assignment.agent.backend);
+      }
     }
   }
 

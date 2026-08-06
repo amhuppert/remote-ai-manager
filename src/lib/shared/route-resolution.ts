@@ -240,3 +240,30 @@ export async function parseJsonBody<T>(
     return { ok: false, response: jsonError(errorMessage, 400) };
   }
 }
+
+/**
+ * `parseJsonBody` for a route whose body is entirely optional: an absent or
+ * unparseable-as-JSON body parses as `{}` so the schema's own defaults apply,
+ * while a body that IS present and fails validation still refuses with 400.
+ *
+ * The distinction matters for a create route that gained an optional field: an
+ * existing client posting no body must keep working, but a client sending a
+ * malformed selection must not be silently given the default instead.
+ */
+export async function parseOptionalJsonBody<T>(
+  request: Request,
+  schema: { parse(input: unknown): T },
+  errorMessage: string,
+): Promise<RouteResolution<T>> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
+  try {
+    return { ok: true, value: schema.parse(body ?? {}) };
+  } catch {
+    return { ok: false, response: jsonError(errorMessage, 400) };
+  }
+}

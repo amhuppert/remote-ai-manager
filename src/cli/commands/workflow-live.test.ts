@@ -125,15 +125,29 @@ const OUTLINE_BODY = {
       {
         contextId: "plan",
         implementer: {
+          assignmentId: "implementer",
+          profile: "builtin:general-implementer",
+          focus: null,
+          revision: 2,
+          resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
           backend: "claude",
           model: "opus",
           reasoningEffort: "medium",
         },
-        validator: {
-          type: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
+        validators: [
+          {
+            assignmentId: "general",
+            profile: "builtin:general-reviewer",
+            focus: null,
+            revision: 5,
+            resolvedInstructionHash: `sha256:${"e".repeat(64)}`,
+            strategy: "conversation",
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+        ],
+        validatorCohortEnabled: true,
         scriptValidator: false,
         humanApprovalGate: false,
         askUserQuestions: false,
@@ -142,15 +156,29 @@ const OUTLINE_BODY = {
       {
         contextId: "impl",
         implementer: {
+          assignmentId: "implementer",
+          profile: "builtin:general-implementer",
+          focus: null,
+          revision: 2,
+          resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
           backend: "claude",
           model: "opus",
           reasoningEffort: "medium",
         },
-        validator: {
-          type: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
+        validators: [
+          {
+            assignmentId: "general",
+            profile: "builtin:general-reviewer",
+            focus: null,
+            revision: 5,
+            resolvedInstructionHash: `sha256:${"e".repeat(64)}`,
+            strategy: "conversation",
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+        ],
+        validatorCohortEnabled: true,
         scriptValidator: true,
         humanApprovalGate: true,
         askUserQuestions: false,
@@ -159,11 +187,31 @@ const OUTLINE_BODY = {
       {
         contextId: "verify",
         implementer: {
+          assignmentId: "implementer",
+          profile: "project:house-implementer",
+          focus: "state-store",
+          revision: 7,
+          resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
           backend: "codex",
           model: "gpt-5.4",
           reasoningEffort: "high",
         },
-        validator: null,
+        // A disabled cohort that retains a seeded assignment: it does not run,
+        // but the execution holds it and a live edit can enable it.
+        validatorCohortEnabled: false,
+        validators: [
+          {
+            assignmentId: "dormant-security",
+            profile: "global:house-reviewer",
+            focus: null,
+            revision: 3,
+            resolvedInstructionHash: `sha256:${"f".repeat(64)}`,
+            strategy: "task",
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "low",
+          },
+        ],
         scriptValidator: false,
         humanApprovalGate: false,
         askUserQuestions: false,
@@ -257,11 +305,111 @@ describe("cctl workflow live get", () => {
               2 impl-ui     running    "Build inspector UI"  (1.8k chars)
               3 impl-tests  pending    "Add tests"           (704 chars)
       config:
-        plan    claude opus medium; validator claude sonnet medium; script off
-        impl    claude opus medium; validator claude sonnet medium; script on; approval on
+        plan    claude opus medium; validator general conversation claude sonnet medium; script off
+        impl    claude opus medium; validator general conversation claude sonnet medium; script on; approval on
         verify  codex gpt-5.4 high; validator off; script off
+      staffing (snapshots):
+        plan    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus medium
+        plan    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet medium
+        impl    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus medium
+        impl    validator    general           builtin:general-reviewer@5     #eeeeeeeeeeee  conversation claude sonnet medium
+        verify  implementer  implementer       project:house-implementer@7    #dddddddddddd  codex gpt-5.4 high  focus "state-store"
+        verify  validator    dormant-security  global:house-reviewer@3        #ffffffffffff  task codex gpt-5.4 low  (cohort disabled)
       "
     `);
+  });
+
+  /**
+   * R13.1: the live surface is the SNAPSHOT half of the two-shape distinction —
+   * a running execution shows the revision it resolved and the hash of the
+   * instructions it replays. `cctl workflow get` shows neither, because a saved
+   * definition has resolved nothing.
+   */
+  it("renders one staffing row per seeded assignment with revision and hash", async () => {
+    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+
+    const staffing = result.stdout
+      .split("staffing (snapshots):\n")[1]
+      ?.split("\n")
+      .filter((line) => line.startsWith("  "));
+
+    // One row per SEEDED assignment: three implementers plus three validators,
+    // the last of which is dormant. A dormant row is what a disabled cohort
+    // holds, and the block reports what the execution holds.
+    expect(staffing).toHaveLength(6);
+    expect(staffing?.[0]).toContain("builtin:general-implementer@2");
+    expect(staffing?.[0]).toContain("#cccccccccccc");
+    expect(staffing?.[1]).toContain("builtin:general-reviewer@5");
+    expect(staffing?.[1]).toContain("conversation claude sonnet medium");
+    expect(staffing?.[4]).toContain('focus "state-store"');
+    // The short hash is a prefix of the digest, never the whole 64-char one.
+    expect(result.stdout).not.toContain("c".repeat(64));
+  });
+
+  /**
+   * Hard cutover: the live-outline projection always carries the post-cutover
+   * staffing fields, so the CLI REQUIRES them. An outline missing them is not
+   * quietly reinterpreted under the old rules — inferring "cohort disabled" from
+   * an empty list would be an inbound compatibility parser, which the charter
+   * prohibits. It falls back to the raw payload, the same as any other body the
+   * renderer cannot honestly render.
+   */
+  it("refuses to infer staffing from an outline missing the cutover fields", async () => {
+    const legacy = structuredClone(OUTLINE_BODY);
+    for (const entry of legacy.outline.config) {
+      delete (entry as { validatorCohortEnabled?: unknown })
+        .validatorCohortEnabled;
+    }
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      baseEnv,
+      makeHost(() => jsonResponse(legacy)),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("staffing (snapshots):");
+    expect(result.stdout).not.toContain("validator off");
+  });
+
+  it("refuses to render a staffing row whose seeded provenance is absent", async () => {
+    const legacy = structuredClone(OUTLINE_BODY);
+    for (const entry of legacy.outline.config) {
+      delete (entry.implementer as { revision?: unknown }).revision;
+    }
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      baseEnv,
+      makeHost(() => jsonResponse(legacy)),
+    );
+
+    expect(result.stdout).not.toContain("staffing (snapshots):");
+  });
+
+  /**
+   * The dormant row carries the SAME marker the saved surface uses, so the two
+   * staffing blocks stay readable side by side — and the `config:` line still
+   * says "validator off", because dormant assignments are not dispatched.
+   */
+  it("marks a disabled cohort's rows dormant without claiming it runs them", async () => {
+    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+
+    const staffing = result.stdout
+      .split("staffing (snapshots):\n")[1]
+      ?.split("\n")
+      .filter((line) => line.startsWith("  "));
+
+    const dormant = staffing?.find((line) => line.includes("dormant-security"));
+    expect(dormant).toContain("global:house-reviewer@3");
+    expect(dormant).toContain("#ffffffffffff");
+    expect(dormant).toContain("(cohort disabled)");
+    // Enabled rows carry no marker.
+    expect(staffing?.[1]).not.toContain("(cohort disabled)");
+    // The runtime line is unchanged: nothing in this cohort is invoked.
+    expect(result.stdout).toContain(
+      "verify  codex gpt-5.4 high; validator off",
+    );
   });
 
   it("passes the endpoint JSON through the envelope with --json", async () => {
@@ -342,11 +490,15 @@ describe("cctl workflow live get", () => {
         config: {
           contextId: "impl",
           implementer: {
-            backend: "claude",
-            model: "opus",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "medium",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: true },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },

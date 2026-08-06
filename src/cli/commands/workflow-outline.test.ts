@@ -39,7 +39,7 @@ const RECORD = {
         id: "plan",
         title: "Plan the approach",
         acceptanceCriteria: "A plan.md describes the approach.",
-        contextValidator: { kind: "disabled" },
+        contextValidator: { enabled: false, assignments: [] },
       },
       {
         id: "impl",
@@ -116,6 +116,179 @@ describe("workflow outline", () => {
     expect(parseOutlineRecord({ nope: true })).toBeNull();
   });
 
+  /**
+   * R13.1: a saved definition is REFERENCE-bearing — it names profiles the
+   * library still owns and resolves nothing. Its staffing view therefore
+   * carries the qualified `tier:id`, the strategy, and the runtime, and must
+   * NOT carry a revision or a resolved hash: those exist only once execution
+   * start seeds a snapshot, and printing them here would claim a determinism a
+   * saved document does not have.
+   */
+  describe("assignment provenance (references)", () => {
+    const STAFFED = {
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        workflowConfig: {
+          ...RECORD.definition.workflowConfig,
+          implementer: {
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "opus",
+              reasoningEffort: "high",
+            },
+          },
+        },
+        executionContexts: [
+          RECORD.definition.executionContexts[0],
+          {
+            ...RECORD.definition.executionContexts[1],
+            implementer: {
+              id: "implementer",
+              profile: { tier: "project", id: "house-implementer" },
+              focus: "state-store",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.6",
+                reasoningEffort: "high",
+              },
+            },
+            contextValidator: {
+              enabled: true,
+              assignments: [
+                {
+                  id: "security",
+                  profile: { tier: "global", id: "security-reviewer" },
+                  strategy: "task",
+                  agent: {
+                    backend: "codex",
+                    model: "gpt-5.6",
+                    reasoningEffort: "high",
+                  },
+                  continuity: { enabled: true },
+                },
+                {
+                  id: "general",
+                  profile: { tier: "builtin", id: "general-reviewer" },
+                  strategy: "conversation",
+                  agent: {
+                    backend: "claude",
+                    model: "sonnet",
+                    reasoningEffort: "medium",
+                  },
+                  continuity: { enabled: true },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    it("reports each authored assignment with its tier, role, ref, and runtime", () => {
+      const data = buildOutlineData(parseOutlineRecord(STAFFED)!);
+
+      expect(data.staffing).toEqual([
+        {
+          scope: "workflow",
+          role: "implementer",
+          assignmentId: "implementer",
+          profile: "builtin:general-implementer",
+          focus: null,
+          strategy: null,
+          runtime: "claude opus high",
+        },
+        {
+          scope: "impl",
+          role: "implementer",
+          assignmentId: "implementer",
+          profile: "project:house-implementer",
+          focus: "state-store",
+          strategy: null,
+          runtime: "codex gpt-5.6 high",
+        },
+        {
+          scope: "impl",
+          role: "validator",
+          assignmentId: "security",
+          profile: "global:security-reviewer",
+          focus: null,
+          strategy: "task",
+          runtime: "codex gpt-5.6 high",
+        },
+        {
+          scope: "impl",
+          role: "validator",
+          assignmentId: "general",
+          profile: "builtin:general-reviewer",
+          focus: null,
+          strategy: "conversation",
+          runtime: "claude sonnet medium",
+        },
+      ]);
+    });
+
+    it("renders the staffing block as references, never as snapshots", () => {
+      const text = renderOutline(parseOutlineRecord(STAFFED)!);
+
+      expect(text).toContain("staffing (references):");
+      expect(text).toContain(
+        "workflow  implementer  implementer  builtin:general-implementer",
+      );
+      expect(text).toContain("global:security-reviewer");
+      expect(text).toContain("task codex gpt-5.6 high");
+      expect(text).toContain('focus "state-store"');
+      // A reference has no seeded revision and no resolved hash. Both spellings
+      // belong to `live get` alone — that IS the two-shape distinction.
+      expect(text).not.toMatch(/@\d/);
+      expect(text).not.toContain("#");
+    });
+
+    it("says so when a definition authors no assignment at any tier", () => {
+      const text = renderOutline(parseOutlineRecord(RECORD)!);
+      expect(text).toContain("staffing (references): none authored");
+    });
+
+    it("retains the dormant assignments of a disabled cohort", () => {
+      const withDormant = {
+        ...STAFFED,
+        definition: {
+          ...STAFFED.definition,
+          executionContexts: STAFFED.definition.executionContexts.map(
+            (context, index) =>
+              index === 1
+                ? {
+                    ...context,
+                    contextValidator: {
+                      enabled: false,
+                      assignments:
+                        STAFFED.definition.executionContexts[1]!
+                          .contextValidator!.assignments,
+                    },
+                  }
+                : context,
+          ),
+        },
+      };
+
+      const data = buildOutlineData(parseOutlineRecord(withDormant)!);
+      // Dormant assignments are configuration a later edit can enable without
+      // touching the library, so an author has to be able to see them.
+      const validators = data.staffing.filter(
+        (row) => row.role === "validator",
+      );
+      expect(validators.map((row) => row.assignmentId)).toEqual([
+        "security",
+        "general",
+      ]);
+      expect(renderOutline(parseOutlineRecord(withDormant)!)).toMatch(
+        /impl\s+validator\s+security\s+global:security-reviewer\s+task codex gpt-5\.6 high\s+\(cohort disabled\)/,
+      );
+    });
+  });
+
   it("summarizes a declared outputSchema as a shape, not a body (R7.2)", () => {
     const record = parseOutlineRecord(RECORD);
     if (!record) throw new Error("expected a parsable outline record");
@@ -179,7 +352,10 @@ describe("workflow outline", () => {
         tasks: Array<{ id: string; instructions: string }>;
       };
       expect(value.context.id).toBe("plan");
-      expect(value.context.contextValidator).toEqual({ kind: "disabled" });
+      expect(value.context.contextValidator).toEqual({
+        enabled: false,
+        assignments: [],
+      });
       expect(value.tasks[0]?.instructions).toHaveLength(612);
     }
     expect(sliceContext(record, "missing").ok).toBe(false);
@@ -209,7 +385,9 @@ describe("workflow outline", () => {
     if (config.ok) {
       expect(config.value).toEqual({
         workflow: { scriptValidator: { enabled: true } },
-        contexts: { plan: { contextValidator: { kind: "disabled" } } },
+        contexts: {
+          plan: { contextValidator: { enabled: false, assignments: [] } },
+        },
       });
     }
 

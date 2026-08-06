@@ -18,8 +18,7 @@ import {
 } from "@/lib/notifications/schemas";
 import { workflowCollaborationConfigSchema } from "@/lib/workflow-graph/collaboration-schemas";
 import {
-  graphWorkflowAgentConfigSchema,
-  graphWorkflowAgentValidatorConfigSchema,
+  agentAssignmentSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowHumanApprovalGateConfigSchema,
@@ -27,6 +26,7 @@ import {
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
+  validatorCohortSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import { devServerConfigSchema } from "@/lib/dev-server/schemas";
 
@@ -35,8 +35,8 @@ import { devServerConfigSchema } from "@/lib/dev-server/schemas";
 // ============================================================
 
 export const workflowDefaultsSchema = z.object({
-  implementer: graphWorkflowAgentConfigSchema,
-  contextValidator: graphWorkflowAgentValidatorConfigSchema,
+  implementer: agentAssignmentSchema,
+  contextValidator: validatorCohortSchema,
   scriptValidator: graphWorkflowScriptValidatorConfigSchema,
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema,
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema,
@@ -49,8 +49,8 @@ export const workflowDefaultsSchema = z.object({
 export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
 
 const rawWorkflowDefaultsSchema = z.object({
-  implementer: graphWorkflowAgentConfigSchema.optional(),
-  contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  implementer: agentAssignmentSchema.optional(),
+  contextValidator: validatorCohortSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),

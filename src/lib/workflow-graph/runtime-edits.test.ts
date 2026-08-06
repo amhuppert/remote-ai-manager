@@ -15,7 +15,7 @@ describe("graph workflow runtime edit service", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -34,7 +34,7 @@ describe("graph workflow runtime edit service", () => {
         },
         "context-implement": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -53,7 +53,7 @@ describe("graph workflow runtime edit service", () => {
         },
         "context-verify": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -133,7 +133,7 @@ describe("graph workflow runtime edit service", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -152,7 +152,7 @@ describe("graph workflow runtime edit service", () => {
         },
         "context-implement": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -171,7 +171,7 @@ describe("graph workflow runtime edit service", () => {
         },
         "context-verify": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,

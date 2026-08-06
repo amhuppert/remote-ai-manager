@@ -18,6 +18,7 @@ import { mutationFetch } from "@/lib/api/fetcher";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { AddTicketAttachmentServiceInput } from "./attachment-service";
 import { resetDeletedTicketCaches } from "./cache-lifecycle";
 import {
@@ -1061,6 +1062,8 @@ export interface StartTicketVars {
   backend?: AgentBackendId;
   model?: string;
   reasoningEffort?: EffortLevel;
+  /** Identity for the provisioned session's initial conversation (R7). */
+  profile?: AgentProfileRef;
 }
 
 export function useStartTicketMutation() {
@@ -1074,6 +1077,7 @@ export function useStartTicketMutation() {
       backend,
       model,
       reasoningEffort,
+      profile,
     }: StartTicketVars) =>
       mutationFetch(
         `${ticketUrl(projectName, number)}/start`,
@@ -1081,7 +1085,13 @@ export function useStartTicketMutation() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode, backend, model, reasoningEffort }),
+          body: JSON.stringify({
+            mode,
+            backend,
+            model,
+            reasoningEffort,
+            profile,
+          }),
         },
         startTicketOutputSchema,
       ),

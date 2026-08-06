@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { assignmentFingerprint } from "./lane-identity";
 import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
+  GraphWorkflowValidationSpecialistEntry,
 } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowAgentSessionState,
@@ -21,6 +23,8 @@ import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  makeProfileSnapshot,
+  stubValidationRoundService,
 } from "@/lib/workflow-graph/test-fixtures";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import {
@@ -28,6 +32,9 @@ import {
   createGraphWorkflowIterationOrchestrator,
   IterationHaltedError,
 } from "./iteration-orchestrator";
+import type { GraphWorkflowContextValidationInput } from "./execution-validation";
+import type { CohortParkedLane } from "./validation-cohort";
+import type { ResumeUserInputContext } from "./user-input-gate";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import { StaleLoopFenceError, runWithLoopFence } from "./loop-fence";
 import { AgentTurnFailedError } from "./errors";
@@ -233,7 +240,7 @@ function createExecutionWithPlanTasks(
     contextStates: {
       "context-plan": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-plan",
         status: "running",
         totalTaskCount: 2,
@@ -252,7 +259,7 @@ function createExecutionWithPlanTasks(
       },
       "context-implement": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-implement",
         status: "pending",
         totalTaskCount: 1,
@@ -271,7 +278,7 @@ function createExecutionWithPlanTasks(
       },
       "context-verify": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,
@@ -365,6 +372,8 @@ function seedFailedContextValidationEvent(
       title: string;
       description: string;
     }>;
+    roundSeq: number | null;
+    specialists: GraphWorkflowValidationSpecialistEntry[];
   }> = {},
 ): void {
   repository.appendedEvents.push({
@@ -376,6 +385,8 @@ function seedFailedContextValidationEvent(
       executionId,
       contextId: "context-plan",
       validatorType: "context",
+      roundSeq: overrides.roundSeq ?? null,
+      specialists: overrides.specialists ?? [],
       kind: "context_validation",
       rejectedOutput: null,
       gateRepairAttempts: null,
@@ -499,8 +510,13 @@ describe("graph workflow iteration orchestrator", () => {
       contextId: "context-plan",
     });
 
+    // The lane conversation is handed the context implementer's seeded
+    // snapshot, not left to resolve a profile of its own (R4).
     expect(createConversation).toHaveBeenCalledWith("/repo", "session-1", {
       role: "iteration",
+      profileSnapshot:
+        repository.read().workingDefinition.executionContexts[0]!.implementer
+          .profileSnapshot,
     });
     expect(createToolServer).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1159,6 +1175,62 @@ describe("graph workflow iteration orchestrator", () => {
     expect(runAgentIteration).toHaveBeenCalledTimes(1);
   });
 
+  it("fingerprints the implementer assignment so an edited implementer rotates its lane", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+    });
+    const repository = createRepository(execution);
+    const resolveImplementerCall = vi.fn(
+      async (input: ResolveImplementerCallInput) => ({
+        execution: input.execution,
+        conversationId: "conv-1",
+        sessionAction: "reuse" as const,
+        promptMode: "follow_up" as const,
+      }),
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conv-unused" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration: vi.fn(async () => ({
+        conversationId: "conv-1",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+        compacted: false,
+      })),
+      continuityService: {
+        resolveImplementerCall,
+        recordLaneTurnOutcome: vi.fn(
+          async (input: RecordLaneTurnOutcomeInput) => input.execution,
+        ),
+      },
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    )!;
+    expect(
+      resolveImplementerCall.mock.calls[0]?.[0].assignmentFingerprint,
+    ).toBe(
+      assignmentFingerprint({
+        profileSnapshot: context.implementer.profileSnapshot,
+        agent: context.implementer.agent,
+        continuity: context.iterationPolicy.continuity,
+      }),
+    );
+  });
+
   it("sends follow-up prompt as initial call when session is resumed (promptMode follow_up)", async () => {
     const repository = createRepository(
       createExecutionWithPlanTasks({
@@ -1532,12 +1604,15 @@ describe("graph workflow iteration orchestrator", () => {
       projectName: "repo",
       sessionName: "session-1",
       contextId: "context-plan",
-      resumeUserInput: {
-        conversationId: "conv-ask",
-        questionBatchId: "batch-conv-ask",
-        answers,
-        lane: "implementer",
-      },
+      resumeUserInputs: [
+        {
+          laneKey: "implementer",
+          lane: "implementer",
+          conversationId: "conv-ask",
+          questionBatchId: "batch-conv-ask",
+          answers,
+        },
+      ],
     });
 
     // The pin threads the asking conversation into the resolver.
@@ -2450,6 +2525,7 @@ describe("task validation failure handling (circuit breaker)", () => {
         "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing tests: Add edge case tests.",
       issues: [
         {
+          assignmentId: "general",
           taskId: "task-plan-2",
           title: "Missing tests",
           description: "Add edge case tests.",
@@ -2555,6 +2631,73 @@ describe("task validation failure handling (circuit breaker)", () => {
     expect(prompts[1]).toContain("`task-plan-2` - Write plan");
   });
 
+  // R12.2: the latest-verdict feedback reads the AGGREGATE. A cohort round adds
+  // specialist entries and drops the single-reviewer refs, and the remediation
+  // an implementer receives must be identical to what one reviewer produced.
+  it("builds the same remediation feedback from a multi-assignment round's aggregate", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const specialist = (
+      assignmentId: string,
+      id: string,
+      pass: boolean,
+    ): GraphWorkflowValidationSpecialistEntry => ({
+      assignmentId,
+      profile: { tier: "builtin", id, revision: 1 },
+      resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+      pass,
+      summary: `${assignmentId} reported`,
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+      usage: null,
+    });
+    seedFailedContextValidationEvent(repository, repository.read().id, {
+      roundSeq: 3,
+      specialists: [
+        specialist("general", "general-reviewer", true),
+        specialist("security", "security-reviewer", false),
+      ],
+    });
+    const prompts: string[] = [];
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-retry" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: vi.fn(async (agentInput) => {
+        prompts.push(agentInput.prompt);
+        return {
+          conversationId: "conversation-retry",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      }),
+      now: () => "2026-03-27T16:00:00.000Z",
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(prompts[0]).toContain("Latest Context Validation Failure");
+    expect(prompts[0]).toContain(
+      "Validation failed because rollback notes are missing.",
+    );
+    expect(prompts[0]).toContain("`task-plan-2` - Write plan");
+    expect(prompts[0]).toContain("Missing rollback notes");
+  });
+
   it("resets consecutiveFailureCount when a task completes successfully", async () => {
     const execution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",
@@ -2640,7 +2783,7 @@ describe("task validation failure handling (circuit breaker)", () => {
     )!;
     planContext.acceptanceCriteria =
       "Never-include-me-sentinel: plan review complete.";
-    planContext.contextValidator = null;
+    planContext.contextValidator = { enabled: false, assignments: [] };
 
     const repository = createRepository(execution);
     const prompts: string[] = [];
@@ -2723,10 +2866,21 @@ describe("task validation failure handling (circuit breaker)", () => {
     planContext.acceptanceCriteria =
       "Never-include-me-sentinel: plan review complete.";
     planContext.contextValidator = {
-      type: "claude",
       enabled: false,
-      continuity: { enabled: true },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     };
 
     const repository = createRepository(execution);
@@ -2773,10 +2927,21 @@ describe("task validation failure handling (circuit breaker)", () => {
     planContext.acceptanceCriteria =
       "Include-me-sentinel: plan review complete.";
     planContext.contextValidator = {
-      type: "claude",
       enabled: true,
-      continuity: { enabled: true },
-      agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     };
 
     const repository = createRepository(execution);
@@ -2824,11 +2989,16 @@ describe("codex implementer continuity", () => {
           title: "Plan",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "codex",
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "codex",
+              model: "gpt-5.4-mini",
+              reasoningEffort: "medium",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
@@ -2869,7 +3039,7 @@ describe("codex implementer continuity", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 2,
@@ -3198,12 +3368,12 @@ describe("mid-iteration halt via signalHalt", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-infra" }));
 
     const validateContextCompletion = vi.fn(async () => ({
-      kind: "infra_error" as const,
+      kind: "infra_exhausted" as const,
+      assignmentId: "general",
+      attempts: 3,
       reason: "exception" as const,
       message: "Codex rate limit exceeded",
       engine: "codex" as const,
-      sessionRef: null,
-      reviewArtifact: null,
     }));
 
     const signalHalt = vi.fn(
@@ -3374,6 +3544,7 @@ describe("mid-iteration halt via signalHalt", () => {
         "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing: add coverage",
       issues: [
         {
+          assignmentId: "general",
           taskId: "task-plan-2",
           title: "Missing",
           description: "add coverage",
@@ -3487,6 +3658,7 @@ describe("mid-iteration halt via signalHalt", () => {
         "Context validation blocked completion.\nReopened tasks:\n- task-plan-2\n- Missing: add coverage",
       issues: [
         {
+          assignmentId: "general",
           taskId: "task-plan-2",
           title: "Missing",
           description: "add coverage",
@@ -4167,18 +4339,10 @@ describe("runIteration when all tasks are already completed on entry", () => {
   it("forwards a validator resume into context validation (pin + answer block)", async () => {
     const repository = seedRepoWithAllTasksCompleted();
 
-    let receivedResume:
-      | { conversationId: string; questionBatchId: string; lane: string }
-      | undefined;
+    let receivedResume: readonly ResumeUserInputContext[] | undefined;
     const validateContextCompletion = vi.fn(
-      async (input: {
-        resumeUserInput?: {
-          conversationId: string;
-          questionBatchId: string;
-          lane: string;
-        };
-      }) => {
-        receivedResume = input.resumeUserInput;
+      async (input: GraphWorkflowContextValidationInput) => {
+        receivedResume = input.resumeUserInputs;
         return {
           kind: "pass" as const,
           summary: "Context passed after answer",
@@ -4216,22 +4380,28 @@ describe("runIteration when all tasks are already completed on entry", () => {
       projectName: "repo",
       sessionName: "session-1",
       contextId: "context-plan",
-      resumeUserInput: {
-        conversationId: "validator-conv-ask",
-        questionBatchId: "batch-validator",
-        answers,
-        lane: "context_validator",
-      },
+      resumeUserInputs: [
+        {
+          laneKey: "context_validator:general",
+          lane: "context_validator",
+          conversationId: "validator-conv-ask",
+          questionBatchId: "batch-validator",
+          answers,
+        },
+      ],
     });
 
     // The validator resume is forwarded so the runner pins the asking
     // validator conversation and embeds the answers block in its prompt.
-    expect(receivedResume).toEqual({
-      conversationId: "validator-conv-ask",
-      questionBatchId: "batch-validator",
-      answers,
-      lane: "context_validator",
-    });
+    expect(receivedResume).toEqual([
+      {
+        laneKey: "context_validator:general",
+        lane: "context_validator",
+        conversationId: "validator-conv-ask",
+        questionBatchId: "batch-validator",
+        answers,
+      },
+    ]);
   });
 
   it("does not forward an implementer resume into context validation", async () => {
@@ -4239,8 +4409,8 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     let receivedResume: unknown = "unset";
     const validateContextCompletion = vi.fn(
-      async (input: { resumeUserInput?: unknown }) => {
-        receivedResume = input.resumeUserInput;
+      async (input: GraphWorkflowContextValidationInput) => {
+        receivedResume = input.resumeUserInputs;
         return {
           kind: "pass" as const,
           summary: "Context passed",
@@ -4271,15 +4441,20 @@ describe("runIteration when all tasks are already completed on entry", () => {
       projectName: "repo",
       sessionName: "session-1",
       contextId: "context-plan",
-      resumeUserInput: {
-        conversationId: "impl-conv-ask",
-        questionBatchId: "batch-impl",
-        answers: {},
-        lane: "implementer",
-      },
+      resumeUserInputs: [
+        {
+          laneKey: "implementer",
+          lane: "implementer",
+          conversationId: "impl-conv-ask",
+          questionBatchId: "batch-impl",
+          answers: {},
+        },
+      ],
     });
 
-    expect(receivedResume).toBeUndefined();
+    // An implementer entry is filtered out, so the validator sees an empty set
+    // rather than another lane's answers.
+    expect(receivedResume).toEqual([]);
   });
 
   it("signals halt with validator_infra_error without running implementer when validator returns infra_error on re-validation", async () => {
@@ -4290,12 +4465,12 @@ describe("runIteration when all tasks are already completed on entry", () => {
     const runAgentIteration = vi.fn();
 
     const validateContextCompletion = vi.fn(async () => ({
-      kind: "infra_error" as const,
+      kind: "infra_exhausted" as const,
+      assignmentId: "general",
+      attempts: 3,
       reason: "unparseable" as const,
       message: "Validator agent did not return a JSON block",
       engine: "codex" as const,
-      sessionRef: null,
-      reviewArtifact: null,
     }));
 
     const signalHalt = vi.fn(
@@ -4367,6 +4542,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
         "Context validation blocked completion.\nReopened tasks:\n- task-plan-2",
       issues: [
         {
+          assignmentId: "general",
           taskId: "task-plan-2",
           title: "Missing rollback notes",
           description: "Add rollback guidance.",
@@ -4510,6 +4686,7 @@ describe("script validator integration", () => {
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -4567,6 +4744,7 @@ describe("script validator integration", () => {
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -4624,6 +4802,7 @@ describe("script validator integration", () => {
     });
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -4715,6 +4894,7 @@ describe("script validator integration", () => {
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -4790,6 +4970,7 @@ describe("script validator integration", () => {
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -4869,6 +5050,7 @@ describe("script validator integration", () => {
     );
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -4953,6 +5135,7 @@ describe("script validator integration", () => {
     const runCircuitBreakerGate = vi.fn(defaultGate);
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
       executionRepository: repository,
       findLatestContextValidationEvent:
         repository.findLatestContextValidationEvent,
@@ -5752,6 +5935,7 @@ describe("human approval gate at finalization", () => {
         "Context validation blocked completion.\nReopened tasks:\n- task-plan-2",
       issues: [
         {
+          assignmentId: "general",
           taskId: "task-plan-2",
           title: "Missing tests",
           description: "Add edge case tests.",
@@ -5934,12 +6118,13 @@ describe("awaiting-user-input park after an implementer turn", () => {
       "awaiting_user_input",
     );
 
-    // The gate was driven with the implementer lane, batch, and snapshot questions.
+    // The gate was driven with the implementer lane key, batch, and snapshot
+    // questions.
     expect(enterSpy).toHaveBeenCalledTimes(1);
     expect(enterSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         contextId: "context-plan",
-        lane: "implementer",
+        laneKey: "implementer",
         conversationId: "conversation-ask",
         questionBatchId: "batch-1",
         questions,
@@ -5950,7 +6135,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const persisted = repository.read();
     const contextState = persisted.contextStates["context-plan"];
     expect(contextState?.status).toBe("awaiting_user_input");
-    expect(contextState?.pendingUserInput).toMatchObject({
+    expect(contextState?.pendingUserInputs["implementer"]).toMatchObject({
       conversationId: "conversation-ask",
       lane: "implementer",
       questionBatchId: "batch-1",
@@ -6045,7 +6230,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     const persisted = repository.read();
     const contextState = persisted.contextStates["context-plan"];
     expect(contextState?.status).toBe("awaiting_user_input");
-    expect(contextState?.pendingUserInput).toMatchObject({
+    expect(contextState?.pendingUserInputs["implementer"]).toMatchObject({
       conversationId: "conversation-ask",
       lane: "implementer",
       questionBatchId: "batch-1",
@@ -6143,7 +6328,7 @@ describe("awaiting-user-input park after an implementer turn", () => {
     expect(enterSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         contextId: "context-plan",
-        lane: "implementer",
+        laneKey: "implementer",
         conversationId: "conversation-ask",
         questionBatchId: "batch-1",
         questions,
@@ -6222,17 +6407,20 @@ describe("awaiting-user-input park after an implementer turn", () => {
       "task-plan-2": "pending",
     });
     // Fast answer: a same-batch record with answers already exists pre-park.
-    execution.contextStates["context-plan"]!.pendingUserInput = {
-      conversationId: "conversation-ask",
-      lane: "implementer",
-      questionBatchId: "batch-1",
-      questions: [question("q1")],
-      requestedAt: NOW,
-      answers: {
-        byQuestionId: {
-          q1: { selected: ["A"], note: null, skipped: false, question: "?" },
+    execution.contextStates["context-plan"]!.pendingUserInputs = {
+      implementer: {
+        conversationId: "conversation-ask",
+        lane: "implementer",
+        questionBatchId: "batch-1",
+        questions: [question("q1")],
+        requestedAt: NOW,
+        roundSeq: null,
+        answers: {
+          byQuestionId: {
+            q1: { selected: ["A"], note: null, skipped: false, question: "?" },
+          },
+          answeredAt: NOW,
         },
-        answeredAt: NOW,
       },
     };
     const repository = createRepository(execution);
@@ -6353,8 +6541,8 @@ describe("awaiting-user-input park after an implementer turn", () => {
     );
     expect(result.shouldContinueInContext).toBe(false);
     expect(
-      repository.read().contextStates["context-plan"]?.pendingUserInput,
-    ).toBeNull();
+      repository.read().contextStates["context-plan"]?.pendingUserInputs,
+    ).toEqual({});
   });
 });
 
@@ -6452,9 +6640,14 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     // The validator's turn ended with a pending question and no verdict.
     const validateContextCompletion = vi.fn(async () => ({
       kind: "asked_user" as const,
-      conversationId: "conversation-validator",
-      questionBatchId: "batch-validator-1",
-      questions,
+      parked: [
+        {
+          assignmentId: "general",
+          conversationId: "conversation-validator",
+          questionBatchId: "batch-validator-1",
+          questions,
+        },
+      ] as [CohortParkedLane, ...CohortParkedLane[]],
     }));
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
@@ -6485,12 +6678,13 @@ describe("awaiting-user-input park after a context-validator turn", () => {
       "awaiting_user_input",
     );
 
-    // The gate was driven with the VALIDATOR lane, batch, and snapshot questions.
+    // The gate was driven with the asking VALIDATOR's lane key, batch, and
+    // snapshot questions.
     expect(enterSpy).toHaveBeenCalledTimes(1);
     expect(enterSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         contextId: "context-plan",
-        lane: "context_validator",
+        laneKey: "context_validator:general",
         conversationId: "conversation-validator",
         questionBatchId: "batch-validator-1",
         questions,
@@ -6501,7 +6695,9 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     const persisted = repository.read();
     const contextState = persisted.contextStates["context-plan"];
     expect(contextState?.status).toBe("awaiting_user_input");
-    expect(contextState?.pendingUserInput).toMatchObject({
+    expect(
+      contextState?.pendingUserInputs["context_validator:general"],
+    ).toMatchObject({
       conversationId: "conversation-validator",
       lane: "context_validator",
       questionBatchId: "batch-validator-1",
@@ -6552,9 +6748,14 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     const questions = [question("qv1")];
     const validateContextCompletion = vi.fn(async () => ({
       kind: "asked_user" as const,
-      conversationId: "conversation-validator",
-      questionBatchId: "batch-validator-2",
-      questions,
+      parked: [
+        {
+          assignmentId: "general",
+          conversationId: "conversation-validator",
+          questionBatchId: "batch-validator-2",
+          questions,
+        },
+      ] as [CohortParkedLane, ...CohortParkedLane[]],
     }));
 
     const runAgentIteration = vi.fn(async () => {
@@ -6585,7 +6786,7 @@ describe("awaiting-user-input park after a context-validator turn", () => {
     expect(runAgentIteration).not.toHaveBeenCalled();
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
     expect(enterSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ lane: "context_validator" }),
+      expect.objectContaining({ laneKey: "context_validator:general" }),
     );
     expect(result.shouldContinueInContext).toBe(false);
     expect(result.execution.contextStates["context-plan"]?.status).toBe(
@@ -7729,8 +7930,11 @@ describe("context output capture (D2)", () => {
     if (!planContext) throw new Error("fixture missing context-plan");
     planContext.implementer = {
       ...planContext.implementer,
-      backend: "codex",
-      model: "gpt-5.4",
+      agent: {
+        ...planContext.implementer.agent,
+        backend: "codex",
+        model: "gpt-5.4",
+      },
     };
 
     const repository = createRepository(execution);

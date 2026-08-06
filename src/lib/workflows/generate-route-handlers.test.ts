@@ -45,6 +45,8 @@ function makePlannerSession(
     referenceDocuments: [],
     conversations: [
       {
+        profileSnapshot: null,
+        profileLockedAt: null,
         id: conversationId,
         scope: "session",
         nameOrigin: "default",

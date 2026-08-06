@@ -395,6 +395,23 @@ function readJsonlFile(filePath: string): ContextLogs["iterations"] {
   return records;
 }
 
+function collectValidatorResponses(
+  dir: string,
+  filePrefix: string,
+  into: ContextLogs["validatorResponses"],
+): void {
+  if (!existsSync(dir)) return;
+  for (const file of readdirSync(dir).sort()) {
+    if (!file.endsWith(".json")) continue;
+    const parsed = parseJsonRecord(readFileSync(path.join(dir, file), "utf8"));
+    const parsePath = parsed?.parsePath;
+    into.push({
+      file: `${filePrefix}${file}`,
+      parsePath: typeof parsePath === "string" ? parsePath : null,
+    });
+  }
+}
+
 function loadContextLogs(
   executionLogsDir: string,
 ): Record<string, ContextLogs> {
@@ -405,18 +422,27 @@ function loadContextLogs(
     if (!entry.isDirectory()) continue;
     const contextDir = path.join(contextsDir, entry.name);
     const validatorResponses: ContextLogs["validatorResponses"] = [];
-    const promptsDir = path.join(contextDir, "prompts");
-    if (existsSync(promptsDir)) {
-      for (const file of readdirSync(promptsDir).sort()) {
-        if (!file.endsWith(".json")) continue;
-        const parsed = parseJsonRecord(
-          readFileSync(path.join(promptsDir, file), "utf8"),
+    // Two locations, because a context validated by a cohort writes one
+    // response per assignment under `validators/<assignmentId>/`, while
+    // `prompts/` holds the pre-cohort layout that archived runs still carry.
+    // The recorded `file` keeps the assignment prefix so an audit can tell
+    // which specialist a fallback parse came from.
+    collectValidatorResponses(
+      path.join(contextDir, "prompts"),
+      "",
+      validatorResponses,
+    );
+    const validatorsDir = path.join(contextDir, "validators");
+    if (existsSync(validatorsDir)) {
+      for (const assignment of readdirSync(validatorsDir, {
+        withFileTypes: true,
+      })) {
+        if (!assignment.isDirectory()) continue;
+        collectValidatorResponses(
+          path.join(validatorsDir, assignment.name),
+          `validators/${assignment.name}/`,
+          validatorResponses,
         );
-        const parsePath = parsed?.parsePath;
-        validatorResponses.push({
-          file,
-          parsePath: typeof parsePath === "string" ? parsePath : null,
-        });
       }
     }
     logs[entry.name] = {

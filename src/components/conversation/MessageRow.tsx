@@ -15,6 +15,7 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-schemas";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 
 // `message`, the role modifier, `message-content`, and `message-iteration-badge`
 // are retained as structural / test hooks — external slices and tooling still
@@ -48,7 +49,13 @@ export interface MessageRowProps {
   worktreePath: string | undefined;
   thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
   /** Fork handler; omit to hide the Fork action where forking isn't supported. */
-  onFork?: (messageIndex: number) => void;
+  onFork?: (messageIndex: number, profile?: AgentProfileRef) => void;
+  /**
+   * Project whose profile library the index-0 fork picker lists — that fork
+   * derives from no session, so it is a fresh conversation with an identity to
+   * choose. Omit and the action stays one-click at every index.
+   */
+  forkProjectName?: string;
   /**
    * Conversation identity for the per-message Compact action; omit on hosts
    * without it (the action is hidden). Must be referentially stable — this row
@@ -84,6 +91,7 @@ const MessageRow = memo(function MessageRow({
   worktreePath,
   thinkingExpansionCommand,
   onFork,
+  forkProjectName,
   compactionTarget,
   conversationName,
   lastMessageExtras,
@@ -176,6 +184,7 @@ const MessageRow = memo(function MessageRow({
         content={msg.content}
         role={msg.role}
         onFork={onFork}
+        forkProjectName={forkProjectName}
         compactionTarget={compactionTarget}
         messageRef={
           // Queued rows render at a provisional index that may not be their

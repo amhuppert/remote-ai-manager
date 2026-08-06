@@ -5,7 +5,7 @@ import ProjectCockpit from "./ProjectCockpit";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import type {
   AskQuestionItem,
-  ConversationState,
+  PublicConversationState,
 } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -23,9 +23,11 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
 
 function makeConversation(
   id: string,
-  o: Partial<ConversationState> = {},
-): ConversationState {
+  o: Partial<PublicConversationState> = {},
+): PublicConversationState {
   return {
+    redactedProfileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",
@@ -61,7 +63,7 @@ function makeConversation(
   };
 }
 
-const openConversations: ConversationState[] = [
+const openConversations: PublicConversationState[] = [
   makeConversation("auth-refactor", { name: "Auth refactor" }),
   makeConversation("parser-bug", { name: "Parser bug", unread: true }),
 ];
@@ -108,7 +110,7 @@ const pendingQuestions: AskQuestionItem[] = [
   },
 ];
 
-const waitingConversations: ConversationState[] = [
+const waitingConversations: PublicConversationState[] = [
   makeConversation("auth-refactor", {
     name: "Auth refactor",
     status: "waiting_for_input",
@@ -173,7 +175,7 @@ function RailStub() {
 function Harness({
   conversations = openConversations,
 }: {
-  conversations?: ConversationState[];
+  conversations?: PublicConversationState[];
 }) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);
   const [backend, setBackend] = useState<AgentBackendId>("claude");

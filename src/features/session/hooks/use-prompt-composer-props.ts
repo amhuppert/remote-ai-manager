@@ -9,7 +9,7 @@ import {
 import type PromptComposer from "@/components/session/prompt/PromptComposer";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import { stripCollabPrefix } from "@/lib/conversation-commands/parse";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { CollabConfigDraft } from "@/stores/collaboration.store";
@@ -24,7 +24,7 @@ export interface UsePromptComposerPropsArgs {
   projectName: string;
   sessionName: string;
   conversationId: string;
-  activeConversation: ConversationState | undefined;
+  activeConversation: PublicConversationState | undefined;
   editorRef: RefObject<PromptEditorHandle | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   promptText: string;

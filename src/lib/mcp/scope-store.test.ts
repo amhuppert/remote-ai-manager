@@ -47,6 +47,8 @@ function stateWithAllScopes(): ManagerState {
             finished: false,
             conversations: [
               {
+                profileSnapshot: null,
+                profileLockedAt: null,
                 id: CONVERSATION_ID,
                 scope: "session",
                 nameOrigin: "default",

@@ -18,6 +18,9 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
+import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import { createAssignmentReferenceChecker } from "./assignment-references";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { createWorkflowStorageService } from "./storage";
 
@@ -27,7 +30,62 @@ let tempDir: string;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(tmpdir(), "cc-workflow-storage-contract-"));
+
+  // Every profile the maximal fixtures reference must exist: accept-time
+  // validation resolves assignment references, so a fixture naming a profile
+  // nobody created would be refused before durability is ever exercised.
+  const library = createAgentProfileLibraryService({
+    storage: createAgentProfileStorage({ resolveConfigDir: () => tempDir }),
+  });
+  for (const [tier, id] of [
+    ["project", "persistence-implementer"],
+    ["project", "security-reviewer"],
+    ["global", "perf-reviewer"],
+    ["global", "org-implementer"],
+    ["global", "org-security"],
+  ] as const) {
+    await library.create({
+      projectPath: PROJECT_PATH,
+      tier,
+      id,
+      name: id,
+      description: `Fixture profile ${tier}:${id}`,
+      instructions: `Fixture instructions for ${tier}:${id}.`,
+    });
+  }
 });
+
+function storageForContract() {
+  return createWorkflowStorageService({
+    resolveConfigDir: () => tempDir,
+    assignmentReferences: createAssignmentReferenceChecker({
+      library: createAgentProfileLibraryService({
+        storage: createAgentProfileStorage({ resolveConfigDir: () => tempDir }),
+      }),
+    }),
+  });
+}
+
+/**
+ * The maximal definition with every project-tier reference swapped for a
+ * global-tier one. A global template is refused when it reaches into a project
+ * (R4.2), so the global-scope round trip needs a document that is legal at that
+ * scope while keeping every other maximal field intact.
+ */
+function buildGlobalScopeMaximalDefinition(): WorkflowSemanticDefinition {
+  const definition = buildMaximalDefinition();
+  return JSON.parse(
+    JSON.stringify(definition)
+      .replaceAll(
+        '"tier":"project","id":"persistence-implementer"',
+        '"tier":"global","id":"org-implementer"',
+      )
+      .replaceAll(
+        '"tier":"project","id":"security-reviewer"',
+        '"tier":"global","id":"org-security"',
+      ),
+  ) as WorkflowSemanticDefinition;
+}
 
 afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
@@ -62,19 +120,31 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
     ],
     workflowConfig: {
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
-      },
-      contextValidator: {
-        type: "claude",
-        enabled: true,
-        continuity: { enabled: false, contextLimitTokens: 110_000 },
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        focus: "workflow-tier implementer steer",
         agent: {
           backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          model: "opus",
+          reasoningEffort: "high",
         },
+      },
+      contextValidator: {
+        enabled: false,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin", id: "general-reviewer" },
+            focus: "workflow-tier steer",
+            strategy: "conversation",
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: false, contextLimitTokens: 110_000 },
+          },
+        ],
       },
       scriptValidator: { enabled: true },
       iterationPolicy: {
@@ -150,22 +220,47 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           label: "Maximal context source",
         },
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
-        },
-        contextValidator: {
-          kind: "use",
-          value: {
-            type: "claude",
-            enabled: true,
-            continuity: { enabled: false, contextLimitTokens: 120_000 },
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
-            },
+          id: "context-implementer",
+          profile: { tier: "project", id: "persistence-implementer" },
+          focus: "context-tier implementer steer",
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
           },
+        },
+        // Disabled with assignments intact: the dormant entries — their
+        // profiles, focus, strategy, per-assignment continuity, and runtime —
+        // must survive the round trip, or re-enabling would silently lose the
+        // configured reviewers (R1.1, R2).
+        contextValidator: {
+          enabled: false,
+          assignments: [
+            {
+              id: "security",
+              profile: { tier: "project", id: "security-reviewer" },
+              focus: "auth boundaries and token handling",
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: false, contextLimitTokens: 120_000 },
+            },
+            {
+              id: "performance",
+              profile: { tier: "global", id: "perf-reviewer" },
+              focus: "hot paths only",
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "high",
+              },
+              continuity: { enabled: true, contextLimitTokens: 60_000 },
+            },
+          ],
         },
         scriptValidator: { enabled: true },
         mutability: { allowAgentTaskAdd: true },
@@ -248,14 +343,16 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
  * `layout.workflowId`) are sourced from that created record rather than this
  * fixture; this fixture only has to satisfy the completeness guard.
  */
-function buildMaximalRecord(): WorkflowDefinitionRecord {
+function buildMaximalRecord(
+  definition: WorkflowSemanticDefinition = buildMaximalDefinition(),
+): WorkflowDefinitionRecord {
   return {
     id: "placeholder-id",
     name: "Maximal durable workflow",
     description: "A fully-populated definition record for the durability check",
     schemaVersion: 1,
     revision: 1,
-    definition: buildMaximalDefinition(),
+    definition,
     layout: {
       workflowId: "placeholder-id",
       contextPositions: { "ctx-1": { x: 12, y: 34 } },
@@ -268,9 +365,7 @@ function buildMaximalRecord(): WorkflowDefinitionRecord {
 
 describe("workflow-graph storage durability contract", () => {
   it("round-trips every persisted definition key path — including the full charter — through the real storage service", async () => {
-    const storage = createWorkflowStorageService({
-      resolveConfigDir: () => tempDir,
-    });
+    const storage = storageForContract();
 
     await assertRoundTripDurability({
       label: "workflow-definition-storage",
@@ -316,14 +411,13 @@ describe("workflow-graph storage durability contract", () => {
   });
 
   it("round-trips the same maximal definition record through the GLOBAL scope under the reserved key", async () => {
-    const storage = createWorkflowStorageService({
-      resolveConfigDir: () => tempDir,
-    });
+    const storage = storageForContract();
 
     await assertRoundTripDurability({
       label: "workflow-definition-storage-global",
       schema: workflowDefinitionRecordSchema,
-      buildMaximalFixture: buildMaximalRecord,
+      buildMaximalFixture: () =>
+        buildMaximalRecord(buildGlobalScopeMaximalDefinition()),
       persist: async (fixture) =>
         storage.create(
           { kind: "global" },
@@ -346,16 +440,14 @@ describe("workflow-graph storage durability contract", () => {
   });
 
   it("stores a global record under the reserved scope, isolated from any project scope", async () => {
-    const storage = createWorkflowStorageService({
-      resolveConfigDir: () => tempDir,
-    });
+    const storage = storageForContract();
 
     const created = await storage.create(
       { kind: "global" },
       {
         name: "Global-only template",
         description: null,
-        definition: buildMaximalDefinition(),
+        definition: buildGlobalScopeMaximalDefinition(),
         layout: {
           workflowId: "placeholder-id",
           contextPositions: { "ctx-1": { x: 1, y: 2 } },

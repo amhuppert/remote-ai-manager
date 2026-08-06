@@ -11,6 +11,7 @@ import {
   createGraphWorkflowExecutionRepository,
 } from "./execution-repository";
 import { LegacyWorkflowSchemaError } from "./schema-cutover-guard";
+import { SEEDED_WORKFLOW_DEFAULTS } from "./resolve-config";
 import { StaleLoopFenceError, runWithLoopFence } from "./loop-fence";
 import {
   createWorkflowDefinition,
@@ -22,6 +23,7 @@ import type {
 } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
 
 const WORKTREE_PATH = "/repo/.worktrees/session-1";
 
@@ -336,7 +338,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         cleanupStatus: "not-applicable",
         lastMergeError: null,
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
       });
     }
 
@@ -378,11 +380,21 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     });
 
     for (const context of execution.workingDefinition.executionContexts) {
-      expect(context.implementer).toEqual({
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      });
+      expect(context.implementer).toMatchObject(
+        SEEDED_WORKFLOW_DEFAULTS.implementer,
+      );
+
+      // Seeded, not merely referenced: the working definition carries the bytes
+      // the run will deliver, resolved once here and never looked up again (R4).
+      const snapshot = context.implementer.profileSnapshot;
+      expect(snapshot.tier).toBe("builtin");
+      expect(snapshot.id).toBe("general-implementer");
+      expect(snapshot.renderedInstructionBlock).toContain(
+        snapshot.instructions,
+      );
+      expect(snapshot.resolvedInstructionHash).toBe(
+        computeContentHash(snapshot.renderedInstructionBlock),
+      );
     }
   });
 
@@ -395,7 +407,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         baseline.executionContexts[0]!,
         {
           ...baseline.executionContexts[1]!,
-          contextValidator: { kind: "disabled" as const },
+          contextValidator: { enabled: false, assignments: [] },
         },
         baseline.executionContexts[2]!,
       ],
@@ -418,9 +430,15 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       ]),
     );
 
-    expect(byId["context-plan"]?.contextValidator).not.toBeNull();
-    expect(byId["context-verify"]?.contextValidator).not.toBeNull();
-    expect(byId["context-implement"]?.contextValidator).toBeNull();
+    // Seeding resolves each tier's whole cohort: the two contexts that declare
+    // none inherit the enabled global default, and the one that pins a disabled
+    // cohort keeps it disabled rather than losing the block.
+    expect(byId["context-plan"]?.contextValidator.enabled).toBe(true);
+    expect(byId["context-verify"]?.contextValidator.enabled).toBe(true);
+    expect(byId["context-implement"]?.contextValidator).toEqual({
+      enabled: false,
+      assignments: [],
+    });
   });
 
   it("throws GraphWorkflowValidationError when resolved implementer uses an unsupported reasoning effort", async () => {
@@ -432,9 +450,13 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         {
           ...baseline.executionContexts[0]!,
           implementer: {
-            backend: "codex" as const,
-            model: "gpt-5.4" as const,
-            reasoningEffort: "minimal" as const,
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "codex" as const,
+              model: "gpt-5.4" as const,
+              reasoningEffort: "minimal" as const,
+            },
           },
         },
         ...baseline.executionContexts.slice(1),

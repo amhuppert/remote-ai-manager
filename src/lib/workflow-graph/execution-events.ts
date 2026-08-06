@@ -28,8 +28,9 @@ import type {
   GraphWorkflowUserInputPendingEvent,
   GraphWorkflowUserInputResolvedEvent,
   GraphWorkflowValidationResultEvent,
-  GraphWorkflowValidationEventSessionRef,
-  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowValidationSpecialistEntry,
+  GraphWorkflowValidationSpecialistResultEvent,
+  GraphWorkflowValidationIncidentEvent,
 } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
@@ -37,6 +38,8 @@ import type {
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
   GraphWorkflowHaltReason,
+  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowValidationSessionRef,
 } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowValidationIssue,
@@ -108,8 +111,41 @@ interface PublishValidationResultInput {
   /** The contract that refused the payload, snapshotted so a later schema edit
    *  cannot re-caption this rejection. `output_schema` failures only. */
   rejectedAgainstSchema?: Record<string, unknown> | null;
-  sessionRef?: GraphWorkflowValidationEventSessionRef | null;
+  sessionRef?: GraphWorkflowValidationSessionRef | null;
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
+  /**
+   * The round this verdict concluded, and every cohort member's verdict in
+   * configured cohort order. Absent outside a round — and then the published
+   * event carries neither field.
+   */
+  round?: {
+    seq: number;
+    specialists: readonly GraphWorkflowValidationSpecialistEntry[];
+  };
+}
+
+interface PublishValidationSpecialistResultInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  roundSeq: number;
+  specialist: GraphWorkflowValidationSpecialistEntry;
+}
+
+interface PublishValidationIncidentInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  incident: GraphWorkflowValidationIncidentEvent["incident"];
+  roundSeq: number;
+  stage: GraphWorkflowValidationIncidentEvent["stage"];
+  assignmentId?: string | null;
+  /** Admitted dispatches spent; only an exhaustion has a non-zero count. */
+  attempts?: number;
+  driftedComponents: string;
+  message: string;
 }
 
 interface PublishApprovalPendingInput {
@@ -348,6 +384,13 @@ function haltReasonsEqual(
       return (
         next.type === "script_validator_missing_command" &&
         previous.contextId === next.contextId &&
+        previous.message === next.message
+      );
+    case "validation_candidate_unavailable":
+      return (
+        next.type === "validation_candidate_unavailable" &&
+        previous.contextId === next.contextId &&
+        previous.attempts === next.attempts &&
         previous.message === next.message
       );
     case "merge_failure":
@@ -939,6 +982,58 @@ export function createGraphWorkflowExecutionEventPublisher(
       rejectedAgainstSchema: input.rejectedAgainstSchema ?? null,
       sessionRef: input.sessionRef ?? null,
       reviewArtifact: input.reviewArtifact ?? null,
+      // Present only for a result a round produced. A publication with no round
+      // — the structured-output gate's rejection above all — keeps the exact
+      // field set it had before cohorts existed (D12).
+      ...(input.round !== undefined
+        ? {
+            roundSeq: input.round.seq,
+            specialists: [...input.round.specialists],
+          }
+        : {}),
+    };
+
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
+  }
+
+  function publishValidationSpecialistResult(
+    input: PublishValidationSpecialistResultInput,
+  ): GraphWorkflowEventDelivery {
+    const event: GraphWorkflowValidationSpecialistResultEvent = {
+      type: "graph-workflow-validation-specialist-result",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      roundSeq: input.roundSeq,
+      specialist: input.specialist,
+    };
+
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
+  }
+
+  function publishValidationIncident(
+    input: PublishValidationIncidentInput,
+  ): GraphWorkflowEventDelivery {
+    const event: GraphWorkflowValidationIncidentEvent = {
+      type: "graph-workflow-validation-incident",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      incident: input.incident,
+      roundSeq: input.roundSeq,
+      stage: input.stage,
+      assignmentId: input.assignmentId ?? null,
+      attempts: input.attempts ?? 0,
+      driftedComponents: input.driftedComponents,
+      message: input.message,
     };
 
     return {
@@ -1178,6 +1273,8 @@ export function createGraphWorkflowExecutionEventPublisher(
   return {
     publishExecutionUpdate,
     publishValidationResult,
+    publishValidationSpecialistResult,
+    publishValidationIncident,
     publishApprovalPending,
     publishApprovalResolved,
     publishUserInputPending,

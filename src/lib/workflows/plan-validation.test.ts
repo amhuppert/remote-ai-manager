@@ -139,6 +139,241 @@ describe("validateWorkflowPlan", () => {
     }
   });
 
+  // R2.1: a cohort's shape refusals have to reach an author as LOCATED issues,
+  // not an opaque parse failure — the plan boundary is where a hand-authored
+  // plan.json meets the schema.
+  describe("validator cohort shape refusal", () => {
+    function withContextValidator(contextValidator: unknown) {
+      const definition = createWorkflowDefinition();
+      return {
+        ...makePlan(definition),
+        definition: {
+          ...definition,
+          executionContexts: definition.executionContexts.map(
+            (context, index) =>
+              index === 1 ? { ...context, contextValidator } : context,
+          ),
+        },
+      };
+    }
+
+    const REVIEWER = {
+      id: "general",
+      profile: { tier: "builtin", id: "general-reviewer" },
+      strategy: "conversation",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      continuity: { enabled: true },
+    };
+
+    it("locates an enabled cohort with no assignments on the empty set", () => {
+      const result = validateWorkflowPlan(
+        withContextValidator({ enabled: true, assignments: [] }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.path)).toContain(
+        "definition.executionContexts.1.contextValidator.assignments",
+      );
+      expect(result.issues[0]?.message).toMatch(/at least one/);
+    });
+
+    it("locates a duplicate assignment id on the offending entry", () => {
+      const result = validateWorkflowPlan(
+        withContextValidator({
+          enabled: true,
+          assignments: [REVIEWER, { ...REVIEWER, focus: "auth" }],
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.path)).toContain(
+        "definition.executionContexts.1.contextValidator.assignments.1.id",
+      );
+    });
+
+    it("locates an id that violates the grammar on that id", () => {
+      const result = validateWorkflowPlan(
+        withContextValidator({
+          enabled: true,
+          assignments: [{ ...REVIEWER, id: "General Reviewer" }],
+        }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.path)).toContain(
+        "definition.executionContexts.1.contextValidator.assignments.0.id",
+      );
+    });
+
+    it("accepts a cohort naming the same profile twice under different focus", () => {
+      const result = validateWorkflowPlan(
+        withContextValidator({
+          enabled: true,
+          assignments: [
+            { ...REVIEWER, id: "security", focus: "auth boundaries" },
+            { ...REVIEWER, id: "performance", focus: "hot paths" },
+          ],
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+    });
+
+    /**
+     * R13.1: a shape refusal is located by its PATH, but an author reading a
+     * message has to know which use site it is about without decoding array
+     * indices. The schema that raised it is mounted at four different places
+     * and cannot know which — so the plan boundary, which does know, supplies
+     * the context/role/assignment-id use site and the qualified profile ref.
+     */
+    describe("use-site enrichment (R13.1)", () => {
+      it("names the context, role, assignment id, and qualified ref on a duplicate id", () => {
+        const result = validateWorkflowPlan(
+          withContextValidator({
+            enabled: true,
+            assignments: [
+              { ...REVIEWER, id: "security" },
+              { ...REVIEWER, id: "security", focus: "auth" },
+            ],
+          }),
+        );
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const issue = result.issues.find(
+          (i) =>
+            i.path ===
+            "definition.executionContexts.1.contextValidator.assignments.1.id",
+        );
+        expect(issue?.message).toContain('context "context-implement"');
+        expect(issue?.message).toContain('validator assignment "security"');
+        expect(issue?.message).toContain("builtin:general-reviewer");
+      });
+
+      it("names the cohort use site when the error is the cohort, not an assignment", () => {
+        const result = validateWorkflowPlan(
+          withContextValidator({ enabled: true, assignments: [] }),
+        );
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const issue = result.issues.find(
+          (i) =>
+            i.path ===
+            "definition.executionContexts.1.contextValidator.assignments",
+        );
+        expect(issue?.message).toContain('context "context-implement"');
+        expect(issue?.message).toContain("validator cohort");
+      });
+
+      it("names the implementer use site for an implementer shape error", () => {
+        const definition = createWorkflowDefinition();
+        const result = validateWorkflowPlan({
+          ...makePlan(definition),
+          definition: {
+            ...definition,
+            executionContexts: definition.executionContexts.map(
+              (context, index) =>
+                index === 0
+                  ? {
+                      ...context,
+                      implementer: {
+                        ...context.implementer,
+                        id: "Not A Valid Id",
+                      },
+                    }
+                  : context,
+            ),
+          },
+        });
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const issue = result.issues.find(
+          (i) => i.path === "definition.executionContexts.0.implementer.id",
+        );
+        expect(issue?.message).toContain('context "context-plan"');
+        expect(issue?.message).toContain("implementer assignment");
+        expect(issue?.message).toContain("builtin:general-implementer");
+      });
+
+      it("names the workflow tier for a workflow-config assignment error", () => {
+        const definition = createWorkflowDefinition();
+        const result = validateWorkflowPlan({
+          ...makePlan(definition),
+          definition: {
+            ...definition,
+            workflowConfig: {
+              ...definition.workflowConfig,
+              contextValidator: {
+                enabled: true,
+                assignments: [REVIEWER, { ...REVIEWER, focus: "auth" }],
+              },
+            },
+          },
+        });
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const issue = result.issues.find(
+          (i) =>
+            i.path ===
+            "definition.workflowConfig.contextValidator.assignments.1.id",
+        );
+        expect(issue?.message).toContain("workflow-tier");
+        expect(issue?.message).toContain('validator assignment "general"');
+      });
+
+      it("escapes control characters in the raw values it quotes", () => {
+        const result = validateWorkflowPlan(
+          withContextValidator({
+            enabled: true,
+            assignments: [
+              {
+                ...REVIEWER,
+                id: "ev\nil",
+                profile: { tier: "builtin", id: "re\nviewer" },
+              },
+            ],
+          }),
+        );
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        // A located issue is one line by contract; a raw newline here would
+        // split it and let the second half pose as another issue.
+        for (const issue of result.issues) {
+          expect(issue.message).not.toContain("\n");
+        }
+        expect(
+          result.issues.some((issue) => issue.message.includes("ev\\nil")),
+        ).toBe(true);
+      });
+
+      it("leaves a non-assignment shape error unenriched", () => {
+        const definition = createWorkflowDefinition();
+        const result = validateWorkflowPlan(
+          makePlan({
+            ...definition,
+            executionContexts: definition.executionContexts.map((ctx, index) =>
+              index === 0 ? { ...ctx, title: 42 } : ctx,
+            ),
+          } as never),
+        );
+
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        const issue = result.issues.find(
+          (i) => i.path === "definition.executionContexts.0.title",
+        );
+        expect(issue?.message).not.toContain("Use site:");
+      });
+    });
+  });
+
   describe("outputSchema declaration refusal (D2 R1.2)", () => {
     // `validateWorkflowPlan` takes the raw request body, so the declaration is
     // supplied exactly as an author would send it — no cast injects state past
@@ -237,5 +472,77 @@ describe("validateWorkflowPlan", () => {
 
       expect(result.ok).toBe(true);
     });
+  });
+});
+
+// R3.2: after the agent-assignment cutover, `workflow validate` must refuse a
+// legacy singleton shape with a located, actionable error rather than an opaque
+// union failure — and must never normalize it into an assignment.
+describe("validateWorkflowPlan post-cutover refusal", () => {
+  it("refuses a legacy implementer triple with a located error naming the expected form", () => {
+    const definition = createWorkflowDefinition();
+    (definition.executionContexts[1] as Record<string, unknown>).implementer = {
+      backend: "codex",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const issue = result.issues.find(
+      (candidate) =>
+        candidate.path === "definition.executionContexts.1.implementer",
+    );
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain("profile");
+  });
+
+  it("refuses a legacy singleton validator with a located error naming the cohort form", () => {
+    const definition = createWorkflowDefinition();
+    (
+      definition.executionContexts[0] as Record<string, unknown>
+    ).contextValidator = {
+      kind: "use",
+      value: {
+        type: "claude",
+        enabled: true,
+        continuity: { enabled: true },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      },
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const issue = result.issues.find(
+      (candidate) =>
+        candidate.path === "definition.executionContexts.0.contextValidator",
+    );
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain("assignments");
+  });
+
+  it("never normalizes a legacy shape into an assignment", () => {
+    const definition = createWorkflowDefinition();
+    (definition.workflowConfig as Record<string, unknown>).implementer = {
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.path)).toContain(
+      "definition.workflowConfig.implementer",
+    );
   });
 });

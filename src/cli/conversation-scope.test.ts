@@ -292,6 +292,11 @@ describe("cctl at project conversation scope — session-only commands", () => {
   // green while project agents silently lost a working command (R2.4).
   describe("project-supported commands do not demand a session", () => {
     const projectSupportedInvocations: Record<string, string[]> = {
+      // Leaves that differ from their session-only group: the profile library
+      // is project-scoped, so a project agent keeps the discovery surface even
+      // though `agent run` needs a session worktree.
+      "agent list": ["agent", "list"],
+      "agent get": ["agent", "get", "builtin:standard-agent"],
       ask: ["ask", "--file", "/tmp/ask.json"],
       conversation: ["conversation", "read", "conv-1"],
       doctor: ["doctor"],

@@ -20,7 +20,10 @@ import {
   createPersistenceFixture,
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createWorkflowExecution,
+  makeSeededValidatorAssignment,
+} from "./test-fixtures";
 import {
   createGraphLaneStore,
   graphLaneId,
@@ -406,5 +409,171 @@ describe("graph lane store durability contract (§1.9.4)", () => {
         graphLaneId("implementer", "context-plan"),
       ].sort(),
     );
+  });
+});
+
+/**
+ * R8.1 at the durability layer: two assignments of the same profile reviewing
+ * one context are two lanes, not one. The pre-cohort store keyed the inner
+ * record by lane KIND, so a second reviewer would have overwritten the first's
+ * continuity handle on every write.
+ */
+describe("per-assignment validator lanes", () => {
+  function validatorLane(assignmentId: string, ref: string): LaneState {
+    return implementerLane({
+      laneId: graphLaneId(
+        "context_validator",
+        "context-implement",
+        assignmentId,
+      ),
+      backend: "codex",
+      refKind: "backend",
+      ref,
+      conversationId: `conv-${assignmentId}`,
+      writeCapability: "read_only",
+      metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
+    });
+  }
+
+  it("keeps two assignments' continuity handles distinct across a restart", async () => {
+    const repo = createGraphWorkflowExecutionsRepo(db);
+    seedActiveExecution(repo);
+
+    const store = buildStore(db);
+    await store.write(validatorLane("reviewer-a", "thread-a"));
+    await store.write(validatorLane("reviewer-b", "thread-b"));
+
+    const afterRestart = buildStore(db);
+    expect(
+      (
+        await afterRestart.read({
+          workflowId: EXECUTION_ID,
+          laneId: graphLaneId(
+            "context_validator",
+            "context-implement",
+            "reviewer-a",
+          ),
+        })
+      )?.ref,
+    ).toBe("thread-a");
+    expect(
+      (
+        await afterRestart.read({
+          workflowId: EXECUTION_ID,
+          laneId: graphLaneId(
+            "context_validator",
+            "context-implement",
+            "reviewer-b",
+          ),
+        })
+      )?.ref,
+    ).toBe("thread-b");
+  });
+
+  it("persists each assignment under its own laneStates key, carrying its assignment identity", async () => {
+    const repo = createGraphWorkflowExecutionsRepo(db);
+    seedActiveExecution(repo);
+    const store = buildStore(db);
+
+    await store.write(validatorLane("reviewer-a", "thread-a"));
+    await store.write(validatorLane("reviewer-b", "thread-b"));
+
+    const lanes = readActiveFresh(db)?.laneStates["context-implement"];
+    expect(Object.keys(lanes ?? {}).sort()).toEqual([
+      "context_validator:reviewer-a",
+      "context_validator:reviewer-b",
+    ]);
+    expect(lanes?.["context_validator:reviewer-a"]?.assignmentId).toBe(
+      "reviewer-a",
+    );
+    expect(lanes?.["context_validator:reviewer-b"]?.assignmentId).toBe(
+      "reviewer-b",
+    );
+  });
+
+  it("deletes one assignment's lane without disturbing its sibling", async () => {
+    const repo = createGraphWorkflowExecutionsRepo(db);
+    seedActiveExecution(repo);
+    const store = buildStore(db);
+
+    await store.write(validatorLane("reviewer-a", "thread-a"));
+    await store.write(validatorLane("reviewer-b", "thread-b"));
+
+    await store.delete({
+      workflowId: EXECUTION_ID,
+      laneId: graphLaneId(
+        "context_validator",
+        "context-implement",
+        "reviewer-a",
+      ),
+    });
+
+    expect(
+      await store.read({
+        workflowId: EXECUTION_ID,
+        laneId: graphLaneId(
+          "context_validator",
+          "context-implement",
+          "reviewer-a",
+        ),
+      }),
+    ).toBeNull();
+    expect(
+      (
+        await store.read({
+          workflowId: EXECUTION_ID,
+          laneId: graphLaneId(
+            "context_validator",
+            "context-implement",
+            "reviewer-b",
+          ),
+        })
+      )?.ref,
+    ).toBe("thread-b");
+  });
+
+  it("lists every assignment lane, resolving each one's own continuity policy", async () => {
+    const repo = createGraphWorkflowExecutionsRepo(db);
+    const execution = createWorkflowExecution({
+      id: EXECUTION_ID,
+      status: "running",
+    });
+    const context = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-implement",
+    );
+    if (!context) throw new Error("fixture context missing");
+    context.contextValidator = {
+      enabled: true,
+      assignments: [
+        {
+          ...makeSeededValidatorAssignment({ id: "reviewer-a" }),
+          continuity: { enabled: true, contextLimitTokens: 90_000 },
+        },
+        {
+          ...makeSeededValidatorAssignment({ id: "reviewer-b" }),
+          continuity: { enabled: false },
+        },
+      ],
+    };
+    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, NOW);
+
+    const store = buildStore(db);
+    await store.write(validatorLane("reviewer-a", "thread-a"));
+    await store.write(validatorLane("reviewer-b", "thread-b"));
+
+    const lanes = await store.listByWorkflow(EXECUTION_ID);
+    const byAssignment = new Map(
+      lanes.map((lane) => [lane.laneId, lane.policy]),
+    );
+    expect(
+      byAssignment.get(
+        graphLaneId("context_validator", "context-implement", "reviewer-a"),
+      ),
+    ).toEqual({ continuityEnabled: true, contextLimitTokens: 90_000 });
+    expect(
+      byAssignment.get(
+        graphLaneId("context_validator", "context-implement", "reviewer-b"),
+      ),
+    ).toEqual({ continuityEnabled: false });
   });
 });

@@ -1094,6 +1094,9 @@ export function createSpecSpineWorld(): SpecSpineWorld {
     resumeExecution: unsupported("resumeExecution"),
     abortExecution: unsupported("abortExecution"),
     resetExecutionContext: unsupported("resetExecutionContext"),
+    resetExecutionContextAssignment: unsupported(
+      "resetExecutionContextAssignment",
+    ),
     archiveExecution: async () => {
       activeWorkflowExecution = null;
     },

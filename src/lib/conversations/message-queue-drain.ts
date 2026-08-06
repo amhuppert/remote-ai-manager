@@ -26,6 +26,7 @@ import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatc
 import { ticketCommandFallbackMessage } from "@/lib/conversation-commands/ticket-confirmation";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
+import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 // The `conversation-manager` module key is a stable log-query key: queue.*
@@ -371,6 +372,15 @@ export async function drainConversationQueue(
     };
 
     if (self.getSnapshot().can(event)) {
+      // The queue is the OTHER producer of `SUBMIT_PROMPT`, so it owes the same
+      // pre-send admission the turn executor does (R8/D21): a conversation
+      // whose first turn arrives out of the queue must have its profile settled
+      // durably before the runtime is handed the prompt.
+      await admitConversationProfileForTurn({
+        projectPath,
+        sessionName,
+        conversationId,
+      });
       self.send(event);
       logger.info("queue.drain_dispatched", {
         conversationId,

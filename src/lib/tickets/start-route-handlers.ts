@@ -64,6 +64,7 @@ export function createTicketStartRouteHandlers(
         backend: body["backend"],
         model: body["model"],
         reasoningEffort: body["reasoningEffort"],
+        profile: body["profile"],
       });
       if (!parsed.success) {
         return validationFailedResponse(toTicketValidationIssues(parsed.error));

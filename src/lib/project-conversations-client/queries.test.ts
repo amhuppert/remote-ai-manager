@@ -9,7 +9,7 @@ import {
   useProjectConversationMessagesQuery,
   isOpenProjectConversation,
 } from "./queries";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -30,9 +30,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function conv(
   id: string,
-  overrides: Partial<ConversationState> = {},
-): ConversationState {
+  overrides: Partial<PublicConversationState> = {},
+): PublicConversationState {
   return {
+    redactedProfileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",

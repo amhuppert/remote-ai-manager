@@ -53,6 +53,23 @@ export interface ConversationListItemProjection extends ConversationListItemFiel
  * so these are the remaining big blobs. Row-size telemetry sweeps them on write
  * so a ballooning column surfaces as a `state-store.row_size.exceeded` finding.
  */
+/**
+ * The redacted profile identity, extracted in SQL for the list-item tier.
+ *
+ * `profile_snapshot` carries the profile's instruction text and rendered block,
+ * so a list read that selected the column would pull every conversation's
+ * instructions into the process on every feed poll — and put them one careless
+ * spread away from a response body. Extracting the six safe scalars keeps the
+ * projection blob-free and leaves the instruction bytes in SQLite.
+ */
+const PROFILE_IDENTITY_SELECT = `
+  json_extract(profile_snapshot, '$.tier') AS profile_tier,
+  json_extract(profile_snapshot, '$.id') AS profile_id,
+  json_extract(profile_snapshot, '$.name') AS profile_name,
+  json_extract(profile_snapshot, '$.revision') AS profile_revision,
+  json_extract(profile_snapshot, '$.sourceContentHash') AS profile_source_content_hash,
+  json_extract(profile_snapshot, '$.resolvedInstructionHash') AS profile_resolved_instruction_hash`;
+
 const CONVERSATION_JSON_COLUMNS = [
   "pending_queue",
   "mcp_runtime",
@@ -62,6 +79,7 @@ const CONVERSATION_JSON_COLUMNS = [
   "debug_mode",
   "pending_questions",
   "pending_agent_notices",
+  "profile_snapshot",
 ] as const;
 
 export interface ConversationsRepo {
@@ -190,6 +208,8 @@ const conversationsTableRowSchema = z.object({
   pending_queue: z.string().nullable(),
   last_seen_alignment_version: z.number().int().nullable(),
   pending_agent_notices: z.string().nullable(),
+  profile_snapshot: z.string().nullable(),
+  profile_locked_at: z.string().nullable(),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -228,6 +248,8 @@ interface SqlBindRow {
   pending_queue: string | null;
   last_seen_alignment_version: number | null;
   pending_agent_notices: string | null;
+  profile_snapshot: string | null;
+  profile_locked_at: string | null;
 }
 
 /**
@@ -360,6 +382,8 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "pending_queue",
   "last_seen_alignment_version",
   "pending_agent_notices",
+  "profile_snapshot",
+  "profile_locked_at",
 ];
 
 /**
@@ -440,7 +464,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     `SELECT id, project_path, session_name, name, summary, status, role,
             archived, agent_backend, backend_ref, transcript_path,
             last_activity_at, debug_mode, pending_question_id, pending_questions,
-            forked_from, unread
+            forked_from, unread,
+            ${PROFILE_IDENTITY_SELECT}
      FROM conversations
      ORDER BY project_path ASC, session_name ASC, created_at ASC, id ASC`,
   );
@@ -459,7 +484,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
-       unread, pending_queue, last_seen_alignment_version, pending_agent_notices
+       unread, pending_queue, last_seen_alignment_version, pending_agent_notices,
+       profile_snapshot, profile_locked_at
      ) VALUES (
        @id, @project_path, @session_name, @name, @name_origin, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
@@ -467,7 +493,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
-       @unread, @pending_queue, @last_seen_alignment_version, @pending_agent_notices
+       @unread, @pending_queue, @last_seen_alignment_version, @pending_agent_notices,
+       @profile_snapshot, @profile_locked_at
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -502,7 +529,9 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        unread                     = excluded.unread,
        pending_queue              = excluded.pending_queue,
        last_seen_alignment_version = excluded.last_seen_alignment_version,
-       pending_agent_notices      = excluded.pending_agent_notices`,
+       pending_agent_notices      = excluded.pending_agent_notices,
+       profile_snapshot           = excluded.profile_snapshot,
+       profile_locked_at          = excluded.profile_locked_at`,
   );
   // The machine snapshot lives in the owner-discriminated sidecar table, not on
   // the conversation row. Its cleanup is DB-enforced by the AFTER DELETE trigger

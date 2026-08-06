@@ -36,9 +36,10 @@ function makeConversation(
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,
-    machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
+    profileSnapshot: null,
+    profileLockedAt: null,
     ...overrides,
   } as ConversationState;
 }
@@ -67,6 +68,9 @@ function makeDeps(overrides: Partial<ConversationRouteDeps> = {}) {
     getProjectDisplayName: vi.fn(() => "demo"),
     getSession: vi.fn(async () => session),
     createConversation: vi.fn(async () => conversation),
+    changeConversationProfile: vi.fn(async () => {
+      throw new Error("not exercised here");
+    }),
     renameConversation: vi.fn(async () => {}),
     resolveConversationNamingContent: vi.fn(
       async () => "Whole conversation basis",
@@ -124,6 +128,54 @@ describe("POST_CREATE — conversation-created broadcast", () => {
         expect(parsed.data.conversation.id).toBe(conversation.id);
       }
     }
+  });
+
+  it("passes an explicit profile selection through to creation", async () => {
+    const { deps } = makeDeps();
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    const response = await POST_CREATE(
+      jsonRequest({ profile: "builtin:security-reviewer" }),
+      context({ name: "demo", session: "s1" }),
+    );
+
+    expect(response.status).toBe(201);
+    // The compact spelling is normalized to the qualified form at the boundary.
+    expect(deps.createConversation).toHaveBeenCalledWith("/repos/demo", "s1", {
+      profile: { tier: "builtin", id: "security-reviewer" },
+    });
+  });
+
+  it("creates with no selection when the button posts no body", async () => {
+    const { deps } = makeDeps();
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    const response = await POST_CREATE(
+      jsonRequest(),
+      context({ name: "demo", session: "s1" }),
+    );
+
+    expect(response.status).toBe(201);
+    // Undefined, not a guessed ref: the default lives in the resolver, so the
+    // route never has to know what it is.
+    expect(deps.createConversation).toHaveBeenCalledWith(
+      "/repos/demo",
+      "s1",
+      undefined,
+    );
+  });
+
+  it("refuses a malformed selection rather than silently defaulting", async () => {
+    const { deps } = makeDeps();
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    const response = await POST_CREATE(
+      jsonRequest({ profile: "security-reviewer" }),
+      context({ name: "demo", session: "s1" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(deps.createConversation).not.toHaveBeenCalled();
   });
 
   it("returns 404 and does not broadcast when project is missing", async () => {

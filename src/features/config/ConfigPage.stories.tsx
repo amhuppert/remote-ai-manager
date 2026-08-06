@@ -85,13 +85,20 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   pushNotification: notificationConfig,
   workflowDefaults: {
     contextValidator: {
-      type: "codex",
       enabled: true,
-      codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-      },
-      continuity: { enabled: true },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "task",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     },
   },
 };
@@ -121,18 +128,29 @@ const fullyConfiguredConfig: GlobalConfig = {
   pushNotification: notificationConfig,
   workflowDefaults: {
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
-    },
-    contextValidator: {
-      type: "codex",
-      enabled: true,
-      codex: {
-        model: "gpt-5.4",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: {
+        backend: "claude",
+        model: "opus",
         reasoningEffort: "medium",
       },
-      continuity: { enabled: true },
+    },
+    contextValidator: {
+      enabled: true,
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "task",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },

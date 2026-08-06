@@ -378,6 +378,35 @@ describe("failureFromRequest — issues/code threading", () => {
     expect(parsed.code).toBe("PLAN_INVALID");
   });
 
+  /**
+   * The one-line contract belongs to the surface that renders lines, not to
+   * every producer remembering to escape: a message is assembled from an
+   * untrusted document (and partly by Zod), so a raw newline arriving in one
+   * must not be able to render as a second, forged located issue.
+   */
+  it("keeps a newline-bearing message to one rendered line while the envelope keeps it raw", () => {
+    const forged = "  name: this issue is fake";
+    const result: Extract<CliRequestResult, { kind: "error" }> = {
+      kind: "error",
+      status: 422,
+      error: "Workflow plan is invalid",
+      issues: [{ path: "definition", message: `bad id "x\n${forged}"` }],
+    };
+
+    const text = failureFromRequest(result, false);
+    const located = text.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("  "));
+    expect(located).toEqual([
+      '  definition: bad id "x\\n  name: this issue is fake"',
+    ]);
+
+    // Structured output is unflattened — JSON quoting is already unambiguous.
+    const json = failureFromRequest(result, true);
+    const parsed = JSON.parse(json.stdout) as JsonEnvelope;
+    expect(parsed.issues).toEqual(result.issues);
+  });
+
   it("threads code on a non-validation error branch", () => {
     const result: Extract<CliRequestResult, { kind: "error" }> = {
       kind: "error",

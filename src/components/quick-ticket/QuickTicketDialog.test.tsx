@@ -899,6 +899,8 @@ describe("QuickTicketDialog", () => {
       backend: "claude",
       model: "opus",
       reasoningEffort: "medium",
+      // The untouched picker still names the Standard Agent on the wire (R7.1).
+      profile: { tier: "builtin", id: "standard-agent" },
     });
     await waitFor(() =>
       expect(useToastStoreForTesting.getState().toasts.at(-1)).toMatchObject({
@@ -958,6 +960,31 @@ describe("QuickTicketDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  // R7.1: the quick-ticket kickoff path offers the picker on its Standard Agent
+  // default, beside — not merged into — the backend/model/effort controls.
+  it("reveals a Standard-Agent-defaulted profile picker with the kickoff controls", async () => {
+    open("/projects/command-center");
+    const user = userEvent.setup();
+    renderWithQuery(
+      <QuickTicketDialog captureScreenshot={async () => SCREENSHOT} />,
+    );
+
+    const autoStart = await screen.findByRole("checkbox", {
+      name: "Start agent after create",
+    });
+    expect(
+      screen.queryByRole("combobox", { name: /agent profile/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(autoStart);
+
+    expect(
+      await screen.findByRole("combobox", { name: /agent profile/i }),
+    ).toHaveTextContent("Standard Agent");
+    expect(screen.getByTestId("model-selector-trigger")).toBeInTheDocument();
+    expect(screen.getByTestId("effort-selector-trigger")).toBeInTheDocument();
+  });
+
   it("switches kickoff defaults per backend, clamps effort per model, and sends the selection", async () => {
     open("/projects/command-center");
     api.reply("POST", "/api/projects/command-center/tickets", {
@@ -1015,6 +1042,7 @@ describe("QuickTicketDialog", () => {
       backend: "codex",
       model: "gpt-5.6-terra",
       reasoningEffort: "high",
+      profile: { tier: "builtin", id: "standard-agent" },
     });
   });
 
@@ -1063,7 +1091,13 @@ describe("QuickTicketDialog", () => {
     expect(
       api.requestsTo("POST", "/api/projects/command-center/tickets/14/start")[0]
         ?.jsonBody,
-    ).toEqual({ mode: "agent" });
+      // The runtime triple falls back to the server's configured defaults, but
+      // identity does not depend on that configuration: the profile is the
+      // library's own default and still travels explicitly.
+    ).toEqual({
+      mode: "agent",
+      profile: { tier: "builtin", id: "standard-agent" },
+    });
   });
 
   it("keeps a reopened draft interactive while the previous ticket starts", async () => {

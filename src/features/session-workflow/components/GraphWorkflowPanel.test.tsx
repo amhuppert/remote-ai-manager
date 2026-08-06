@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  makeProfileSnapshot,
 } from "@/lib/workflow-graph/test-fixtures";
 import { renderWithQuery } from "@/test/component-mocks";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -135,6 +136,40 @@ describe("GraphWorkflowPanel", () => {
       screen.getByText(
         "No graph workflow execution has started for this session.",
       ),
+    ).toBeInTheDocument();
+  });
+
+  // The assignment-cutover migration empties the active execution table, so
+  // this empty state is exactly where every affected session lands. Its
+  // archived runs — and the reason they were ended — must be reachable here.
+  it("surfaces archived runs and their cutover abort reason in the empty state", () => {
+    renderWithQuery(
+      <GraphWorkflowPanel
+        execution={null}
+        events={[]}
+        archivedExecutions={[
+          {
+            executionId: "exec-cutover",
+            definitionId: "wf-1",
+            definitionRevision: 2,
+            status: "aborted",
+            startedAt: "2026-03-01T00:00:00.000Z",
+            completedAt: "2026-03-02T00:00:00.000Z",
+            haltReason: {
+              type: "aborted",
+              cause: "migration_cutover",
+              summary: "Aborted by the agent assignments cutover.",
+            },
+            archived: true,
+          },
+        ]}
+        {...noopCallbacks}
+      />,
+    );
+
+    expect(screen.getByText(/exec-cutover/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/ended by a Command Center schema cutover/i),
     ).toBeInTheDocument();
   });
 
@@ -291,7 +326,7 @@ describe("GraphWorkflowPanel", () => {
         execution={createWorkflowExecution({
           status: "aborted",
           completedAt: "2026-03-28T10:00:00.000Z",
-          haltReason: { type: "aborted" },
+          haltReason: { type: "aborted", cause: null, summary: null },
         })}
         events={[]}
         archivedExecutions={[]}
@@ -331,11 +366,16 @@ function createCodexExecutionWithRunningTask() {
         description: "Codex-powered implementation",
         acceptanceCriteria: "Feature shipped via Codex",
         implementer: {
-          backend: "codex",
-          model: "gpt-5.4-mini",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          profileSnapshot: makeProfileSnapshot(),
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+          },
         },
-        contextValidator: null,
+        contextValidator: { enabled: false, assignments: [] },
         scriptValidator: { enabled: false },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
@@ -365,7 +405,7 @@ function createCodexExecutionWithRunningTask() {
     contextStates: {
       "context-codex-impl": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-codex-impl",
         status: "running",
         totalTaskCount: 1,

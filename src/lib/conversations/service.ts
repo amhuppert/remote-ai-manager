@@ -30,6 +30,11 @@ import { getErrorMessage } from "../shared/errors";
 import { getBackendDescriptor } from "../agent-backends/registry";
 import type { BackendContinuityAdapter } from "../agent-backends/continuity";
 import { buildConversation } from "./build-conversation";
+import { resolveConversationProfileSnapshot } from "./profile-resolution";
+import type {
+  AgentProfileRef,
+  AgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 
 /**
  * Typed error raised for client-correctable fork preconditions: missing
@@ -97,6 +102,16 @@ export interface ConversationsDeps {
    * the backend registry.
    */
   getContinuityAdapter?(backend: AgentBackendId): BackendContinuityAdapter;
+  /**
+   * Resolve and compose the profile a new conversation runs under. Always
+   * awaited BEFORE the row is written (and outside any write-queue callback):
+   * resolution reads the library from disk, and the snapshot has to be durable
+   * before a provider runtime could exist (R6).
+   */
+  resolveProfileSnapshot?(
+    projectPath: string,
+    ref?: AgentProfileRef | null,
+  ): Promise<AgentProfileSnapshot>;
 }
 
 function defaultGetContinuityAdapter(
@@ -117,6 +132,7 @@ const defaultConversationsDeps: ConversationsDeps = {
   getSessionConversations: defaultGetSessionConversations,
   setConversationPendingPromptText: defaultSetConversationPendingPromptText,
   getContinuityAdapter: defaultGetContinuityAdapter,
+  resolveProfileSnapshot: resolveConversationProfileSnapshot,
 };
 
 // ============================================================
@@ -135,6 +151,7 @@ export function createConversationService(
     setConversationPendingPromptText: setPendingPromptTextDep,
     configDir,
     getContinuityAdapter = defaultGetContinuityAdapter,
+    resolveProfileSnapshot = resolveConversationProfileSnapshot,
   } = deps;
 
   // ============================================================
@@ -145,8 +162,43 @@ export function createConversationService(
   async function createConversation(
     projectPath: string,
     sessionName: string,
-    opts?: { role?: ConversationRole; agentBackend?: AgentBackendId },
+    opts?: {
+      role?: ConversationRole;
+      agentBackend?: AgentBackendId;
+      /**
+       * Omitting this yields the explicit Standard Agent snapshot, not an
+       * absent profile — system creators (planner, lanes) simply do not pass
+       * one (R7).
+       */
+      profile?: AgentProfileRef | null;
+      /**
+       * A snapshot the caller ALREADY resolved, persisted verbatim.
+       *
+       * The graph-workflow lane handoff (R4): an execution resolves every
+       * assignment once at start, and a lane created minutes later must run
+       * those bytes — not a re-resolution that could pick up a newer revision,
+       * fall back to the Standard Agent, or fail on a profile deleted since.
+       * Mutually exclusive with `profile`: a caller holding bytes has nothing
+       * left to resolve, and honouring both would make it ambiguous which one
+       * the conversation actually ran under.
+       */
+      profileSnapshot?: AgentProfileSnapshot;
+    },
   ): Promise<ConversationState> {
+    if (opts?.profile != null && opts.profileSnapshot !== undefined) {
+      throw new Error(
+        "createConversation accepts either a profile reference or a pre-resolved profileSnapshot, not both.",
+      );
+    }
+
+    // Before the row exists: an unresolvable reference must refuse the creation
+    // rather than leave a conversation running under a profile nobody chose.
+    // A handed-over snapshot skips this entirely — resolution is the only way
+    // a post-seed library edit or deletion could reach the conversation.
+    const profileSnapshot =
+      opts?.profileSnapshot ??
+      (await resolveProfileSnapshot(projectPath, opts?.profile));
+
     const conversation = await createSessionConversation(
       projectPath,
       sessionName,
@@ -158,6 +210,7 @@ export function createConversationService(
           createdAt: new Date().toISOString(),
           agentBackend: opts?.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
           role: opts?.role ?? null,
+          profileSnapshot,
         }),
     );
 
@@ -413,18 +466,74 @@ export function createConversationService(
       });
     }
 
-    // Eagerly derive the new conversation's backend continuity from the
-    // owning adapter so the fork owns its session/seed from the moment it's
-    // created (decoupling it from any later mutation of the source —
-    // auto-compaction, deletion, etc.). Cases 1 and 2 only; case 3 has no
-    // derived source ref. The adapter normalizes the outcome:
+    // --- Phase 3: The fork's agent profile ---
+    //
+    // A session-derived fork inherits the SOURCE's snapshot verbatim — same
+    // identity, same revision, no re-resolution — because the source's
+    // instructions are already part of the context being carried forward, and
+    // it is locked from creation for the same reason (R7/R8). A legacy source
+    // hands down its absence of a profile, which is the honest record.
+    //
+    // An index-0 fork derives from no session: it is a fresh conversation and
+    // follows the standard default, changeable until its first turn.
+    const derivesFromSession = derivedSourceRef !== null;
+    const profileSnapshot = derivesFromSession
+      ? (source.profileSnapshot ?? null)
+      : await resolveProfileSnapshot(projectPath, input.profile);
+    const profileLockedAt =
+      derivesFromSession && profileSnapshot !== null
+        ? (source.profileLockedAt ?? now)
+        : null;
+
+    // --- Phase 4: Provisional row, BEFORE any provider continuity exists ---
+    //
+    // The snapshot's persist-before-provider guarantee (R6) has to hold on
+    // every path that creates provider state, and this is the one path that
+    // used to invert it: `continuity.fork()` ran with no row in existence, so a
+    // crash in between left a forked backend session nothing referenced. The
+    // row goes in first, marked pending, and is finalized or removed below.
+    const forkedFrom: ForkedFrom = {
+      sourceConversationId,
+      messageIndex,
+      sourceBackend: derivedSourceRef ? derivedSourceRef.backend : null,
+      sourceBackendRef: derivedSourceRef,
+      forkLocator,
+      forkMode: null,
+      forkPending: derivesFromSession,
+    };
+
+    await mutateSession(
+      projectPath,
+      sessionName,
+      "forkConversation",
+      (sess) => {
+        sess.conversations.push(
+          buildConversation({
+            id: newId,
+            scope: "session",
+            name: forkName,
+            createdAt: now,
+            agentBackend: source.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
+            transcriptPath,
+            pendingPromptText,
+            forkedFrom,
+            profileSnapshot,
+            profileLockedAt,
+          }),
+        );
+      },
+    );
+
+    // --- Phase 5: Provider continuity, then finalize the row ---
+    //
+    // The adapter normalizes the outcome:
     // - native: an eagerly-forked backend session, persisted as backendRef.
     // - synthetic_seed: a transcript-derived seed prepended to
     //   pendingPromptText; backendRef stays null so the next prompt starts a
     //   fresh backend session.
     // - unsupported: the fork proceeds with no backend continuity at all.
-    // If the adapter can produce no outcome it throws, and the fork must NOT
-    // be created.
+    // If the adapter can produce no outcome it throws, and the provisional row
+    // is removed — no conversation is created.
     let backendRef: AgentSessionRef | null = null;
     let forkMode: "native" | "synthetic" | null = null;
 
@@ -440,6 +549,7 @@ export function createConversationService(
         });
       } catch (err) {
         const reason = getErrorMessage(err);
+        await removeProvisionalFork(projectPath, sessionName, newId);
         logger.warn("conversation.fork.failed", {
           projectPath,
           sessionName,
@@ -485,38 +595,24 @@ export function createConversationService(
           backend: derivedSourceRef.backend,
         });
       }
+
+      const settledPendingPromptText = pendingPromptText;
+      await mutateSession(
+        projectPath,
+        sessionName,
+        "finalizeForkConversation",
+        (sess) => {
+          const conversation = sess.conversations.find((c) => c.id === newId);
+          if (!conversation) return;
+          conversation.backendRef = backendRef;
+          conversation.pendingPromptText = settledPendingPromptText;
+          if (conversation.forkedFrom) {
+            conversation.forkedFrom.forkMode = forkMode;
+            conversation.forkedFrom.forkPending = false;
+          }
+        },
+      );
     }
-
-    const forkedFrom: ForkedFrom = {
-      sourceConversationId,
-      messageIndex,
-      sourceBackend: derivedSourceRef ? derivedSourceRef.backend : null,
-      sourceBackendRef: derivedSourceRef,
-      forkLocator,
-      forkMode,
-    };
-
-    // --- Phase 3: State mutation (inside lock) ---
-    await mutateSession(
-      projectPath,
-      sessionName,
-      "forkConversation",
-      (sess) => {
-        const conversation = buildConversation({
-          id: newId,
-          scope: "session",
-          name: forkName,
-          createdAt: now,
-          agentBackend: source.agentBackend ?? DEFAULT_AGENT_BACKEND_ID,
-          transcriptPath,
-          pendingPromptText,
-          forkedFrom,
-          backendRef,
-        });
-
-        sess.conversations.push(conversation);
-      },
-    );
 
     logger.info("conversation.forked", {
       projectPath,
@@ -531,11 +627,46 @@ export function createConversationService(
     return { conversationId: newId, name: forkName, forkMode };
   }
 
+  /**
+   * Drop the row a failed fork left behind. Best-effort: the fork already
+   * failed, and a removal failure must not replace the adapter's reason with a
+   * cleanup error — the row is reported instead so it can be found.
+   */
+  async function removeProvisionalFork(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): Promise<void> {
+    try {
+      await mutateSession(
+        projectPath,
+        sessionName,
+        "removeProvisionalFork",
+        (sess) => {
+          sess.conversations = sess.conversations.filter(
+            (c) => c.id !== conversationId,
+          );
+        },
+      );
+    } catch (err) {
+      logger.error("conversation.fork.provisional_cleanup_failed", {
+        projectPath,
+        sessionName,
+        conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
   /** Finalize focus initialization: archive init conversation, create a new one */
   async function finalizeInitialization(
     projectPath: string,
     sessionName: string,
   ): Promise<FinalizeInitializationResult> {
+    // Resolved outside the lock: the library read is disk I/O, and the session
+    // mutation below must not hold the write queue across it.
+    const profileSnapshot = await resolveProfileSnapshot(projectPath);
+
     const result = await mutateSession(
       projectPath,
       sessionName,
@@ -560,6 +691,7 @@ export function createConversationService(
           name: `${sessionName} ${sequenceNumber}`,
           createdAt: now,
           agentBackend: DEFAULT_AGENT_BACKEND_ID,
+          profileSnapshot,
         });
 
         session.conversations.push(newConvo);
@@ -600,6 +732,12 @@ export interface ForkConversationInput {
   sessionName: string;
   sourceConversationId: string;
   messageIndex: number;
+  /**
+   * Only an index-0 fork can carry one: it derives from no session, so it is a
+   * fresh conversation with the standard selection rules. Every other fork
+   * inherits the source's snapshot verbatim and offers no selection (R7.2).
+   */
+  profile?: AgentProfileRef | null;
 }
 
 export interface ForkConversationResult {

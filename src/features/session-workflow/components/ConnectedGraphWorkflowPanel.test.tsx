@@ -10,8 +10,10 @@ import {
 import {
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
+  graphWorkflowHistoryKeys,
   workflowDefinitionKeys,
 } from "@/lib/workflows/query-keys";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 import ConnectedGraphWorkflowPanel from "./ConnectedGraphWorkflowPanel";
 
 const PROJECT_NAME = "project-1";
@@ -40,6 +42,92 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("ConnectedGraphWorkflowPanel definition approval", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    useToastStoreForTesting.setState({ toasts: [] });
+  });
+
+  it("reconciles to completed and explains when completion wins before pause", async () => {
+    const runningExecution = createWorkflowExecution({
+      id: "execution-race",
+      status: "running",
+    });
+    const completedExecution = createWorkflowExecution({
+      ...runningExecution,
+      status: "completed",
+      completedAt: "2026-08-05T19:48:36.580Z",
+      loopEpoch: runningExecution.loopEpoch + 1,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/graph-workflow/pause") && init?.method === "POST") {
+          return jsonResponse(
+            {
+              error: "Only running graph workflow executions can be paused",
+              code: "workflow_transition_conflict",
+              details: {
+                action: "pause",
+                currentStatus: "completed",
+                allowedStatuses: ["running"],
+              },
+            },
+            409,
+          );
+        }
+        if (url.endsWith("/graph-workflow/execution")) {
+          return jsonResponse({ execution: completedExecution });
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? "GET"} ${url}`);
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+        mutations: { retry: false },
+      },
+    });
+    queryClient.setQueryData(
+      graphWorkflowExecutionKeys.detail(PROJECT_NAME, SESSION_NAME),
+      runningExecution,
+    );
+    queryClient.setQueryData(
+      workflowDefinitionKeys.detail(PROJECT_NAME, "workflow-1"),
+      { item: createWorkflowDefinitionRecord() },
+    );
+    queryClient.setQueryData(
+      graphWorkflowEventsKeys.list(
+        PROJECT_NAME,
+        SESSION_NAME,
+        runningExecution.id,
+      ),
+      [],
+    );
+    queryClient.setQueryData(
+      graphWorkflowHistoryKeys.list(PROJECT_NAME, SESSION_NAME),
+      [],
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ConnectedGraphWorkflowPanel
+          projectName={PROJECT_NAME}
+          sessionName={SESSION_NAME}
+          isMobile={false}
+          mobilePanel="graph"
+          autoSwitchPanel={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Pause" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+    });
+    expect(useToastStoreForTesting.getState().toasts.at(-1)?.message).toBe(
+      "Workflow completed before pause could be applied.",
+    );
   });
 
   it("does not carry an approval refusal onto a replacement execution", async () => {

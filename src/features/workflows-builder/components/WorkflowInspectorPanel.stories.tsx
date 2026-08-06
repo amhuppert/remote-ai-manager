@@ -166,9 +166,13 @@ export const ContextTabCodexImplementerOverride = {
       const def = createWorkflowDefinition();
       const plan = def.executionContexts.find((c) => c.id === "context-plan")!;
       plan.implementer = {
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "medium",
+        },
       };
       return def;
     })(),

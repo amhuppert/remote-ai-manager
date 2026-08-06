@@ -10,14 +10,13 @@ import {
   clearContextBlockOverride,
   clearWorkflowConfigOverride,
   deleteExecutionContext,
-  disableContextValidator,
-  enableContextValidator,
   moveTaskWithinContext,
   setContextBlockOverride,
   setContextOutputSchema,
   setWorkflowConfigOverride,
   updateContextPosition,
 } from "./builder-draft";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 describe("workflow builder draft helpers", () => {
   it("adds an execution context with only id, title, and empty acceptance criteria", () => {
@@ -127,24 +126,36 @@ describe("workflow builder draft helpers", () => {
       createWorkflowDefinition(),
       "context-implement",
       "implementer",
-      { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      {
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+      },
     );
 
     const target = result.executionContexts.find(
       (context) => context.id === "context-implement",
     );
     expect(target?.implementer).toEqual({
-      backend: "codex",
-      model: "gpt-5.4",
-      reasoningEffort: "high",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: {
+        backend: "codex",
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+      },
     });
     const other = result.executionContexts.find(
       (context) => context.id === "context-plan",
     );
     expect(other?.implementer).toEqual({
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "high",
+      },
     });
   });
 
@@ -193,29 +204,40 @@ describe("workflow builder draft helpers", () => {
     expect("iterationPolicy" in (target ?? {})).toBe(false);
   });
 
-  it("disableContextValidator writes contextValidator: { kind: 'disabled' }", () => {
-    const result = disableContextValidator(
+  it("setContextBlockOverride pins a disabled cohort that keeps its assignments", () => {
+    const inherited = SEEDED_WORKFLOW_DEFAULTS.contextValidator;
+    const result = setContextBlockOverride(
       createWorkflowDefinition(),
       "context-implement",
+      "contextValidator",
+      { ...inherited, enabled: false },
     );
 
     const target = result.executionContexts.find(
       (context) => context.id === "context-implement",
     );
-    expect(target?.contextValidator).toEqual({ kind: "disabled" });
+    expect(target?.contextValidator).toEqual({
+      enabled: false,
+      assignments: inherited.assignments,
+    });
   });
 
-  it("enableContextValidator clears the override back to inherit", () => {
-    const disabled = disableContextValidator(
+  it("clearContextBlockOverride drops the validator override back to inherit", () => {
+    const overridden = setContextBlockOverride(
       createWorkflowDefinition(),
       "context-implement",
+      "contextValidator",
+      { ...SEEDED_WORKFLOW_DEFAULTS.contextValidator, enabled: false },
     );
-    const enabled = enableContextValidator(disabled, "context-implement");
+    const cleared = clearContextBlockOverride(
+      overridden,
+      "context-implement",
+      "contextValidator",
+    );
 
-    const target = enabled.executionContexts.find(
+    const target = cleared.executionContexts.find(
       (context) => context.id === "context-implement",
     );
-    expect(target?.contextValidator).toBeUndefined();
     expect("contextValidator" in (target ?? {})).toBe(false);
   });
 
@@ -223,13 +245,17 @@ describe("workflow builder draft helpers", () => {
     const result = setWorkflowConfigOverride(
       createWorkflowDefinition(),
       "implementer",
-      { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+      {
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
+      },
     );
 
     expect(result.workflowConfig.implementer).toEqual({
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "low",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
     });
   });
 

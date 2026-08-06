@@ -21,7 +21,7 @@ export function ClaudeAgentSubfields({
     <>
       <ConfigField
         label="Agent model"
-        fieldPath="workflowDefaults.contextValidator.agent.model"
+        fieldPath="workflowDefaults.contextValidator.assignments.0.agent.model"
         isDefault={false}
         isModified={false}
       >
@@ -39,7 +39,7 @@ export function ClaudeAgentSubfields({
       </ConfigField>
       <ConfigField
         label="Agent effort"
-        fieldPath="workflowDefaults.contextValidator.agent.reasoningEffort"
+        fieldPath="workflowDefaults.contextValidator.assignments.0.agent.reasoningEffort"
         isDefault={false}
         isModified={false}
       >

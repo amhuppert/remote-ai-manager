@@ -94,7 +94,7 @@ describe("deriveOutputSchemaHaltEvidence (R3.2)", () => {
     expect(
       deriveOutputSchemaHaltEvidence({
         execution: executionWithSchema(),
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
         validationEvents: [rejection()],
       }),
     ).toBeNull();
@@ -324,7 +324,7 @@ describe("deriveOutputSchemaHaltEvidenceByContext (R3.2)", () => {
     const byContext = deriveOutputSchemaHaltEvidenceByContext({
       execution: executionWithSchema(),
       haltReasons: [
-        { type: "aborted" },
+        { type: "aborted", cause: null, summary: null },
         {
           type: "circuit_breaker",
           contextId: "context-plan",

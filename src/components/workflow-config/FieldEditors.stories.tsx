@@ -1,11 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
+import { agentProfileKeys } from "@/lib/agent-profiles/query-keys";
+import type { AgentProfileLibraryListing } from "@/lib/agent-profiles/schemas";
 import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
-  GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
+  AgentAssignment,
+  ValidatorAssignment,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
   GraphWorkflowPlanRepairPolicy,
@@ -19,17 +22,50 @@ import {
   PlanRepairEditor,
 } from "./FieldEditors";
 
-const IMPLEMENTER: GraphWorkflowAgentConfig = {
-  backend: "claude",
-  model: "opus",
-  reasoningEffort: "high",
+// The assignment editors read their options through the production library
+// query, so the canvas seeds that query's cache instead of passing options in.
+const PROJECT = "acme-web";
+
+const LISTING: AgentProfileLibraryListing = {
+  profiles: [
+    {
+      ref: { tier: "builtin", id: "general-implementer" },
+      name: "General Implementer",
+      description: "Command Center's default implementer.",
+      revision: 1,
+      recommendedFor: ["workflow_implementer"],
+      tags: [],
+      readOnly: true,
+    },
+    {
+      ref: { tier: "builtin", id: "general-reviewer" },
+      name: "General Reviewer",
+      description: "Reviews a diff against acceptance criteria.",
+      revision: 1,
+      recommendedFor: ["workflow_validator"],
+      tags: [],
+      readOnly: true,
+    },
+  ],
+  diagnostics: [],
 };
 
-const VALIDATOR: GraphWorkflowAgentValidatorConfig = {
-  type: "claude",
-  enabled: true,
-  continuity: { enabled: true },
+const IMPLEMENTER: AgentAssignment = {
+  id: "implementer",
+  profile: { tier: "builtin", id: "general-implementer" },
+  agent: {
+    backend: "claude",
+    model: "opus",
+    reasoningEffort: "high",
+  },
+};
+
+const VALIDATOR: ValidatorAssignment = {
+  id: "general",
+  profile: { tier: "builtin", id: "general-reviewer" },
+  strategy: "conversation",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  continuity: { enabled: true },
 };
 
 const ITERATION: GraphWorkflowIterationPolicy = {
@@ -58,23 +94,30 @@ const COLLABORATION: WorkflowCollaborationConfig = {
 };
 
 function Panel({ children }: { children: React.ReactNode }) {
+  const [client] = useState(() => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(agentProfileKeys.projectList(PROJECT), LISTING);
+    return queryClient;
+  });
   return (
-    <div
-      style={{ width: 340, padding: 16, background: "var(--bg-surface)" }}
-      className="flex flex-col gap-lg"
-    >
-      {children}
-    </div>
+    <QueryClientProvider client={client}>
+      <div
+        style={{ width: 380, padding: 16, background: "var(--bg-surface)" }}
+        className="flex flex-col gap-lg"
+      >
+        {children}
+      </div>
+    </QueryClientProvider>
   );
 }
 
 // Standalone harness so each editor is interactive in the story canvas; the
 // editors are pure value+onChange, so local state is the only wiring needed.
 function AllEditors({ readOnly }: { readOnly?: boolean }) {
-  const [implementer, setImplementer] =
-    useState<GraphWorkflowAgentConfig>(IMPLEMENTER);
-  const [validator, setValidator] =
-    useState<GraphWorkflowAgentValidatorConfig>(VALIDATOR);
+  const [implementer, setImplementer] = useState<AgentAssignment>(IMPLEMENTER);
+  const [validator, setValidator] = useState<ValidatorAssignment>(VALIDATOR);
   const [iteration, setIteration] =
     useState<GraphWorkflowIterationPolicy>(ITERATION);
   const [circuitBreaker, setCircuitBreaker] =
@@ -89,11 +132,13 @@ function AllEditors({ readOnly }: { readOnly?: boolean }) {
       <ImplementerEditor
         value={implementer}
         onChange={setImplementer}
+        libraryProjectName={PROJECT}
         readOnly={readOnly}
       />
       <ContextValidatorEditor
         value={validator}
         onChange={setValidator}
+        libraryProjectName={PROJECT}
         readOnly={readOnly}
       />
       <IterationPolicyEditor
@@ -140,17 +185,46 @@ export const ReadOnly: Story = {
 export const CodexImplementer: Story = {
   render: () => {
     const CodexHarness = () => {
-      const [value, setValue] = useState<GraphWorkflowAgentConfig>({
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+      const [value, setValue] = useState<AgentAssignment>({
+        ...IMPLEMENTER,
+        agent: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        },
       });
       return (
         <Panel>
-          <ImplementerEditor value={value} onChange={setValue} />
+          <ImplementerEditor
+            value={value}
+            onChange={setValue}
+            libraryProjectName={PROJECT}
+          />
         </Panel>
       );
     };
     return <CodexHarness />;
+  },
+};
+
+/** A use-site focus the composer would refuse, refused where it is authored. */
+export const FocusRefusal: Story = {
+  render: () => {
+    const FocusHarness = () => {
+      const [value, setValue] = useState<AgentAssignment>({
+        ...IMPLEMENTER,
+        focus: "follow the ```ts sample exactly",
+      });
+      return (
+        <Panel>
+          <ImplementerEditor
+            value={value}
+            onChange={setValue}
+            libraryProjectName={PROJECT}
+          />
+        </Panel>
+      );
+    };
+    return <FocusHarness />;
   },
 };

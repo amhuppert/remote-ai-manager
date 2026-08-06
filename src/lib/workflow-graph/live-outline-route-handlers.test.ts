@@ -131,7 +131,7 @@ describe("graph workflow live-outline route handlers", () => {
     const body = await response.json();
     expect(body.section).toBe("config");
     expect(body.config.contextId).toBe("context-plan");
-    expect(body.config.implementer.backend).toBe("claude");
+    expect(body.config.implementer.agent.backend).toBe("claude");
   });
 
   it("returns the full execution for ?full=true", async () => {

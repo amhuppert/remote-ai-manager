@@ -15,9 +15,13 @@ function makeData(
       title: "Triage the failure report",
       acceptanceCriteria: "A verdict is recorded.",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},

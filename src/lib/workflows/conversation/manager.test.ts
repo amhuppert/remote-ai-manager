@@ -4,6 +4,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { fromPromise } from "xstate";
+import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "@/lib/conversations/profile-admission";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import { conversationMachine } from "./machine";
 import type {
   PrepareTurnOutput,
@@ -112,11 +117,22 @@ describe("conversation manager", () => {
     _resetForTesting();
     resetRuntime();
     setMachineFactory(createTestMachine);
+    // Turn submission settles the conversation's agent profile before it sends.
+    // These cases exercise the lifecycle, not the store, so the seam answers as
+    // a legacy conversation would — no profile, no lock, no write.
+    setConversationProfileAdmissionDeps({
+      mutateConversation: async (_p, _s, _c, _label, mutate) =>
+        mutate({
+          profileSnapshot: null,
+          profileLockedAt: null,
+        } as unknown as ConversationState),
+    });
     vi.clearAllMocks();
   });
 
   afterEach(() => {
     _resetMachineFactoryForTesting();
+    _resetConversationProfileAdmissionDepsForTesting();
   });
 
   describe("startConversationActor", () => {
@@ -592,6 +608,8 @@ describe("conversation manager", () => {
         pendingQueue: [],
         lastSeenAlignmentVersion: null,
         pendingAgentNotices: [],
+        profileSnapshot: null,
+        profileLockedAt: null,
       };
 
       applySyncDerivedFields(context, conv);

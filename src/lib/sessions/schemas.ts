@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import {
+  conversationProfileSelectionSchema,
+  conversationStateSchema,
+  publicConversationStateSchema,
+  toPublicConversationStates,
+} from "@/lib/conversations/schemas";
 import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
 import { mcpOverridesSchema } from "@/lib/mcp/schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
@@ -75,6 +80,26 @@ export const sessionStateSchema = z.object({
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 
+/**
+ * A session as a read surface may carry it. A session's `conversations` are
+ * stored rows, so the two routes that serialize a whole session (create, get)
+ * must project them; the differing `conversations` element type means the
+ * compiler refuses an unprojected session at either egress.
+ */
+export const publicSessionStateSchema = sessionStateSchema.extend({
+  conversations: z.array(publicConversationStateSchema).default([]),
+});
+export type PublicSessionState = z.infer<typeof publicSessionStateSchema>;
+
+export function toPublicSessionState(
+  session: SessionState,
+): PublicSessionState {
+  return {
+    ...session,
+    conversations: toPublicConversationStates(session.conversations),
+  };
+}
+
 // Slim per-row shape for the sessions-list accessor. Defined explicitly (NOT
 // via sessionStateSchema.omit/extend) so heavy fields added to sessionStateSchema
 // in the future do not silently leak into the list payload.
@@ -127,6 +152,10 @@ export const createSessionRequestSchema = z
       sessionName: z.string().trim().min(1),
       tddEnabled: z.boolean().optional(),
       parentSessionName: z.string().trim().min(1).optional(),
+      // Profile for the session's initial conversation; omitting it yields the
+      // Standard Agent default (R7). Separate from backend/model/effort, which
+      // stay with the runtime cascade.
+      profile: conversationProfileSelectionSchema.optional(),
     }),
     z.object({
       mode: z.literal("optimistic"),
@@ -134,6 +163,7 @@ export const createSessionRequestSchema = z
       images: z.array(imagePayloadSchema).max(5).optional(),
       tddEnabled: z.boolean().optional(),
       parentSessionName: z.string().trim().min(1).optional(),
+      profile: conversationProfileSelectionSchema.optional(),
     }),
   ])
   .superRefine((request, context) => {

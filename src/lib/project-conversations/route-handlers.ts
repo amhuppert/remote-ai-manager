@@ -18,10 +18,25 @@ import {
 import { isConversationBusy as defaultIsConversationBusy } from "@/lib/prompt/single-flight";
 import { runPromptRequestSchema } from "@/lib/prompt/schemas";
 import {
+  changeConversationProfileRequestSchema,
   generateConversationNameRequestSchema,
   generateConversationNameResponseSchema,
   renameConversationRequestSchema,
+  toPublicConversationState,
+  toPublicConversationStates,
 } from "@/lib/conversations/schemas";
+import { ConversationProfileLockedError } from "@/lib/conversations/conversation-profile";
+import {
+  changeConversationProfile as defaultChangeConversationProfile,
+  resolveLibraryAgentProfile,
+  ConversationNotFoundForProfileChangeError,
+  UnknownAgentProfileError,
+  type ConversationProfileChangeIdentity,
+} from "@/lib/conversations/profile-change";
+import {
+  getConversation as defaultGetConversation,
+  mutateConversation as defaultMutateConversation,
+} from "@/lib/state-store";
 import {
   generateAndApplyConversationName as defaultGenerateAndApplyConversationName,
   type GenerateConversationNameInput,
@@ -36,6 +51,7 @@ import {
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
   conversationOpenEventSchema,
+  conversationProfileChangedEventSchema,
   conversationUnreadEventSchema,
 } from "@/lib/conversations/schemas";
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
@@ -49,6 +65,7 @@ import {
   resolveProjectOr404,
   parseJsonBody,
   jsonError,
+  notFound,
 } from "@/lib/shared/route-resolution";
 import { resolveProjectConversationRoute } from "./route-resolution";
 import { readConversationMessagesWithSeq as defaultReadConversationMessagesWithSeq } from "@/lib/prompt/transcript";
@@ -68,6 +85,10 @@ import type {
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import type {
+  AgentProfileRef,
+  RedactedAgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 import type { ExecuteProjectPromptStreamInput } from "./prompt-entry";
 
 const logger = createLogger("project-conversations.routes");
@@ -79,7 +100,11 @@ export interface ProjectConversationRouteDeps {
   getProjectDisplayName(projectPath: string): string;
   createProjectConversation(
     projectPath: string,
-    opts?: { agentBackend?: ConversationState["agentBackend"]; name?: string },
+    opts?: {
+      agentBackend?: ConversationState["agentBackend"];
+      name?: string;
+      profile?: AgentProfileRef;
+    },
   ): Promise<ConversationState>;
   getProjectConversation(
     projectPath: string,
@@ -117,6 +142,10 @@ export interface ProjectConversationRouteDeps {
     projectPath: string,
     conversationId: string,
   ): Promise<void>;
+  changeConversationProfile(
+    identity: ConversationProfileChangeIdentity,
+    ref: AgentProfileRef,
+  ): Promise<RedactedAgentProfileSnapshot>;
   executeProjectPromptStream(
     input: ExecuteProjectPromptStreamInput,
   ): Promise<PromptStreamResult>;
@@ -151,6 +180,18 @@ function defaultDeps(): ProjectConversationRouteDeps {
       service.setProjectConversationOpen(projectPath, id, open),
     markProjectConversationRead: (projectPath, id) =>
       service.markProjectConversationRead(projectPath, id),
+    // The same change operation the session router uses; the sentinel session
+    // in the identity is what points its store calls at the project repository.
+    changeConversationProfile: (identity, ref) =>
+      defaultChangeConversationProfile(
+        {
+          getConversation: defaultGetConversation,
+          mutateConversation: defaultMutateConversation,
+          resolveProfile: resolveLibraryAgentProfile,
+        },
+        identity,
+        ref,
+      ),
     executeProjectPromptStream: defaultExecuteProjectPromptStream,
     isConversationBusy: defaultIsConversationBusy,
     broadcast: publishEvent,
@@ -176,6 +217,12 @@ export function createProjectConversationRouteHandlers(
        * nothing to stamp.
        */
       creationRequestId?: string;
+      /**
+       * Like `creationRequestId`, meaningful only when this entry creates the
+       * conversation: an existing conversation's profile is already settled and
+       * changes through its own PATCH route.
+       */
+      profile?: AgentProfileRef;
     },
   ): Response {
     const encoder = new TextEncoder();
@@ -211,6 +258,9 @@ export function createProjectConversationRouteHandlers(
             ...(conversationId === undefined &&
             body.creationRequestId !== undefined
               ? { creationRequestId: body.creationRequestId }
+              : {}),
+            ...(conversationId === undefined && body.profile !== undefined
+              ? { profile: body.profile }
               : {}),
           });
         } catch (err) {
@@ -284,7 +334,9 @@ export function createProjectConversationRouteHandlers(
         buildProjectConversationCreatedEvent(projectName, conversation),
     });
 
-    return NextResponse.json(conversation, { status: 201 });
+    return NextResponse.json(toPublicConversationState(conversation), {
+      status: 201,
+    });
   }
 
   async function listGET(
@@ -296,7 +348,7 @@ export function createProjectConversationRouteHandlers(
     if (!project.ok) return project.response;
 
     const conversations = await deps.listProjectConversations(project.value);
-    return NextResponse.json(conversations);
+    return NextResponse.json(toPublicConversationStates(conversations));
   }
 
   async function messagesGET(
@@ -604,6 +656,80 @@ export function createProjectConversationRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
+  /**
+   * Point a project conversation at a different agent profile.
+   *
+   * The project counterpart of the session router's profile PATCH, and the only
+   * production control a project conversation has for the operation: a legacy
+   * row (and one that has already run a turn) is refused here with the standard
+   * post-lock error as a 409, because the request is well-formed and the profile
+   * may well exist — the conversation is simply past the point where its profile
+   * can change (R6.5). The body carries the redacted snapshot now in force,
+   * never the instructions behind it (R6.3).
+   */
+  async function profilePATCH(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId } = resolved.value;
+
+    const parsed = await parseJsonBody(
+      request,
+      changeConversationProfileRequestSchema,
+      'profile (a "tier:id" reference or a {tier, id} object) is required',
+    );
+    if (!parsed.ok) return parsed.response;
+
+    try {
+      const redactedProfileSnapshot = await deps.changeConversationProfile(
+        {
+          projectPath,
+          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+          conversationId,
+        },
+        parsed.value.profile,
+      );
+
+      const projectName = deps.getProjectDisplayName(projectPath);
+      publishEventBestEffort({
+        publish: deps.broadcast,
+        logger,
+        failureEvent: "conversation_profile_changed.broadcast_failed",
+        context: { projectName, conversationId },
+        build: () =>
+          conversationProfileChangedEventSchema.parse({
+            type: "conversation-profile-changed",
+            scope: "project",
+            projectName,
+            conversationId,
+            redactedProfileSnapshot,
+          }),
+      });
+
+      return NextResponse.json({ ok: true, redactedProfileSnapshot });
+    } catch (err) {
+      if (err instanceof ConversationProfileLockedError) {
+        return jsonError(err.message, 409);
+      }
+      // Through the resolve seam, not a hand-rolled ladder: both are
+      // single-entity misses. The conversation case is a race guard — route
+      // resolution already found it, so only a concurrent delete gets here.
+      if (err instanceof UnknownAgentProfileError) {
+        return notFound(err.message);
+      }
+      if (err instanceof ConversationNotFoundForProfileChangeError) {
+        return notFound(err.message);
+      }
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to change the conversation's agent profile";
+      return jsonError(message, 500);
+    }
+  }
+
   return {
     createPOST,
     listGET,
@@ -615,6 +741,7 @@ export function createProjectConversationRouteHandlers(
     archivePATCH,
     openPATCH,
     markReadPOST,
+    profilePATCH,
   };
 }
 
@@ -636,6 +763,9 @@ export const projectConversationArchivePATCH = withTracing(
   _handlers.archivePATCH,
 );
 export const projectConversationOpenPATCH = withTracing(_handlers.openPATCH);
+export const projectConversationProfilePATCH = withTracing(
+  _handlers.profilePATCH,
+);
 export const projectConversationMarkReadPOST = withTracing(
   _handlers.markReadPOST,
 );

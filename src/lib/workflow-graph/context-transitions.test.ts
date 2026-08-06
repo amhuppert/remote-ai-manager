@@ -66,7 +66,10 @@ describe("CONTEXT_STATUS_TRANSITIONS legality table", () => {
     // that can no longer complete its context (its output contract changed
     // under the park) leaves no runner behind.
     awaiting_approval: ["ready", "running", "completed", "halted"],
-    awaiting_user_input: ["running", "halted"],
+    // `ready` likewise returns an abandoned user-input park: pause-to-edit
+    // withdraws the round's parked validator questions, so nothing is waiting
+    // on the human and the context owes the edited roster a fresh round.
+    awaiting_user_input: ["ready", "running", "halted"],
     halted: [
       "ready",
       "running",
@@ -188,7 +191,7 @@ describe("resetContextStateToInitial", () => {
       cleanupStatus: "not-applicable",
       lastMergeError: null,
       pendingApproval: null,
-      pendingUserInput: null,
+      pendingUserInputs: {},
     });
     expect(next["context-plan"]).toBe(execution.contextStates["context-plan"]);
     expect(next["context-verify"]).toBe(
@@ -398,7 +401,11 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
       const fileName = String(relativePath);
       if (!fileName.endsWith(".ts")) continue;
       if (fileName.endsWith(".test.ts")) continue;
+      // Test scaffolding, not engine code: fixtures and harnesses FABRICATE
+      // states to run a test against, so routing them through the transition
+      // owner would test the owner rather than use it.
       if (fileName === "test-fixtures.ts") continue;
+      if (fileName.startsWith("testing/")) continue;
       if (fileName === "context-transitions.ts") continue;
 
       const content = readFileSync(path.join(dir, fileName), "utf8");
@@ -451,7 +458,11 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
       const fileName = String(relativePath);
       if (!fileName.endsWith(".ts")) continue;
       if (fileName.endsWith(".test.ts")) continue;
+      // Test scaffolding, not engine code: fixtures and harnesses FABRICATE
+      // states to run a test against, so routing them through the transition
+      // owner would test the owner rather than use it.
       if (fileName === "test-fixtures.ts") continue;
+      if (fileName.startsWith("testing/")) continue;
       if (fileName === "context-transitions.ts") continue;
 
       const content = readFileSync(path.join(dir, fileName), "utf8");

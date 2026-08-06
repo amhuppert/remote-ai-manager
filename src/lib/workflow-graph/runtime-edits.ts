@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { assertNever } from "@/lib/shared/assert-never";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
+import type {
+  AgentAssignment,
+  SeededValidatorCohort,
+  ValidatorCohort,
+} from "./config-schemas";
 import {
   createExecutionIndex,
   type ExecutionIndex,
@@ -318,6 +324,18 @@ export type ResolvedContextConfig = Pick<
 export interface LiveEditDeps {
   createTaskId(): string;
   resolvedGlobalDefaults(): ResolvedContextConfig;
+  /**
+   * The snapshot for an assignment a live edit INTRODUCES.
+   *
+   * A live edit is a new authoring act, so an assignment arriving in an op has
+   * never been resolved — unlike a dormant assignment being enabled, whose
+   * bytes were seeded at start and are reused untouched. Sync by construction
+   * like every other dep here: the async boundary resolves the library once per
+   * request and hands the pure core a lookup. Throws on a reference the library
+   * cannot resolve, which fails the edit rather than storing an assignment with
+   * no bytes behind it.
+   */
+  snapshotFor(assignment: AgentAssignment): AgentProfileSnapshot;
   hasPreMergeCommand(): boolean;
   /** ISO timestamp source for `amend-charter` amendment-log entries. */
   now(): string;
@@ -370,6 +388,11 @@ function laneAgentLiveEditDeps(
     resolvedGlobalDefaults() {
       throw new Error(
         "lane-agent add_task does not seed context config from global defaults",
+      );
+    },
+    snapshotFor() {
+      throw new Error(
+        "lane-agent add_task does not introduce an agent assignment",
       );
     },
     hasPreMergeCommand() {
@@ -740,14 +763,45 @@ function liveContextEditGate(
   return null;
 }
 
+/**
+ * An authored assignment plus the bytes it will run under. Applied at the live-
+ * edit boundary for the same reason execution start applies it at the seed
+ * boundary: past this point the working definition is snapshot-bearing, and
+ * nothing downstream of it consults the library.
+ */
+function seedLiveAssignment<T extends AgentAssignment>(
+  assignment: T,
+  deps: LiveEditDeps,
+): T & { profileSnapshot: AgentProfileSnapshot } {
+  return { ...assignment, profileSnapshot: deps.snapshotFor(assignment) };
+}
+
+function seedLiveCohort(
+  cohort: ValidatorCohort,
+  deps: LiveEditDeps,
+): SeededValidatorCohort {
+  return {
+    ...cohort,
+    // Dormant assignments included: a disabled cohort's members are enabled by
+    // a later edit that does no resolution, so their bytes must land now.
+    assignments: cohort.assignments.map((assignment) =>
+      seedLiveAssignment(assignment, deps),
+    ),
+  };
+}
+
 function applyLiveConfigBlocks(
   context: GraphWorkflowResolvedContext,
   op: LiveContextConfigOp,
+  deps: LiveEditDeps,
 ): void {
-  if (op.implementer !== undefined) context.implementer = op.implementer;
-  // `null` disables the validator (matches the resolved context's nullable field).
+  if (op.implementer !== undefined) {
+    context.implementer = seedLiveAssignment(op.implementer, deps);
+  }
+  // Whole-cohort replacement, matching the cascade: a live edit swaps the set
+  // rather than merging into it, and `enabled: false` is how it turns off.
   if (op.contextValidator !== undefined) {
-    context.contextValidator = op.contextValidator;
+    context.contextValidator = seedLiveCohort(op.contextValidator, deps);
   }
   if (op.scriptValidator !== undefined) {
     context.scriptValidator = op.scriptValidator;
@@ -976,7 +1030,7 @@ function applyUpdateContext(
       delete next.contextOutputs[op.contextId];
     }
   }
-  applyLiveConfigBlocks(context, op);
+  applyLiveConfigBlocks(context, op, ctx.deps);
 
   ctx.affectedContextIds.add(op.contextId);
   ctx.configTouchedContextIds.add(op.contextId);
@@ -1390,10 +1444,9 @@ function applyAddContext(
     base = ctx.deps.resolvedGlobalDefaults();
   }
 
-  // Explicit op fields override the seeded base; `contextValidator: null`
-  // disables it, so the `!== undefined` guard distinguishes "disable" from
-  // "inherit the base". The charter is workflow-global content, copied from the
-  // execution to match every resolved context (resolve-config.ts).
+  // Explicit op fields override the seeded base. The charter is workflow-global
+  // content, copied from the execution to match every resolved context
+  // (resolve-config.ts).
   const context: GraphWorkflowResolvedContext = {
     id: op.id,
     title: op.title,
@@ -1402,11 +1455,14 @@ function applyAddContext(
     // Never seeded from `configFromContextId`: an output contract is per-context
     // identity, not inheritable config (D1).
     ...(op.outputSchema !== undefined ? { outputSchema: op.outputSchema } : {}),
-    implementer: op.implementer ?? base.implementer,
+    implementer:
+      op.implementer === undefined
+        ? base.implementer
+        : seedLiveAssignment(op.implementer, ctx.deps),
     contextValidator:
-      op.contextValidator !== undefined
-        ? op.contextValidator
-        : base.contextValidator,
+      op.contextValidator === undefined
+        ? base.contextValidator
+        : seedLiveCohort(op.contextValidator, ctx.deps),
     scriptValidator: op.scriptValidator ?? base.scriptValidator,
     humanApprovalGate: op.humanApprovalGate ?? base.humanApprovalGate,
     askUserQuestions: op.askUserQuestions ?? base.askUserQuestions,

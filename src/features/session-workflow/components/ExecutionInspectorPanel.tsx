@@ -13,6 +13,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/Tabs";
 import { SectionLabel } from "@/components/ui/SectionHeader";
+import { StatusChip } from "@/components/ui/StatusChip";
 import {
   ApprovalGlyphIcon,
   BackendChip,
@@ -24,8 +25,7 @@ import {
   validatorChipLabel,
 } from "@/components/workflow-config/InspectorChips";
 import { cn } from "@/lib/ui/cn";
-import AskQuestionPanel from "@/components/AskQuestionPanel";
-import type { AskQuestionPanelProps } from "@/hooks/use-user-input-gate";
+import type { ReactNode } from "react";
 
 const wbBtn =
   "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
@@ -116,13 +116,24 @@ import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type {
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowValidationIncidentEvent,
   GraphWorkflowValidationResultEvent,
+  GraphWorkflowValidationSpecialistEntry,
 } from "@/lib/workflow-graph/event-schemas";
+import {
+  formatAgentProfileRef,
+  type AgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
+import CohortRoundCard from "./CohortRoundCard";
+import {
+  deriveCohortRoundView,
+  type CohortMemberView,
+} from "./cohort-round-view";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   GraphWorkflowLaneKind,
+  GraphWorkflowValidationReviewArtifact,
 } from "@/lib/workflow-graph/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
@@ -198,6 +209,13 @@ function MarkdownReadView({
 type ResolvedContextDefinition =
   GraphWorkflowExecution["workingDefinition"]["executionContexts"][number];
 
+// `tier:id@revision` for a seeded assignment. The snapshot is the side that
+// ran: after the library moves on, only these bytes identify what the lane was
+// actually given.
+function seededProfileLabel(snapshot: AgentProfileSnapshot): string {
+  return `${formatAgentProfileRef(snapshot)}@${snapshot.revision}`;
+}
+
 // At-a-glance summary of the selected context's resolved configuration:
 // implementer + enabled gates as compact chips. Everything renders straight
 // from the execution's already-resolved working definition.
@@ -206,20 +224,29 @@ function ResolvedSetupStrip({
 }: {
   context: ResolvedContextDefinition;
 }): React.JSX.Element {
-  const validator = context.contextValidator;
+  const cohort = context.contextValidator;
   return (
     <div
       className="flex flex-shrink-0 flex-wrap items-center gap-[6px] border-b border-solid border-border-dim bg-bg-base px-lg py-[10px]"
       data-section="resolved-setup"
     >
-      <BackendChip backend={context.implementer.backend}>
-        {implementerChipLabel(context.implementer)}
+      <BackendChip backend={context.implementer.agent.backend}>
+        {/* The implementer's PROFILE identity, not just its runtime: after a
+            library edit only the seeded revision says which instructions this
+            context's implementer actually received (R12.3). */}
+        <span data-testid="setup-implementer-profile">
+          {seededProfileLabel(context.implementer.profileSnapshot)}
+        </span>
+        {" · "}
+        {implementerChipLabel(context.implementer.agent)}
       </BackendChip>
-      {validator?.enabled ? (
-        <BackendChip backend={validator.type === "codex" ? "codex" : "claude"}>
-          Validator · {validatorChipLabel(validator)}
-        </BackendChip>
-      ) : null}
+      {cohort.enabled
+        ? cohort.assignments.map((assignment) => (
+            <BackendChip key={assignment.id} backend={assignment.agent.backend}>
+              Validator · {validatorChipLabel(assignment)}
+            </BackendChip>
+          ))
+        : null}
       {context.scriptValidator.enabled ? (
         <GateChip tone="neutral" icon={<ScriptGlyphIcon size={13} />}>
           Script
@@ -244,12 +271,13 @@ interface ExecutionInspectorPanelProps {
   events: GraphWorkflowExecutionEvent[];
   selectedContextId: string | null;
   /**
-   * Answer-panel props for the selected context when it is parked awaiting user
-   * input, or null otherwise. The container derives these via `useUserInputGate`
-   * (it owns the answer mutation + QueryClient); the inspector only mounts the
-   * panel for the selected parked context.
+   * One answer panel per lane of the selected context that is waiting on the
+   * human — a cohort's validators park independently, so a context can be
+   * waiting on several answers at once. The container renders them (each panel
+   * owns the answer mutation for its own asking conversation); the inspector
+   * only decides where they appear.
    */
-  userInputPanel?: AskQuestionPanelProps | null;
+  userInputPanels?: ReactNode;
   onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
   onAddTask: (contextId: string, title: string, instructions: string) => void;
@@ -260,6 +288,12 @@ interface ExecutionInspectorPanelProps {
   onRemoveTask: (taskId: string) => void;
   onReorderTask: (contextId: string, orderedTaskIds: string[]) => void;
   onResetContext?: (contextId: string) => void;
+  /** Reset ONE cohort member's lane, leaving its siblings and the context alone. */
+  onResetAssignment?: (contextId: string, assignmentId: string) => void;
+  /** The assignment whose reset is in flight, if any. */
+  resettingAssignmentId?: string | null;
+  /** Scopes the agent-profile listing the config tab's pickers offer. */
+  libraryProjectName?: string | null;
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
@@ -277,10 +311,17 @@ interface ExecutionInspectorPanelProps {
   isResumingExecution?: boolean;
   configEditConflict?: boolean;
   configSaveSucceeded?: boolean;
+  /**
+   * Opens one lane's transcript. `label` names the use site the transcript
+   * belongs to (`Validator · security`) — with a cohort, "the context
+   * validator" no longer identifies a conversation, so a header built from the
+   * lane KIND alone would title several transcripts identically.
+   */
   onViewConversation?: (
     conversationId: string,
     lane: GraphWorkflowLaneKind,
     contextId: string,
+    label?: string,
   ) => void;
   /**
    * "Edit schema" on an output-schema halt shown in the OVERVIEW: no context is
@@ -387,8 +428,29 @@ function getHistoryEntries(
       }),
     )
     .reverse();
+  // Oldest-first, unlike the two above: incidents are read against ONE round,
+  // where the order they happened in is the diagnosis.
+  const incidentEvents = events
+    .filter(
+      (
+        entry,
+      ): entry is {
+        occurredAt: string;
+        event: GraphWorkflowValidationIncidentEvent;
+        preReset: boolean;
+      } =>
+        entry.event.type === "graph-workflow-validation-incident" &&
+        entry.preReset !== true &&
+        (contextId == null || entry.event.contextId === contextId),
+    )
+    .map(
+      (entry): Timestamped<GraphWorkflowValidationIncidentEvent> => ({
+        ...entry.event,
+        occurredAt: entry.occurredAt,
+      }),
+    );
 
-  return { validationEvents, circuitBreakerEvents };
+  return { validationEvents, circuitBreakerEvents, incidentEvents };
 }
 
 function formatTimestamp(iso: string): string {
@@ -593,6 +655,112 @@ function ResponseArtifactSection({
   );
 }
 
+/** The header a cohort member's transcript opens under. */
+function assignmentTranscriptLabel(assignmentId: string): string {
+  return `Validator · ${assignmentId}`;
+}
+
+/**
+ * ONE cohort member's verdict, nested inside the aggregate round result.
+ *
+ * Nested rather than listed as a sibling: the aggregate is the deterministic
+ * outcome the engine acted on, and a member card floating beside it would read
+ * as a second, competing result. Everything here is the member's own —
+ * identity, verdict, issues, artifact and lane — so no reader has to attribute
+ * a finding by position.
+ */
+function SpecialistCard({
+  specialist,
+  contextId,
+  onViewConversation,
+}: {
+  specialist: GraphWorkflowValidationSpecialistEntry;
+  contextId: string;
+  onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
+}): React.JSX.Element {
+  const sessionRef = specialist.sessionRef;
+  const conversationId = sessionRef?.workflowConversationId;
+  const reviewArtifact = specialist.reviewArtifact;
+
+  return (
+    <div
+      className="border-x-0 border-t border-b-0 border-solid border-border-dim py-[8px] first:border-t-0"
+      data-testid="validation-specialist"
+      data-assignment-id={specialist.assignmentId}
+      data-verdict={specialist.pass ? "pass" : "fail"}
+    >
+      <div className="flex flex-wrap items-center gap-[6px]">
+        <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
+          {specialist.assignmentId}
+        </span>
+        <span
+          className="font-mono text-[0.66rem] text-text-tertiary"
+          data-testid="validation-specialist-profile"
+        >
+          {`${formatAgentProfileRef(specialist.profile)}@${specialist.profile.revision}`}
+        </span>
+        <StatusChip tone={specialist.pass ? "green" : "red"}>
+          {specialist.pass ? "Passed" : "Rejected"}
+        </StatusChip>
+        {conversationId !== undefined && sessionRef && onViewConversation && (
+          <button
+            className={cn(
+              wbBtn,
+              wbBtnXs,
+              wbBtnDefault,
+              "ml-auto text-[0.68rem]",
+            )}
+            onClick={() =>
+              onViewConversation(
+                conversationId,
+                sessionRef.lane,
+                contextId,
+                assignmentTranscriptLabel(specialist.assignmentId),
+              )
+            }
+            type="button"
+          >
+            View Transcript
+          </button>
+        )}
+      </div>
+      <div className="mt-[4px] min-w-0 text-[0.72rem]">
+        <CompactMarkdown content={specialist.summary} />
+      </div>
+      {reviewArtifact?.kind === "response" && (
+        <ResponseArtifactSection reviewArtifact={reviewArtifact} />
+      )}
+      {specialist.issues.length > 0 && (
+        <div className={wbValidationBody}>
+          <div className={wbValidationSectionLabel}>
+            Issues ({specialist.issues.length})
+          </div>
+          <CollapsibleText maxCollapsedHeight={140}>
+            <ul className={wbValidationIssuesList}>
+              {specialist.issues.map((issue, idx) => (
+                <li key={idx} className={wbValidationIssue}>
+                  <div className={wbValidationIssueTitle}>
+                    {issue.path !== undefined ? (
+                      <code className="mr-[6px] font-mono text-amber">
+                        {issue.path}
+                      </code>
+                    ) : (
+                      issue.title
+                    )}
+                  </div>
+                  <div className={wbValidationIssueDesc}>
+                    <CompactMarkdown content={issue.description} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleText>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ValidationCard({
   event,
   isReusedSession,
@@ -600,13 +768,31 @@ function ValidationCard({
 }: {
   event: Timestamped<GraphWorkflowValidationResultEvent>;
   isReusedSession?: boolean;
-  onViewConversation?: (
-    conversationId: string,
-    lane: GraphWorkflowLaneKind,
-    contextId: string,
-  ) => void;
+  onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
-  const hasIssues = event.issues.length > 0;
+  const specialists = event.specialists ?? [];
+  // A rejecting cohort publishes each finding TWICE: `concludeCohort`
+  // concatenates every failing lane's findings onto the aggregate, and each
+  // lane's entry carries its own copy. Rendering both lists would show every
+  // finding twice, and the aggregate copy carries no visible attribution — so
+  // an attributed finding is rendered only in its assignment's group.
+  //
+  // Filtered by attribution rather than by "a cohort is present": a finding
+  // that names no listed assignment (a round-level objection, an
+  // output-schema rejection) has no group to fall into, and dropping it would
+  // lose a real finding rather than a duplicate.
+  const specialistIds = new Set(
+    specialists.map((specialist) => specialist.assignmentId),
+  );
+  const aggregateIssues =
+    specialists.length === 0
+      ? event.issues
+      : event.issues.filter(
+          (issue) =>
+            issue.assignmentId === undefined ||
+            !specialistIds.has(issue.assignmentId),
+        );
+  const hasIssues = aggregateIssues.length > 0;
   const sessionRef = event.sessionRef;
   const reviewArtifact = event.reviewArtifact;
   // An output-schema rejection is the engine's own verdict on a format turn,
@@ -621,7 +807,11 @@ function ValidationCard({
   const laneBadge = isOutputSchema ? "" : getLaneBadgeLabel(sessionRef?.lane);
 
   return (
-    <div className="border-b border-border-dim py-[10px] last:border-b-0">
+    <div
+      className="border-x-0 border-t-0 border-b border-solid border-border-dim py-[10px] last:border-b-0"
+      data-testid="validation-aggregate"
+      data-round-seq={event.roundSeq ?? undefined}
+    >
       <div className="flex items-start gap-[8px] text-[0.72rem]">
         <span
           className={cn(
@@ -634,6 +824,11 @@ function ValidationCard({
         <div className="min-w-0 flex-1">
           <CompactMarkdown content={event.summary} />
         </div>
+        {event.roundSeq !== null && event.roundSeq !== undefined && (
+          <span className="shrink-0 font-mono text-[0.68rem] whitespace-nowrap text-text-tertiary">
+            Round {event.roundSeq}
+          </span>
+        )}
         <span className="shrink-0 text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {formatTimestamp(event.occurredAt)}
         </span>
@@ -686,15 +881,28 @@ function ValidationCard({
         <ResponseArtifactSection reviewArtifact={reviewArtifact} />
       )}
       {hasIssues && (
-        <div className={wbValidationBody}>
+        <div
+          className={wbValidationBody}
+          data-testid="validation-aggregate-issues"
+        >
           <div className={wbValidationSectionLabel}>
-            Issues ({event.issues.length})
+            {specialists.length > 0 ? "Unattributed Issues" : "Issues"} (
+            {aggregateIssues.length})
           </div>
           <CollapsibleText maxCollapsedHeight={140}>
             <ul className={wbValidationIssuesList}>
-              {event.issues.map((issue, idx) => (
+              {aggregateIssues.map((issue, idx) => (
                 <li key={idx} className={wbValidationIssue}>
                   <div className={wbValidationIssueTitle}>
+                    {/* This list is the one place a finding can appear outside
+                        its assignment group, so a finding that DOES name a
+                        raiser carries it inline rather than reading as
+                        anonymous. */}
+                    {issue.assignmentId !== undefined && (
+                      <span className="mr-[6px] font-mono text-[0.66rem] text-text-tertiary">
+                        {issue.assignmentId}
+                      </span>
+                    )}
                     {/* A path-carrying issue titles itself with a machine
                         locator; an agent validator's issues are prose. Mono
                         + amber is the same locator recipe the halt surfaces
@@ -714,6 +922,21 @@ function ValidationCard({
               ))}
             </ul>
           </CollapsibleText>
+        </div>
+      )}
+      {specialists.length > 0 && (
+        <div className={wbValidationBody}>
+          <div className={wbValidationSectionLabel}>
+            Cohort ({specialists.length})
+          </div>
+          {specialists.map((specialist) => (
+            <SpecialistCard
+              key={specialist.assignmentId}
+              specialist={specialist}
+              contextId={event.contextId}
+              {...(onViewConversation ? { onViewConversation } : {})}
+            />
+          ))}
         </div>
       )}
       {event.reopenTaskIds.length > 0 && (
@@ -936,7 +1159,7 @@ function DetailView({
   execution,
   events,
   contextId,
-  userInputPanel,
+  userInputPanels,
   onSelectContext,
   onDeselectContext,
   onAddTask,
@@ -944,6 +1167,9 @@ function DetailView({
   onRemoveTask,
   onReorderTask,
   onResetContext,
+  onResetAssignment,
+  resettingAssignmentId,
+  libraryProjectName,
   onViewTask,
   viewingTaskId,
   isMutating,
@@ -961,7 +1187,7 @@ function DetailView({
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
   contextId: string;
-  userInputPanel?: AskQuestionPanelProps | null;
+  userInputPanels?: ReactNode;
   onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
   onAddTask: (contextId: string, title: string, instructions: string) => void;
@@ -972,6 +1198,9 @@ function DetailView({
   onRemoveTask: (taskId: string) => void;
   onReorderTask: (contextId: string, orderedTaskIds: string[]) => void;
   onResetContext?: (contextId: string) => void;
+  onResetAssignment?: ExecutionInspectorPanelProps["onResetAssignment"];
+  resettingAssignmentId?: string | null;
+  libraryProjectName?: string | null;
   onViewTask: (taskId: string) => void;
   viewingTaskId: string | null;
   isMutating: boolean;
@@ -1077,6 +1306,14 @@ function DetailView({
         validationEvents: history.validationEvents,
       }),
     [execution, contextHaltReason, history.validationEvents],
+  );
+  const cohortRoundView = useMemo(
+    () =>
+      deriveCohortRoundView({
+        round: execution.contextStates[contextId]?.validationRound,
+        incidents: history.incidentEvents,
+      }),
+    [execution, contextId, history.incidentEvents],
   );
 
   if (!context) return null;
@@ -1184,10 +1421,10 @@ function DetailView({
         </div>
 
         <div className={cn(wbInspectorBody, "wb-inspector-body", "min-h-0")}>
-          {userInputPanel && (
+          {userInputPanels && (
             <section className={wbOverviewSection}>
-              <GroupHeader label="Question" />
-              <AskQuestionPanel {...userInputPanel} compact />
+              <GroupHeader label="Questions" />
+              {userInputPanels}
             </section>
           )}
           {contextHaltReason && (
@@ -1533,6 +1770,9 @@ function DetailView({
               execution={execution}
               contextId={contextId}
               onSaveContextConfig={onSaveContextConfig}
+              libraryProjectName={libraryProjectName}
+              {...(onResetAssignment ? { onResetAssignment } : {})}
+              resettingAssignmentId={resettingAssignmentId}
               onPauseExecution={onPauseExecution}
               onResumeExecution={onResumeExecution}
               isSaving={isSavingConfig}
@@ -1553,6 +1793,30 @@ function DetailView({
                 onSelectContext={onSelectContext}
               />
             </section>
+            {cohortRoundView && (
+              <section className={wbOverviewSection} data-testid="cohort-round">
+                <GroupHeader
+                  label="Validation Round"
+                  meta={`#${cohortRoundView.seq}`}
+                />
+                <CohortRoundCard
+                  view={cohortRoundView}
+                  {...(onViewConversation
+                    ? {
+                        onOpenTranscript: (member: CohortMemberView) => {
+                          if (member.conversationId === null) return;
+                          onViewConversation(
+                            member.conversationId,
+                            "context_validator",
+                            contextId,
+                            assignmentTranscriptLabel(member.assignmentId),
+                          );
+                        },
+                      }
+                    : {})}
+                />
+              </section>
+            )}
             <section className={wbOverviewSection}>
               <GroupHeader label="Validations" />
               {history.validationEvents.length > 0 ? (
@@ -1639,7 +1903,7 @@ export default function ExecutionInspectorPanel({
   execution,
   events,
   selectedContextId,
-  userInputPanel,
+  userInputPanels,
   onSelectContext,
   onDeselectContext,
   onAddTask,
@@ -1647,6 +1911,9 @@ export default function ExecutionInspectorPanel({
   onRemoveTask,
   onReorderTask,
   onResetContext,
+  onResetAssignment,
+  resettingAssignmentId,
+  libraryProjectName,
   onViewTask,
   viewingTaskId,
   isMutating,
@@ -1685,7 +1952,7 @@ export default function ExecutionInspectorPanel({
       execution={execution}
       events={events}
       contextId={selectedContextId}
-      userInputPanel={userInputPanel}
+      userInputPanels={userInputPanels}
       onSelectContext={onSelectContext}
       onDeselectContext={onDeselectContext}
       onAddTask={onAddTask}
@@ -1693,6 +1960,9 @@ export default function ExecutionInspectorPanel({
       onRemoveTask={onRemoveTask}
       onReorderTask={onReorderTask}
       onResetContext={onResetContext}
+      onResetAssignment={onResetAssignment}
+      resettingAssignmentId={resettingAssignmentId}
+      libraryProjectName={libraryProjectName}
       onViewTask={onViewTask}
       viewingTaskId={viewingTaskId}
       isMutating={isMutating}

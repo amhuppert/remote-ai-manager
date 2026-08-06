@@ -17,6 +17,47 @@ const logger = createLogger("query-semaphore");
 const DEFAULT_MAX_CONCURRENT = 2;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * The stable marker for "this call never got a slot".
+ *
+ * Embedded in the message as well as carried by the error type because the
+ * rejection crosses boundaries that keep only the text — a workflow task run
+ * surfaces its failure as a string — and the distinction it encodes matters
+ * most on the far side of those boundaries.
+ */
+export const QUERY_SLOT_ADMISSION_TIMEOUT_CODE = "QUERY_SLOT_ADMISSION_TIMEOUT";
+
+/**
+ * Waiting for a slot expired before one opened. Deliberately its own type: a
+ * caller retrying work needs to tell queue pressure — where nothing ran and
+ * nothing is known to be wrong — apart from a run that started and failed.
+ */
+export class QuerySlotAdmissionTimeoutError extends Error {
+  readonly code = QUERY_SLOT_ADMISSION_TIMEOUT_CODE;
+
+  constructor(label: string, timeoutMs: number) {
+    super(
+      `Query semaphore timeout after ${timeoutMs}ms waiting for slot (label: ${label}) [${QUERY_SLOT_ADMISSION_TIMEOUT_CODE}]`,
+    );
+    this.name = "QuerySlotAdmissionTimeoutError";
+  }
+}
+
+/**
+ * Whether a failure is an admission timeout, given either the thrown value or
+ * just the message text that survived from it.
+ */
+export function isQuerySlotAdmissionTimeout(value: unknown): boolean {
+  if (value instanceof QuerySlotAdmissionTimeoutError) return true;
+  if (typeof value === "string") {
+    return value.includes(QUERY_SLOT_ADMISSION_TIMEOUT_CODE);
+  }
+  if (value instanceof Error) {
+    return value.message.includes(QUERY_SLOT_ADMISSION_TIMEOUT_CODE);
+  }
+  return false;
+}
+
 interface Waiter {
   resolve: () => void;
   reject: (err: Error) => void;
@@ -86,9 +127,7 @@ export async function acquireQuerySlot(label: string): Promise<() => void> {
         waiting: state.queue.length,
       });
       reject(
-        new Error(
-          `Query semaphore timeout after ${DEFAULT_QUEUE_TIMEOUT_MS}ms waiting for slot (label: ${label})`,
-        ),
+        new QuerySlotAdmissionTimeoutError(label, DEFAULT_QUEUE_TIMEOUT_MS),
       );
     }, DEFAULT_QUEUE_TIMEOUT_MS);
 

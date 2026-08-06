@@ -88,6 +88,9 @@ const validatorInfra: GraphWorkflowHaltReason = {
   infraReason: "unparseable",
   message: "Validator returned non-JSON response",
   summary: null,
+  assignmentId: "security-reviewer",
+  attempts: 3,
+  roundSeq: 4,
 };
 
 const longJoinFailure: GraphWorkflowHaltReason = {

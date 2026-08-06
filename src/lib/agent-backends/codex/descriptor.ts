@@ -110,6 +110,15 @@ export const codexTaskTranscriptProjection: BackendTaskTranscriptProjection = {
       : { backend: backendRef.backend, threadId: backendRef.ref },
 };
 
+/**
+ * Codex confines a restricted task run with its native sandbox: workspace-write
+ * with the writable roots set to exactly the policy allowlist.
+ *
+ * Exported as a literal (not read off the descriptor) because the descriptor
+ * carries the server-only runner while definition validate runs client-side.
+ */
+export const codexTaskFsWriteRestriction = "enforced" as const;
+
 export interface CodexDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
   /** `createCodexContinuityAdapter(...)` in production; injected so the
@@ -143,6 +152,7 @@ export function createCodexBackendDescriptor(
       runner: deps.taskRunner,
       structuredOutput: "backend_native",
       transcript: codexTaskTranscriptProjection,
+      fsWriteRestriction: codexTaskFsWriteRestriction,
     },
     managedSkills: {
       conversations: "bundled",

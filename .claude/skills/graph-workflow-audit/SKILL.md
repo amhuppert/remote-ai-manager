@@ -166,8 +166,9 @@ brief of this shape, and run them in parallel:
    wandering outside the context's scope; `cctl workflow task complete`
    friction; whether ask-user-question pauses were used at genuine forks
    (and whether the agent guessed badly where it *should* have asked).
-3. **Validator evidence** — `validation-transcript.jsonl` (full validator
-   reasoning) and `validation.jsonl` (verdict pipeline). For every NO-GO ask
+3. **Validator evidence** — `validators/<assignmentId>/validation-transcript.jsonl`
+   (each cohort member's full reasoning) and `validation.jsonl` (the whole
+   cohort's verdict pipeline, with `assignmentId` on each entry). For every NO-GO ask
    the AeroTrainer question: *was the AC itself wrong?* A validator
    faithfully enforcing a bad spec is a planning defect, not an agent one.
 4. **Rotation and scheduling telemetry** — `workflow-logs/<exec>/decisions.jsonl`

@@ -188,5 +188,8 @@ describe("ToastHost", () => {
 
     expect(screen.getByText("my-project / my-session")).toBeInTheDocument();
     expect(screen.getByText("Archived 3 sessions")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Notifications" })).toHaveClass(
+      "z-toast",
+    );
   });
 });

@@ -21,12 +21,14 @@ import {
   bulkDeleteSessions,
 } from "@/lib/sessions/service";
 import type { ImagePayload } from "@/lib/images/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { isReservedSessionName } from "@/lib/sessions/derived";
 import {
   createSessionRequestSchema,
   sessionArchiveRequestSchema,
   sessionTddRequestSchema,
   bulkSessionsRequestSchema,
+  toPublicSessionState,
   type CreateSessionRequest,
   type BulkSessionResult,
   type SessionState,
@@ -86,6 +88,8 @@ type BranchOpts = {
   baseBranch?: string;
   targetBranch?: string;
   parentSessionName?: string;
+  /** Profile for the session's initial conversation (R7); default when absent. */
+  profile?: AgentProfileRef;
 };
 
 export interface CreateSessionRouteDeps {
@@ -145,9 +149,7 @@ export function createSessionRouteHandlers(
     }
     const body: CreateSessionRequest = parsed.data;
 
-    let branchOpts:
-      | { baseBranch: string; targetBranch: string; parentSessionName: string }
-      | undefined;
+    let branchOpts: BranchOpts | undefined;
 
     if (body.parentSessionName) {
       const parent = await deps.getSession(projectPath, body.parentSessionName);
@@ -174,6 +176,10 @@ export function createSessionRouteHandlers(
         targetBranch: parent.branchName,
         parentSessionName: body.parentSessionName,
       };
+    }
+
+    if (body.profile !== undefined) {
+      branchOpts = { ...branchOpts, profile: body.profile };
     }
 
     try {
@@ -207,7 +213,9 @@ export function createSessionRouteHandlers(
           );
         }
       }
-      return NextResponse.json(session, { status: 201 });
+      return NextResponse.json(toPublicSessionState(session), {
+        status: 201,
+      });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to create session";
@@ -264,7 +272,7 @@ export const getSessionRoute = withTracing(
     );
     if (!resolved.ok) return resolved.response;
 
-    return NextResponse.json(resolved.value.session);
+    return NextResponse.json(toPublicSessionState(resolved.value.session));
   },
 );
 

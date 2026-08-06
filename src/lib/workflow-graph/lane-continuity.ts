@@ -20,6 +20,11 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
+import {
+  laneStateKey,
+  type LaneIdentity,
+} from "@/lib/workflow-graph/lane-identity";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type {
@@ -83,6 +88,13 @@ export interface GraphLaneContinuityDeps {
     opts: {
       role: "iteration" | "validator";
       agentBackend?: AgentBackendId;
+      /**
+       * The calling assignment's execution-seeded snapshot, handed over rather
+       * than re-resolved (R4). Absent only when the caller has no seeded
+       * assignment to hand over, in which case the conversation service applies
+       * its own default.
+       */
+      profileSnapshot?: AgentProfileSnapshot;
     },
   ): Promise<{ id: string }>;
   /** Existence check for a lane's CC conversation on the reuse path. */
@@ -173,6 +185,21 @@ export interface ResolveImplementerCallInput {
    * Context-window rotation (`rotateBeforeNextTurn`) still outranks the pin.
    */
   pinnedConversationId?: string;
+  /**
+   * The implementer assignment's fingerprint (see `assignmentFingerprint`).
+   * Stamped on creation and compared on reuse, exactly as for a validator
+   * assignment: an implementer swapped, refocused, or re-pointed at a new
+   * profile revision under a running execution gets a fresh conversation
+   * rather than one that already replayed the superseded profile block.
+   * Absent means the caller cannot fingerprint, which never rotates a lane.
+   */
+  assignmentFingerprint?: string;
+  /**
+   * The context implementer's execution-seeded snapshot. Handed to every lane
+   * conversation this call creates so the lane runs the seeded bytes rather
+   * than whatever the library holds now (R4).
+   */
+  profileSnapshot?: AgentProfileSnapshot;
 }
 
 export interface ResolveValidatorCallInput {
@@ -181,6 +208,21 @@ export interface ResolveValidatorCallInput {
   sessionName: string;
   contextId: string;
   lane: "context_validator";
+  /**
+   * Which cohort member is calling. Every lane concern — continuity handle,
+   * conversation anchor, rotation, artifacts — is keyed by it, so two
+   * assignments of one profile reviewing one context never share state.
+   */
+  assignmentId: string;
+  /**
+   * The calling assignment's fingerprint (see `assignmentFingerprint`).
+   * Stamped onto the lane on creation and compared on reuse: an assignment
+   * edited under a running execution gets a fresh lane rather than a resumed
+   * handle still carrying the superseded instructions. Optional because a
+   * caller that cannot fingerprint simply forgoes that rotation trigger — an
+   * absent fingerprint never rotates a lane.
+   */
+  assignmentFingerprint?: string;
   backend: AgentBackendId;
   strategy: ValidatorExecutionStrategy;
   /**
@@ -189,6 +231,13 @@ export interface ResolveValidatorCallInput {
    * Context-window rotation (`rotateBeforeNextTurn`) still outranks the pin.
    */
   pinnedConversationId?: string;
+  /**
+   * The calling assignment's execution-seeded snapshot. A conversation-strategy
+   * validator lane persists it so the lane's record names the profile the
+   * assignment actually runs under; the block itself reaches a validator turn
+   * through the per-turn instruction channel, not this record (D9).
+   */
+  profileSnapshot?: AgentProfileSnapshot;
 }
 
 export interface RecordLaneTurnOutcomeInput {
@@ -197,6 +246,8 @@ export interface RecordLaneTurnOutcomeInput {
   sessionName: string;
   contextId: string;
   lane: GraphWorkflowLaneKind;
+  /** Required for assignment-scoped lanes; absent for the implementer. */
+  assignmentId?: string;
   /**
    * Neutral post-turn outcome, recorded through the shared lane service.
    * `ref` is honored only for lanes whose continuity handle is backend-native;
@@ -262,6 +313,7 @@ function shouldRotate(
   continuityEnabled: boolean,
   backend?: AgentBackendId,
   pinnedConversationId?: string,
+  assignmentFingerprint?: string,
 ): boolean {
   if (!laneState) return true;
   if (laneState.contextId !== contextId) return true;
@@ -269,27 +321,50 @@ function shouldRotate(
     return true;
   if (laneState.metrics.rotateBeforeNextTurn) return true;
   if (backend !== undefined && laneState.backend !== backend) return true;
+  if (assignmentChanged(laneState, assignmentFingerprint)) return true;
   return false;
+}
+
+/**
+ * True only when BOTH fingerprints are known and differ. A lane that predates
+ * fingerprinting has nothing to compare against, and rotating it on that basis
+ * would discard live continuity to learn nothing — it acquires a fingerprint at
+ * its next natural rotation instead.
+ */
+function assignmentChanged(
+  laneState: GraphWorkflowAgentSessionState,
+  assignmentFingerprint: string | undefined,
+): boolean {
+  return (
+    assignmentFingerprint !== undefined &&
+    laneState.assignmentFingerprint !== undefined &&
+    laneState.assignmentFingerprint !== assignmentFingerprint
+  );
 }
 
 function getLaneContinuityEnabled(
   execution: GraphWorkflowExecution,
   contextId: string,
-  lane: GraphWorkflowLaneKind,
+  identity: LaneIdentity,
 ): boolean {
   const ctx = execution.workingDefinition.executionContexts.find(
     (c) => c.id === contextId,
   );
   if (!ctx) return true;
-  return lane === "implementer"
-    ? (ctx.iterationPolicy.continuity.enabled ?? true)
-    : (ctx.contextValidator?.continuity.enabled ?? true);
+  if (identity.lane === "implementer") {
+    return ctx.iterationPolicy.continuity.enabled ?? true;
+  }
+  return (
+    ctx.contextValidator.assignments.find(
+      (assignment) => assignment.id === identity.assignmentId,
+    )?.continuity.enabled ?? true
+  );
 }
 
 function withLaneState(
   execution: GraphWorkflowExecution,
   contextId: string,
-  lane: GraphWorkflowLaneKind,
+  identity: LaneIdentity,
   state: GraphWorkflowAgentSessionState,
 ): GraphWorkflowExecution {
   const previousContextLanes = execution.laneStates[contextId] ?? {};
@@ -299,7 +374,8 @@ function withLaneState(
       ...execution.laneStates,
       [contextId]: {
         ...previousContextLanes,
-        [lane]: state,
+        [laneStateKey(identity.lane, identity.assignmentId ?? undefined)]:
+          state,
       },
     },
   };
@@ -308,9 +384,12 @@ function withLaneState(
 function getCurrentLane(
   execution: GraphWorkflowExecution,
   contextId: string,
-  lane: GraphWorkflowLaneKind,
+  identity: LaneIdentity,
 ): GraphWorkflowAgentSessionState | undefined {
-  const stored = execution.laneStates[contextId]?.[lane];
+  const stored =
+    execution.laneStates[contextId]?.[
+      laneStateKey(identity.lane, identity.assignmentId ?? undefined)
+    ];
   if (!stored) return undefined;
   return graphWorkflowAgentSessionStateSchema.parse(stored);
 }
@@ -321,11 +400,14 @@ function rotationReason(
   continuityEnabled: boolean,
   pinned: boolean,
   backend: AgentBackendId,
+  assignmentFingerprint?: string,
 ): string {
   if (!laneState) return "no_prior_lane";
   if (laneState.contextId !== contextId) return "context_changed";
   if (!continuityEnabled && !pinned) return "continuity_disabled";
   if (laneState.backend !== backend) return "engine_changed";
+  if (assignmentChanged(laneState, assignmentFingerprint))
+    return "assignment_changed";
   return "rotation_scheduled";
 }
 
@@ -352,36 +434,64 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
   async function persistLaneState(
     execution: GraphWorkflowExecution,
     laneState: GraphWorkflowAgentSessionState,
+    identity: LaneIdentity,
     contextId: string,
   ): Promise<void> {
     await deps.laneService.initialize(
-      toNeutralLaneState(execution, laneState, laneState.lane, contextId),
+      toNeutralLaneState(execution, laneState, identity, contextId),
     );
+  }
+
+  /**
+   * The assignment identity a freshly created lane records about itself, so a
+   * later resolve can tell "same assignment, resume" from "this assignment was
+   * edited, rebuild".
+   */
+  function assignmentFields(
+    identity: LaneIdentity,
+    assignmentFingerprint: string | undefined,
+  ): Record<string, string> {
+    return {
+      ...(identity.assignmentId !== null
+        ? { assignmentId: identity.assignmentId }
+        : {}),
+      ...(assignmentFingerprint !== undefined ? { assignmentFingerprint } : {}),
+    };
   }
 
   async function createFreshConversationLane(
     execution: GraphWorkflowExecution,
     projectPath: string,
     sessionName: string,
-    lane: GraphWorkflowLaneKind,
+    identity: LaneIdentity,
     contextId: string,
     backend: AgentBackendId,
     role: "iteration" | "validator",
     reason: string,
+    assignmentFingerprint?: string,
+    profileSnapshot?: AgentProfileSnapshot,
   ): Promise<{
     laneState: GraphWorkflowAgentSessionState;
     conversationId: string;
   }> {
+    // Pre-resolved handoff, never a reference (R4): a lane created long after
+    // execution start — or after a rotation — must run the bytes the execution
+    // was seeded with, so the library is not consulted on this path at all.
     const conversation = await deps.createConversation(
       projectPath,
       sessionName,
-      { role, agentBackend: backend },
+      {
+        role,
+        agentBackend: backend,
+        ...(profileSnapshot !== undefined ? { profileSnapshot } : {}),
+      },
     );
     const laneState = graphWorkflowAgentSessionStateSchema.parse({
       backend,
       refKind: "conversation",
-      lane,
+      lane: identity.lane,
       contextId,
+      ...assignmentFields(identity, assignmentFingerprint),
       workflowConversationId: conversation.id,
       sessionRef: { backend, ref: conversation.id },
       metrics: { rotateBeforeNextTurn: false },
@@ -389,10 +499,11 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       lastUsedAt: getNow(),
     });
 
-    await persistLaneState(execution, laneState, contextId);
+    await persistLaneState(execution, laneState, identity, contextId);
 
     logger.info("workflow-continuity.lane.create", {
-      lane,
+      lane: identity.lane,
+      assignmentId: identity.assignmentId,
       engine: backend,
       contextId,
       conversationId: conversation.id,
@@ -482,11 +593,12 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     const { execution, projectPath, sessionName, contextId } = input;
     const backend = input.backend ?? DEFAULT_AGENT_BACKEND_ID;
     const lane: GraphWorkflowLaneKind = "implementer";
-    const laneState = getCurrentLane(execution, contextId, lane);
+    const identity: LaneIdentity = { lane, assignmentId: null };
+    const laneState = getCurrentLane(execution, contextId, identity);
     const continuityEnabled = getLaneContinuityEnabled(
       execution,
       contextId,
-      lane,
+      identity,
     );
     const pinned = laneMatchesPin(laneState, input.pinnedConversationId);
     const rotate = shouldRotate(
@@ -495,6 +607,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       continuityEnabled,
       backend,
       input.pinnedConversationId,
+      input.assignmentFingerprint,
     );
 
     if (rotate) {
@@ -504,6 +617,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         continuityEnabled,
         pinned,
         backend,
+        input.assignmentFingerprint,
       );
 
       const execLogger = getExecutionLogger(execution.id);
@@ -535,11 +649,13 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           execution,
           projectPath,
           sessionName,
-          lane,
+          identity,
           contextId,
           backend,
           "iteration",
           reason,
+          input.assignmentFingerprint,
+          input.profileSnapshot,
         );
 
       retireReplacedLaneConversation(
@@ -550,7 +666,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       );
 
       return {
-        execution: withLaneState(execution, contextId, lane, newLaneState),
+        execution: withLaneState(execution, contextId, identity, newLaneState),
         conversationId,
         sessionAction: "create",
         promptMode: "iteration_seed",
@@ -582,15 +698,17 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           execution,
           projectPath,
           sessionName,
-          lane,
+          identity,
           contextId,
           backend,
           "iteration",
           "stale_recovery",
+          input.assignmentFingerprint,
+          input.profileSnapshot,
         );
 
       return {
-        execution: withLaneState(execution, contextId, lane, newLaneState),
+        execution: withLaneState(execution, contextId, identity, newLaneState),
         conversationId: freshId,
         sessionAction: "create",
         promptMode: "iteration_seed",
@@ -610,7 +728,12 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     });
 
     return {
-      execution: withLaneState(execution, contextId, lane, updatedLaneState),
+      execution: withLaneState(
+        execution,
+        contextId,
+        identity,
+        updatedLaneState,
+      ),
       conversationId,
       sessionAction: "reuse",
       promptMode: "follow_up",
@@ -628,12 +751,17 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       lane,
       backend,
       strategy,
+      assignmentFingerprint,
     } = input;
-    const laneState = getCurrentLane(execution, contextId, lane);
+    const identity: LaneIdentity = {
+      lane,
+      assignmentId: input.assignmentId,
+    };
+    const laneState = getCurrentLane(execution, contextId, identity);
     const continuityEnabled = getLaneContinuityEnabled(
       execution,
       contextId,
-      lane,
+      identity,
     );
     const pinned = laneMatchesPin(laneState, input.pinnedConversationId);
     const expectedRefKind =
@@ -645,6 +773,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         continuityEnabled,
         backend,
         input.pinnedConversationId,
+        assignmentFingerprint,
       ) ||
       laneState?.refKind !== expectedRefKind ||
       (expectedRefKind === "backend" && laneState?.sessionRef === undefined);
@@ -657,6 +786,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       execLogger?.decision("validator.rotation", {
         contextId,
         lane,
+        assignmentId: identity.assignmentId,
         engine: backend,
         reason: rotationReason(
           laneState,
@@ -664,6 +794,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           continuityEnabled,
           pinned,
           backend,
+          assignmentFingerprint,
         ),
         continuityEnabled,
         previousContextId: laneState?.contextId ?? null,
@@ -679,6 +810,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           continuityEnabled,
           pinned,
           backend,
+          assignmentFingerprint,
         );
 
         const { laneState: newLaneState, conversationId } =
@@ -686,11 +818,13 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
             execution,
             projectPath,
             sessionName,
-            lane,
+            identity,
             contextId,
             backend,
             "validator",
             reason,
+            assignmentFingerprint,
+            input.profileSnapshot,
           );
 
         retireReplacedLaneConversation(
@@ -701,7 +835,12 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         );
 
         return {
-          execution: withLaneState(execution, contextId, lane, newLaneState),
+          execution: withLaneState(
+            execution,
+            contextId,
+            identity,
+            newLaneState,
+          ),
           sessionAction: "create",
           strategy,
           backend,
@@ -729,6 +868,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         getExecutionLogger(execution.id)?.decision("validator.rotation", {
           contextId,
           lane,
+          assignmentId: identity.assignmentId,
           engine: backend,
           reason: "stale_recovery",
           continuityEnabled,
@@ -741,15 +881,22 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
             execution,
             projectPath,
             sessionName,
-            lane,
+            identity,
             contextId,
             backend,
             "validator",
             "stale_recovery",
+            assignmentFingerprint,
+            input.profileSnapshot,
           );
 
         return {
-          execution: withLaneState(execution, contextId, lane, newLaneState),
+          execution: withLaneState(
+            execution,
+            contextId,
+            identity,
+            newLaneState,
+          ),
           sessionAction: "create",
           strategy,
           backend,
@@ -764,13 +911,14 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
 
       logger.info("workflow-continuity.lane.reuse", {
         lane,
+        assignmentId: identity.assignmentId,
         engine: backend,
         contextId,
         conversationId,
       });
 
       return {
-        execution: withLaneState(execution, contextId, lane, updatedLane),
+        execution: withLaneState(execution, contextId, identity, updatedLane),
         sessionAction: "reuse",
         strategy,
         backend,
@@ -792,16 +940,18 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         refKind: "backend",
         lane,
         contextId,
+        ...assignmentFields(identity, assignmentFingerprint),
         sessionRef: started,
         metrics: { lastTurnUsage: null, rotateBeforeNextTurn: false },
         limitEvaluation: "disabled",
         lastUsedAt: getNow(),
       });
 
-      await persistLaneState(execution, newLaneState, contextId);
+      await persistLaneState(execution, newLaneState, identity, contextId);
 
       logger.info("workflow-continuity.lane.create", {
         lane,
+        assignmentId: identity.assignmentId,
         engine: backend,
         contextId,
         threadId: started.ref,
@@ -809,7 +959,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       });
 
       return {
-        execution: withLaneState(execution, contextId, lane, newLaneState),
+        execution: withLaneState(execution, contextId, identity, newLaneState),
         sessionAction: "create",
         strategy: "task",
         backend,
@@ -834,6 +984,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           continuityEnabled,
           pinned,
           backend,
+          assignmentFingerprint,
         ),
       );
     }
@@ -875,13 +1026,14 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
 
     logger.info("workflow-continuity.lane.reuse", {
       lane,
+      assignmentId: identity.assignmentId,
       engine: backend,
       contextId,
       ref: resumption.ref.ref,
     });
 
     return {
-      execution: withLaneState(execution, contextId, lane, updatedLane),
+      execution: withLaneState(execution, contextId, identity, updatedLane),
       sessionAction: "reuse",
       strategy,
       backend,
@@ -893,7 +1045,12 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
     input: RecordLaneTurnOutcomeInput,
   ): Promise<GraphWorkflowExecution> {
     const { execution, projectPath, sessionName, contextId, lane } = input;
-    const laneState = getCurrentLane(execution, contextId, lane);
+    const identity: LaneIdentity = {
+      lane,
+      assignmentId: input.assignmentId ?? null,
+    };
+    const laneKey = laneStateKey(lane, input.assignmentId);
+    const laneState = getCurrentLane(execution, contextId, identity);
     if (!laneState || laneState.backend !== input.outcome.backend) {
       return execution;
     }
@@ -964,12 +1121,12 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
       projectPath,
       sessionName,
       (latest) => {
-        const existingGraphLane = latest.laneStates[contextId]?.[lane];
+        const existingGraphLane = latest.laneStates[contextId]?.[laneKey];
         if (!existingGraphLane) return latest;
         const existingNeutral = toNeutralLaneState(
           latest,
           existingGraphLane,
-          lane,
+          identity,
           contextId,
         );
         const { state, contextLimitEvaluation } = deriveLaneOutcome(
@@ -983,7 +1140,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
         const limitEvaluation = toGraphLimitEvaluation(contextLimitEvaluation);
         const mirrored = toGraphLaneState(
           state,
-          lane,
+          identity,
           contextId,
           existingGraphLane,
         );
@@ -991,7 +1148,7 @@ export function createGraphLaneContinuity(deps: GraphLaneContinuityDeps) {
           ...mirrored,
           limitEvaluation,
         });
-        return withLaneState(latest, contextId, lane, nextLane);
+        return withLaneState(latest, contextId, identity, nextLane);
       },
     );
   }

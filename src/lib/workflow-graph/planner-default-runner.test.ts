@@ -28,9 +28,13 @@ const submittedDefinition: WorkflowSemanticDefinition = {
       description: "Inspect the implementation surface.",
       acceptanceCriteria: "TBD",
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "high",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},

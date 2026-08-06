@@ -33,6 +33,7 @@ const PROJECT_CONVERSATION_JSON_COLUMNS = [
   "debug_mode",
   "pending_questions",
   "pending_agent_notices",
+  "profile_snapshot",
 ] as const;
 
 /**
@@ -133,6 +134,8 @@ const projectConversationsTableRowSchema = z.object({
   pending_queue: z.string().nullable(),
   last_seen_alignment_version: z.number().int().nullable(),
   pending_agent_notices: z.string().nullable(),
+  profile_snapshot: z.string().nullable(),
+  profile_locked_at: z.string().nullable(),
   creation_request_id: z.string().nullable(),
 });
 type ProjectConversationsTableRow = z.infer<
@@ -177,6 +180,8 @@ interface ProjectSqlBindRow {
   pending_queue: string | null;
   last_seen_alignment_version: number | null;
   pending_agent_notices: string | null;
+  profile_snapshot: string | null;
+  profile_locked_at: string | null;
   creation_request_id: string | null;
 }
 
@@ -234,6 +239,8 @@ const PROJECT_CONVERSATION_COLUMN_KEYS: ReadonlyArray<
   "pending_queue",
   "last_seen_alignment_version",
   "pending_agent_notices",
+  "profile_snapshot",
+  "profile_locked_at",
   "creation_request_id",
 ];
 
@@ -359,6 +366,7 @@ export function createProjectConversationsRepo(
        debug_mode, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
        unread, spawned_session_ids, pending_queue, last_seen_alignment_version, pending_agent_notices,
+       profile_snapshot, profile_locked_at,
        creation_request_id
      ) VALUES (
        @id, @project_path, @name, @name_origin, @transcript_path, @status,
@@ -368,6 +376,7 @@ export function createProjectConversationsRepo(
        @debug_mode, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
        @unread, @spawned_session_ids, @pending_queue, @last_seen_alignment_version, @pending_agent_notices,
+       @profile_snapshot, @profile_locked_at,
        @creation_request_id
      )
      ON CONFLICT(id) DO UPDATE SET
@@ -405,6 +414,8 @@ export function createProjectConversationsRepo(
        pending_queue              = excluded.pending_queue,
        last_seen_alignment_version = excluded.last_seen_alignment_version,
        pending_agent_notices      = excluded.pending_agent_notices,
+       profile_snapshot           = excluded.profile_snapshot,
+       profile_locked_at          = excluded.profile_locked_at,
        creation_request_id        = excluded.creation_request_id`,
   );
   // The machine snapshot lives in the owner-discriminated sidecar table, not on

@@ -63,8 +63,9 @@ import {
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
 import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import {
-  createWorkflowExecution,
   createResolvedWorkflowDefinition,
+  createWorkflowExecution,
+  makeProfileSnapshot,
 } from "@/lib/workflow-graph/test-fixtures";
 import { runCircuitBreakerGate } from "./circuit-breaker-gate";
 import { runStructuredOutputGate } from "./structured-output-gate";
@@ -699,35 +700,28 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       definition.executionContexts[0]!.circuitBreaker
         .consecutiveFailureThreshold ?? 3;
 
-    const initialExecution = {
-      id: "exec-1",
-      seedDefinitionId: "def-1",
-      seedDefinitionRevision: 1,
+    // Built from the shared factory, not hand-rolled: the loop reads lane,
+    // join, and collaboration state unconditionally, so a partial execution
+    // cast into shape throws inside the context task and the run halts on
+    // recovery_error before ever reaching the breaker.
+    const baseExecution = createWorkflowExecution({
       workingDefinition: definition,
-      status: "running" as const,
+      status: "running",
       activeContextIds: [contextId],
+      startedAt: "2026-04-28T00:00:00.000Z",
+    });
+    const initialExecution: GraphWorkflowExecution = {
+      ...baseExecution,
       contextStates: {
+        ...baseExecution.contextStates,
         [contextId]: {
-          contextId,
-          status: "running" as const,
-          totalTaskCount: 1,
-          completedTaskCount: 0,
+          ...baseExecution.contextStates[contextId]!,
+          status: "running",
           iterationCount: 1,
           consecutiveFailureCount: threshold - 1,
         },
       },
-      taskStates: {},
-      sharedDocuments: [],
-      laneStates: {},
-      machineSnapshot: null,
-      history: [],
-      startedAt: "2026-04-28T00:00:00.000Z",
-      completedAt: null,
-      haltReason: null,
-      pendingHaltReason: null,
-      secondaryHaltReasons: [],
-      pendingMergeRetry: [],
-    } as unknown as GraphWorkflowExecution;
+    };
 
     let currentExecution = initialExecution;
 
@@ -1036,14 +1030,21 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
                   ...ctx,
                   acceptanceCriteria: "Reviewed",
                   contextValidator: {
-                    type: "claude",
                     enabled: true,
-                    continuity: { enabled: true },
-                    agent: {
-                      backend: "claude",
-                      model: "sonnet",
-                      reasoningEffort: "medium",
-                    },
+                    assignments: [
+                      {
+                        id: "general",
+                        profile: { tier: "builtin", id: "general-reviewer" },
+                        profileSnapshot: makeProfileSnapshot(),
+                        strategy: "conversation",
+                        agent: {
+                          backend: "claude",
+                          model: "sonnet",
+                          reasoningEffort: "medium",
+                        },
+                        continuity: { enabled: true },
+                      },
+                    ],
                   },
                 }
               : ctx,
@@ -1063,7 +1064,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         sessionName: "session-1",
         execution,
         context: contextDef,
-        validator: contextDef.contextValidator!,
+        validator: contextDef.contextValidator.assignments[0]!,
       });
 
       expect(executeWorkflowTaskRunSpy).toHaveBeenCalledTimes(1);

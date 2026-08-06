@@ -29,6 +29,8 @@ function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: "conversation-1",
     scope: "session",
     nameOrigin: "default",

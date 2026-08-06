@@ -3,6 +3,8 @@ import {
   effortLevelSchema,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
+import { conversationProfileSelectionSchema } from "@/lib/conversations/schemas";
 import type { PublishFn } from "@/lib/events/publication";
 import { createLogger } from "@/lib/logging";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -58,6 +60,13 @@ export const startTicketServiceInputSchema = z.object({
   backend: agentBackendSchema.optional(),
   model: z.string().trim().min(1).max(100).optional(),
   reasoningEffort: effortLevelSchema.optional(),
+  /**
+   * Identity for the provisioned session's initial conversation. Separate from
+   * the runtime triple above and optional on the wire: omitting it resolves the
+   * Standard Agent at the construction site (R7). Applies in both start modes —
+   * a prepared session's first manual turn runs under it too.
+   */
+  profile: conversationProfileSelectionSchema.optional(),
 });
 export type StartTicketServiceInput = z.input<
   typeof startTicketServiceInputSchema
@@ -131,6 +140,8 @@ export interface TicketStartServiceDeps {
   provisionSession(
     projectPath: string,
     sessionName: string,
+    /** Identity for the session's initial conversation; default when absent. */
+    profile?: AgentProfileRef,
   ): Promise<ProvisionedTicketSession>;
   deleteSessionIfCurrent(
     projectPath: string,
@@ -683,6 +694,12 @@ export function createTicketStartService(
       model?: string;
       reasoningEffort?: EffortLevel;
     },
+    /**
+     * Prompt identity for the provisioned session's initial conversation. A
+     * parameter of its own rather than a `kickoffConfig` field: that object is
+     * the runtime cascade, and a profile carries no runtime.
+     */
+    profile: AgentProfileRef | undefined,
     bindTicketId: (ticketId: string) => void,
   ): Promise<TicketResult<StartTicketOutput>> {
     // The lock-entry snapshot: field/attachment CRUD stays lock-free, so this
@@ -736,7 +753,11 @@ export function createTicketStartService(
 
     let provisioned: ProvisionedTicketSession;
     try {
-      provisioned = await deps.provisionSession(projectPath, sessionName);
+      provisioned = await deps.provisionSession(
+        projectPath,
+        sessionName,
+        profile,
+      );
     } catch (error) {
       await discardConversationSnapshots(
         ticket.id,
@@ -931,8 +952,15 @@ export function createTicketStartService(
           issues: toTicketValidationIssues(parsed.error),
         });
       }
-      const { projectName, number, mode, backend, model, reasoningEffort } =
-        parsed.data;
+      const {
+        projectName,
+        number,
+        mode,
+        backend,
+        model,
+        reasoningEffort,
+        profile,
+      } = parsed.data;
       const projectPath = await deps.resolveProjectPath(projectName);
       if (projectPath === null) {
         return fail({
@@ -963,6 +991,7 @@ export function createTicketStartService(
             number,
             mode,
             { backend, model, reasoningEffort },
+            profile,
             (id) => hold.bindTicketId(id),
           );
         } finally {

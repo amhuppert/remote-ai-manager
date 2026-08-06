@@ -11,6 +11,11 @@ import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
 import { sanitizeBranchName } from "@/lib/sessions/branch-name";
 import BranchSelector from "@/components/BranchSelector";
+import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import {
+  parseAgentProfilePickerValue,
+  STANDARD_AGENT_PROFILE_VALUE,
+} from "@/components/agent-profiles/agent-profile-picker-state";
 import { useBranchFromParent } from "@/stores/sessions.store";
 import TddToggle from "@/components/TddToggle";
 import { Button } from "@/components/ui/Button";
@@ -72,6 +77,9 @@ export default function CreateSessionModal({
   );
   const [sessionName, setSessionName] = useState("");
   const [instructions, setInstructions] = useState("");
+  const [profileValue, setProfileValue] = useState(
+    STANDARD_AGENT_PROFILE_VALUE,
+  );
   const [error, setError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<RichPromptInputHandle>(null);
@@ -112,6 +120,7 @@ export default function CreateSessionModal({
       setInstructions("");
       setMode("normal");
       setParentSessionName(branchFromParent);
+      setProfileValue(STANDARD_AGENT_PROFILE_VALUE);
       setError(null);
     }
   }
@@ -163,6 +172,9 @@ export default function CreateSessionModal({
     mode: SessionCreationMode,
     document?: SerializedPromptDoc,
   ) => {
+    // The picker's own values, so a null here is not a user error — it is the
+    // default the server would resolve anyway.
+    const profile = parseAgentProfilePickerValue(profileValue) ?? undefined;
     if (mode === "normal") {
       if (!canSubmit) return;
       setError(null);
@@ -172,6 +184,7 @@ export default function CreateSessionModal({
           sessionName: sessionName.trim(),
           tddEnabled,
           parentSessionName: parentSessionName ?? undefined,
+          profile,
         },
         false,
       );
@@ -186,6 +199,7 @@ export default function CreateSessionModal({
         images: document.images.length > 0 ? document.images : undefined,
         tddEnabled,
         parentSessionName: parentSessionName ?? undefined,
+        profile,
       },
       true,
     );
@@ -344,6 +358,16 @@ export default function CreateSessionModal({
             />
             <FormHint>{textareaHint}</FormHint>
           </div>
+          {/* Prompt identity for the session's first conversation. Separate
+              from the runtime cascade, which this dialog leaves to configured
+              defaults. */}
+          <FormLabel layoutClassName="mt-sm">Agent profile</FormLabel>
+          <AgentProfilePicker
+            projectName={projectName}
+            value={profileValue}
+            onChange={(selection) => setProfileValue(selection.value)}
+            disabled={createMutation.isPending}
+          />
           {error && <FormError>{error}</FormError>}
           <TddToggle
             enabled={tddEnabled}

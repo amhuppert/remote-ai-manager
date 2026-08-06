@@ -30,6 +30,13 @@ import {
   pendingQueuedMessageSchema,
   queuedMessageViewSchema,
 } from "./message-queue-schemas";
+import {
+  agentProfileRefSchema,
+  agentProfileSnapshotSchema,
+  parseAgentProfileRef,
+  redactAgentProfileSnapshot,
+  redactedAgentProfileSnapshotSchema,
+} from "@/lib/agent-profiles/schemas";
 
 export {
   messageContentBlockSchema,
@@ -166,6 +173,17 @@ export const forkedFromSchema = z
     sourceBackendRef: persistedAgentSessionRefSchema.nullable().optional(),
     forkLocator: z.string().nullable().optional(),
     forkMode: z.enum(["native", "synthetic"]).nullable().default(null),
+    /**
+     * True between the provisional insert and the adapter's answer: this row
+     * exists so the fork's profile snapshot is durable BEFORE provider
+     * continuity is created (D28), but its `backendRef` and `forkMode` are not
+     * settled yet. It is a distinct state from an index-0 fork, which has no
+     * provider continuity to wait for and is final at insert.
+     *
+     * A row left `true` by a crash mid-fork is a fork whose continuity outcome
+     * is unknown — it has its transcript and its snapshot, and no resume handle.
+     */
+    forkPending: z.boolean().default(false),
   })
   .nullable()
   .default(null);
@@ -228,7 +246,12 @@ export type ConversationScope = z.infer<typeof conversationScopeSchema>;
 export const nameOriginSchema = z.enum(["default", "auto", "manual"]);
 export type NameOrigin = z.infer<typeof nameOriginSchema>;
 
-export const conversationStateSchema = z.object({
+/**
+ * Every conversation field that is identical whether the aggregate is being
+ * stored or projected. The two schemas below differ ONLY in how they carry the
+ * resolved agent profile, so an ordinary new field belongs here.
+ */
+const conversationStateFieldsSchema = z.object({
   id: conversationIdSchema,
   scope: conversationScopeSchema,
   name: z.string().nullable().default(null),
@@ -299,7 +322,134 @@ export const conversationStateSchema = z.object({
   // decodes conversations persisted before this field existed.
   pendingAgentNotices: z.array(z.string()).default([]),
 });
-export type ConversationState = z.infer<typeof conversationStateSchema>;
+
+/**
+ * Moment the conversation's profile stopped being changeable — its first turn.
+ * Null means "not locked yet"; it is never a claim that a profile exists, since
+ * a legacy conversation is null on both profile fields.
+ */
+const profileLockedAtSchema = z.string().nullable().default(null);
+
+/**
+ * The STORED conversation aggregate: what the two conversation repositories
+ * write and read, carrying the private profile snapshot verbatim —
+ * `instructions` and `renderedInstructionBlock` included. Nothing typed this
+ * way may reach an API body, an SSE payload, or a log field; cross with
+ * {@link toPublicConversationState} instead.
+ *
+ * `profileSnapshot: null` is the meaningful legacy value (R6 / D18): every
+ * conversation created before the profile library carries it, loads normally,
+ * and is never backfilled.
+ */
+export const storedConversationStateSchema =
+  conversationStateFieldsSchema.extend({
+    // Optional as well as nullable, so a PUBLIC projection — which has no such
+    // key — still satisfies consumers typed on the stored aggregate. That is
+    // what lets the projector be mandatory at every egress without retyping the
+    // whole client. It never weakens the persisted encoding: `buildConversation`
+    // and both repository decoders always write an explicit value, so a stored
+    // row is null (legacy) or a snapshot, never absent.
+    profileSnapshot: agentProfileSnapshotSchema.nullable().optional(),
+    profileLockedAt: profileLockedAtSchema,
+  });
+export type StoredConversationState = z.infer<
+  typeof storedConversationStateSchema
+>;
+
+/**
+ * The aggregate's long-standing repository-facing name, which has always meant
+ * the stored shape. New code at a storage boundary should prefer the explicit
+ * `stored` spelling so the split is legible at the call site.
+ */
+export const conversationStateSchema = storedConversationStateSchema;
+export type ConversationState = StoredConversationState;
+
+/**
+ * The PUBLIC conversation aggregate: the shape every API response, SSE payload,
+ * feed row, and log projection is allowed to carry. It has no field for
+ * instruction text to occupy — `redactedProfileSnapshot` is a DIFFERENT field
+ * from the stored `profileSnapshot`, so a repository row is not structurally a
+ * public one and the compiler refuses it at any egress typed this way (D19).
+ * `.strict()` closes the runtime half: a smuggled key is a parse failure rather
+ * than a silently stripped one.
+ */
+export const publicConversationStateSchema = conversationStateFieldsSchema
+  .extend({
+    redactedProfileSnapshot: redactedAgentProfileSnapshotSchema
+      .nullable()
+      .default(null),
+    profileLockedAt: profileLockedAtSchema,
+  })
+  .strict();
+export type PublicConversationState = z.infer<
+  typeof publicConversationStateSchema
+>;
+
+/**
+ * The one sanctioned crossing from storage to every read surface. It parses its
+ * own output, so a future stored-only field added without updating this
+ * function fails loudly here instead of riding along to a client.
+ */
+export function toPublicConversationState(
+  conversation: StoredConversationState,
+): PublicConversationState {
+  const { profileSnapshot, ...rest } = conversation;
+  return publicConversationStateSchema.parse({
+    ...rest,
+    // Nullish, not strictly null: both the schema and the repository decoders
+    // produce null, but an absent key means the same thing — no profile — and a
+    // read surface must not fail on the difference.
+    redactedProfileSnapshot:
+      profileSnapshot == null
+        ? null
+        : redactAgentProfileSnapshot(profileSnapshot),
+  });
+}
+
+export function toPublicConversationStates(
+  conversations: readonly StoredConversationState[],
+): PublicConversationState[] {
+  return conversations.map(toPublicConversationState);
+}
+
+/**
+ * A profile selection as it arrives over the wire. Accepts the compact
+ * `tier:id` spelling as well as the qualified object, normalizing to the
+ * qualified form here — the shorthand exists only at text boundaries, and an
+ * unqualified bare id is refused rather than guessed at across sibling tiers.
+ *
+ * Shared by every creation surface that offers a picker and by the change
+ * routes, so "what a client may send" is one schema rather than one per route.
+ */
+export const conversationProfileSelectionSchema = z.union([
+  agentProfileRefSchema,
+  z.string().transform((value, ctx) => {
+    const result = parseAgentProfileRef(value);
+    if (result.ok) return result.ref;
+    ctx.addIssue({ code: "custom", message: result.failure.message });
+    return z.NEVER;
+  }),
+]);
+
+/** Body of a profile-change request. */
+export const changeConversationProfileRequestSchema = z.object({
+  profile: conversationProfileSelectionSchema,
+});
+
+/**
+ * Body of the session-conversation create request. Every field is optional: the
+ * button that creates a conversation with no picker in play posts nothing, and
+ * the resolver answers with the Standard Agent default (R7).
+ */
+export const createSessionConversationRequestSchema = z.object({
+  profile: conversationProfileSelectionSchema.optional(),
+});
+export type CreateSessionConversationRequest = z.infer<
+  typeof createSessionConversationRequestSchema
+>;
+export type ChangeConversationProfileRequest = z.infer<
+  typeof changeConversationProfileRequestSchema
+>;
 
 // ============================================================
 // Cross-Project Conversation List (addressable conversations)
@@ -340,6 +490,16 @@ const conversationListItemFieldsSchema = z.object({
   status: conversationStatusSchema,
   lastActivityAt: z.string(),
   archived: z.boolean(),
+  // Which agent profile the conversation is running under, redacted (R6.3):
+  // identity and provenance hashes, never instruction text. Null for a legacy
+  // conversation. Spelled `redacted…` like the public aggregate's field so this
+  // row has no key an instruction block could occupy — which is the guarantee
+  // that matters here; optionality only spares the many list fixtures from
+  // restating a field they do not exercise. The production assemblers always
+  // set it, and the wire suite asserts it is present on this feed.
+  redactedProfileSnapshot: redactedAgentProfileSnapshotSchema
+    .nullable()
+    .optional(),
   // Compaction advertisement — present only for conversations with a
   // completed conversation_compaction artifact (design §12.4).
   compactArtifactId: z.string().optional(),
@@ -551,6 +711,11 @@ export const generateConversationNameResponseSchema = z.object({
 
 export const forkRequestSchema = z.object({
   messageIndex: z.number().int().min(0),
+  // Only meaningful for an index-0 fork, which derives from no session and is
+  // therefore a fresh conversation with the standard selection rules. Every
+  // other fork inherits the source's snapshot verbatim and offers no picker
+  // (R7.2), so the service ignores this there.
+  profile: conversationProfileSelectionSchema.optional(),
 });
 
 export const forkResponseSchema = z.object({
@@ -739,17 +904,22 @@ export const messageUpdatedEventSchema = z.discriminatedUnion("scope", [
 ]);
 export type MessageUpdatedEvent = z.infer<typeof messageUpdatedEventSchema>;
 
+// The payload is the PUBLIC conversation: an SSE frame is a read surface like
+// any response body, and this event is the one that carries a whole conversation
+// rather than an id. Producers hold a repository row, so they must project —
+// `publicConversationStateSchema` rejects the stored shape outright rather than
+// stripping it, which is what makes the omission impossible to ship unnoticed.
 export const conversationCreatedEventSchema = z.discriminatedUnion("scope", [
   z.object({
     type: z.literal("conversation-created"),
     ...sessionEventIdentity,
-    conversation: conversationStateSchema,
+    conversation: publicConversationStateSchema,
   }),
   z
     .object({
       type: z.literal("conversation-created"),
       ...projectEventIdentity,
-      conversation: conversationStateSchema,
+      conversation: publicConversationStateSchema,
     })
     .strict(),
 ]);
@@ -795,6 +965,32 @@ export const conversationArchivedEventSchema = z.discriminatedUnion("scope", [
 ]);
 export type ConversationArchivedEvent = z.infer<
   typeof conversationArchivedEventSchema
+>;
+
+// A conversation's profile changed before its first turn. The payload is the
+// REDACTED snapshot — an SSE frame is a read surface, and the chip that renders
+// it needs identity and revision, never instruction text (R6.3).
+export const conversationProfileChangedEventSchema = z.discriminatedUnion(
+  "scope",
+  [
+    z.object({
+      type: z.literal("conversation-profile-changed"),
+      ...sessionEventIdentity,
+      conversationId: z.string().min(1),
+      redactedProfileSnapshot: redactedAgentProfileSnapshotSchema,
+    }),
+    z
+      .object({
+        type: z.literal("conversation-profile-changed"),
+        ...projectEventIdentity,
+        conversationId: z.string().min(1),
+        redactedProfileSnapshot: redactedAgentProfileSnapshotSchema,
+      })
+      .strict(),
+  ],
+);
+export type ConversationProfileChangedEvent = z.infer<
+  typeof conversationProfileChangedEventSchema
 >;
 
 export const conversationUnreadEventSchema = z.discriminatedUnion("scope", [

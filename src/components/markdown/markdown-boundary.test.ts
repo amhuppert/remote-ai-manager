@@ -214,6 +214,13 @@ function resolveProjectImport(
   return null;
 }
 
+/**
+ * Parsed WITHOUT parent pointers: this guard walks downward only (imports,
+ * identifiers, string literals) and never reads `node.parent`, while building
+ * back-pointers for every node in `src/**` is most of the scan's cost. With
+ * them the whole-tree pass sat at ~95% of the default test budget and tipped
+ * over on the next file added to the repo.
+ */
 function parseSource(
   file: string,
   text = readFileSync(file, "utf8"),
@@ -222,7 +229,7 @@ function parseSource(
     file,
     text,
     ts.ScriptTarget.Latest,
-    true,
+    false,
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
 }

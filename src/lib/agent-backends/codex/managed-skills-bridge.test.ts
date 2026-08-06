@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readFile,
   readlink,
   rm,
   symlink,
@@ -16,7 +17,11 @@ import path from "node:path";
 
 import type { ManagedSkillBundle } from "@/lib/managed-skills/schemas";
 
-import { ensureCodexManagedSkillsBridge } from "./managed-skills-bridge";
+import {
+  ensureCodexManagedSkillsBridge,
+  MANAGED_SKILLS_EXCLUDE_PATTERN,
+  MANAGED_SKILLS_LINK_RELATIVE,
+} from "./managed-skills-bridge";
 
 const execFileAsync = promisify(execFile);
 
@@ -58,6 +63,41 @@ async function writeBundleOnDisk(
     skillNames: ["agent-context", "cc-cli"],
   };
 }
+
+describe("reserved managed-skills path", () => {
+  it("resolves to the namespaced Codex skill root", () => {
+    expect(MANAGED_SKILLS_LINK_RELATIVE).toBe(
+      path.join(".agents", "skills", "command-center"),
+    );
+    expect(MANAGED_SKILLS_EXCLUDE_PATTERN).toBe(
+      `/${MANAGED_SKILLS_LINK_RELATIVE}`,
+    );
+  });
+
+  // Turbopack statically evaluates an all-literal path.join and emits a
+  // DirAssetReference for the result. This module is reachable from the
+  // instrumentation entrypoint, so that reference makes the bundler walk the
+  // very directory the bridge fills with a symlink out of the checkout — and
+  // Turbopack panics fatally on a symlink that leaves the project root,
+  // breaking `bun run build` in every checkout an agent has launched in.
+  it("never hands the bundler a statically resolvable directory literal", async () => {
+    const source = await readFile(
+      path.join(import.meta.dirname, "managed-skills-bridge.ts"),
+      "utf8",
+    );
+    const allLiteralJoins = [
+      ...source.matchAll(/path\.join\(([^()]*)\)/g),
+    ].filter((match) =>
+      (match[1] ?? "")
+        .split(",")
+        .map((arg) => arg.trim())
+        .filter((arg) => arg.length > 0)
+        .every((arg) => /^"[^"]*"$/.test(arg)),
+    );
+
+    expect(allLiteralJoins.map(([call]) => call)).toEqual([]);
+  });
+});
 
 describe("ensureCodexManagedSkillsBridge", () => {
   let tempDir: string;

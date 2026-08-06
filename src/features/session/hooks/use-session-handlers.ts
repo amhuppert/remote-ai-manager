@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import type { useRouter } from "next/navigation";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { buildConversationContext } from "@/lib/conversations/copy-context";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
@@ -26,6 +27,7 @@ interface ForkMutation {
   mutateAsync: (input: {
     conversationId: string;
     messageIndex: number;
+    profile?: AgentProfileRef;
   }) => Promise<{ conversationId: string }>;
 }
 
@@ -56,7 +58,10 @@ export interface SessionHandlers {
     answers: Record<string, AskQuestionAnswer>,
   ) => Promise<void>;
   handleDelete: () => void;
-  handleFork: (messageIndex: number) => Promise<void>;
+  handleFork: (
+    messageIndex: number,
+    profile?: AgentProfileRef,
+  ) => Promise<void>;
   buildContext: () => string | null;
 }
 
@@ -112,11 +117,12 @@ export function useSessionHandlers({
   }, [deleteMutation, sessionName, projectName, router, cancelDelete]);
 
   const handleFork = useCallback(
-    async (messageIndex: number) => {
+    async (messageIndex: number, profile?: AgentProfileRef) => {
       try {
         const result = await forkMutation.mutateAsync({
           conversationId,
           messageIndex,
+          ...(profile === undefined ? {} : { profile }),
         });
         if (onOpenConversation !== undefined) {
           onOpenConversation({ conversationId: result.conversationId });

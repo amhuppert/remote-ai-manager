@@ -23,6 +23,7 @@ import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  makeProfileSnapshot,
 } from "@/lib/workflow-graph/test-fixtures";
 
 function makeDefinition(
@@ -92,9 +93,13 @@ describe("deriveNodes", () => {
           description: "desc",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -124,9 +129,13 @@ describe("deriveNodes", () => {
           title: "A",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -137,9 +146,13 @@ describe("deriveNodes", () => {
           title: "B",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -168,9 +181,13 @@ describe("deriveNodes", () => {
           title: "A",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -226,9 +243,13 @@ describe("deriveNodes", () => {
           title: "A",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin" as const, id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
@@ -249,7 +270,7 @@ describe("deriveNodes", () => {
 
     const ctxState: GraphWorkflowExecutionContextState = {
       pendingApproval: null,
-      pendingUserInput: null,
+      pendingUserInputs: {},
       contextId: "ctx-1",
       status: "running",
       totalTaskCount: 1,
@@ -300,9 +321,13 @@ describe("deriveNodes wait state attachment", () => {
       title: id,
       acceptanceCriteria: "TBD",
       implementer: {
-        backend: "claude" as const,
-        model: "sonnet" as const,
-        reasoningEffort: "medium" as const,
+        id: "implementer",
+        profile: { tier: "builtin" as const, id: "general-implementer" },
+        agent: {
+          backend: "claude" as const,
+          model: "sonnet" as const,
+          reasoningEffort: "medium" as const,
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
@@ -329,7 +354,7 @@ describe("deriveNodes wait state attachment", () => {
       cleanupStatus: "not-applicable",
       lastMergeError: null,
       pendingApproval: null,
-      pendingUserInput: null,
+      pendingUserInputs: {},
       ...overrides,
     };
   }
@@ -456,7 +481,7 @@ describe("getContextDisplayPhase", () => {
       cleanupStatus: "not-applicable",
       lastMergeError: null,
       pendingApproval: null,
-      pendingUserInput: null,
+      pendingUserInputs: {},
       ...overrides,
     };
   }
@@ -569,11 +594,16 @@ describe("getDisplayValidators", () => {
       title: "Ctx",
       acceptanceCriteria: "AC",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin" as const, id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
-      contextValidator: null,
+      contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
@@ -593,9 +623,13 @@ describe("getDisplayValidators", () => {
       title: "Ctx",
       acceptanceCriteria: "AC",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin" as const, id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
@@ -619,14 +653,21 @@ describe("getDisplayValidators", () => {
   it("surfaces an inherited claude agent validator", () => {
     const ctx = makeResolved({
       contextValidator: {
-        type: "claude",
         enabled: true,
-        continuity: { enabled: true },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            profileSnapshot: makeProfileSnapshot(),
+            strategy: "conversation" as const,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -638,10 +679,21 @@ describe("getDisplayValidators", () => {
   it("surfaces an inherited codex agent validator", () => {
     const ctx = makeResolved({
       contextValidator: {
-        type: "codex",
         enabled: true,
-        continuity: { enabled: true },
-        codex: { model: "gpt-5.4", reasoningEffort: "high" },
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            profileSnapshot: makeProfileSnapshot(),
+            strategy: "task" as const,
+            agent: {
+              backend: "codex",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -653,14 +705,21 @@ describe("getDisplayValidators", () => {
   it("hides the agent validator when its config is present but disabled", () => {
     const ctx = makeResolved({
       contextValidator: {
-        type: "claude",
         enabled: false,
-        continuity: { enabled: true },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            profileSnapshot: makeProfileSnapshot(),
+            strategy: "conversation" as const,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -673,14 +732,21 @@ describe("getDisplayValidators", () => {
     const ctx = makeResolved({
       scriptValidator: { enabled: true },
       contextValidator: {
-        type: "claude",
         enabled: true,
-        continuity: { enabled: true },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            profileSnapshot: makeProfileSnapshot(),
+            strategy: "conversation" as const,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -692,17 +758,20 @@ describe("getDisplayValidators", () => {
   it("surfaces a claude agent validator from a per-context 'use' override", () => {
     const ctx = makeBuilderContext({
       contextValidator: {
-        kind: "use",
-        value: {
-          type: "claude",
-          enabled: true,
-          continuity: { enabled: true },
-          agent: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+        enabled: true,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            strategy: "conversation" as const,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
           },
-        },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -714,13 +783,20 @@ describe("getDisplayValidators", () => {
   it("surfaces a codex agent validator from a per-context 'use' override", () => {
     const ctx = makeBuilderContext({
       contextValidator: {
-        kind: "use",
-        value: {
-          type: "codex",
-          enabled: true,
-          continuity: { enabled: true },
-          codex: { model: "gpt-5.5", reasoningEffort: "medium" },
-        },
+        enabled: true,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            strategy: "task" as const,
+            agent: {
+              backend: "codex",
+              model: "gpt-5.5",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -732,17 +808,20 @@ describe("getDisplayValidators", () => {
   it("hides the agent validator when a 'use' override is present but disabled", () => {
     const ctx = makeBuilderContext({
       contextValidator: {
-        kind: "use",
-        value: {
-          type: "claude",
-          enabled: false,
-          continuity: { enabled: true },
-          agent: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+        enabled: false,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin" as const, id: "general-reviewer" },
+            strategy: "conversation" as const,
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
           },
-        },
+        ],
       },
     });
     expect(getDisplayValidators(ctx)).toEqual({
@@ -753,7 +832,7 @@ describe("getDisplayValidators", () => {
 
   it("returns no agent validator for an explicitly 'disabled' override", () => {
     const ctx = makeBuilderContext({
-      contextValidator: { kind: "disabled" },
+      contextValidator: { enabled: false, assignments: [] },
     });
     expect(getDisplayValidators(ctx)).toEqual({
       script: false,
@@ -771,11 +850,16 @@ describe("getDisplayApprovalGate", () => {
       title: "Ctx",
       acceptanceCriteria: "AC",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin" as const, id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
-      contextValidator: null,
+      contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
@@ -802,9 +886,13 @@ describe("getDisplayApprovalGate", () => {
       title: "Ctx",
       acceptanceCriteria: "AC",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin" as const, id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
@@ -952,7 +1040,7 @@ describe("deriveEdges", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed" as GraphWorkflowContextStatus,
           totalTaskCount: 1,
@@ -971,7 +1059,7 @@ describe("deriveEdges", () => {
         },
         "ctx-2": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-2",
           status: "running" as GraphWorkflowContextStatus,
           totalTaskCount: 1,

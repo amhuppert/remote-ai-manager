@@ -2,8 +2,11 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
+  SeededAgentAssignment,
+  SeededValidatorCohort,
+  ValidatorAssignment,
 } from "@/lib/workflow-graph/config-schemas";
+import { formatAgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type {
   GraphWorkflowContextStatus,
   GraphWorkflowResolvedContext,
@@ -67,10 +70,37 @@ export interface LiveOutlineAgentSummary {
   reasoningEffort: string;
 }
 
-export interface LiveOutlineValidatorSummary {
-  type: GraphWorkflowAgentValidatorConfig["type"];
-  model: string | null;
-  reasoningEffort: string | null;
+/**
+ * The provenance of a SEEDED assignment: which profile revision execution start
+ * resolved, and the hash of the instruction block the lane actually replays.
+ *
+ * These two fields are what separates a live execution's staffing from a saved
+ * definition's. A saved document names a reference the library still owns and
+ * can still change; a running execution replays bytes nothing can reach. The
+ * instruction text behind the hash is deliberately absent — an outline is a
+ * navigation surface, and the hash is the whole point of provenance here.
+ */
+export interface LiveOutlineAssignmentProvenance {
+  /** The assignment's stable use-site id, unique within its cohort. */
+  assignmentId: string;
+  /** The library profile, in the compact `tier:id` spelling. */
+  profile: string;
+  /** The use-site steer narrowing the profile, when one was authored. */
+  focus: string | null;
+  /** The profile revision resolved at execution start. */
+  revision: number;
+  /** Hash of the rendered instruction block the lane replays verbatim. */
+  resolvedInstructionHash: string;
+}
+
+export type LiveOutlineImplementerSummary = LiveOutlineAgentSummary &
+  LiveOutlineAssignmentProvenance;
+
+export interface LiveOutlineValidatorSummary extends LiveOutlineAssignmentProvenance {
+  strategy: ValidatorAssignment["strategy"];
+  backend: GraphWorkflowAgentConfig["backend"];
+  model: string;
+  reasoningEffort: string;
 }
 
 export interface LiveOutlineCollaborationSummary {
@@ -81,9 +111,19 @@ export interface LiveOutlineCollaborationSummary {
 
 export interface LiveOutlineContextConfig {
   contextId: string;
-  implementer: LiveOutlineAgentSummary;
-  /** `null` when the context validator is disabled ("validator off"). */
-  validator: LiveOutlineValidatorSummary | null;
+  implementer: LiveOutlineImplementerSummary;
+  /**
+   * False when the cohort is switched off. Dormancy is a property of the
+   * COHORT, not of an assignment — every assignment below is dormant when this
+   * is false, and none of them is dispatched.
+   */
+  validatorCohortEnabled: boolean;
+  /**
+   * Every seeded assignment, dormant ones included. A disabled cohort retains
+   * its assignments and start snapshotted them, so this is what the execution
+   * actually holds — omitting them would make re-enabling one a blind edit.
+   */
+  validators: LiveOutlineValidatorSummary[];
   scriptValidator: boolean;
   humanApprovalGate: boolean;
   askUserQuestions: boolean;
@@ -303,22 +343,40 @@ function summarizeAgent(
   };
 }
 
-function summarizeValidator(
-  validator: GraphWorkflowAgentValidatorConfig | null,
-): LiveOutlineValidatorSummary | null {
-  if (!validator || !validator.enabled) return null;
-  if (validator.type === "claude") {
-    return {
-      type: "claude",
-      model: validator.agent.model,
-      reasoningEffort: validator.agent.reasoningEffort,
-    };
-  }
+/**
+ * The seeded provenance of one assignment.
+ *
+ * Every field comes from the SNAPSHOT, including the profile identity — after
+ * start the reference and the snapshot can disagree only if something bypassed
+ * seeding, and in that case the reference is the wrong answer. The snapshot is
+ * the side that ran.
+ */
+function summarizeProvenance(
+  assignment: SeededAgentAssignment,
+): LiveOutlineAssignmentProvenance {
+  const snapshot = assignment.profileSnapshot;
   return {
-    type: "codex",
-    model: validator.codex.model ?? null,
-    reasoningEffort: validator.codex.reasoningEffort ?? null,
+    assignmentId: assignment.id,
+    profile: formatAgentProfileRef({ tier: snapshot.tier, id: snapshot.id }),
+    focus: assignment.focus ?? null,
+    revision: snapshot.revision,
+    resolvedInstructionHash: snapshot.resolvedInstructionHash,
   };
+}
+
+// One entry per seeded assignment, whether or not the cohort is enabled: the
+// cohort's own switch says which of them run, and a display surface reports the
+// whole configured set rather than silently hiding the dormant half.
+function summarizeValidators(
+  cohort: SeededValidatorCohort,
+): LiveOutlineValidatorSummary[] {
+  return cohort.assignments.map((assignment) => ({
+    ...summarizeProvenance(assignment),
+    strategy: assignment.strategy,
+    backend: assignment.agent.backend,
+    model: assignment.agent.model,
+    reasoningEffort: assignment.agent.reasoningEffort,
+  }));
 }
 
 function summarizeCollaboration(
@@ -338,8 +396,12 @@ function summarizeConfig(
 ): LiveOutlineContextConfig {
   return {
     contextId: context.id,
-    implementer: summarizeAgent(context.implementer),
-    validator: summarizeValidator(context.contextValidator),
+    implementer: {
+      ...summarizeAgent(context.implementer.agent),
+      ...summarizeProvenance(context.implementer),
+    },
+    validatorCohortEnabled: context.contextValidator.enabled,
+    validators: summarizeValidators(context.contextValidator),
     scriptValidator: context.scriptValidator.enabled,
     humanApprovalGate: context.humanApprovalGate.enabled,
     askUserQuestions: context.askUserQuestions.enabled,

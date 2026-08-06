@@ -1013,4 +1013,317 @@ describe("CodexTaskRunner", () => {
       );
     });
   });
+
+  /**
+   * R10.1 — governing instructions travel through Codex's privileged channel.
+   *
+   * The `developer_instructions` config key emits at the developer role, above
+   * user input; the fenced "## System Instructions" prompt block did not. These
+   * assertions read the config actually handed to the SDK client and the prompt
+   * actually handed to `Thread.run`, so a regression that reinstates the inline
+   * block — or forgets the config on the resume path — fails here rather than
+   * silently downgrading every governed run to user-priority text.
+   */
+  describe("privileged instruction channel", () => {
+    const INSTRUCTIONS = "# Role contract\nYou are read-only.";
+
+    function capturingRunner(): {
+      runner: CodexTaskRunner;
+      createCodex: ReturnType<typeof vi.fn>;
+    } {
+      const createCodex = vi.fn(
+        (options) =>
+          new Codex(options) as unknown as ReturnType<
+            CodexTaskRunnerDeps["createCodex"]
+          >,
+      );
+      return {
+        createCodex,
+        runner: new CodexTaskRunner({
+          createCodex,
+          buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
+          listNativeCodexMcpServers,
+          getCodexPricingOverrides: async () => null,
+          getServerUrl: () => null,
+          getApiToken: () => null,
+          getConfigDir: () => "/test/config",
+          ensureManagedSkillsBridge: async () =>
+            ({ status: "skipped", reason: "no_bundle" }) as const,
+        }),
+      };
+    }
+
+    function deliveredConfig(
+      createCodex: ReturnType<typeof vi.fn>,
+    ): Record<string, unknown> {
+      const options = createCodex.mock.calls[0]?.[0] as
+        | { config?: Record<string, unknown> }
+        | undefined;
+      return options?.config ?? {};
+    }
+
+    it("delivers systemInstructions as developer_instructions on a new turn", async () => {
+      const { runner: capturing, createCodex } = capturingRunner();
+
+      await capturing.run(makeRequest({ systemInstructions: [INSTRUCTIONS] }));
+
+      expect(deliveredConfig(createCodex).developer_instructions).toBe(
+        INSTRUCTIONS,
+      );
+    });
+
+    it("delivers developer_instructions on a resumed turn too", async () => {
+      const { runner: capturing, createCodex } = capturingRunner();
+
+      await capturing.run(
+        makeRequest({
+          systemInstructions: [INSTRUCTIONS],
+          resumeRef: { backend: "codex", ref: "thread-old" },
+        }),
+      );
+
+      expect(resumeThreadMock).toHaveBeenCalledWith(
+        "thread-old",
+        expect.anything(),
+      );
+      expect(deliveredConfig(createCodex).developer_instructions).toBe(
+        INSTRUCTIONS,
+      );
+    });
+
+    it("keeps the instructions out of the Thread.run prompt input", async () => {
+      const { runner: capturing } = capturingRunner();
+
+      await capturing.run(makeRequest({ systemInstructions: [INSTRUCTIONS] }));
+
+      const prompt = runMock.mock.calls[0]?.[0];
+      expect(prompt).toBe("Do the thing");
+      expect(JSON.stringify(prompt)).not.toContain("## System Instructions");
+      expect(JSON.stringify(prompt)).not.toContain("read-only");
+    });
+
+    it("joins multiple instruction entries into the one channel", async () => {
+      const { runner: capturing, createCodex } = capturingRunner();
+
+      await capturing.run(
+        makeRequest({ systemInstructions: ["first", "second"] }),
+      );
+
+      expect(deliveredConfig(createCodex).developer_instructions).toBe(
+        "first\n\nsecond",
+      );
+    });
+
+    it("leaves developer_instructions unset when a run governs nothing", async () => {
+      const { runner: capturing, createCodex } = capturingRunner();
+
+      await capturing.run(makeRequest());
+
+      expect(deliveredConfig(createCodex)).not.toHaveProperty(
+        "developer_instructions",
+      );
+    });
+
+    it("overrides the isolated one-shot blank rather than being suppressed by it", async () => {
+      const { runner: capturing, createCodex } = capturingRunner();
+
+      await capturing.run(
+        makeRequest({
+          systemInstructions: [INSTRUCTIONS],
+          executionProfile: "isolated-one-shot",
+        }),
+      );
+
+      // Blanking exists to drop AMBIENT developer instructions; the caller's own
+      // payload is the opposite of ambient and must survive the hermetic profile.
+      expect(deliveredConfig(createCodex).developer_instructions).toBe(
+        INSTRUCTIONS,
+      );
+    });
+  });
+
+  /**
+   * R7.1 — the adapter's half of the write envelope: what the real Codex CLI is
+   * actually launched with when a run carries a server-derived policy. The OS
+   * enforcing it is proven separately against the installed runner; these
+   * assertions are the reason that proof stays true for every future run.
+   */
+  describe("filesystem write envelope", () => {
+    const SCRATCH = "/private/tmp/cc-validator-lanes/exec/ctx/reviewer";
+    const LANE_TMP = `${SCRATCH}/tmp`;
+    const WORKTREE = "/test/workspace";
+    const POLICY = {
+      mode: "allowlist" as const,
+      allowWrite: [SCRATCH, LANE_TMP],
+      denyWrite: [WORKTREE],
+    };
+
+    function restrictedRunner(): {
+      runner: CodexTaskRunner;
+      createCodex: ReturnType<typeof vi.fn>;
+    } {
+      const createCodex = vi.fn(
+        (options) =>
+          new Codex(options) as unknown as ReturnType<
+            CodexTaskRunnerDeps["createCodex"]
+          >,
+      );
+      return {
+        createCodex,
+        runner: new CodexTaskRunner({
+          createCodex,
+          buildChildEnv: () =>
+            ({
+              NODE_ENV: "test",
+              TMPDIR: "/ambient/tmp",
+              PATH: "/usr/bin",
+            }) as NodeJS.ProcessEnv,
+          listNativeCodexMcpServers,
+          getCodexPricingOverrides: async () => null,
+          getServerUrl: () => null,
+          getApiToken: () => null,
+          getConfigDir: () => "/test/config",
+          ensureManagedSkillsBridge: async () =>
+            ({ status: "skipped", reason: "no_bundle" }) as const,
+        }),
+      };
+    }
+
+    function deliveredOptions(createCodex: ReturnType<typeof vi.fn>): {
+      env?: Record<string, string>;
+      config?: Record<string, unknown>;
+    } {
+      return (createCodex.mock.calls[0]?.[0] ?? {}) as {
+        env?: Record<string, string>;
+        config?: Record<string, unknown>;
+      };
+    }
+
+    it("runs workspace-write out of the lane scratch directory, never the candidate worktree", async () => {
+      const { runner: restricted } = restrictedRunner();
+
+      await restricted.run(
+        makeRequest({ fsWritePolicy: POLICY, sandboxMode: "workspace-write" }),
+      );
+
+      // workspace-write makes the working directory writable, so the cwd of a
+      // restricted run is the one thing that cannot be the worktree.
+      expect(startThreadMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxMode: "workspace-write",
+          workingDirectory: SCRATCH,
+        }),
+      );
+    });
+
+    it("pins the writable roots to the policy and drops the ambient temp roots", async () => {
+      const { runner: restricted, createCodex } = restrictedRunner();
+
+      await restricted.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      expect(deliveredOptions(createCodex).config).toMatchObject({
+        sandbox_workspace_write: {
+          writable_roots: [SCRATCH, LANE_TMP],
+          exclude_tmpdir_env_var: true,
+          exclude_slash_tmp: true,
+        },
+      });
+    });
+
+    it("repoints the child's TMPDIR into the allowlist so inherited temp is unreachable", async () => {
+      const { runner: restricted, createCodex } = restrictedRunner();
+
+      await restricted.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      expect(deliveredOptions(createCodex).env?.TMPDIR).toBe(LANE_TMP);
+    });
+
+    it("suppresses MCP servers the machine configured but CC did not compose", async () => {
+      listNativeCodexMcpServers.mockResolvedValue([
+        { name: "ambient-server", configEntry: { command: "ambient" } },
+      ]);
+      const { runner: restricted, createCodex } = restrictedRunner();
+
+      await restricted.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      expect(deliveredOptions(createCodex).config).toMatchObject({
+        mcp_servers: {
+          "ambient-server": { command: "ambient", enabled: false },
+        },
+      });
+    });
+
+    it("names the candidate worktree by absolute path, since the run no longer sits in it", async () => {
+      const { runner: restricted } = restrictedRunner();
+
+      await restricted.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      const prompt = runMock.mock.calls[0]?.[0];
+      expect(String(prompt)).toContain(WORKTREE);
+      expect(String(prompt)).toContain("Do the thing");
+    });
+
+    it("leaves an unrestricted run exactly as it was", async () => {
+      const { runner: unrestricted, createCodex } = restrictedRunner();
+
+      await unrestricted.run(makeRequest());
+
+      expect(startThreadMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sandboxMode: "danger-full-access",
+          workingDirectory: WORKTREE,
+        }),
+      );
+      expect(deliveredOptions(createCodex).config).not.toHaveProperty(
+        "sandbox_workspace_write",
+      );
+      expect(deliveredOptions(createCodex).env?.TMPDIR).toBe("/ambient/tmp");
+    });
+
+    describe("fail-closed establishment", () => {
+      it("refuses to start a thread when the policy cannot be translated", async () => {
+        const { runner: restricted } = restrictedRunner();
+
+        const result = await restricted.run(
+          makeRequest({
+            fsWritePolicy: { ...POLICY, allowWrite: [] },
+          }),
+        );
+
+        expect(result.error).toMatch(/write envelope/i);
+        expect(result.failure).not.toBeNull();
+        expect(startThreadMock).not.toHaveBeenCalled();
+      });
+
+      it("refuses a restricted run that also asks for full disk access", async () => {
+        const { runner: restricted } = restrictedRunner();
+
+        const result = await restricted.run(
+          makeRequest({
+            fsWritePolicy: POLICY,
+            sandboxMode: "danger-full-access",
+          }),
+        );
+
+        expect(result.error).toMatch(/write envelope/i);
+        expect(startThreadMock).not.toHaveBeenCalled();
+      });
+
+      it("refuses a restricted run carrying additional directories", async () => {
+        const { runner: restricted } = restrictedRunner();
+
+        // Extra directories join the writable workspace under workspace-write,
+        // so honoring both would silently widen the allowlist.
+        const result = await restricted.run(
+          makeRequest({
+            fsWritePolicy: POLICY,
+            additionalDirectories: ["/somewhere/else"],
+          }),
+        );
+
+        expect(result.error).toMatch(/write envelope/i);
+        expect(startThreadMock).not.toHaveBeenCalled();
+      });
+    });
+  });
 });

@@ -159,6 +159,8 @@ function makeConversationRecord(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "session",
     nameOrigin: "default",
@@ -556,7 +558,7 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
     const logger = createExecutionLogger("exec-e4", { configDir });
 
     logger.writeValidatorTranscript(
-      "ctx-1",
+      { contextId: "ctx-1", assignmentId: "general" },
       { lane: "context_validator", engine: TESTFAKE_BACKEND_ID },
       [...fake.taskTranscriptEntries],
     );
@@ -566,6 +568,8 @@ describe("E4: transcript consumers pass testfake envelopes through untouched", (
         logger.logDir,
         "contexts",
         "ctx-1",
+        "validators",
+        "general",
         "validation-transcript.jsonl",
       ),
       "utf8",

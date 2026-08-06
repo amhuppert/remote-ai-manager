@@ -21,19 +21,48 @@ const agentSummarySchema = z
   })
   .loose();
 
+/**
+ * A live execution's assignments are SEEDED: resolved once at start, replayed
+ * verbatim thereafter. The revision and resolved hash are the provenance that
+ * says so, and they are what distinguishes this view from the reference-bearing
+ * one `cctl workflow get` prints for a saved definition.
+ *
+ * Every field is REQUIRED. The cutover is hard: a live execution's assignments
+ * are seeded, so the projection always carries their provenance, and accepting
+ * an outline without it would be an inbound parser for a shape that no longer
+ * exists. A body that lacks these fields falls through to the raw-payload
+ * fallback rather than being rendered under guessed-at older rules.
+ */
+const assignmentProvenanceSchema = z.object({
+  assignmentId: z.string(),
+  profile: z.string(),
+  /** Null when no use-site steer was authored — never absent. */
+  focus: z.string().nullable(),
+  revision: z.number(),
+  resolvedInstructionHash: z.string(),
+});
+
+const implementerSummarySchema = agentSummarySchema.extend(
+  assignmentProvenanceSchema.shape,
+);
+
 const validatorSummarySchema = z
   .object({
-    type: z.string(),
-    model: z.string().nullable(),
-    reasoningEffort: z.string().nullable(),
+    strategy: z.string(),
+    backend: z.string(),
+    model: z.string(),
+    reasoningEffort: z.string(),
   })
+  .extend(assignmentProvenanceSchema.shape)
   .loose();
 
 const contextConfigSchema = z
   .object({
     contextId: z.string(),
-    implementer: agentSummarySchema,
-    validator: validatorSummarySchema.nullable(),
+    implementer: implementerSummarySchema,
+    /** Whether the cohort dispatches. Required — see the provenance schema. */
+    validatorCohortEnabled: z.boolean(),
+    validators: z.array(validatorSummarySchema),
     scriptValidator: z.boolean(),
     humanApprovalGate: z.boolean(),
     askUserQuestions: z.boolean(),
@@ -168,14 +197,17 @@ function tasksBlock(tasks: LiveOutlineData["tasks"]): string {
 }
 
 function validatorSummary(config: LiveOutlineContextConfig): string {
-  if (!config.validator) return "validator off";
-  const parts = [
-    "validator",
-    config.validator.type,
-    config.validator.model,
-    config.validator.reasoningEffort,
-  ].filter((part): part is string => typeof part === "string" && part !== "");
-  return parts.join(" ");
+  // The `config:` line is a RUNTIME line: a disabled cohort reads "validator
+  // off" however many assignments it retains, because none of them is invoked.
+  if (!config.validatorCohortEnabled) return "validator off";
+  // One clause per assignment: the cohort's identity is the set, and printing
+  // only the first would hide the reviewers a context actually configured.
+  return config.validators
+    .map(
+      (validator) =>
+        `validator ${validator.assignmentId} ${validator.strategy} ${validator.backend} ${validator.model} ${validator.reasoningEffort}`,
+    )
+    .join(", ");
 }
 
 function configLine(config: LiveOutlineContextConfig): string {
@@ -199,6 +231,98 @@ function configBlock(config: LiveOutlineData["config"]): string {
   return `config:\n${rows.join("\n")}`;
 }
 
+/**
+ * `sha256:ab12…` → `#ab12…`, truncated to a comparison-sized prefix.
+ *
+ * The full digest is in `--json`; the text row exists so two rows can be told
+ * apart at a glance — which is the question provenance actually gets asked
+ * ("are these two lanes running the same instructions?").
+ */
+function shortHash(hash: string): string {
+  const digest = hash.includes(":") ? hash.slice(hash.indexOf(":") + 1) : hash;
+  return `#${digest.slice(0, 12)}`;
+}
+
+/**
+ * The staffing block: what this execution IS RUNNING, snapshot by snapshot.
+ *
+ * Deliberately a mirror of `cctl workflow get`'s "staffing (references)" block
+ * with two columns the saved surface cannot have — the seeded revision and the
+ * resolved-instruction hash. A reader comparing the two surfaces sees exactly
+ * one difference, and that difference is the whole point: an authored document
+ * names a profile the library still owns, a running execution replays bytes
+ * nothing can reach.
+ */
+function staffingBlock(config: LiveOutlineData["config"]): string {
+  interface Row {
+    scope: string;
+    role: string;
+    id: string;
+    profile: string;
+    hash: string;
+    detail: string;
+  }
+
+  const profileOf = (
+    assignment: z.infer<typeof assignmentProvenanceSchema>,
+  ): string => `${assignment.profile}@${assignment.revision}`;
+
+  const hashOf = (
+    assignment: z.infer<typeof assignmentProvenanceSchema>,
+  ): string => shortHash(assignment.resolvedInstructionHash);
+
+  const detailOf = (
+    assignment: z.infer<typeof assignmentProvenanceSchema>,
+    runtime: string,
+  ): string =>
+    `${runtime}${assignment.focus ? `  focus "${assignment.focus}"` : ""}`;
+
+  const rows: Row[] = config.flatMap((context) => [
+    {
+      scope: context.contextId,
+      role: "implementer",
+      id: context.implementer.assignmentId,
+      profile: profileOf(context.implementer),
+      hash: hashOf(context.implementer),
+      detail: detailOf(
+        context.implementer,
+        `${context.implementer.backend} ${context.implementer.model} ${context.implementer.reasoningEffort}`,
+      ),
+    },
+    // Dormant rows are reported and MARKED, the same way the saved surface
+    // marks them: the execution holds these snapshots, so a reader deciding
+    // whether to re-enable the cohort can see exactly what would start running.
+    ...context.validators.map((validator) => ({
+      scope: context.contextId,
+      role: "validator",
+      id: validator.assignmentId,
+      profile: profileOf(validator),
+      hash: hashOf(validator),
+      detail: `${detailOf(
+        validator,
+        `${validator.strategy} ${validator.backend} ${validator.model} ${validator.reasoningEffort}`,
+      )}${context.validatorCohortEnabled ? "" : "  (cohort disabled)"}`,
+    })),
+  ]);
+
+  if (rows.length === 0) return "staffing (snapshots):\n  (none)";
+  const scopeWidth = widestOf(rows.map((row) => row.scope));
+  const roleWidth = widestOf(rows.map((row) => row.role));
+  const idWidth = widestOf(rows.map((row) => row.id));
+  const profileWidth = widestOf(rows.map((row) => row.profile));
+  const hashWidth = widestOf(rows.map((row) => row.hash));
+  const lines = rows.map(
+    (row) =>
+      `  ${pad(row.scope, scopeWidth)}  ${pad(row.role, roleWidth)}  ${pad(
+        row.id,
+        idWidth,
+      )}  ${pad(row.profile, profileWidth)}  ${pad(row.hash, hashWidth)}  ${
+        row.detail
+      }`,
+  );
+  return `staffing (snapshots):\n${lines.join("\n")}`;
+}
+
 /** Render the full live-outline projection as the doc-06 text table. */
 export function renderLiveOutline(outline: LiveOutlineData): string {
   return [
@@ -206,6 +330,7 @@ export function renderLiveOutline(outline: LiveOutlineData): string {
     contextsBlock(outline.contexts),
     tasksBlock(outline.tasks),
     configBlock(outline.config),
+    staffingBlock(outline.config),
   ].join("\n");
 }
 

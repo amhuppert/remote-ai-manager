@@ -92,7 +92,7 @@ describe("evaluatePlanRepairTrigger", () => {
     const verdict = evaluatePlanRepairTrigger(
       createWorkflowExecution({
         status: "halted",
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
       }),
     );
     expect(verdict).toEqual({ eligible: false, reason: "halt_kind" });

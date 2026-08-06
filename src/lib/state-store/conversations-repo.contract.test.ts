@@ -66,6 +66,8 @@ function makeMinimalConversation(
 ): ConversationState {
   return conversationStateSchema.parse({
     id: "c1",
+    // The legacy encoding a pre-feature row reloads with.
+    profileSnapshot: null,
     transcriptPath: null,
     status: "new",
     promptCount: 0,
@@ -80,6 +82,8 @@ function makeFullConversation(
 ): ConversationState {
   return conversationStateSchema.parse({
     id: "c-full",
+    // The legacy encoding a pre-feature row reloads with.
+    profileSnapshot: null,
     name: "Full convo",
     transcriptPath: "/tmp/transcripts/c-full.jsonl",
     status: "running",
@@ -1394,6 +1398,9 @@ function buildMaximalConversation(): ConversationState {
       sourceBackendRef: { backend: "codex", ref: "src-thread" },
       forkLocator: "msg-7",
       forkMode: "synthetic",
+      // Non-default so the column is proven durable. The combination is not a
+      // real fork state — a maximal fixture is a shape, not a scenario.
+      forkPending: true,
     },
     role: "validator",
     // activeTurnSource is intentionally omitted here (see fieldPolicies):
@@ -1499,6 +1506,19 @@ function buildMaximalConversation(): ConversationState {
     pendingAgentNotices: [
       "agent notice that must round-trip (lost background tasks)",
     ],
+    profileSnapshot: {
+      tier: "global",
+      id: "maximal-profile",
+      name: "Maximal profile",
+      revision: 4,
+      sourceContentHash: `sha256:${"1".repeat(64)}`,
+      instructions:
+        "Private profile instructions that must round-trip verbatim",
+      renderedInstructionBlock:
+        "<agent-profile>\nPrivate profile instructions that must round-trip verbatim\n</agent-profile>",
+      resolvedInstructionHash: `sha256:${"2".repeat(64)}`,
+    },
+    profileLockedAt: "2026-02-01T09:00:00.000Z",
   });
 }
 
@@ -1609,6 +1629,7 @@ describe("conversations-repo backend-ref canonical encoding (raw bytes)", () => 
           sourceBackendRef: { backend: "claude", ref: "src-canon" },
           forkLocator: "msg-2",
           forkMode: "native",
+          forkPending: false,
         },
       }),
     );
@@ -1822,5 +1843,36 @@ describe("conversations-repo lastSeenAlignmentVersion durability", () => {
 
     const reloaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-advance");
     expect(reloaded?.lastSeenAlignmentVersion).toBe(2);
+  });
+});
+
+describe("conversations-repo profile snapshot durability", () => {
+  it("reloads the full private snapshot from SQLite byte-for-byte", () => {
+    const fixture = buildMaximalConversation();
+    repo.upsert(PROJECT_PATH, SESSION_NAME, fixture);
+
+    const out = repo.findByKey(PROJECT_PATH, SESSION_NAME, fixture.id);
+    expect(out?.profileSnapshot).toEqual(fixture.profileSnapshot);
+    expect(out?.profileSnapshot?.renderedInstructionBlock).toBe(
+      fixture.profileSnapshot?.renderedInstructionBlock,
+    );
+    expect(out?.profileLockedAt).toBe(fixture.profileLockedAt);
+  });
+
+  it("reloads a pre-feature row (null columns) as the legacy no-profile shape", () => {
+    // The row a conversation created before this feature leaves behind: both
+    // columns absent from the INSERT, i.e. NULL on disk, with no backfill.
+    const legacy = makeMinimalConversation({ id: "legacy-session-conv" });
+    repo.upsert(PROJECT_PATH, SESSION_NAME, legacy);
+    db.prepare(
+      `UPDATE conversations
+       SET profile_snapshot = NULL, profile_locked_at = NULL
+       WHERE id = ?`,
+    ).run(legacy.id);
+
+    const out = repo.findByKey(PROJECT_PATH, SESSION_NAME, legacy.id);
+    expect(out).not.toBeNull();
+    expect(out?.profileSnapshot).toBeNull();
+    expect(out?.profileLockedAt).toBeNull();
   });
 });

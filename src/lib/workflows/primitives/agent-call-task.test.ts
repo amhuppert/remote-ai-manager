@@ -153,6 +153,47 @@ describe("dispatchTaskRun", () => {
     expect(capturedInput.value?.timeoutMs).toBe(0);
   });
 
+  it("forwards the write-restriction policy onto the runner's task request", async () => {
+    const { runner, capturedInput } = makeStubRunner("codex");
+
+    await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "review" },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/private/tmp/lane/scratch",
+        fsWritePolicy: {
+          mode: "allowlist",
+          allowWrite: [
+            "/private/tmp/lane/scratch",
+            "/private/tmp/lane/scratch/tmp",
+          ],
+          denyWrite: ["/private/repo/worktree"],
+        },
+      },
+    );
+
+    expect(capturedInput.value?.fsWritePolicy).toEqual({
+      mode: "allowlist",
+      allowWrite: [
+        "/private/tmp/lane/scratch",
+        "/private/tmp/lane/scratch/tmp",
+      ],
+      denyWrite: ["/private/repo/worktree"],
+    });
+  });
+
+  it("leaves the task request unrestricted when no write policy is supplied", async () => {
+    const { runner, capturedInput } = makeStubRunner("codex");
+
+    await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "implement" },
+      { runner, capabilityView: CODEX_VIEW, workingDirectory: "/tmp/wt" },
+    );
+
+    expect(capturedInput.value?.fsWritePolicy).toBeUndefined();
+  });
+
   it("forwards an explicit Codex fast-mode choice to the task runner", async () => {
     const { runner, capturedInput } = makeStubRunner("codex");
 

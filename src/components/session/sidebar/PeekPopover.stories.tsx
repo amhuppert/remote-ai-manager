@@ -227,6 +227,7 @@ function PeekStoryFrame({
         onReplyText={fn()}
         onAnswerQuestion={fn()}
         onFork={fn()}
+        forkProjectName="remote-ai-manager"
       />
     </div>
   );

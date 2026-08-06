@@ -171,6 +171,8 @@ function makeConvo(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: crypto.randomUUID(),
     scope: "session",
     nameOrigin: "default",
@@ -1067,6 +1069,8 @@ describe("forkConversation", () => {
       sourceBackendRef: { backend: "claude", ref: "src-session-abc" },
       forkLocator: "uuid-a1",
       forkMode: "native",
+      // Settled: the provisional marker is cleared once the adapter answered.
+      forkPending: false,
     });
     expect(fork!.backendRef).toEqual({
       backend: "claude",
@@ -1185,6 +1189,9 @@ describe("forkConversation", () => {
       sourceBackendRef: null,
       forkLocator: null,
       forkMode: null,
+      // An index-0 fork has no provider continuity to wait for, so its row is
+      // final at insert.
+      forkPending: false,
     });
     expect(fork!.backendRef).toBeNull();
     expect(claudeContinuity.forkCalls).toHaveLength(0);

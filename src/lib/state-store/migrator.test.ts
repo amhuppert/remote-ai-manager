@@ -348,16 +348,6 @@ function readActiveExecutionRow(
   return row ?? null;
 }
 
-function mergeActiveExecutionRow(
-  row: { definition_json: string; runtime_json: string } | null,
-): Record<string, unknown> {
-  if (row === null) throw new Error("no active execution row");
-  return {
-    ...(JSON.parse(row.definition_json) as Record<string, unknown>),
-    ...(JSON.parse(row.runtime_json) as Record<string, unknown>),
-  };
-}
-
 function readArchivedBlob(
   db: Db,
   executionId: string,
@@ -411,16 +401,21 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     );
     expect(ctxScoped?.event.type).toBe("graph-workflow-context-status");
 
-    // 0002 strips `history` from the active blob; 0003 (next in the registry)
-    // then moves that history-free blob out of the session column into the
-    // dedicated executions table and NULLs the source column.
+    // 0002 strips `history` from the active blob; 0003 moves that history-free
+    // blob out of the session column into the executions table and NULLs the
+    // source column; 0011 (last in the registry) then aborts this still-running
+    // execution at the assignment cutover and archives it, emptying the active
+    // table. The events split by 0002 survive all three — they are keyed by
+    // execution id, not by which table the control state lives in.
     expect(readActiveBlob(db)).toBeNull();
-    const split = readActiveExecutionRow(db);
-    expect(split).not.toBeNull();
-    expect(split?.status).toBe("running");
-    const merged = mergeActiveExecutionRow(split);
-    expect(merged).toMatchObject({ id: "exec-active", status: "running" });
-    expect("history" in merged).toBe(false);
+    expect(readActiveExecutionRow(db)).toBeNull();
+    const archived = readArchivedBlob(db, "exec-active");
+    expect(archived).toMatchObject({
+      id: "exec-active",
+      status: "aborted",
+      haltReason: { type: "aborted", cause: "migration_cutover" },
+    });
+    expect(archived && "history" in archived).toBe(false);
   });
 
   it("archives past executions and splits their history by execution id", async () => {
@@ -462,7 +457,10 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
       PROJECT_PATH,
       SESSION_NAME,
     );
+    // The two past executions 0002 archived, plus the active one 0011 aborted
+    // and archived at the assignment cutover.
     expect(summaries.map((s) => s.executionId).sort()).toEqual([
+      "exec-active",
       "exec-past-a",
       "exec-past-b",
     ]);
@@ -513,18 +511,21 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     const eventsRepo = createGraphWorkflowEventsRepo(db);
     expect(eventsRepo.findByExecution("exec-active")).toHaveLength(1);
     expect(eventsRepo.findByExecution("exec-past")).toHaveLength(1);
+    // The past execution 0002 archived, plus the active one 0011 aborted.
     expect(
       createGraphWorkflowArchivedExecutionsRepo(db).listSummariesBySession(
         PROJECT_PATH,
         SESSION_NAME,
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
 
-    // After the full registry the active execution lives in the executions
-    // table (history-free) and the session column is NULL.
+    // After the full registry the session column is NULL and the active table
+    // is empty — the cutover archived the last execution and left nothing
+    // behind for a second run to re-archive.
     expect(readActiveBlob(db)).toBeNull();
-    const merged = mergeActiveExecutionRow(readActiveExecutionRow(db));
-    expect("history" in merged).toBe(false);
+    expect(readActiveExecutionRow(db)).toBeNull();
+    const archived = readArchivedBlob(db, "exec-active");
+    expect(archived && "history" in archived).toBe(false);
   });
 
   it("re-runs the up step (manual replay) without duplicating rows", async () => {
@@ -563,11 +564,13 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     const eventsRepo = createGraphWorkflowEventsRepo(db);
     expect(eventsRepo.findByExecution("exec-active")).toHaveLength(2);
     expect(eventsRepo.findByExecution("exec-past")).toHaveLength(1);
+    // `exec-past` (archived by 0002) and `exec-active` (aborted and archived by
+    // the 0011 cutover) — one row each, not duplicated by the replay.
     expect(
       createGraphWorkflowArchivedExecutionsRepo(db).listSummariesBySession(
         PROJECT_PATH,
         SESSION_NAME,
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 });

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
@@ -49,7 +49,9 @@ function sseResponse(frames: string[], status = 200): Response {
   });
 }
 
-const okConversation: ConversationState = {
+const okConversation: PublicConversationState = {
+  redactedProfileSnapshot: null,
+  profileLockedAt: null,
   id: "c1",
   scope: "project",
   nameOrigin: "default",
@@ -190,7 +192,7 @@ describe("optimistic lifecycle updates", () => {
 
   function seededClient(): QueryClient {
     const client = new QueryClient();
-    client.setQueryData<ConversationState[]>(
+    client.setQueryData<PublicConversationState[]>(
       projectConversationKeys.list("proj"),
       [okConversation, { ...okConversation, id: "c2", name: "c2" }],
     );
@@ -203,7 +205,7 @@ describe("optimistic lifecycle updates", () => {
 
   function openFlag(client: QueryClient, id: string): boolean | undefined {
     const list =
-      client.getQueryData<ConversationState[]>(
+      client.getQueryData<PublicConversationState[]>(
         projectConversationKeys.list("proj"),
       ) ?? [];
     return list.find((c) => c.id === id)?.open;
@@ -259,7 +261,7 @@ describe("optimistic lifecycle updates", () => {
     const deferred = deferredResponse();
     fetchSpy.mockReturnValue(deferred.promise);
     const client = new QueryClient();
-    client.setQueryData<ConversationState[]>(
+    client.setQueryData<PublicConversationState[]>(
       projectConversationKeys.list("proj"),
       [{ ...okConversation, open: false }],
     );
@@ -355,6 +357,52 @@ describe("useSendProjectPrompt", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(init?.body as string)).toMatchObject({ prompt: "hello" });
     expect(result.current.provisionalKeys).toEqual([]);
+  });
+
+  // R7.1: the create-and-send entry is a construction site, so the profile the
+  // zero-tab composer's picker names has to reach it — alongside, and separate
+  // from, the runtime selection the same submission carries.
+  it("carries the selected profile on the create-and-send entry, beside the runtime selection", async () => {
+    fetchSpy.mockResolvedValue(sseResponse(["event: done\ndata: {}\n\n"]));
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+    await act(async () => {
+      await result.current.send({
+        target: { kind: "create" },
+        text: "hello",
+        backend: "codex",
+        modelId: "gpt-5.4",
+        profile: { tier: "project", id: "reviewer" },
+      }).settled;
+    });
+    expect(
+      JSON.parse(fetchSpy.mock.calls[0]![1]?.body as string),
+    ).toMatchObject({
+      prompt: "hello",
+      backend: "codex",
+      modelId: "gpt-5.4",
+      profile: { tier: "project", id: "reviewer" },
+    });
+  });
+
+  it("sends no profile when the turn targets an existing conversation", async () => {
+    fetchSpy.mockResolvedValue(sseResponse(["event: done\ndata: {}\n\n"]));
+    const { result } = renderHook(() => useSendProjectPrompt("proj"), {
+      wrapper: wrapperFor(new QueryClient()),
+    });
+    await act(async () => {
+      await result.current.send({
+        target: conversationTurnKey("c1"),
+        text: "go",
+        profile: { tier: "project", id: "reviewer" },
+      }).settled;
+    });
+    // That conversation's profile is already resolved and possibly locked;
+    // changing it is the PATCH route's business, not a prompt's.
+    expect(
+      JSON.parse(fetchSpy.mock.calls[0]![1]?.body as string),
+    ).not.toHaveProperty("profile");
   });
 
   it("posts to the per-conversation prompt route when the target is a conversation", async () => {
@@ -1713,13 +1761,15 @@ describe("useSendProjectPrompt: full stream event set (R4.5)", () => {
     })}\n\n`;
 
   /** The cockpit's own source of durable conversation state. */
-  function seedList(...conversations: ConversationState[]) {
+  function seedList(...conversations: PublicConversationState[]) {
     client.setQueryData(projectConversationKeys.list("proj"), conversations);
   }
 
-  function listed(id: string): ConversationState | undefined {
+  function listed(id: string): PublicConversationState | undefined {
     return client
-      .getQueryData<ConversationState[]>(projectConversationKeys.list("proj"))
+      .getQueryData<
+        PublicConversationState[]
+      >(projectConversationKeys.list("proj"))
       ?.find((c) => c.id === id);
   }
 

@@ -14,7 +14,10 @@ import {
 } from "@/lib/state-store";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import { workflowLiveEditRequestSchema } from "@/lib/workflows/edit-schemas";
+import {
+  workflowLiveEditRequestSchema,
+  type WorkflowLiveEditOperation,
+} from "@/lib/workflows/edit-schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
@@ -28,10 +31,12 @@ import {
 import { formatDefinitionEditIssue } from "./definition-edits";
 import {
   applyLiveEditsToActiveExecution,
+  buildDefaultAssignmentSnapshotPreparation,
   buildDefaultLiveEditDeps,
   defaultWriteCharterDocument,
   type LiveEditFailure,
 } from "./live-edit-apply";
+import type { PrepareAssignmentSnapshotsResult } from "./live-edit-preparation";
 import type { LiveEditDeps } from "./runtime-edits";
 
 type RouteContext = {
@@ -66,6 +71,10 @@ export interface GraphWorkflowRuntimeEditRouteDeps {
     ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  prepareAssignmentSnapshots(
+    projectPath: string,
+    operations: readonly WorkflowLiveEditOperation[],
+  ): Promise<PrepareAssignmentSnapshotsResult>;
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
   ): GraphWorkflowEventDelivery;
@@ -91,6 +100,7 @@ const defaultDeps: GraphWorkflowRuntimeEditRouteDeps = {
   getActiveExecution: getActiveGraphWorkflowExecution,
   mutateActive: executionRepository.mutateActive,
   buildLiveEditDeps: buildDefaultLiveEditDeps,
+  prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
   publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
   publishCharterUpdated: eventPublisher.publishCharterUpdated,
   writeCharterDocument: defaultWriteCharterDocument,

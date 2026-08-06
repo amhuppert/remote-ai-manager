@@ -12,6 +12,7 @@ import {
   within,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   ActiveConversationsResponse,
@@ -471,7 +472,6 @@ describe("ConversationSidebar", () => {
       contextTokens: null,
       contextWindowMax: null,
       debugMode: null,
-      machineSnapshot: null,
       agentBackend: "claude",
       backendRef: null,
       unread: false,
@@ -579,6 +579,22 @@ describe("ConversationSidebar", () => {
       expect(routerPushMock).not.toHaveBeenCalled();
     });
 
+    // R7.1: the session-conversation creation path offers a picker on its
+    // Standard Agent default. The one-click control keeps creating under that
+    // default, so the picker sits beside it rather than in front of it.
+    it("offers a Standard-Agent-defaulted profile picker beside the new-conversation control", async () => {
+      const user = userEvent.setup();
+      renderSidebarWithActiveData(sessionActiveData);
+
+      await user.click(
+        screen.getByRole("button", { name: /choose an agent profile/i }),
+      );
+
+      expect(
+        await screen.findByRole("combobox", { name: /agent profile/i }),
+      ).toHaveTextContent("Standard Agent");
+    });
+
     it("creates a conversation with C C when the workspace action is available", async () => {
       const onOpenConversation = vi.fn();
       const dispatcher = createHotkeyDispatcher();
@@ -628,34 +644,44 @@ describe("ConversationSidebar", () => {
       });
     });
 
-    it("routes the fork open from the peek through onOpenConversation when provided", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (url: RequestInfo | URL) => {
-          const target = String(url);
-          if (target.includes("/fork")) {
-            return jsonResponse({
-              conversationId: "forked-convo-1",
-              name: "Forked conversation",
-              forkMode: "native",
-            });
-          }
-          return jsonResponse([
-            {
-              role: "user",
-              content: [{ type: "text", text: "Hello from the transcript" }],
-              timestamp: "2026-05-15T12:30:00.000Z",
-              seq: 0,
-            },
-          ]);
-        }),
-      );
+    // The peeked transcript's only message is at index 0, which derives from
+    // no session — so this is a fresh-conversation fork and it goes through
+    // the profile panel on its way out (R7.1).
+    it("routes the index-0 fork open from the peek through onOpenConversation, under the chosen profile", async () => {
+      const fetchSpy = vi.fn<typeof fetch>(async (url) => {
+        const target = String(url);
+        if (target.includes("/fork")) {
+          return jsonResponse({
+            conversationId: "forked-convo-1",
+            name: "Forked conversation",
+            forkMode: "native",
+          });
+        }
+        if (target.includes("/agent-profiles")) {
+          return jsonResponse({ profiles: [], diagnostics: [] });
+        }
+        return jsonResponse([
+          {
+            role: "user",
+            content: [{ type: "text", text: "Hello from the transcript" }],
+            timestamp: "2026-05-15T12:30:00.000Z",
+            seq: 0,
+          },
+        ]);
+      });
+      vi.stubGlobal("fetch", fetchSpy);
       const onOpenConversation = vi.fn();
       renderSidebarWithActiveData(sessionActiveData, { onOpenConversation });
 
       await openPeek();
       fireEvent.click(
         await screen.findByTitle("Fork conversation from this message"),
+      );
+      expect(
+        await screen.findByRole("combobox", { name: /agent profile/i }),
+      ).toHaveTextContent("Standard Agent");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Fork conversation" }),
       );
 
       await waitFor(() => {
@@ -664,6 +690,13 @@ describe("ConversationSidebar", () => {
           projectName: "remote-ai-manager",
           sessionName: "conversation-ui-overhaul",
         });
+      });
+      const forkCall = fetchSpy.mock.calls.find(([url]) =>
+        String(url).includes("/fork"),
+      );
+      expect(JSON.parse(String(forkCall?.[1]?.body))).toEqual({
+        messageIndex: 0,
+        profile: { tier: "builtin", id: "standard-agent" },
       });
       expect(routerPushMock).not.toHaveBeenCalled();
     });

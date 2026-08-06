@@ -31,6 +31,8 @@ function makeConv(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     scope: "project",
     nameOrigin: "default",
     name: "Repo chat",
@@ -220,6 +222,9 @@ function projectRouteDeps(
       };
     },
     isConversationBusy: () => false,
+    changeConversationProfile: async () => {
+      throw new Error("not used");
+    },
     broadcast: () => ({ delivered: true }),
   };
 }

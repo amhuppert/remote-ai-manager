@@ -1,10 +1,11 @@
 /**
  * Loop-generation fencing for graph-workflow execution loops.
  *
- * An execution loop can outlive its mandate: abort/halt only mutate persisted
- * state, so a loop blocked in a long await (an agent turn, a validator run)
- * does not observe them until it wakes — by which time its execution may have
- * been aborted and replaced, or halted and resumed under a new loop. Every
+ * An execution loop can outlive its mandate: lifecycle transitions mutate
+ * persisted state while cancellation is best-effort, so a loop blocked in a
+ * long await (an agent turn, a validator run) does not observe them until it
+ * wakes — by which time its generation may have been retired by pause, halt,
+ * abort, completion, or resume. Every
  * manager/repository API such a zombie calls is keyed by (projectPath,
  * sessionName), so without a fence it transparently reads and mutates the
  * *successor* generation's state (incident 622782a0: three loops raced one
@@ -88,6 +89,35 @@ export function matchesLoopFence(
     execution !== null &&
     execution.id === fence.executionId &&
     execution.loopEpoch === fence.loopEpoch
+  );
+}
+
+/**
+ * Whether `execution` is the fenced generation's own execution, observed after
+ * a lifecycle transition retired it.
+ *
+ * Retiring a generation bumps `loopEpoch` atomically with the status change, so
+ * the loop that owns the generation stops matching its own fence the instant an
+ * operator pauses or aborts it. That loop still has to observe the terminal
+ * snapshot — to report the true status instead of the pre-transition one it
+ * happens to be holding, and to run its exit path. Only a *successor*
+ * generation is off-limits to it, and a successor is always running: resume is
+ * the sole way out of a quiescent state and it bumps the epoch again. So a
+ * non-running snapshot of the same execution at a later epoch can only be this
+ * loop's own retirement notice.
+ *
+ * Read-only: the fence still governs writes, so a retired loop that tries to
+ * mutate is rejected by the repository exactly as before.
+ */
+export function isOwnRetiredGeneration(
+  fence: GraphWorkflowLoopFence,
+  execution: Pick<GraphWorkflowExecution, "id" | "loopEpoch" | "status"> | null,
+): boolean {
+  return (
+    execution !== null &&
+    execution.id === fence.executionId &&
+    execution.loopEpoch > fence.loopEpoch &&
+    execution.status !== "running"
   );
 }
 

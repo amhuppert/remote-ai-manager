@@ -82,6 +82,16 @@ export const claudeTaskTranscriptProjection: BackendTaskTranscriptProjection = {
   projectAssistantMetadata: () => undefined,
 };
 
+/**
+ * Claude confines a restricted task run with the Agent SDK sandbox plus
+ * path-scoped permission rules over the file-mutation tools — a mechanism the
+ * agent cannot renegotiate from inside the turn.
+ *
+ * Exported as a literal (not read off the descriptor) because the descriptor
+ * carries the server-only runner while definition validate runs client-side.
+ */
+export const claudeTaskFsWriteRestriction = "enforced" as const;
+
 export interface ClaudeDescriptorDeps {
   conversationFactory: ConversationBackendFactory;
   /** `createClaudeContinuityAdapter(...)` in production; injected so the
@@ -114,6 +124,7 @@ export function createClaudeBackendDescriptor(
       runner: deps.taskRunner,
       structuredOutput: "post_validation",
       transcript: claudeTaskTranscriptProjection,
+      fsWriteRestriction: claudeTaskFsWriteRestriction,
     },
     managedSkills: { conversations: "bundled", tasks: "bundled" },
     mcp: deps.mcp,

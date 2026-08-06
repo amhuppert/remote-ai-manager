@@ -10,6 +10,8 @@ import type { SessionState } from "@/lib/sessions/schemas";
 // ---------------------------------------------------------------------------
 
 const BASE_CONVERSATION: ConversationState = {
+  profileSnapshot: null,
+  profileLockedAt: null,
   id: "conv-1",
   scope: "session",
   nameOrigin: "default",

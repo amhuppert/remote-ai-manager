@@ -171,7 +171,7 @@ export function GenericToastSource(): React.JSX.Element | null {
   return (
     <section
       aria-label="Notifications"
-      className="pointer-events-none fixed bottom-md left-1/2 z-dropdown flex max-h-[calc(100vh_-_var(--spacing-3xl))] w-max max-w-[calc(100vw_-_var(--spacing-lg))] [transform:translateX(-50%)] flex-col items-center gap-sm overflow-y-auto p-sm"
+      className="pointer-events-none fixed bottom-md left-1/2 z-toast flex max-h-[calc(100vh_-_var(--spacing-3xl))] w-max max-w-[calc(100vw_-_var(--spacing-lg))] [transform:translateX(-50%)] flex-col items-center gap-sm overflow-y-auto p-sm"
     >
       {toasts.map((t) => (
         <Toast

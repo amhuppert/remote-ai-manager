@@ -65,18 +65,33 @@ Follow these steps precisely:
 1. Analyze the validation output to identify all errors.
 2. For each error, read the relevant file and understand the context around the error.
 3. Fix the issue — make the minimal code change that resolves the error while preserving correct behavior.
-4. Stage all fixed files with \`git add <file>\`.
+4. Re-run the specific check that reported the error, scoped to the files you changed, to confirm the fix landed.
+5. Stage all fixed files with \`git add <file>\`.
 
 IMPORTANT:
 - Fix ALL errors listed in the validation output.
 - Make minimal changes — only fix what the validation flagged.
 - Do not refactor or change behavior beyond what is needed to pass validation.
 - Stage every modified file with git add.
-- Do NOT run the validation script yourself — the caller will re-run it after you finish and provide feedback if issues remain.`;
+- You MAY run the project's linter, formatter, and typechecker directly (eslint, prettier, tsc, and any project-specific lint/architecture script), scoped to the files you changed. Not every error's remedy is legible in its message: an architecture or seam rule may name a violation whose sanctioned fix is a new module rather than the edit the message suggests, and a lint ratchet may report only a count. For those, re-running the check is the only way to know whether your change actually resolved it.
+- Suppressing a check is not fixing it. Do not add allowlist, baseline, or ignore entries, and do not add inline disable comments, unless the rule's own message says that is the sanctioned remedy.
+- Do NOT run the full validation script — it typically rebuilds the project and runs the whole test suite, which is slow. The caller re-runs it for you after you finish and feeds any remaining errors back.
+- The output you were given may stop at the first failing check, so more errors can surface once yours are fixed. That is expected, not a sign your fix was wrong.`;
 
 // ============================================================
 // Temp File Management
 // ============================================================
+
+/**
+ * A single filename component built from free text. The job id carries the
+ * session name, and a session named after a ticket routinely contains "/" —
+ * left raw, that names a directory nothing created and the write fails with
+ * ENOENT before the fix agent takes its first turn. The length cap keeps the
+ * result inside the 255-byte filename limit for a long session name.
+ */
+function toFilenameSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 120);
+}
 
 /**
  * Write validation output to a temp file so the agent can read the full output.
@@ -89,7 +104,10 @@ async function writeValidationOutputFile(
 ): Promise<string> {
   const dir = path.join(tmpdir(), "cc-validation");
   await mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, `${jobId}-attempt-${attempt}.txt`);
+  const filePath = path.join(
+    dir,
+    `${toFilenameSegment(jobId)}-attempt-${attempt}.txt`,
+  );
   await writeFile(filePath, validationOutput, "utf-8");
   return filePath;
 }

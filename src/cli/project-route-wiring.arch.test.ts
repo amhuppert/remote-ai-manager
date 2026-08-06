@@ -166,6 +166,26 @@ const PROJECT_SCOPE_INVOCATIONS: {
   },
   { name: "ticket list", argv: ["ticket", "list"], body: { tickets: [] } },
   {
+    name: "agent list",
+    argv: ["agent", "list"],
+    body: { profiles: [], diagnostics: [] },
+  },
+  {
+    name: "agent get",
+    argv: ["agent", "get", "builtin:standard-agent"],
+    body: {
+      id: "standard-agent",
+      revision: 1,
+      name: "Standard Agent",
+      description: "The default profile.",
+      instructions: "Work the task.",
+      recommendedFor: [],
+      tags: [],
+      tier: "builtin",
+      readOnly: true,
+    },
+  },
+  {
     name: "spec abandon",
     argv: ["spec", "abandon", "feat", "--reason", "x"],
     body: { spec: { slug: "feat", status: "abandoned" } },

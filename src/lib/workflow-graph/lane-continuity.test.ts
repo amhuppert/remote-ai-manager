@@ -23,6 +23,8 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { graphLaneId } from "./graph-lane-store";
+import { laneStateKey } from "./lane-identity";
+import { makeProfileSnapshot } from "./test-fixtures";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -44,11 +46,16 @@ function makeDefinition(
         title: "Plan",
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          profileSnapshot: makeProfileSnapshot(),
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
-        contextValidator: null,
+        contextValidator: { enabled: false, assignments: [] },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
@@ -92,7 +99,7 @@ function makeExecution(
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 1,
@@ -142,6 +149,17 @@ function makeExecution(
   };
 }
 
+/**
+ * Validator lanes are per-assignment, so a fixture lane lands under its
+ * assignment's key. `DEFAULT_ASSIGNMENT_ID` matches `makeValidatorAssignment`'s
+ * seeded id, which is the single reviewer these tests resolve against.
+ */
+const DEFAULT_ASSIGNMENT_ID = "general";
+const VALIDATOR_LANE_KEY = laneStateKey(
+  "context_validator",
+  DEFAULT_ASSIGNMENT_ID,
+);
+
 function laneStatesByContext(
   ...states: GraphWorkflowAgentSessionState[]
 ): GraphWorkflowExecution["laneStates"] {
@@ -149,10 +167,18 @@ function laneStatesByContext(
   for (const state of states) {
     laneStates[state.contextId] = {
       ...laneStates[state.contextId],
-      [state.lane]: state,
+      [laneStateKey(state.lane, state.assignmentId)]: state,
     };
   }
   return laneStates;
+}
+
+function assignmentIdFor(
+  lane: GraphWorkflowAgentSessionState["lane"],
+): { assignmentId: string } | Record<string, never> {
+  return lane === "context_validator"
+    ? { assignmentId: DEFAULT_ASSIGNMENT_ID }
+    : {};
 }
 
 function makeClaudeSessionState(
@@ -172,6 +198,7 @@ function makeClaudeSessionState(
     refKind: "conversation",
     lane,
     contextId,
+    ...assignmentIdFor(lane),
     workflowConversationId: conversationId,
     sessionRef: { backend: "claude", ref: conversationId },
     metrics: { rotateBeforeNextTurn: false, ...options.metrics },
@@ -193,6 +220,7 @@ function makeCodexSessionState(options: {
     refKind: "backend",
     lane: options.lane,
     contextId: options.contextId ?? "ctx-1",
+    ...assignmentIdFor(options.lane),
     ...(options.workflowConversationId === undefined
       ? {}
       : { workflowConversationId: options.workflowConversationId }),
@@ -296,6 +324,11 @@ async function record(
     sessionName: "sess",
     contextId,
     lane,
+    // Validator lanes are per-assignment; these fixtures carry the single
+    // seeded reviewer.
+    ...(lane === "context_validator"
+      ? { assignmentId: DEFAULT_ASSIGNMENT_ID }
+      : {}),
     outcome,
   });
 }
@@ -354,6 +387,44 @@ describe("resolveImplementerCall", () => {
     expect(result.sessionAction).toBe("reuse");
     expect(result.promptMode).toBe("follow_up");
     expect(result.conversationId).toBe("conv-existing");
+  });
+
+  it("rebuilds the implementer lane when its assignment changed, and reuses it when the fingerprint holds", async () => {
+    const harness = makeHarness();
+    const svc = createGraphLaneContinuity(harness.deps);
+    const seededFingerprint = `sha256:${"a".repeat(64)}||true||claude|sonnet|medium`;
+    const execution = makeExecution({
+      laneStates: laneStatesByContext({
+        ...makeClaudeSessionState(),
+        assignmentFingerprint: seededFingerprint,
+      }),
+    });
+
+    const unchanged = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      assignmentFingerprint: seededFingerprint,
+    });
+    expect(unchanged.sessionAction).toBe("reuse");
+
+    // The implementer assignment was swapped (or refocused) under the running
+    // execution: the seeded conversation replayed the superseded profile block
+    // at creation, so resuming it would run bytes nobody chose.
+    const edited = await svc.resolveImplementerCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      assignmentFingerprint: `sha256:${"c".repeat(64)}||true||claude|sonnet|medium`,
+    });
+    expect(edited.sessionAction).toBe("create");
+    expect(edited.conversationId).not.toBe("conv-existing");
+    expect(
+      edited.execution.laneStates["ctx-1"]?.["implementer"]
+        ?.assignmentFingerprint,
+    ).toBe(`sha256:${"c".repeat(64)}||true||claude|sonnet|medium`);
   });
 
   it("creates fresh session when context changes", async () => {
@@ -745,6 +816,7 @@ describe("lane retirement on rotation", () => {
       laneStates: laneStatesByContext({
         ...makeRotatedClaudeLane(),
         lane: "context_validator",
+        assignmentId: DEFAULT_ASSIGNMENT_ID,
         workflowConversationId: "conv-validator-old",
         sessionRef: { backend: "claude", ref: "conv-validator-old" },
       }),
@@ -756,6 +828,7 @@ describe("lane retirement on rotation", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
     });
@@ -956,6 +1029,7 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
     });
@@ -971,8 +1045,86 @@ describe("resolveValidatorCall", () => {
       expect(result.conversationId).toBe("conv-new");
     }
     expect(
-      result.execution.laneStates["ctx-1"]?.["context_validator"]?.lane,
+      result.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.lane,
     ).toBe("context_validator");
+  });
+
+  it("rebuilds the lane when the assignment behind it changed, and reuses it when the fingerprint holds", async () => {
+    const harness = makeHarness();
+    const svc = createGraphLaneContinuity(harness.deps);
+    const seededFingerprint =
+      "sha256:aaa|conversation|true||claude|sonnet|high";
+    const existingLane = {
+      ...makeClaudeSessionState({
+        lane: "context_validator",
+        conversationId: "conv-val",
+      }),
+      assignmentFingerprint: seededFingerprint,
+    };
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    // Same assignment: the live conversation is resumed.
+    const unchanged = await svc.resolveValidatorCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      lane: "context_validator",
+      assignmentId: DEFAULT_ASSIGNMENT_ID,
+      assignmentFingerprint: seededFingerprint,
+      backend: "claude",
+      strategy: "conversation",
+    });
+    expect(unchanged.sessionAction).toBe("reuse");
+
+    // The assignment was edited under the running execution: replaying the
+    // superseded instructions on a resumed handle would be wrong, so the lane
+    // is rebuilt.
+    const edited = await svc.resolveValidatorCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      lane: "context_validator",
+      assignmentId: DEFAULT_ASSIGNMENT_ID,
+      assignmentFingerprint: "sha256:bbb|conversation|true||claude|sonnet|high",
+      backend: "claude",
+      strategy: "conversation",
+    });
+    expect(edited.sessionAction).toBe("create");
+    expect(
+      edited.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]
+        ?.assignmentFingerprint,
+    ).toBe("sha256:bbb|conversation|true||claude|sonnet|high");
+  });
+
+  it("leaves a lane written before fingerprints existed alone rather than rotating on an unknown", async () => {
+    const harness = makeHarness();
+    const svc = createGraphLaneContinuity(harness.deps);
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(
+        makeClaudeSessionState({
+          lane: "context_validator",
+          conversationId: "conv-val",
+        }),
+      ),
+    });
+
+    const result = await svc.resolveValidatorCall({
+      execution,
+      projectPath: "/proj",
+      sessionName: "sess",
+      contextId: "ctx-1",
+      lane: "context_validator",
+      assignmentId: DEFAULT_ASSIGNMENT_ID,
+      assignmentFingerprint: "sha256:ccc|conversation|true||claude|sonnet|high",
+      backend: "claude",
+      strategy: "conversation",
+    });
+
+    expect(result.sessionAction).toBe("reuse");
   });
 
   it("reuses claude validator session when continuity enabled and same context", async () => {
@@ -994,6 +1146,7 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
     });
@@ -1017,6 +1170,7 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "codex",
       strategy: "task",
     });
@@ -1051,6 +1205,7 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "codex",
       strategy: "task",
     });
@@ -1073,10 +1228,21 @@ describe("resolveValidatorCall", () => {
     const definition =
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
     definition.executionContexts[0]!.contextValidator = {
-      type: "claude",
       enabled: true,
-      continuity: { enabled: false },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: false },
+        },
+      ],
     };
 
     const existingLane = makeClaudeSessionState({
@@ -1095,6 +1261,7 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
     });
@@ -1126,6 +1293,7 @@ describe("resolveValidatorCall", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
     });
@@ -1138,7 +1306,7 @@ describe("resolveValidatorCall", () => {
       valResult.execution.laneStates["ctx-1"]?.["implementer"]?.backend,
     ).toBe("claude");
     expect(
-      valResult.execution.laneStates["ctx-1"]?.["context_validator"]?.backend,
+      valResult.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.backend,
     ).toBe("claude");
   });
 });
@@ -1299,10 +1467,21 @@ describe("resolveValidatorCall — resume conversation pin", () => {
     const definition =
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
     definition.executionContexts[0]!.contextValidator = {
-      type: "claude",
       enabled: true,
-      continuity: { enabled: false },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: false },
+        },
+      ],
     };
 
     const existingLane = makeClaudeSessionState({
@@ -1321,6 +1500,7 @@ describe("resolveValidatorCall — resume conversation pin", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
       pinnedConversationId: "conv-pinned-val",
@@ -1341,10 +1521,21 @@ describe("resolveValidatorCall — resume conversation pin", () => {
     const definition =
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition;
     definition.executionContexts[0]!.contextValidator = {
-      type: "claude",
       enabled: true,
-      continuity: { enabled: false },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: false },
+        },
+      ],
     };
 
     const existingLane = makeClaudeSessionState({
@@ -1369,6 +1560,7 @@ describe("resolveValidatorCall — resume conversation pin", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
       pinnedConversationId: "conv-pinned-val",
@@ -1390,9 +1582,10 @@ describe("recordLaneTurnOutcome (occupancy metrics)", () => {
     } = {},
   ): GraphWorkflowAgentSessionState {
     const lane = makeClaudeSessionState({ conversationId: "conv-1" });
+    const merged = { ...lane, ...overrides };
     return {
-      ...lane,
-      ...overrides,
+      ...merged,
+      ...assignmentIdFor(merged.lane),
       metrics: {
         ...lane.metrics,
         ...overrides.metrics,
@@ -1508,7 +1701,7 @@ describe("recordLaneTurnOutcome (occupancy metrics)", () => {
       contextLimitTokens: 100000,
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.limitEvaluation).toBe("metrics_unavailable");
     expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
   });
@@ -1707,7 +1900,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
       contextLimitTokens: 50000,
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.metrics.lastTurnUsage?.inputTokens).toBe(1000);
     expect(updated?.metrics.rotateBeforeNextTurn).toBe(false);
     // Even with a limit configured, a backend without occupancy metrics
@@ -1726,7 +1919,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
       lastTurnUsage: null,
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.limitEvaluation).toBe("disabled");
   });
 
@@ -1744,7 +1937,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
       ref: "real-thread-abc",
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.sessionRef).toEqual({
       backend: "codex",
       ref: "real-thread-abc",
@@ -1799,7 +1992,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
       lastTurnUsage: null,
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.sessionRef?.ref).toBe("thread-keep");
   });
 
@@ -1815,7 +2008,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
       continuationDisposition: "clear",
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
   });
 
@@ -1833,6 +2026,7 @@ describe("recordLaneTurnOutcome (thread lanes)", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       outcome: { backend: "claude", contextTokens: 100 },
     });
 
@@ -1929,6 +2123,7 @@ describe("recovery behaviors", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "claude",
       strategy: "conversation",
     });
@@ -1973,6 +2168,7 @@ describe("recovery behaviors", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "codex",
       strategy: "task",
     });
@@ -2019,6 +2215,7 @@ describe("recovery behaviors", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "codex",
       strategy: "task",
     });
@@ -2032,11 +2229,11 @@ describe("recovery behaviors", () => {
       });
     }
     expect(
-      result.execution.laneStates["ctx-1"]?.context_validator?.sessionRef,
+      result.execution.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY]?.sessionRef,
     ).toEqual({ backend: "codex", ref: "thread-recovered" });
     const persisted = await harness.deps.laneService.resolve({
       workflowId: execution.id,
-      laneId: graphLaneId("context_validator", "ctx-1"),
+      laneId: graphLaneId("context_validator", "ctx-1", DEFAULT_ASSIGNMENT_ID),
     });
     expect(persisted?.ref).toBe("thread-recovered");
   });
@@ -2065,6 +2262,7 @@ describe("recovery behaviors", () => {
       sessionName: "sess",
       contextId: "ctx-1",
       lane: "context_validator",
+      assignmentId: "general",
       backend: "codex",
       strategy: "task",
     });
@@ -2174,7 +2372,7 @@ describe("primitive lane-service integration", () => {
       continuationDisposition: "clear",
     });
 
-    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    const updated = result.laneStates["ctx-1"]?.[VALIDATOR_LANE_KEY];
     expect(updated?.backend).toBe("codex");
     expect(updated?.metrics.rotateBeforeNextTurn).toBe(true);
   });
@@ -2305,6 +2503,7 @@ describe("rotation decision reconciliation", () => {
         sessionName: "sess",
         contextId: "ctx-1",
         lane: "context_validator",
+        assignmentId: "general",
         backend: "claude",
         strategy: "conversation",
       });
@@ -2340,6 +2539,7 @@ describe("rotation decision reconciliation", () => {
         sessionName: "sess",
         contextId: "ctx-1",
         lane: "context_validator",
+        assignmentId: "general",
         backend: "claude",
         strategy: "conversation",
       });

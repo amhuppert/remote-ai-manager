@@ -27,6 +27,7 @@ import type {
   ActiveConversationForkedFrom,
 } from "@/lib/active-conversations/schemas";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
+import { redactedConversationProfile } from "@/lib/conversations/conversation-profile";
 import type {
   AskQuestionItem,
   ConversationBackgroundActivity,
@@ -644,6 +645,9 @@ export function createActiveConversationsRouteHandlers(
               unread: convo.unread === true,
               pendingApproval,
               backgroundActivity: deps.getBackgroundActivity(convo.id),
+              // Already redacted by the store's list-item projection: the
+              // snapshot blob never leaves SQLite for this feed.
+              redactedProfileSnapshot: convo.redactedProfileSnapshot,
             });
           }
 
@@ -810,6 +814,8 @@ export function createActiveConversationsRouteHandlers(
           unread: conversation.unread === true,
           pendingApproval: null,
           backgroundActivity: deps.getBackgroundActivity(conversation.id),
+          // The project walk reads whole rows, so redaction happens here.
+          redactedProfileSnapshot: redactedConversationProfile(conversation),
         });
       }
 

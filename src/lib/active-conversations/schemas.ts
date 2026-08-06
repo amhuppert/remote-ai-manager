@@ -5,6 +5,7 @@ import {
   conversationBackgroundActivitySchema,
 } from "@/lib/conversations/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { redactedAgentProfileSnapshotSchema } from "@/lib/agent-profiles/schemas";
 import {
   graphWorkflowCleanupStatusValueSchema,
   graphWorkflowMergeStatusValueSchema,
@@ -48,6 +49,14 @@ const activeConversationSharedFields = {
   worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
   unread: z.boolean(),
+  // Which agent profile the conversation runs under, redacted (R6.3): identity
+  // and provenance hashes only. Null for a legacy conversation. The row has no
+  // key instruction text could occupy; optionality only spares the many sidebar
+  // fixtures from restating a field they do not exercise, and the wire suite
+  // asserts the production assembler sets it.
+  redactedProfileSnapshot: redactedAgentProfileSnapshotSchema
+    .nullable()
+    .optional(),
   // Live harness background work (a Workflow-tool run, a backgrounded shell, a
   // subagent) that keeps running between turns. Read from the in-memory
   // background-activity channel at assembly time and patched live by the

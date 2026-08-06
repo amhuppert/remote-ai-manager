@@ -11,27 +11,35 @@ import {
   createExecutionIndex,
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
+import { readConversationTelemetry } from "@/lib/workflow-graph/conversation-telemetry";
 import {
   buildGraphWorkflowValidationReviewArtifact,
+  type GraphWorkflowExecution,
+  type GraphWorkflowLaneKind,
   type GraphWorkflowValidationConversationUsage,
-  type GraphWorkflowValidationEventSessionRef,
   type GraphWorkflowValidationReviewArtifact,
-} from "@/lib/workflow-graph/event-schemas";
-import { readConversationTelemetry } from "@/lib/workflow-graph/conversation-telemetry";
-import type {
-  GraphWorkflowExecution,
-  GraphWorkflowLaneKind,
+  type GraphWorkflowValidationSessionRef,
 } from "@/lib/workflow-graph/schemas";
 import {
-  resolveGraphWorkflowValidatorExecutionPlan,
-  type GraphWorkflowAgentValidatorConfig,
+  selectRunnableCohortAssignments,
+  type ValidatorAssignment,
 } from "@/lib/workflow-graph/config-schemas";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
+import {
+  assignmentFingerprint,
+  laneStateKey,
+} from "@/lib/workflow-graph/lane-identity";
+import {
+  buildValidatorRoleContract,
+  composeWorkflowRoleInstructions,
+} from "@/lib/workflow-graph/role-instructions";
 import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import type {
-  GraphWorkflowResolvedContext,
+  GraphWorkflowCascadeContext,
   GraphWorkflowTaskDefinition,
   WorkflowValidatorIssue,
 } from "@/lib/workflow-graph/definition-schemas";
+import { isQuerySlotAdmissionTimeout } from "@/lib/shared/query-semaphore";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
@@ -39,9 +47,15 @@ import type {
   AskQuestionAnswer,
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
+import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { LaneConversationPendingState } from "./user-input-gate";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
-import type { GraphWorkflowContextValidatorInput } from "./execution-validation";
+import type {
+  GraphWorkflowContextValidatorInput,
+  RenderRoundCommonSectionsInput,
+  ValidationRoundCommonSections,
+  ValidationRoundToken,
+} from "./execution-validation";
 import type {
   ResolveValidatorCallInput,
   ResolvedValidatorCall,
@@ -53,11 +67,18 @@ import {
   type ExecuteWorkflowTaskRunInput,
   type TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import {
+  composeValidatorLaneWriteEnvelope as defaultComposeValidatorLaneWriteEnvelope,
+  type ComposeValidatorLaneWriteEnvelopeInput,
+  type ValidatorLaneWriteEnvelope,
+} from "@/lib/workflow-graph/lane-write-policy";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { getConversation as defaultGetConversation } from "@/lib/state-store";
 import {
   computeValidationDiffScope as defaultComputeValidationDiffScope,
+  diffScopeTreeHash,
   renderDiffScopeSection,
   type ValidationDiffScope,
 } from "./validation-diff-scope";
@@ -89,10 +110,10 @@ export const VALIDATOR_OUTPUT_SCHEMA = {
 } as const;
 
 export interface BuildContextValidationPromptInput {
-  context: GraphWorkflowResolvedContext;
+  context: GraphWorkflowCascadeContext;
   tasks: GraphWorkflowTaskDefinition[];
   taskStates: GraphWorkflowExecution["taskStates"];
-  validator: GraphWorkflowAgentValidatorConfig;
+  validator: ValidatorAssignment;
   // Optional because the resolved context carries an optional charter; when
   // present the digest is prepended so the prompt opens with it (4.2).
   charter?: WorkflowCharter;
@@ -127,14 +148,13 @@ export interface BuildContextValidationPromptInput {
  * unit-testable in isolation.
  */
 export function resolveValidatorAskUserQuestionsEnabled(
-  validator: GraphWorkflowAgentValidatorConfig,
-  context: GraphWorkflowResolvedContext,
+  validator: ValidatorAssignment,
+  context: GraphWorkflowCascadeContext,
 ): boolean {
-  const plan = resolveGraphWorkflowValidatorExecutionPlan(validator);
   return (
-    plan.strategy === "conversation" &&
+    validator.strategy === "conversation" &&
     context.askUserQuestions.enabled &&
-    getBackendDescriptor(plan.backend).conversation?.capabilities
+    getBackendDescriptor(validator.agent.backend).conversation?.capabilities
       .nativeMidTurnAskUser === true
   );
 }
@@ -275,7 +295,36 @@ export type ValidatorOutcome =
       conversationId: string;
       questionBatchId: string;
       questions: AskQuestionItem[];
+    }
+  // The turn never started: the global query semaphore never admitted it. This
+  // is PRE-admission, which is the whole reason it is not an `infra_error` — no
+  // provider was reached, nothing about the validator or its inputs is known to
+  // be wrong, and the only fact established is that the engine is busy. A cohort
+  // charging a specialist attempt for this would spend the specialist's retry
+  // budget on queue depth (D5).
+  | {
+      kind: "queue_admission_timeout";
+      message: string;
+      engine: AgentBackendId;
     };
+
+/**
+ * The outcome for a dispatch that failed, classified by whether it was ever
+ * admitted. Both cases arrive here as opaque failure text, so the classification
+ * has to happen at every site that turns one into an outcome — otherwise queue
+ * pressure reaches the cohort disguised as a provider failure.
+ */
+function classifyDispatchFailure(
+  message: string,
+  engine: AgentBackendId,
+): Extract<
+  ValidatorOutcome,
+  { kind: "infra_error" } | { kind: "queue_admission_timeout" }
+> {
+  return isQuerySlotAdmissionTimeout(message)
+    ? { kind: "queue_admission_timeout", message, engine }
+    : { kind: "infra_error", reason: "exception", message, engine };
+}
 
 function validateIssueTaskIds(
   issues: WorkflowValidatorIssue[],
@@ -414,7 +463,7 @@ export function parseValidatorResponse(
 }
 
 export interface ValidatorExecutionMetadata {
-  sessionRef: GraphWorkflowValidationEventSessionRef | null;
+  sessionRef: GraphWorkflowValidationSessionRef | null;
   reviewArtifact: GraphWorkflowValidationReviewArtifact | null;
   limitEvaluation:
     | "disabled"
@@ -427,6 +476,23 @@ export interface ValidatorExecutionMetadata {
 export interface ValidatorRunResult {
   result: ValidatorOutcome;
   metadata: ValidatorExecutionMetadata;
+  /**
+   * The round token this run was dispatched with, echoed back verbatim. It is
+   * what makes a result attributable to a round as data — a result from an
+   * earlier round of the same context carries that round's token no matter how
+   * the worktree looks by the time it arrives. Null outside a round.
+   */
+  roundToken?: ValidationRoundToken | null;
+}
+
+/**
+ * The worktree a validator inspects, or the reason it could not be resolved.
+ * Carried as data rather than thrown so a resolve failure degrades the review
+ * to acceptance-criteria-only instead of failing the round.
+ */
+interface InspectionWorktree {
+  worktreePath: string | undefined;
+  resolveError: string | null;
 }
 
 interface ValidatorContinuityService {
@@ -499,6 +565,15 @@ export interface ValidatorRunnerDeps {
   readValidatorConversationTelemetry?(
     conversationId: string,
   ): Promise<GraphWorkflowValidationConversationUsage | null>;
+  /**
+   * Establish the lane's filesystem-write envelope. Defaults to the real
+   * composer, which creates and canonicalizes the lane's scratch directories;
+   * injected in tests so a validator turn does not touch the filesystem. A
+   * throw here is fail-closed — the turn never dispatches.
+   */
+  composeLaneWriteEnvelope?(
+    input: ComposeValidatorLaneWriteEnvelopeInput,
+  ): ValidatorLaneWriteEnvelope;
 }
 
 const validatorLogger = createLogger("graph-workflow-validator");
@@ -520,12 +595,14 @@ function resolvedCallToResumeRef(
 function buildConversationValidationSessionRef(
   backend: AgentBackendId,
   lane: GraphWorkflowLaneKind,
+  assignmentId: string,
   conversationId: string,
-): GraphWorkflowValidationEventSessionRef {
+): GraphWorkflowValidationSessionRef {
   return {
     backend,
     ref: conversationId,
     lane,
+    assignmentId,
     refKind: "conversation",
     workflowConversationId: conversationId,
   };
@@ -535,12 +612,14 @@ function buildTaskValidationSessionRef(
   execution: GraphWorkflowExecution,
   contextId: string,
   lane: GraphWorkflowLaneKind,
+  assignmentId: string,
   backend: AgentBackendId,
   continuationDisposition: TaskRunResult["continuationDisposition"],
-): GraphWorkflowValidationEventSessionRef | null {
+): GraphWorkflowValidationSessionRef | null {
   if (continuationDisposition === "clear") return null;
 
-  const laneState = execution.laneStates[contextId]?.[lane];
+  const laneState =
+    execution.laneStates[contextId]?.[laneStateKey(lane, assignmentId)];
   if (
     laneState?.refKind !== "backend" ||
     laneState.sessionRef?.backend !== backend
@@ -551,6 +630,7 @@ function buildTaskValidationSessionRef(
   return {
     ...laneState.sessionRef,
     lane,
+    assignmentId,
     refKind: "backend",
   };
 }
@@ -593,15 +673,35 @@ interface ValidatorTaskInvocation {
   projectPath: string;
   sessionName: string;
   conversationId: string;
+  /**
+   * The turn's authoritative instruction payload: role contract first, the
+   * assignment's seeded profile block after it. Delivered through the strongest
+   * privileged channel each backend offers rather than folded into the prompt
+   * (R10), which is what keeps user-authored profile text subordinate.
+   */
+  systemInstructions: string;
+  /**
+   * The lane's filesystem-write envelope. Always present on a validator turn —
+   * a validator reviews a frozen candidate, so "no policy" is never a legal
+   * shape here even though the transport allows it for implementer lanes.
+   */
+  fsWritePolicy: FsWritePolicy;
 }
 
+/**
+ * The dispatch id for a task-strategy validator turn, which has no CC
+ * conversation of its own. The assignment segment is what keeps two cohort
+ * members reviewing one context from sharing a dispatch anchor — and with it,
+ * an abort registry entry.
+ */
 function syntheticValidatorConversationId(
   executionId: string,
   contextId: string,
   lane: GraphWorkflowLaneKind,
+  assignmentId: string,
   backend: AgentBackendId,
 ): string {
-  return `__validator__:${executionId}:${contextId}:${lane}:${backend}`;
+  return `__validator__:${executionId}:${contextId}:${lane}:${assignmentId}:${backend}`;
 }
 
 function buildValidatorActorInput(
@@ -690,6 +790,28 @@ function taskRunResultToValidatorTaskResult(
   };
 }
 
+interface RunValidatorTurnInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  lane: "context_validator";
+  /** The cohort member running this turn — the lane's identity. */
+  assignmentId: string;
+  assignmentFingerprint: string;
+  strategy: ValidatorExecutionStrategy;
+  backend: AgentBackendId;
+  prompt: string;
+  systemInstructions: string;
+  profileSnapshot: AgentProfileSnapshot;
+  modelId: string | undefined;
+  reasoningEffort: string | undefined;
+  contextLimitTokens: number | undefined;
+  allowedTaskIds: string[];
+  overrideWorktreePath: string | undefined;
+  pinnedConversationId: string | undefined;
+}
+
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
@@ -707,6 +829,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     });
   const computeValidationDiffScope =
     deps.computeValidationDiffScope ?? defaultComputeValidationDiffScope;
+  const composeLaneWriteEnvelope =
+    deps.composeLaneWriteEnvelope ??
+    ((input: ComposeValidatorLaneWriteEnvelopeInput) =>
+      defaultComposeValidatorLaneWriteEnvelope(input));
   const readLaneConversation =
     deps.readLaneConversation ??
     (async (projectPath, sessionName, conversationId) => {
@@ -750,6 +876,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       conversationId: invocation.conversationId,
       kind: "task_run",
       prompt: invocation.prompt,
+      systemInstructions: invocation.systemInstructions,
+      fsWritePolicy: invocation.fsWritePolicy,
       outputFormat: {
         type: "json_schema",
         schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
@@ -845,6 +973,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     updatedExecution: GraphWorkflowExecution,
     contextId: string,
     lane: GraphWorkflowLaneKind,
+    assignmentId: string,
   ): {
     limitEvaluation:
       | "disabled"
@@ -853,7 +982,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       | "metrics_unavailable";
     rotateBeforeNextTurn: boolean;
   } {
-    const laneState = updatedExecution.laneStates[contextId]?.[lane];
+    const laneState =
+      updatedExecution.laneStates[contextId]?.[
+        laneStateKey(lane, assignmentId)
+      ];
     if (!laneState) {
       return {
         limitEvaluation: "disabled",
@@ -867,35 +999,57 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   }
 
   async function runValidatorTurn(
-    projectPath: string,
-    sessionName: string,
-    execution: GraphWorkflowExecution,
-    contextId: string,
-    lane: "context_validator",
-    strategy: ValidatorExecutionStrategy,
-    backend: AgentBackendId,
-    prompt: string,
-    modelId: string | undefined,
-    reasoningEffort: string | undefined,
-    contextLimitTokens: number | undefined,
-    allowedTaskIds: string[],
-    overrideWorktreePath: string | undefined,
-    pinnedConversationId: string | undefined,
+    input: RunValidatorTurnInput,
   ): Promise<ValidatorRunResult> {
+    const {
+      projectPath,
+      sessionName,
+      execution,
+      contextId,
+      lane,
+      assignmentId,
+      assignmentFingerprint,
+      strategy,
+      backend,
+      prompt,
+      systemInstructions,
+      profileSnapshot,
+      modelId,
+      reasoningEffort,
+      contextLimitTokens,
+      allowedTaskIds,
+      overrideWorktreePath,
+      pinnedConversationId,
+    } = input;
     const execLogger = getExecutionLogger(execution.id);
+    // Every artifact this turn writes is scoped to the assignment, so a cohort
+    // leaves one reviewable trail per specialist instead of overwriting a
+    // single shared prompt/response pair.
+    const artifactScope = { contextId, assignmentId };
     const worktreePath =
       overrideWorktreePath ??
       (await deps.resolveWorktreePath(projectPath, sessionName));
     const timeoutMs = await deps.resolveTimeoutMs(backend);
+    // Established BEFORE any dispatch decision: a lane whose envelope cannot be
+    // composed throws here, and the caller's catch turns that into an
+    // infrastructure outcome rather than a turn that ran unrestricted.
+    const { policy: fsWritePolicy } = composeLaneWriteEnvelope({
+      executionId: execution.id,
+      contextId,
+      assignmentId,
+      worktreePath,
+    });
 
     execLogger?.validation(contextId, "validator.invoked", {
       lane,
+      assignmentId,
       engine: backend,
       hasContinuityService: !!deps.continuityService,
     });
     validatorLogger.info("graph-workflow.validator.invoked", {
       executionId: execution.id,
       lane,
+      assignmentId,
       engine: backend,
       strategy,
     });
@@ -905,10 +1059,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         execution.id,
         contextId,
         lane,
+        assignmentId,
         backend,
       );
       const taskResult = await dispatchValidatorTurn({
         prompt,
+        systemInstructions,
         backend,
         workingDirectory: worktreePath,
         modelId,
@@ -919,11 +1075,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         projectPath,
         sessionName,
         conversationId: noServiceConversationId,
+        fsWritePolicy,
       });
 
       if (taskResult.transcript) {
         execLogger?.writeValidatorTranscript(
-          contextId,
+          artifactScope,
           { lane, engine: backend },
           taskResult.transcript,
         );
@@ -945,12 +1102,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       }
 
       if (taskResult.error) {
-        const outcome: ValidatorOutcome = {
-          kind: "infra_error",
-          reason: "exception",
-          message: taskResult.error,
-          engine: backend,
-        };
+        const outcome: ValidatorOutcome = classifyDispatchFailure(
+          taskResult.error,
+          backend,
+        );
         execLogger?.validation(contextId, "validator.result_parsed", {
           lane,
           engine: backend,
@@ -975,6 +1130,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
+        assignmentId,
         engine: backend,
         parsePath,
         kind: parsed.kind,
@@ -993,13 +1149,17 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionName,
       contextId,
       lane,
+      assignmentId,
+      assignmentFingerprint,
       backend,
       strategy,
+      profileSnapshot,
       pinnedConversationId,
     });
 
+    const laneKey = laneStateKey(lane, assignmentId);
     const resolvedLaneState =
-      resolved.execution.laneStates[contextId]?.[lane] ?? null;
+      resolved.execution.laneStates[contextId]?.[laneKey] ?? null;
 
     function applyResolvedLaneState(
       target: GraphWorkflowExecution,
@@ -1011,7 +1171,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           ...target.laneStates,
           [contextId]: {
             ...target.laneStates[contextId],
-            [lane]: resolvedLaneState,
+            [laneKey]: resolvedLaneState,
           },
         },
       };
@@ -1025,6 +1185,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
             execution.id,
             contextId,
             lane,
+            assignmentId,
             backend,
           );
     // Persist the lane binding BEFORE dispatch. Active cancellation
@@ -1044,13 +1205,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           ...latest.laneStates,
           [contextId]: {
             ...latest.laneStates[contextId],
-            [lane]: laneStateForDispatch,
+            [laneKey]: laneStateForDispatch,
           },
         },
       }));
     }
     const taskResult = await dispatchValidatorTurn({
       prompt,
+      systemInstructions,
       backend,
       workingDirectory: worktreePath,
       modelId,
@@ -1061,11 +1223,12 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       projectPath,
       sessionName,
       conversationId: dispatchConversationId,
+      fsWritePolicy,
     });
 
     if (taskResult.transcript) {
       execLogger?.writeValidatorTranscript(
-        contextId,
+        artifactScope,
         { lane, engine: backend },
         taskResult.transcript,
       );
@@ -1091,12 +1254,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
               ? buildConversationValidationSessionRef(
                   backend,
                   lane,
+                  assignmentId,
                   resolved.conversationId,
                 )
               : buildTaskValidationSessionRef(
                   resolved.execution,
                   contextId,
                   lane,
+                  assignmentId,
                   backend,
                   taskResult.continuationDisposition,
                 ),
@@ -1111,12 +1276,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const text = taskResult.text ?? "";
     const { result: parsed, parsePath }: ParsedValidatorResponse = runnerError
       ? {
-          result: {
-            kind: "infra_error",
-            reason: "exception",
-            message: runnerError,
-            engine: backend,
-          },
+          result: classifyDispatchFailure(runnerError, backend),
           parsePath: "runner_error",
         }
       : parseValidatorResponse(
@@ -1146,6 +1306,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           sessionName,
           contextId,
           lane,
+          assignmentId,
           outcome: {
             backend,
             lastTurnUsage: usage,
@@ -1159,22 +1320,24 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         updatedExecution,
         contextId,
         lane,
+        assignmentId,
       );
 
       const sessionRef = buildTaskValidationSessionRef(
         updatedExecution,
         contextId,
         lane,
+        assignmentId,
         backend,
         taskResult.continuationDisposition,
       );
+      const updatedLaneRef =
+        updatedExecution.laneStates[contextId]?.[laneKey]?.sessionRef;
       const responseRef =
         taskResult.backendRef?.backend === backend
           ? taskResult.backendRef.ref
-          : updatedExecution.laneStates[contextId]?.[lane]?.sessionRef
-                ?.backend === backend
-            ? (updatedExecution.laneStates[contextId]?.[lane]?.sessionRef
-                ?.ref ?? null)
+          : updatedLaneRef?.backend === backend
+            ? (updatedLaneRef.ref ?? null)
             : null;
 
       const reviewArtifact = buildGraphWorkflowValidationReviewArtifact({
@@ -1189,6 +1352,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
+        assignmentId,
         engine: backend,
         parsePath,
         kind: parsed.kind,
@@ -1196,11 +1360,15 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         sessionAction: resolved.sessionAction,
         threadId: responseRef,
       });
-      execLogger?.writeValidatorResponse(contextId, "context-validator.json", {
-        raw: text,
-        parsed,
-        parsePath,
-      });
+      execLogger?.writeValidatorResponse(
+        artifactScope,
+        "context-validator.json",
+        {
+          raw: text,
+          parsed,
+          parsePath,
+        },
+      );
 
       return {
         result: parsed,
@@ -1220,6 +1388,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         sessionName,
         contextId,
         lane,
+        assignmentId,
         outcome: {
           backend,
           ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
@@ -1231,6 +1400,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       updatedExecution,
       contextId,
       lane,
+      assignmentId,
     );
 
     const backendSessionId = Object.is(taskResult.backendRef?.backend, backend)
@@ -1239,6 +1409,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const conversationSessionRef = buildConversationValidationSessionRef(
       backend,
       lane,
+      assignmentId,
       resolved.conversationId,
     );
     const conversationUsage = await readValidatorConversationTelemetry(
@@ -1255,6 +1426,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
 
     execLogger?.validation(contextId, "validator.result_parsed", {
       lane,
+      assignmentId,
       engine: backend,
       parsePath,
       kind: parsed.kind,
@@ -1262,11 +1434,15 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionAction: resolved.sessionAction,
       backendSessionId,
     });
-    execLogger?.writeValidatorResponse(contextId, "context-validator.json", {
-      raw: text,
-      parsed,
-      parsePath,
-    });
+    execLogger?.writeValidatorResponse(
+      artifactScope,
+      "context-validator.json",
+      {
+        raw: text,
+        parsed,
+        parsePath,
+      },
+    );
 
     return {
       result: parsed,
@@ -1279,54 +1455,77 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     };
   }
 
-  async function runContextValidator(
-    input: GraphWorkflowContextValidatorInput,
-  ): Promise<ValidatorRunResult> {
-    const index = createExecutionIndex(
-      input.execution.workingDefinition,
-      input.execution,
-    );
-    const contextTasks = index.tasksByContext.get(input.context.id) ?? [];
-    const execLogger = getExecutionLogger(input.execution.id);
-    const validatorPlan = resolveGraphWorkflowValidatorExecutionPlan(
-      input.validator,
-    );
-    const contextLimitTokens = input.validator.continuity.contextLimitTokens;
-    const allowedTaskIds = getContextTaskIds(index, input.context.id);
-
-    // Resolve the exact worktree the validator will inspect, then compute the
-    // context's uncommitted change set there. Diff scoping is default-on and
-    // degraded-not-fatal: any failure yields an "unavailable" scope rather than
-    // halting validation, and the validator falls back to AC-only review.
+  /**
+   * The exact worktree a validator will inspect. Degraded-not-fatal: a resolve
+   * failure yields no path and a reason, and review continues against the
+   * acceptance criteria alone rather than halting the round.
+   */
+  async function resolveInspectionWorktree(input: {
+    projectPath: string;
+    sessionName: string;
+    executionTarget?: ExecutionTarget;
+  }): Promise<InspectionWorktree> {
     const targetWorktreePath = input.executionTarget?.worktreePath;
-    let resolvedWorktreePath: string | undefined;
-    let diffScope: ValidationDiffScope;
+    if (targetWorktreePath !== undefined) {
+      return { worktreePath: targetWorktreePath, resolveError: null };
+    }
     try {
-      resolvedWorktreePath =
-        targetWorktreePath ??
-        (await deps.resolveWorktreePath(input.projectPath, input.sessionName));
-      diffScope = await computeValidationDiffScope(resolvedWorktreePath);
+      return {
+        worktreePath: await deps.resolveWorktreePath(
+          input.projectPath,
+          input.sessionName,
+        ),
+        resolveError: null,
+      };
     } catch (error) {
+      return { worktreePath: undefined, resolveError: getErrorMessage(error) };
+    }
+  }
+
+  /**
+   * Compute the context's uncommitted change set in the inspected worktree and
+   * render it as the "Changes under review" section, logging what was scoped.
+   * Any failure yields an "unavailable" scope rather than halting validation.
+   */
+  async function renderScopedDiffSection(params: {
+    executionId: string;
+    contextId: string;
+    inspection: InspectionWorktree;
+    contextLimitTokens?: number;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+  }): Promise<{ section: string; treeHash: string | null }> {
+    const { executionId, contextId, inspection, execLogger } = params;
+
+    let diffScope: ValidationDiffScope;
+    if (inspection.worktreePath === undefined) {
       diffScope = {
         kind: "unavailable",
-        reason: `scope computation error: ${getErrorMessage(error)}`,
+        reason: `scope computation error: ${inspection.resolveError ?? "worktree path unavailable"}`,
       };
+    } else {
+      try {
+        diffScope = await computeValidationDiffScope(inspection.worktreePath);
+      } catch (error) {
+        diffScope = {
+          kind: "unavailable",
+          reason: `scope computation error: ${getErrorMessage(error)}`,
+        };
+      }
     }
 
     const renderedDiffScope = renderDiffScopeSection(diffScope, {
-      contextLimitTokens,
+      contextLimitTokens: params.contextLimitTokens,
     });
-    const diffScopeWorktreePath =
-      resolvedWorktreePath ?? targetWorktreePath ?? null;
+    const diffScopeWorktreePath = inspection.worktreePath ?? null;
 
     if (diffScope.kind === "unavailable") {
-      execLogger?.validation(input.context.id, "diff_scope.unavailable", {
+      execLogger?.validation(contextId, "diff_scope.unavailable", {
         worktreePath: diffScopeWorktreePath,
         reason: diffScope.reason,
       });
       validatorLogger.warn("graph-workflow.validator.diff_scope.unavailable", {
-        executionId: input.execution.id,
-        contextId: input.context.id,
+        executionId,
+        contextId,
         worktreePath: diffScopeWorktreePath,
         reason: diffScope.reason,
       });
@@ -1347,16 +1546,108 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         omittedFileCount: renderedDiffScope.omittedFileCount,
       };
       execLogger?.validation(
-        input.context.id,
+        contextId,
         "diff_scope.computed",
         diffScopeMetadata,
       );
       validatorLogger.info("graph-workflow.validator.diff_scope.computed", {
-        executionId: input.execution.id,
-        contextId: input.context.id,
+        executionId,
+        contextId,
         ...diffScopeMetadata,
       });
     }
+
+    return {
+      section: renderedDiffScope.section,
+      treeHash: diffScopeTreeHash(diffScope),
+    };
+  }
+
+  /**
+   * Render a round's shared prompt inputs exactly once, before any specialist
+   * runs.
+   *
+   * The diff budget is the TIGHTEST context limit in the cohort, not each
+   * member's own: one rendering has to fit inside every specialist that will
+   * read it, and a block sized for the roomiest member would overflow the
+   * others. Choosing the minimum keeps the bytes identical — which is the
+   * property being bought — at the cost of showing a roomy specialist a
+   * slightly smaller diff than it could have held.
+   */
+  async function renderRoundCommonSections(
+    input: RenderRoundCommonSectionsInput,
+  ): Promise<ValidationRoundCommonSections> {
+    const limits = selectRunnableCohortAssignments(
+      input.context.contextValidator,
+    )
+      .map((assignment) => assignment.continuity.contextLimitTokens)
+      .filter((limit): limit is number => limit !== undefined);
+
+    const rendered = await renderScopedDiffSection({
+      executionId: input.execution.id,
+      contextId: input.context.id,
+      inspection: await resolveInspectionWorktree(input),
+      ...(limits.length > 0 ? { contextLimitTokens: Math.min(...limits) } : {}),
+      execLogger: getExecutionLogger(input.execution.id),
+    });
+
+    return {
+      diffScopeSection: rendered.section,
+      candidateTreeHash: rendered.treeHash,
+    };
+  }
+
+  /**
+   * Stamp every result with the round it was dispatched for, on every exit —
+   * verdict, infra error, or thrown. A result that could reach its caller
+   * without a token would be a result the caller cannot attribute, which is the
+   * one thing the token exists to prevent.
+   */
+  async function runContextValidator(
+    input: GraphWorkflowContextValidatorInput,
+  ): Promise<ValidatorRunResult> {
+    const result = await runContextValidatorTurn(input);
+    return { ...result, roundToken: input.roundToken ?? null };
+  }
+
+  async function runContextValidatorTurn(
+    input: GraphWorkflowContextValidatorInput,
+  ): Promise<ValidatorRunResult> {
+    const index = createExecutionIndex(
+      input.execution.workingDefinition,
+      input.execution,
+    );
+    const contextTasks = index.tasksByContext.get(input.context.id) ?? [];
+    const execLogger = getExecutionLogger(input.execution.id);
+    // Dispatch reads the assignment directly: strategy and backend are
+    // independent axes, so all four combinations reach the right runner.
+    const validatorPlan = {
+      strategy: input.validator.strategy,
+      backend: input.validator.agent.backend,
+      modelId: input.validator.agent.model,
+      reasoningEffort: input.validator.agent.reasoningEffort,
+    };
+    const contextLimitTokens = input.validator.continuity.contextLimitTokens;
+    const allowedTaskIds = getContextTaskIds(index, input.context.id);
+
+    const inspection = await resolveInspectionWorktree(input);
+    const resolvedWorktreePath = inspection.worktreePath;
+    const targetWorktreePath = input.executionTarget?.worktreePath;
+
+    // A round renders its shared inputs once and hands the same bytes to every
+    // specialist; only a standalone run (no round, or a cohort of one) derives
+    // its own here.
+    const diffScopeSection =
+      input.roundCommonSections?.diffScopeSection ??
+      (
+        await renderScopedDiffSection({
+          executionId: input.execution.id,
+          contextId: input.context.id,
+          inspection,
+          contextLimitTokens,
+          execLogger,
+        })
+      ).section;
 
     const prompt = buildContextValidationPrompt({
       context: input.context,
@@ -1365,7 +1656,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       validator: input.validator,
       ...(input.context.charter ? { charter: input.context.charter } : {}),
       charterAmendments: input.execution.charterAmendments,
-      diffScopeSection: renderedDiffScope.section,
+      diffScopeSection,
       askUserQuestionsEnabled: resolveValidatorAskUserQuestionsEnabled(
         input.validator,
         input.context,
@@ -1380,8 +1671,26 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         : {}),
     });
 
-    execLogger?.writePrompt(input.context.id, "context-validator.md", prompt);
+    // Role contract first, the assignment's seeded lens after it. Composed here
+    // — above both adapters — because the ORDER is the security property and a
+    // per-adapter decision could invert it (R10).
+    const systemInstructions = composeWorkflowRoleInstructions({
+      roleContract: buildValidatorRoleContract({
+        verdictSchema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+      }),
+      profileBlock: input.validator.profileSnapshot.renderedInstructionBlock,
+    });
+
+    const artifactScope = {
+      contextId: input.context.id,
+      assignmentId: input.validator.id,
+    };
+    execLogger?.writePrompt(artifactScope, "context-validator.md", prompt);
     execLogger?.validation(input.context.id, "context_validator.started", {
+      assignmentId: input.validator.id,
       engine: validatorPlan.backend,
       strategy: validatorPlan.strategy,
       promptLength: prompt.length,
@@ -1394,30 +1703,36 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     const overrideWorktreePath = resolvedWorktreePath ?? targetWorktreePath;
 
     try {
-      return await runValidatorTurn(
-        input.projectPath,
-        input.sessionName,
-        input.execution,
-        input.context.id,
-        "context_validator",
-        validatorPlan.strategy,
-        validatorPlan.backend,
+      return await runValidatorTurn({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        execution: input.execution,
+        contextId: input.context.id,
+        lane: "context_validator",
+        assignmentId: input.validator.id,
+        assignmentFingerprint: assignmentFingerprint(input.validator),
+        strategy: validatorPlan.strategy,
+        backend: validatorPlan.backend,
         prompt,
-        validatorPlan.modelId,
-        validatorPlan.reasoningEffort,
+        systemInstructions,
+        profileSnapshot: input.validator.profileSnapshot,
+        modelId: validatorPlan.modelId,
+        reasoningEffort: validatorPlan.reasoningEffort,
         contextLimitTokens,
         allowedTaskIds,
         overrideWorktreePath,
-        input.resumeUserInput?.conversationId,
-      );
+        pinnedConversationId: input.resumeUserInput?.conversationId,
+      });
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       execLogger?.validation(input.context.id, "context_validator.error", {
+        assignmentId: input.validator.id,
         engine: validatorPlan.backend,
         error: errorMessage,
       });
       execLogger?.validation(input.context.id, "validator.infra_error", {
         lane: "context_validator",
+        assignmentId: input.validator.id,
         engine: validatorPlan.backend,
         reason: "exception",
         message: errorMessage,
@@ -1429,16 +1744,11 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       });
 
       return {
-        result: {
-          kind: "infra_error",
-          reason: "exception",
-          message: errorMessage,
-          engine: validatorPlan.backend,
-        },
+        result: classifyDispatchFailure(errorMessage, validatorPlan.backend),
         metadata: buildNoServiceMetadata(),
       };
     }
   }
 
-  return { runContextValidator };
+  return { runContextValidator, renderRoundCommonSections };
 }

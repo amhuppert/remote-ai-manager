@@ -13,6 +13,11 @@ import {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { buildConversation } from "@/lib/conversations/build-conversation";
+import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
+import type {
+  AgentProfileRef,
+  AgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 import { countOpen } from "./lifecycle";
 
 const logger = createLogger("project-conversations.service");
@@ -47,6 +52,11 @@ export interface ProjectConversationServiceDeps {
   getProjectDisplayName(projectPath: string): string;
   newId(): string;
   now(): string;
+  /** See the session service's counterpart: resolved before the row exists. */
+  resolveProfileSnapshot?(
+    projectPath: string,
+    ref?: AgentProfileRef | null,
+  ): Promise<AgentProfileSnapshot>;
 }
 
 export interface CreateProjectConversationOptions {
@@ -59,6 +69,8 @@ export interface CreateProjectConversationOptions {
    * conversation to the caller, which already correlates it.
    */
   creationRequestId?: string;
+  /** Omitting this yields the explicit Standard Agent snapshot (R7). */
+  profile?: AgentProfileRef | null;
 }
 
 export interface ProjectConversationService {
@@ -104,6 +116,7 @@ const defaultDeps: ProjectConversationServiceDeps = {
   getProjectDisplayName,
   newId: () => randomUUID(),
   now: () => new Date().toISOString(),
+  resolveProfileSnapshot: resolveConversationProfileSnapshot,
 };
 
 export function createProjectConversationService(
@@ -120,6 +133,12 @@ export function createProjectConversationService(
     const agentBackend =
       opts?.agentBackend ?? config.defaultAgentBackend ?? "claude";
     const now = deps.now();
+    const resolveProfileSnapshot =
+      deps.resolveProfileSnapshot ?? resolveConversationProfileSnapshot;
+    const profileSnapshot = await resolveProfileSnapshot(
+      projectPath,
+      opts?.profile,
+    );
 
     const conversation = buildConversation({
       id: deps.newId(),
@@ -127,6 +146,7 @@ export function createProjectConversationService(
       name: opts?.name ?? `${projectName} chat ${sequenceNumber}`,
       createdAt: now,
       agentBackend,
+      profileSnapshot,
       ...(opts?.creationRequestId !== undefined
         ? { creationRequestId: opts.creationRequestId }
         : {}),

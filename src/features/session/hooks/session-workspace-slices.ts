@@ -10,6 +10,7 @@ import type { usePromptComposerProps } from "@/features/session/hooks/use-prompt
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   ConversationState,
+  PublicConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
@@ -37,7 +38,7 @@ export interface SessionIdentitySlice {
   sessionName: string;
   conversationId: string;
   session: SessionState;
-  activeConversation: ConversationState | undefined;
+  activeConversation: PublicConversationState | undefined;
   conversations: ConversationState[] | undefined;
   statusDotClass: string;
   displayStatus: string;

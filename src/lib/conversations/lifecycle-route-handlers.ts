@@ -25,13 +25,34 @@ import {
   setConversationArchived as defaultSetConversationArchived,
 } from "@/lib/conversations/service";
 import {
-  conversationCreatedEventSchema,
+  toPublicConversationState,
+  toPublicConversationStates,
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
+  conversationProfileChangedEventSchema,
   generateConversationNameRequestSchema,
   generateConversationNameResponseSchema,
   renameConversationRequestSchema,
+  changeConversationProfileRequestSchema,
+  createSessionConversationRequestSchema,
 } from "@/lib/conversations/schemas";
+import { buildConversationCreatedEvent } from "@/lib/conversations/created-event";
+import { ConversationProfileLockedError } from "@/lib/conversations/conversation-profile";
+import {
+  changeConversationProfile as defaultChangeConversationProfile,
+  resolveLibraryAgentProfile,
+  ConversationNotFoundForProfileChangeError,
+  UnknownAgentProfileError,
+  type ConversationProfileChangeIdentity,
+} from "@/lib/conversations/profile-change";
+import {
+  getConversation as defaultGetConversation,
+  mutateConversation as defaultMutateConversation,
+} from "@/lib/state-store";
+import type {
+  AgentProfileRef,
+  RedactedAgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 import {
   generateAndApplyConversationName as defaultGenerateAndApplyConversationName,
   type GenerateConversationNameInput,
@@ -48,7 +69,12 @@ import {
   publishEventBestEffort,
   type PublishFn,
 } from "@/lib/events/publication";
-import { jsonError, parseJsonBody } from "@/lib/shared/route-resolution";
+import {
+  jsonError,
+  notFound,
+  parseJsonBody,
+  parseOptionalJsonBody,
+} from "@/lib/shared/route-resolution";
 import {
   resolveSessionRoute,
   resolveSessionConversationRoute,
@@ -73,6 +99,7 @@ export interface ConversationRouteDeps {
   createConversation(
     projectPath: string,
     sessionName: string,
+    opts?: { profile?: AgentProfileRef },
   ): Promise<ConversationState>;
   renameConversation(
     projectPath: string,
@@ -95,6 +122,10 @@ export interface ConversationRouteDeps {
     conversationId: string,
     archived: boolean,
   ): Promise<void>;
+  changeConversationProfile(
+    identity: ConversationProfileChangeIdentity,
+    ref: AgentProfileRef,
+  ): Promise<RedactedAgentProfileSnapshot>;
   broadcast: PublishFn;
 }
 
@@ -108,6 +139,16 @@ const defaultDeps: ConversationRouteDeps = {
   resolveMessageNamingContent: defaultResolveMessageNamingContent,
   generateAndApplyConversationName: defaultGenerateAndApplyConversationName,
   setConversationArchived: defaultSetConversationArchived,
+  changeConversationProfile: (identity, ref) =>
+    defaultChangeConversationProfile(
+      {
+        getConversation: defaultGetConversation,
+        mutateConversation: defaultMutateConversation,
+        resolveProfile: resolveLibraryAgentProfile,
+      },
+      identity,
+      ref,
+    ),
   broadcast: publishEvent,
 };
 
@@ -160,7 +201,7 @@ export function createConversationsListRouteHandlers(
       resolved.value.projectPath,
       resolved.value.sessionName,
     );
-    return NextResponse.json(conversations);
+    return NextResponse.json(toPublicConversationStates(conversations));
   }
 
   return { GET };
@@ -170,16 +211,31 @@ export function createConversationRouteHandlers(
   deps: ConversationRouteDeps = defaultDeps,
 ) {
   async function POST_CREATE(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const resolved = await resolveSessionRoute(deps, context);
     if (!resolved.ok) return resolved.response;
     const { projectPath, sessionName } = resolved.value;
 
+    // Optional body: the plain "new conversation" button posts nothing, and
+    // omitting a selection resolves to the Standard Agent default (R7).
+    const parsed = await parseOptionalJsonBody(
+      request,
+      createSessionConversationRequestSchema,
+      'profile (a "tier:id" reference or a {tier, id} object) is invalid',
+    );
+    if (!parsed.ok) return parsed.response;
+
     let conversation: ConversationState;
     try {
-      conversation = await deps.createConversation(projectPath, sessionName);
+      conversation = await deps.createConversation(
+        projectPath,
+        sessionName,
+        parsed.value.profile !== undefined
+          ? { profile: parsed.value.profile }
+          : undefined,
+      );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to create conversation";
@@ -193,8 +249,7 @@ export function createConversationRouteHandlers(
       failureEvent: "conversation_created.broadcast_failed",
       context: { projectName, sessionName, conversationId: conversation.id },
       build: () =>
-        conversationCreatedEventSchema.parse({
-          type: "conversation-created",
+        buildConversationCreatedEvent({
           scope: "session",
           projectName,
           sessionName,
@@ -202,7 +257,9 @@ export function createConversationRouteHandlers(
         }),
     });
 
-    return NextResponse.json(conversation, { status: 201 });
+    return NextResponse.json(toPublicConversationState(conversation), {
+      status: 201,
+    });
   }
 
   async function PATCH_RENAME(
@@ -422,11 +479,80 @@ export function createConversationRouteHandlers(
     return NextResponse.json({ ok: true, archivedIds });
   }
 
+  /**
+   * Point a conversation at a different agent profile.
+   *
+   * A settled profile is refused with 409, not 400: the request is well-formed
+   * and the profile may well exist — the conversation is simply past the point
+   * where its profile can change (R6.5). The body carries the redacted snapshot
+   * now in force, never the instructions behind it (R6.3).
+   */
+  async function PATCH_PROFILE(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId } = resolved.value;
+
+    const parsed = await parseJsonBody(
+      request,
+      changeConversationProfileRequestSchema,
+      'profile (a "tier:id" reference or a {tier, id} object) is required',
+    );
+    if (!parsed.ok) return parsed.response;
+
+    try {
+      const redactedProfileSnapshot = await deps.changeConversationProfile(
+        { projectPath, sessionName, conversationId },
+        parsed.value.profile,
+      );
+
+      const projectName = deps.getProjectDisplayName(projectPath);
+      publishEventBestEffort({
+        publish: deps.broadcast,
+        logger,
+        failureEvent: "conversation_profile_changed.broadcast_failed",
+        context: { projectName, sessionName, conversationId },
+        build: () =>
+          conversationProfileChangedEventSchema.parse({
+            type: "conversation-profile-changed",
+            scope: "session",
+            projectName,
+            sessionName,
+            conversationId,
+            redactedProfileSnapshot,
+          }),
+      });
+
+      return NextResponse.json({ ok: true, redactedProfileSnapshot });
+    } catch (err) {
+      if (err instanceof ConversationProfileLockedError) {
+        return jsonError(err.message, 409);
+      }
+      // Through the resolve seam, not a hand-rolled ladder: both are
+      // single-entity misses. The conversation case is a race guard — route
+      // resolution already found it, so only a concurrent delete gets here.
+      if (err instanceof UnknownAgentProfileError) {
+        return notFound(err.message);
+      }
+      if (err instanceof ConversationNotFoundForProfileChangeError) {
+        return notFound(err.message);
+      }
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to change the conversation's agent profile";
+      return jsonError(message, 500);
+    }
+  }
+
   return {
     POST_CREATE,
     PATCH_RENAME,
     POST_GENERATE_NAME,
     PATCH_ARCHIVE,
+    PATCH_PROFILE,
     POST_ARCHIVE_OTHERS,
   };
 }
@@ -453,6 +579,9 @@ export const archiveOtherConversations = withTracing(
 );
 export const renameConversation = withTracing(
   _defaultConversationHandlers.PATCH_RENAME,
+);
+export const changeSessionConversationProfile = withTracing(
+  _defaultConversationHandlers.PATCH_PROFILE,
 );
 export const generateConversationName = withTracing(
   _defaultConversationHandlers.POST_GENERATE_NAME,

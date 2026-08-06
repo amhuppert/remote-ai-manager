@@ -1,10 +1,23 @@
-import { mkdtemp, rm, writeFile, unlink as fsUnlink } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+  unlink as fsUnlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { parseDiff, computeDiff, _resetDiffCacheForTesting } from "./diff";
+import {
+  parseDiff,
+  computeDiff,
+  computeCandidateSnapshot,
+  computeCandidateTreeHash,
+  _resetDiffCacheForTesting,
+} from "./diff";
 import type { ComputeDiffDeps } from "./diff";
 import { buildChildEnv } from "../shared/child-env";
 
@@ -584,5 +597,180 @@ describe("computeDiff golden (real repo)", () => {
     expect(third).not.toBe(first);
     expect(third.totalAdditions).toBe(3);
     expect(third.totalDeletions).toBe(2);
+  });
+});
+
+describe("computeCandidateTreeHash (real repo)", () => {
+  let repoDir: string;
+
+  async function git(...args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoDir,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    _resetDiffCacheForTesting();
+    repoDir = await mkdtemp(join(tmpdir(), "cc-tree-hash-"));
+    await git("init");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    await git("config", "core.fileMode", "true");
+    await writeFile(join(repoDir, ".gitignore"), ".cc/\ndist/\n");
+    await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
+    await git("add", "-A");
+    await git("commit", "-m", "baseline");
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("hashes the HEAD tree for a clean worktree without touching the real index", async () => {
+    const hash = await computeCandidateTreeHash(repoDir);
+
+    expect(hash).toBe((await git("rev-parse", "HEAD^{tree}")).trim());
+    expect((await git("status", "--porcelain=v1")).trim()).toBe("");
+  });
+
+  it("puts untracked content inside the identity and matches the tree `add -A` stages", async () => {
+    const baseline = await computeCandidateTreeHash(repoDir);
+    await writeFile(join(repoDir, "new.txt"), "fresh\n");
+
+    const withUntracked = await computeCandidateTreeHash(repoDir);
+    expect(withUntracked).not.toBe(baseline);
+
+    // The real index is untouched: new.txt is still untracked afterwards.
+    expect(await git("status", "--porcelain=v1")).toContain("?? new.txt");
+
+    // Same tree the diff pipeline's temporary index builds: seeded from HEAD,
+    // then `add -A`. Staged for real here only after the untouched-index
+    // assertion above, so the comparison cannot mask a leak.
+    await git("add", "-A");
+    expect(withUntracked).toBe((await git("write-tree")).trim());
+  });
+
+  it("puts a file-mode change inside the identity", async () => {
+    const baseline = await computeCandidateTreeHash(repoDir);
+    await chmod(join(repoDir, "a.txt"), 0o755);
+
+    expect(await computeCandidateTreeHash(repoDir)).not.toBe(baseline);
+  });
+
+  it("leaves gitignored build artifacts and lane logs outside the identity", async () => {
+    const baseline = await computeCandidateTreeHash(repoDir);
+
+    // `.cc/workflow/` is where the script validator writes its failure logs, and
+    // `dist/` stands in for build output. Both are gitignored, so neither can
+    // move the candidate a cohort is reviewing.
+    await mkdir(join(repoDir, ".cc", "workflow"), { recursive: true });
+    await writeFile(
+      join(repoDir, ".cc", "workflow", "pre-merge.log"),
+      "validation output\n",
+    );
+    await mkdir(join(repoDir, "dist"), { recursive: true });
+    await writeFile(join(repoDir, "dist", "bundle.js"), "built\n");
+
+    expect(await computeCandidateTreeHash(repoDir)).toBe(baseline);
+  });
+
+  it("moves when tracked content changes, even for an already-modified file", async () => {
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\ngamma\n");
+    const first = await computeCandidateTreeHash(repoDir);
+
+    // The diff cache's token (HEAD + porcelain hash) cannot see this edit — an
+    // already-modified file stays " M". The candidate identity must, or a round
+    // would certify a tree that changed under it.
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\nGAMMA\n");
+    expect(await computeCandidateTreeHash(repoDir)).not.toBe(first);
+  });
+
+  it("returns null for a directory that is not a git repository", async () => {
+    const plainDir = await mkdtemp(join(tmpdir(), "cc-tree-hash-plain-"));
+    try {
+      expect(await computeCandidateTreeHash(plainDir)).toBeNull();
+    } finally {
+      await rm(plainDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("computeCandidateSnapshot (real repo)", () => {
+  let repoDir: string;
+
+  async function git(...args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoDir,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    _resetDiffCacheForTesting();
+    repoDir = await mkdtemp(join(tmpdir(), "cc-candidate-snapshot-"));
+    await git("init");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    await writeFile(join(repoDir, "a.txt"), "alpha\nbeta\ngamma\n");
+    await git("add", "-A");
+    await git("commit", "-m", "baseline");
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("returns the tree hash and the diff of one and the same temporary index", async () => {
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\ngamma\n");
+    await writeFile(join(repoDir, "new.txt"), "fresh\n");
+
+    const snapshot = await computeCandidateSnapshot(repoDir);
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.treeHash).toBe(await computeCandidateTreeHash(repoDir));
+    expect(snapshot!.diff.files.map((file) => file.filePath).sort()).toEqual([
+      "a.txt",
+      "new.txt",
+    ]);
+  });
+
+  it("re-reads content the diff cache cannot see, so the patch is never older than the tree", async () => {
+    // The regression this closes: `computeDiff`'s token is HEAD plus a porcelain
+    // hash, and a content-only edit to an ALREADY-modified file leaves porcelain
+    // at " M a.txt". A round that froze the new tree hash while validators read
+    // the cached old patch would certify a tree nobody reviewed.
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\ngamma\n");
+    const cached = await computeDiff(repoDir);
+    expect(
+      cached.files[0]!.hunks[0]!.lines.some(
+        (line) => line.type === "add" && line.content === "BETA",
+      ),
+    ).toBe(true);
+
+    await writeFile(join(repoDir, "a.txt"), "alpha\nBETA\nGAMMA\n");
+
+    // computeDiff is still serving the stale patch — the porcelain token did
+    // not move — which is exactly why the round must not read through it.
+    expect(await computeDiff(repoDir)).toBe(cached);
+
+    const snapshot = await computeCandidateSnapshot(repoDir);
+    expect(snapshot!.treeHash).toBe(await computeCandidateTreeHash(repoDir));
+    expect(
+      snapshot!.diff.files[0]!.hunks[0]!.lines.some(
+        (line) => line.type === "add" && line.content === "GAMMA",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns null when git state cannot be resolved", async () => {
+    const plainDir = await mkdtemp(join(tmpdir(), "cc-candidate-plain-"));
+    try {
+      expect(await computeCandidateSnapshot(plainDir)).toBeNull();
+    } finally {
+      await rm(plainDir, { recursive: true, force: true });
+    }
   });
 });

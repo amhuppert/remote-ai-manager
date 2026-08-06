@@ -4,12 +4,15 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowResolvedContext,
+  GraphWorkflowCascadeContext,
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+// The cascade shape, not the seeded one: the index only keys contexts by id, so
+// typing it on the wider (snapshot-free) shape lets one index serve both the
+// builder preview and a running execution's working definition.
 type ExecutionIndexContext =
   | GraphWorkflowExecutionContextDefinition
-  | GraphWorkflowResolvedContext;
+  | GraphWorkflowCascadeContext;
 
 export interface ExecutionIndexDefinition {
   executionContexts: ExecutionIndexContext[];

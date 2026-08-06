@@ -6,12 +6,19 @@ import {
   useBackendModelEffort,
 } from "./use-backend-model-effort";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import {
+  toPublicConversationState,
+  type ConversationState,
+  type PublicConversationState,
+} from "@/lib/conversations/schemas";
 
 function makeConversation(
   overrides: Partial<ConversationState> = {},
-): ConversationState {
-  return {
+): PublicConversationState {
+  // Projected, like every conversation a client actually receives.
+  return toPublicConversationState({
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: "c1",
     scope: "session",
     nameOrigin: "default",
@@ -43,7 +50,7 @@ function makeConversation(
     agentBackend: "claude",
     backendRef: null,
     ...overrides,
-  };
+  });
 }
 
 describe("pickPreferredEffort", () => {
@@ -124,7 +131,7 @@ describe("useBackendModelEffort", () => {
 
   it("hydrates controls from a running Codex conversation", () => {
     const initialProps: {
-      activeConversation: ConversationState | undefined;
+      activeConversation: PublicConversationState | undefined;
       lastUsedModelId: string | undefined;
       lastUsedEffort: string | undefined;
     } = {

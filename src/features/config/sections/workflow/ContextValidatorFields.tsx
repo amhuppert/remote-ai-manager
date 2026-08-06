@@ -1,148 +1,63 @@
-import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
-import { agentBackendSchema } from "@/lib/shared/schemas";
+import {
+  CohortEditor,
+  toggleCohortEnabled,
+} from "@/components/workflow-config/CohortEditor";
+import type { ValidatorCohort } from "@/lib/workflow-graph/config-schemas";
 import { ConfigField } from "../../components/ConfigField";
-import { ConfigNumericInput } from "../../components/ConfigNumericInput";
-import { ConfigPillGroup } from "../../components/ConfigPillGroup";
 import { ConfigToggle } from "../../components/ConfigToggle";
-import { ClaudeAgentSubfields } from "./ClaudeAgentSubfields";
-import { CodexAgentSubfields } from "./CodexAgentSubfields";
 
+/**
+ * Global-tier editor for the validator cohort.
+ *
+ * It composes the same cohort editor the workflow builder and the runtime
+ * pause-to-edit surface render (D11), so the ordered set an operator authors
+ * here is authored the same way at every tier — a defaults form that could only
+ * edit the first assignment would make the seeded single reviewer look like the
+ * only shape the global tier supports.
+ *
+ * Its provenance line carries only the two states this tier can be in — in use,
+ * or switched off — because nothing sits above the global defaults for them to
+ * inherit from. `enabled` stays a field of its own, like every other Settings
+ * toggle, and flips through the shared helper that keeps the dormant
+ * assignments.
+ */
 export function ContextValidatorFields({
   value,
   onChange,
 }: {
-  value: GraphWorkflowAgentValidatorConfig;
-  onChange: (v: GraphWorkflowAgentValidatorConfig) => void;
+  value: ValidatorCohort;
+  onChange: (v: ValidatorCohort) => void;
 }) {
-  const type = value.type;
-  const continuityEnabled = value.continuity?.enabled ?? true;
-  const continuityLimit = value.continuity?.contextLimitTokens;
-
-  const handleTypeChange = (next: "claude" | "codex") => {
-    if (next === value.type) return;
-    if (next === "codex") {
-      onChange({
-        type: "codex",
-        enabled: value.enabled,
-        continuity: value.continuity ?? { enabled: true },
-        codex: { model: "gpt-5.4", reasoningEffort: "medium" },
-      });
-    } else {
-      onChange({
-        type: "claude",
-        enabled: value.enabled,
-        continuity: value.continuity ?? { enabled: true },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
-      });
-    }
-  };
-
   return (
     <>
-      <ConfigField
-        label="Type"
-        fieldPath="workflowDefaults.contextValidator.type"
-        isDefault={false}
-        isModified={false}
-      >
-        <ConfigPillGroup
-          value={type}
-          options={agentBackendSchema.options}
-          onChange={handleTypeChange}
-        />
-      </ConfigField>
-
       <ConfigField
         label="Enabled"
         fieldPath="workflowDefaults.contextValidator.enabled"
         isDefault={false}
         isModified={false}
+        hint="Turning validation off keeps the cohort — every assignment returns, in order, when you turn it back on."
       >
         <ConfigToggle
           label="Context validator enabled"
           value={value.enabled}
-          onChange={(v) => onChange({ ...value, enabled: v })}
-        />
-      </ConfigField>
-
-      {value.type === "claude" && value.agent.backend === "claude" && (
-        <ClaudeAgentSubfields
-          agent={value.agent}
-          onAgentChange={(agent) =>
-            onChange({
-              type: "claude",
-              enabled: value.enabled,
-              continuity: value.continuity,
-              agent,
-            })
-          }
-        />
-      )}
-
-      {value.type === "codex" && (
-        <CodexAgentSubfields
-          model={value.codex.model}
-          reasoningEffort={value.codex.reasoningEffort}
-          onCodexChange={(codex) =>
-            onChange({
-              type: "codex",
-              enabled: value.enabled,
-              continuity: value.continuity,
-              codex,
-            })
-          }
-        />
-      )}
-
-      <ConfigField
-        label="Continuity"
-        fieldPath="workflowDefaults.contextValidator.continuity.enabled"
-        isDefault={false}
-        isModified={false}
-      >
-        <ConfigToggle
-          label="Context validator continuity"
-          value={continuityEnabled}
-          onChange={(v) =>
-            onChange({
-              ...value,
-              continuity: {
-                enabled: v,
-                ...(continuityLimit !== undefined
-                  ? { contextLimitTokens: continuityLimit }
-                  : {}),
-              },
-            })
-          }
+          onChange={(enabled) => onChange(toggleCohortEnabled(value, enabled))}
         />
       </ConfigField>
 
       <ConfigField
-        label="Context limit tokens"
-        fieldPath="workflowDefaults.contextValidator.continuity.contextLimitTokens"
+        label="Cohort"
+        fieldPath="workflowDefaults.contextValidator.assignments"
         isDefault={false}
         isModified={false}
-        hint="Leave empty for auto"
+        hint="Every required validator reviews the same frozen candidate, in this order."
       >
-        <ConfigNumericInput
-          value={continuityLimit}
-          onChange={(v) =>
-            onChange({
-              ...value,
-              continuity: {
-                enabled: continuityEnabled,
-                ...(v !== undefined && v !== null
-                  ? { contextLimitTokens: v }
-                  : {}),
-              },
-            })
-          }
-          positive
-          integer
+        <CohortEditor
+          value={value}
+          onChange={onChange}
+          cascade={{
+            state: value.enabled ? "use" : "disabled",
+            origin: "every workflow that does not override it",
+          }}
         />
       </ConfigField>
     </>

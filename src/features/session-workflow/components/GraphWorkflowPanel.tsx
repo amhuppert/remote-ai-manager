@@ -6,12 +6,16 @@ import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionHistoryItem,
+} from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowVisualLayout } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { Button } from "@/components/ui/Button";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
+import ArchivedExecutionsList from "./ArchivedExecutionsList";
 import ExecutionStatusBar, {
   type ExecutionControlAction,
 } from "./ExecutionStatusBar";
@@ -21,14 +25,20 @@ import ExecutionInspectorPanel, {
 } from "./ExecutionInspectorPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
-import { useUserInputGate } from "@/hooks/use-user-input-gate";
+import { deriveUserInputStandings } from "@/hooks/use-user-input-gate";
+import ParkedQuestionPanel from "./ParkedQuestionPanel";
 
 interface GraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution | null;
   events: GraphWorkflowExecutionEvent[];
-  archivedExecutions: GraphWorkflowExecution[];
+  /**
+   * The session's finished runs, newest first. Rendered in the no-active-run
+   * state: after a schema cutover empties the active slot, this list is the
+   * only place an operator can see that their in-flight run was ended and why.
+   */
+  archivedExecutions: GraphWorkflowExecutionHistoryItem[];
   layout: GraphWorkflowVisualLayout | null;
   onPause(): void;
   onResume(conflictGuidance?: ConflictDecisionInput[]): void;
@@ -48,6 +58,10 @@ interface GraphWorkflowPanelProps {
   ): void;
   onReorderTask(contextId: string, orderedTaskIds: string[]): void;
   onResetContext(contextId: string): void;
+  /** Reset ONE cohort member's lane, leaving its siblings and the context alone. */
+  onResetAssignment?(contextId: string, assignmentId: string): void;
+  /** The assignment whose reset is in flight, if any. */
+  resettingAssignmentId?: string | null;
   onSaveContextConfig(operations: WorkflowLiveEditOperation[]): void;
   isSavingConfig: boolean;
   isPausingExecution: boolean;
@@ -68,6 +82,7 @@ export default function GraphWorkflowPanel({
   sessionName,
   execution,
   events,
+  archivedExecutions,
   layout,
   onPause,
   onResume,
@@ -79,6 +94,8 @@ export default function GraphWorkflowPanel({
   onRemoveTask,
   onReorderTask,
   onResetContext,
+  onResetAssignment,
+  resettingAssignmentId,
   onSaveContextConfig,
   isSavingConfig,
   isPausingExecution,
@@ -147,12 +164,21 @@ export default function GraphWorkflowPanel({
   }, [autoSwitchPanel]);
 
   const handleViewConversation = useCallback(
-    (conversationId: string, lane: string, contextId: string) => {
+    (
+      conversationId: string,
+      lane: string,
+      contextId: string,
+      // The use site the caller opened, when it knows one. With a cohort the
+      // lane kind names several conversations at once, so an assignment-labeled
+      // header is the only thing that tells two validator transcripts apart.
+      assignmentLabel?: string,
+    ) => {
       const contextDef = execution?.workingDefinition.executionContexts.find(
         (ctx) => ctx.id === contextId,
       );
       const label =
-        lane === "context_validator" ? "Context Validator" : "Implementer";
+        assignmentLabel ??
+        (lane === "context_validator" ? "Context Validator" : "Implementer");
       setViewingConversation({
         conversationId,
         contextTitle: contextDef?.title ?? contextId,
@@ -169,15 +195,25 @@ export default function GraphWorkflowPanel({
     return generateWorkflowLayout(execution.workingDefinition, layout ?? null);
   }, [execution, layout]);
 
-  // Answer panel for the selected context when it is parked awaiting user
-  // input. The container owns the answer mutation (QueryClient lives here);
-  // the inspector only mounts the panel with these props.
-  const userInputPanel = useUserInputGate({
-    projectName,
-    sessionName,
+  // One answer panel per lane of the selected context that is waiting on the
+  // human: a cohort's validators park independently, so several questions can
+  // stand at once and each is answered on its own conversation. Keyed by lane
+  // key so a sibling settling never remounts the panel still being filled in.
+  const userInputStandings = deriveUserInputStandings(
     execution,
-    contextId: selectedContextId,
-  });
+    selectedContextId,
+  );
+  const userInputPanels =
+    userInputStandings.length > 0
+      ? userInputStandings.map((standing) => (
+          <ParkedQuestionPanel
+            key={standing.laneKey}
+            projectName={projectName}
+            sessionName={sessionName}
+            standing={standing}
+          />
+        ))
+      : null;
 
   const viewingTask =
     execution && viewingTaskId
@@ -190,10 +226,11 @@ export default function GraphWorkflowPanel({
 
   if (!execution) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+      <div className="flex h-full flex-col items-center justify-center gap-md overflow-y-auto p-lg text-text-tertiary">
         <span className="text-[0.82rem] font-medium">
           No graph workflow execution has started for this session.
         </span>
+        <ArchivedExecutionsList executions={archivedExecutions} />
       </div>
     );
   }
@@ -268,7 +305,7 @@ export default function GraphWorkflowPanel({
                 execution={execution}
                 events={events}
                 selectedContextId={selectedContextId}
-                userInputPanel={userInputPanel}
+                userInputPanels={userInputPanels}
                 onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
                 onAddTask={onAddTask}
@@ -276,6 +313,9 @@ export default function GraphWorkflowPanel({
                 onRemoveTask={onRemoveTask}
                 onReorderTask={onReorderTask}
                 onResetContext={onResetContext}
+                onResetAssignment={onResetAssignment}
+                resettingAssignmentId={resettingAssignmentId}
+                libraryProjectName={projectName}
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}
@@ -354,7 +394,7 @@ export default function GraphWorkflowPanel({
                 execution={execution}
                 events={events}
                 selectedContextId={selectedContextId}
-                userInputPanel={userInputPanel}
+                userInputPanels={userInputPanels}
                 onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
                 onAddTask={onAddTask}
@@ -362,6 +402,9 @@ export default function GraphWorkflowPanel({
                 onRemoveTask={onRemoveTask}
                 onReorderTask={onReorderTask}
                 onResetContext={onResetContext}
+                onResetAssignment={onResetAssignment}
+                resettingAssignmentId={resettingAssignmentId}
+                libraryProjectName={projectName}
                 onViewTask={handleViewTask}
                 viewingTaskId={viewingTaskId}
                 isMutating={isMutating}

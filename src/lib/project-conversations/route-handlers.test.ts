@@ -13,6 +13,8 @@ function makeConv(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: overrides.id,
     scope: "project",
     nameOrigin: "default",
@@ -113,6 +115,9 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
       };
     },
     isConversationBusy: () => false,
+    changeConversationProfile: async () => {
+      throw new Error("not used");
+    },
     broadcast: (e) => {
       broadcasts.push(e);
       return { delivered: true };
@@ -145,6 +150,57 @@ describe("project conversation route handlers", () => {
     expect(h.broadcasts).toHaveLength(1);
     expect(h.broadcasts[0]?.type).toBe("conversation-created");
     expect((h.broadcasts[0] as { scope?: string }).scope).toBe("project");
+  });
+
+  it("createPOST forwards a profile selection and omits it when absent", async () => {
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    const h = harness({
+      createProjectConversation: async (_p, opts) => {
+        seen.push(opts as Record<string, unknown> | undefined);
+        return makeConv({ id: "new-1" });
+      },
+    });
+
+    await h.handlers.createPOST(
+      jsonRequest({ profile: "builtin:general-implementer" }),
+      ctx({ name: "demo" }),
+    );
+    await h.handlers.createPOST(jsonRequest({}), ctx({ name: "demo" }));
+
+    // Normalized at the boundary; absent when the client sends none, so the
+    // resolver's Standard Agent default applies (R7).
+    expect(seen[0]?.profile).toEqual({
+      tier: "builtin",
+      id: "general-implementer",
+    });
+    expect(seen[1]?.profile).toBeUndefined();
+  });
+
+  it("firstPromptPOST forwards a profile selection to the creating entry", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const h = harness({
+      executeProjectPromptStream: async (input) => {
+        seen.push(input as unknown as Record<string, unknown>);
+        input.emit("done", {});
+        return {
+          conversationId: "new-1",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    });
+
+    const res = await h.handlers.firstPromptPOST(
+      jsonRequest({ prompt: "hi", profile: "builtin:general-reviewer" }),
+      ctx({ name: "demo" }),
+    );
+    await readStream(res);
+
+    expect(seen[0]?.profile).toEqual({
+      tier: "builtin",
+      id: "general-reviewer",
+    });
   });
 
   it("createPOST returns 404 for an unknown project", async () => {

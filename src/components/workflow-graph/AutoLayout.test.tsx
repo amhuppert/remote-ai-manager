@@ -24,9 +24,13 @@ function makeContext(id: string) {
     title: id,
     acceptanceCriteria: "TBD",
     implementer: {
-      backend: "claude" as const,
-      model: "sonnet" as const,
-      reasoningEffort: "medium" as const,
+      id: "implementer",
+      profile: { tier: "builtin" as const, id: "general-implementer" },
+      agent: {
+        backend: "claude" as const,
+        model: "sonnet" as const,
+        reasoningEffort: "medium" as const,
+      },
     },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: {},

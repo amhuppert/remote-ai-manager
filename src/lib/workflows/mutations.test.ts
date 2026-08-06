@@ -5,6 +5,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   useApproveGraphWorkflowDefinitionMutation,
+  usePauseGraphWorkflowMutation,
   useResetExecutionContextMutation,
   useResolveApprovalMutation,
   useStartGraphWorkflowMutation,
@@ -79,6 +80,57 @@ describe("useResetExecutionContextMutation", () => {
     expect(init.body).toBe(
       JSON.stringify({ executionId: "exec-42", contextId: "ctx-7" }),
     );
+  });
+});
+
+describe("usePauseGraphWorkflowMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reconciles execution and session queries when a terminal-state race rejects pause", async () => {
+    const client = makeClient();
+    const executionKey = graphWorkflowExecutionKeys.detail("proj-1", "sess-1");
+    const sessionKey = sessionKeys.detail("proj-1", "sess-1");
+    client.setQueryData(executionKey, { id: "exec-1", status: "running" });
+    client.setQueryData(sessionKey, { sessionName: "sess-1" });
+    fetchSpy.mockResolvedValue(
+      jsonResponse(
+        {
+          error: "Only running graph workflow executions can be paused",
+          code: "workflow_transition_conflict",
+          details: {
+            action: "pause",
+            currentStatus: "completed",
+            allowedStatuses: ["running"],
+          },
+        },
+        409,
+      ),
+    );
+
+    const { result } = renderHook(
+      () => usePauseGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await expect(result.current.mutateAsync()).rejects.toMatchObject({
+      name: "ApiCallError",
+      code: "workflow_transition_conflict",
+      status: 409,
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryState(executionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+    });
   });
 });
 

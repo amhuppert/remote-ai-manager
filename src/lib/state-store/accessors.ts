@@ -679,21 +679,10 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution[]> {
-    const summaries =
-      repos.graphWorkflowArchivedExecutions.listSummariesBySession(
-        projectPath,
-        sessionName,
-      );
-    const out: GraphWorkflowExecution[] = [];
-    for (const summary of summaries) {
-      const execution = repos.graphWorkflowArchivedExecutions.findByExecution(
-        projectPath,
-        sessionName,
-        summary.executionId,
-      );
-      if (execution) out.push(execution);
-    }
-    return out;
+    return repos.graphWorkflowArchivedExecutions.listBySession(
+      projectPath,
+      sessionName,
+    );
   }
 
   return {

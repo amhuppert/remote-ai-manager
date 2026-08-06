@@ -45,7 +45,7 @@ describe("graph workflow execution event publisher", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -64,7 +64,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-implement": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -83,7 +83,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-verify": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -529,7 +529,7 @@ describe("graph workflow execution event publisher", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -548,7 +548,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-implement": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -567,7 +567,7 @@ describe("graph workflow execution event publisher", () => {
         },
         "context-verify": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,

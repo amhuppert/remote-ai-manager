@@ -69,6 +69,7 @@ describe("buildConversation", () => {
       sourceBackendRef: backendRef,
       forkLocator: null,
       forkMode: "native",
+      forkPending: false,
     };
 
     const conv = buildConversation({

@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api/fetcher";
 import {
   branchPrefixResponseSchema,
   sessionsResponseSchema,
-  sessionStateSchema,
+  publicSessionStateSchema,
 } from "@/lib/sessions/schemas";
 
 /** A missing session is terminal — retrying a 404 only spams the API. */
@@ -51,7 +51,10 @@ export function useSessionQuery(projectName: string, sessionName: string) {
     queryFn: () =>
       apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}`,
-        sessionStateSchema,
+        // The session detail route serializes through `toPublicSessionState`,
+        // so the client is typed on what it actually receives — including each
+        // conversation's redacted profile identity.
+        publicSessionStateSchema,
       ),
     retry: (failureCount, error) => {
       if (isSessionNotFoundError(error)) return false;

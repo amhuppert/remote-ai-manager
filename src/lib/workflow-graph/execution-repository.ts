@@ -27,6 +27,16 @@ import { computeLanePlan } from "./lane-plan";
 import { substituteContent } from "./parameter-substitution";
 import type { TemplateTier } from "./template-library-service";
 import { resolveWorkflowDefinition } from "./resolve-config";
+import { seedAssignmentSnapshots } from "./seed-assignment-snapshots";
+import {
+  WorkflowAssignmentReferenceError,
+  createAssignmentReferenceChecker,
+  type AssignmentReferenceChecker,
+} from "./assignment-references";
+import {
+  createAgentProfileLibraryService,
+  type AgentProfileLibraryService,
+} from "@/lib/agent-profiles/library-service";
 import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
 import {
   GraphWorkflowValidationError,
@@ -156,11 +166,25 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   >;
   charterService?: WorkflowCharterService;
   readConfig?: () => Promise<GlobalConfig>;
+  agentProfileLibrary?: AgentProfileLibraryService;
+  assignmentReferences?: AssignmentReferenceChecker;
+}
+
+/**
+ * What the seed needs to turn reference-bearing assignments into the bytes the
+ * execution runs: the library to resolve through, the project scope to resolve
+ * the project tier in, and the shared checker for the pre-seed re-check.
+ */
+interface ExecutionAssignmentSeedingDeps {
+  library: AgentProfileLibraryService;
+  assignmentReferences: AssignmentReferenceChecker;
+  projectPath: string;
 }
 
 async function createExecutionFromSeed(
   seed: GraphWorkflowExecutionSeed,
   readConfigDep: () => Promise<GlobalConfig>,
+  assignmentSeeding: ExecutionAssignmentSeedingDeps,
 ): Promise<GraphWorkflowExecution> {
   assertNoLegacyWorkflowFields(
     seed.definition,
@@ -195,8 +219,42 @@ async function createExecutionFromSeed(
     );
   }
 
+  // Re-check assignment references immediately before seeding. Definition
+  // acceptance and `workflow validate` already checked them, but a profile can
+  // be deleted in between, and after the seed there is no library lookup left
+  // to catch it — so the last word belongs here (R4).
+  //
+  // BOTH sources of staffing are checked, because both can dangle. A reference
+  // held only by `workflowDefaults` appears nowhere in the definition — it
+  // arrives through the cascade below — so checking the definition alone lets
+  // it through to `seedAssignmentSnapshots`, which throws an UNLOCATED "could
+  // not be resolved" naming no field to fix. R15 requires the located error for
+  // every holder kind the deletion preview enumerates, and `workflowDefaults`
+  // is one of the three.
+  //
+  // The whole defaults block is checked, not just the slots this definition
+  // happens to inherit: a dangling default is broken global configuration, and
+  // making it fail some launches but not others is the silent breakage R15
+  // exists to prevent.
   const global = await readConfigDep();
-  const workingDefinition = resolveWorkflowDefinition(global, concrete);
+  const referenceIssues = [
+    ...(await assignmentSeeding.assignmentReferences.checkDefinition(concrete, {
+      kind: "project",
+      projectPath: assignmentSeeding.projectPath,
+    })),
+    ...(await assignmentSeeding.assignmentReferences.checkWorkflowDefaults(
+      global.workflowDefaults,
+    )),
+  ];
+  if (referenceIssues.length > 0) {
+    throw new WorkflowAssignmentReferenceError(referenceIssues);
+  }
+
+  const cascade = resolveWorkflowDefinition(global, concrete);
+  const workingDefinition = await seedAssignmentSnapshots(cascade, {
+    library: assignmentSeeding.library,
+    projectPath: assignmentSeeding.projectPath,
+  });
 
   const resolvedValidation = validateResolvedWorkflow(workingDefinition);
   if (!resolvedValidation.ok) {
@@ -247,6 +305,10 @@ export function createGraphWorkflowExecutionRepository(
       publishCharterRegistered: eventPublisher.publishCharterRegistered,
     });
   const readConfigDep = deps.readConfig ?? readConfig;
+  const agentProfileLibrary =
+    deps.agentProfileLibrary ?? createAgentProfileLibraryService();
+  const assignmentReferences =
+    deps.assignmentReferences ?? createAssignmentReferenceChecker();
 
   async function getActive(
     projectPath: string,
@@ -260,7 +322,11 @@ export function createGraphWorkflowExecutionRepository(
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution> {
-    const baseExecution = await createExecutionFromSeed(seed, readConfigDep);
+    const baseExecution = await createExecutionFromSeed(seed, readConfigDep, {
+      library: agentProfileLibrary,
+      assignmentReferences,
+      projectPath,
+    });
 
     const session = await deps.getSession(projectPath, sessionName);
     if (!session) {
@@ -415,7 +481,7 @@ export function createGraphWorkflowExecutionRepository(
   /**
    * Loop-generation fence, checked inside the write-queue critical section
    * against the *persisted* execution: a mutation issued by a superseded loop
-   * instance (its execution aborted/replaced, or resumed under a new epoch) is
+   * instance (its generation retired by a lifecycle transition) is
    * rejected atomically before the mutator runs. Also asserts an active
    * execution exists, narrowing `current` to non-null for the reducer.
    *

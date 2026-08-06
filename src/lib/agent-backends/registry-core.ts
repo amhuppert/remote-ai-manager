@@ -6,6 +6,7 @@ import {
   capabilityKindSchema,
   continuationStrengthSchema,
   forkSupportSchema,
+  fsWriteRestrictionSupportSchema,
   queueDeliveryTimingSchema,
   skillTriggerPrefixSchema,
   structuredOutputSupportSchema,
@@ -174,6 +175,15 @@ function validateDescriptorCompleteness(
       rejectDescriptor(
         descriptor.id,
         `has an invalid tasks.structuredOutput value "${String(tasks.structuredOutput)}"`,
+      );
+    }
+    const writeRestriction = fsWriteRestrictionSupportSchema.safeParse(
+      tasks.fsWriteRestriction,
+    );
+    if (!writeRestriction.success) {
+      rejectDescriptor(
+        descriptor.id,
+        `has an invalid tasks.fsWriteRestriction value "${String(tasks.fsWriteRestriction)}"`,
       );
     }
   }

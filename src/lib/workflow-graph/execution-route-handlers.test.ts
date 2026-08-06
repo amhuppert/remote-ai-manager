@@ -9,7 +9,7 @@ import {
 import { createApprovalGateService } from "./approval-gate";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { createWorkflowExecution } from "./test-fixtures";
+import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
 import {
   buildLaneIterationToolServer,
   createGraphWorkflowExecutionRouteHandlers,
@@ -24,6 +24,7 @@ import type {
   GraphExecutionLifecycleContext,
 } from "./execution-lifecycle-port";
 import {
+  GraphWorkflowTransitionConflictError,
   WorkflowDefinitionApprovalRequiredError,
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
@@ -100,6 +101,7 @@ describe("graph workflow execution route handlers", () => {
   const normalizeExecutionAfterRestart = vi.fn();
   const kickOffExecutionLoop = vi.fn();
   const resetExecutionContext = vi.fn();
+  const resetExecutionContextAssignment = vi.fn();
   const getActiveExecution = vi.fn();
   const recordPendingHaltReason = vi.fn();
   const drainAndHalt = vi.fn();
@@ -136,6 +138,7 @@ describe("graph workflow execution route handlers", () => {
     normalizeExecutionAfterRestart,
     kickOffExecutionLoop,
     resetExecutionContext,
+    resetExecutionContextAssignment,
     getActiveExecution,
     recordPendingHaltReason,
     drainAndHalt,
@@ -1255,7 +1258,7 @@ describe("graph workflow execution route handlers", () => {
         id: "execution-history-1",
         status: "aborted",
         completedAt: "2026-03-27T11:00:00.000Z",
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
       }),
     ]);
 
@@ -1299,7 +1302,7 @@ describe("graph workflow execution route handlers", () => {
           activeContextTitles: [],
           activeBatchIds: [],
           activeJoinIds: [],
-          haltReason: { type: "aborted" },
+          haltReason: { type: "aborted", cause: null, summary: null },
           pendingHaltReason: null,
           contextMergeProgress: [],
           joinProgress: [],
@@ -1852,7 +1855,7 @@ describe("graph workflow execution route handlers", () => {
       createWorkflowExecution({
         status: "aborted",
         completedAt: "2026-03-27T12:10:00.000Z",
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
       }),
     );
 
@@ -1892,6 +1895,39 @@ describe("graph workflow execution route handlers", () => {
     expect(abortExecution).toHaveBeenCalledWith("/repo", "session-1");
   });
 
+  it("returns a structured 409 when completion wins before pause", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    pauseExecution.mockRejectedValue(
+      new GraphWorkflowTransitionConflictError(
+        "pause",
+        "completed",
+        ["running"],
+        "Only running graph workflow executions can be paused",
+      ),
+    );
+
+    const response = await handlers.PAUSE(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/pause",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "Only running graph workflow executions can be paused",
+      code: "workflow_transition_conflict",
+      details: {
+        action: "pause",
+        currentStatus: "completed",
+        allowedStatuses: ["running"],
+      },
+    });
+  });
+
   it("returns 409 without halt recovery when a pending execution cannot be resumed", async () => {
     const pendingExecution = createWorkflowExecution({
       status: "pending",
@@ -1906,7 +1942,10 @@ describe("graph workflow execution route handlers", () => {
     );
     normalizeExecutionAfterRestart.mockResolvedValue(null);
     resumeExecution.mockRejectedValue(
-      new Error(
+      new GraphWorkflowTransitionConflictError(
+        "resume",
+        "pending",
+        ["paused", "halted"],
         "Only paused or halted graph workflow executions can be resumed",
       ),
     );
@@ -1995,7 +2034,7 @@ describe("graph workflow execution route handlers", () => {
     const abortedExecution = createWorkflowExecution({
       status: "aborted",
       completedAt: "2026-03-27T12:10:00.000Z",
-      haltReason: { type: "aborted" },
+      haltReason: { type: "aborted", cause: null, summary: null },
     });
     abortExecution.mockResolvedValue(abortedExecution);
 
@@ -2018,7 +2057,7 @@ describe("graph workflow execution route handlers", () => {
       createWorkflowExecution({
         status: "aborted",
         completedAt: "2026-03-27T12:10:00.000Z",
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
       }),
     );
     executionAborted.mockRejectedValue(new Error("consumer offline"));
@@ -2324,6 +2363,122 @@ describe("graph workflow execution route handlers", () => {
     expect(resetExecutionContext).not.toHaveBeenCalled();
   });
 
+  it("resets one validator assignment and reports the execution it left behind", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-reset",
+          status: "halted",
+        }),
+      }),
+    );
+    resetExecutionContextAssignment.mockResolvedValue(
+      createWorkflowExecution({ id: "execution-reset", status: "halted" }),
+    );
+
+    const response = await handlers.RESET_ASSIGNMENT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-assignment",
+        "POST",
+        {
+          executionId: "execution-reset",
+          contextId: "context-implement",
+          assignmentId: "alpha",
+        },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(resetExecutionContextAssignment).toHaveBeenCalledWith(
+      "/repo",
+      "session-1",
+      "context-implement",
+      "alpha",
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      execution: { executionId: "execution-reset", status: "halted" },
+    });
+  });
+
+  it("returns 400 when the reset-assignment request omits the assignment", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+
+    const response = await handlers.RESET_ASSIGNMENT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-assignment",
+        "POST",
+        { executionId: "execution-reset", contextId: "context-implement" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(resetExecutionContextAssignment).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when a validator assignment reset targets a running execution", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-reset",
+          status: "running",
+        }),
+      }),
+    );
+    resetExecutionContextAssignment.mockRejectedValue(
+      new Error(
+        "Resetting a validator assignment is only allowed when the workflow is paused or halted (current status: running).",
+      ),
+    );
+
+    const response = await handlers.RESET_ASSIGNMENT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-assignment",
+        "POST",
+        {
+          executionId: "execution-reset",
+          contextId: "context-implement",
+          assignmentId: "alpha",
+        },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+  });
+
+  it("returns 409 when a validator assignment reset names a stale execution", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          id: "execution-current",
+          status: "halted",
+        }),
+      }),
+    );
+
+    const response = await handlers.RESET_ASSIGNMENT(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/reset-assignment",
+        "POST",
+        {
+          executionId: "execution-stale",
+          contextId: "context-implement",
+          assignmentId: "alpha",
+        },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(resetExecutionContextAssignment).not.toHaveBeenCalled();
+  });
+
   it("returns 404 when the session has no active execution to reset", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession({ graphWorkflowExecution: null }));
@@ -2425,6 +2580,9 @@ describe("graph workflow resolve-approval route handler", () => {
       resumeExecution: unusedDep("resumeExecution"),
       abortExecution: unusedDep("abortExecution"),
       resetExecutionContext: unusedDep("resetExecutionContext"),
+      resetExecutionContextAssignment: unusedDep(
+        "resetExecutionContextAssignment",
+      ),
       archiveExecution: unusedDep("archiveExecution"),
       kickOffExecutionLoop: unusedDep("kickOffExecutionLoop"),
       getActiveExecution: unusedDep("getActiveExecution"),
@@ -2784,11 +2942,16 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         title: "Codex Implement",
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "codex",
-          model: "gpt-5.4-mini",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          profileSnapshot: makeProfileSnapshot(),
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+          },
         },
-        contextValidator: null,
+        contextValidator: { enabled: false, assignments: [] },
         scriptValidator: { enabled: false },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
@@ -2818,7 +2981,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
     contextStates: {
       "context-codex": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-codex",
         status: "running",
         totalTaskCount: 1,
@@ -3038,6 +3201,9 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
       resumeExecution: unused("resumeExecution"),
       abortExecution: unused("abortExecution"),
       resetExecutionContext: unused("resetExecutionContext"),
+      resetExecutionContextAssignment: unused(
+        "resetExecutionContextAssignment",
+      ),
       archiveExecution: unused("archiveExecution"),
       kickOffExecutionLoop: unused("kickOffExecutionLoop"),
       getActiveExecution: unused("getActiveExecution"),

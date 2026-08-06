@@ -9,8 +9,6 @@ import {
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
-  graphWorkflowValidationEventSessionRefSchema,
-  graphWorkflowValidationReviewArtifactSchema,
   graphWorkflowValidationResultEventSchema,
 } from "@/lib/workflow-graph/event-schemas";
 import {
@@ -23,6 +21,8 @@ import {
   graphWorkflowExecutionSessionRefSchema,
   graphWorkflowHaltReasonSchema,
   graphWorkflowPendingApprovalSchema,
+  graphWorkflowValidationReviewArtifactSchema,
+  graphWorkflowValidationSessionRefSchema,
   resetExecutionContextRequestSchema,
 } from "@/lib/workflow-graph/schemas";
 import {
@@ -30,7 +30,6 @@ import {
   workflowCollaborationStatusSchema,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
-  graphWorkflowAgentValidatorConfigSchema,
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneContinuityPolicySchema,
@@ -56,6 +55,7 @@ import {
   workflowDefaultsSchema,
 } from "@/lib/config/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { makeProfileSnapshot } from "@/lib/workflow-graph/test-fixtures";
 
 const timestamp = "2026-03-27T12:00:00.000Z";
 
@@ -71,9 +71,13 @@ function createSemanticDefinition() {
         description: "Plan the implementation",
         acceptanceCriteria: "All tasks are complete and verified.",
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
         },
         mutability: {
           allowAgentTaskAdd: true,
@@ -86,17 +90,20 @@ function createSemanticDefinition() {
           continuity: { enabled: true, contextLimitTokens: 120000 },
         },
         contextValidator: {
-          kind: "use",
-          value: {
-            type: "claude",
-            enabled: true,
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+          enabled: true,
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
             },
-            continuity: { enabled: true },
-          },
+          ],
         },
       },
       {
@@ -105,9 +112,13 @@ function createSemanticDefinition() {
         description: "Write the code",
         acceptanceCriteria: "Code compiles and tests pass.",
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "medium",
+          },
         },
         mutability: {
           allowAgentTaskAdd: false,
@@ -161,9 +172,14 @@ function createResolvedDefinition() {
         description: "Plan the implementation",
         acceptanceCriteria: "All tasks are complete and verified.",
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          profileSnapshot: makeProfileSnapshot(),
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
         },
         mutability: { allowAgentTaskAdd: true },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
@@ -172,14 +188,21 @@ function createResolvedDefinition() {
           continuity: { enabled: true, contextLimitTokens: 120000 },
         },
         contextValidator: {
-          type: "claude",
           enabled: true,
-          agent: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
-          },
-          continuity: { enabled: true },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              profileSnapshot: makeProfileSnapshot(),
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
       },
       {
@@ -188,14 +211,19 @@ function createResolvedDefinition() {
         description: "Write the code",
         acceptanceCriteria: "Code compiles and tests pass.",
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          profileSnapshot: makeProfileSnapshot(),
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "medium",
+          },
         },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 2 },
         iterationPolicy: { maxIterations: 3 },
-        contextValidator: null,
+        contextValidator: { enabled: false, assignments: [] },
       },
     ],
     tasks: [
@@ -674,7 +702,7 @@ describe("workflow graph validator and request schemas", () => {
 
   it("normalizes legacy validation metadata into provider-neutral event contracts", () => {
     expect(
-      graphWorkflowValidationEventSessionRefSchema.parse({
+      graphWorkflowValidationSessionRefSchema.parse({
         engine: "claude",
         lane: "context_validator",
         conversationId: "conversation-legacy",
@@ -720,7 +748,7 @@ describe("workflow graph validator and request schemas", () => {
 
   it("normalizes validation events containing only an AgentSessionRef", () => {
     expect(
-      graphWorkflowValidationEventSessionRefSchema.parse({
+      graphWorkflowValidationSessionRefSchema.parse({
         backend: "claude",
         ref: "backend-session-1",
       }),
@@ -772,11 +800,15 @@ describe("workflowLiveEditOperationSchema", () => {
         title: "Build it",
         description: null,
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
         },
-        contextValidator: null,
+        contextValidator: { enabled: false, assignments: [] },
         scriptValidator: { enabled: true },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: false },
@@ -825,9 +857,13 @@ describe("workflowLiveEditOperationSchema", () => {
         acceptanceCriteria: "Docs written",
         configFromContextId: "impl",
         implementer: {
-          backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
         },
       },
       { type: "remove-context", contextId: "docs", deleteTasks: true },
@@ -952,58 +988,6 @@ describe("workflowLiveEditRequestSchema", () => {
       baseLiveRevision: 1,
       source: "cli",
       operations: [validOp],
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("graphWorkflowAgentValidatorConfigSchema discriminated union", () => {
-  it("parses a claude validator config with explicit type", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
-      type: "claude",
-      enabled: true,
-      agent: { model: "sonnet", reasoningEffort: "medium" },
-      acceptanceCriteria: "All tasks are complete and verified.",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("claude");
-      expect(result.data).toHaveProperty("agent");
-    }
-  });
-
-  it("parses a codex validator config", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
-      type: "codex",
-      enabled: true,
-      codex: { model: "gpt-5.4", reasoningEffort: "high" },
-      acceptanceCriteria: "All tasks are complete and verified.",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("codex");
-      expect(result.data).toHaveProperty("codex");
-    }
-  });
-
-  it("defaults codex field to empty object when omitted", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
-      type: "codex",
-      enabled: false,
-      acceptanceCriteria: "Check it.",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe("codex");
-      expect((result.data as { codex: object }).codex).toEqual({});
-    }
-  });
-
-  it("rejects invalid type value", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.safeParse({
-      type: "gpt",
-      enabled: true,
-      acceptanceCriteria: "Nope.",
     });
     expect(result.success).toBe(false);
   });
@@ -1140,19 +1124,29 @@ describe("workflow graph session state and SSE schemas", () => {
 function createWorkflowDefaults() {
   return {
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
-    },
-    contextValidator: {
-      type: "claude",
-      enabled: true,
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
       agent: {
         backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        model: "opus",
+        reasoningEffort: "high",
       },
-      continuity: { enabled: true },
+    },
+    contextValidator: {
+      enabled: true,
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
@@ -1181,7 +1175,7 @@ describe("workflowDefaultsSchema", () => {
     const result = workflowDefaultsSchema.safeParse(createWorkflowDefaults());
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.contextValidator.type).toBe("claude");
+      expect(result.data.contextValidator.assignments).toHaveLength(1);
       expect(result.data.scriptValidator.enabled).toBe(false);
       expect(result.data.askUserQuestions.enabled).toBe(false);
       expect(result.data.collaboration.negotiationRounds).toBe(3);
@@ -1300,11 +1294,16 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
     title: "Context",
     acceptanceCriteria: "AC",
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
     },
-    contextValidator: null,
+    contextValidator: { enabled: false, assignments: [] },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
@@ -1340,11 +1339,16 @@ describe("execution context outputSchema (D2 R1)", () => {
   const resolvedBase = {
     ...authoredBase,
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
     },
-    contextValidator: null,
+    contextValidator: { enabled: false, assignments: [] },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
@@ -1547,39 +1551,6 @@ describe("graphWorkflowIterationPolicySchema with continuity", () => {
   });
 });
 
-describe("graphWorkflowAgentValidatorConfigSchema with continuity", () => {
-  it("defaults continuity to enabled for claude validators", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.parse({
-      type: "claude",
-      enabled: true,
-      acceptanceCriteria: "Validate the context.",
-      agent: { model: "sonnet", reasoningEffort: "medium" },
-    });
-    expect(result.continuity.enabled).toBe(true);
-    expect(result.continuity.contextLimitTokens).toBeUndefined();
-  });
-
-  it("defaults continuity to enabled for codex validators", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.parse({
-      type: "codex",
-      enabled: true,
-      acceptanceCriteria: "Validate with Codex.",
-    });
-    expect(result.continuity.enabled).toBe(true);
-  });
-
-  it("accepts explicit continuity on claude validators", () => {
-    const result = graphWorkflowAgentValidatorConfigSchema.parse({
-      type: "claude",
-      enabled: true,
-      acceptanceCriteria: "Check it.",
-      agent: { model: "opus", reasoningEffort: "high" },
-      continuity: { enabled: false },
-    });
-    expect(result.continuity.enabled).toBe(false);
-  });
-});
-
 describe("globalConfigSchema workflowDefaults", () => {
   it("accepts config with workflowDefaults", () => {
     const result = globalConfigSchema.safeParse({
@@ -1601,9 +1572,9 @@ describe("globalConfigSchema workflowDefaults", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.workflowDefaults?.contextValidator?.type).toBe(
-        "claude",
-      );
+      expect(
+        result.data.workflowDefaults?.contextValidator?.assignments,
+      ).toHaveLength(1);
     }
   });
 

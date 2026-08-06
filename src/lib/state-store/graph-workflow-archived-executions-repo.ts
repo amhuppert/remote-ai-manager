@@ -4,6 +4,7 @@ import {
   graphWorkflowExecutionSchema,
   type GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
+import { upgradeLegacyArchivedExecutionBlob } from "@/lib/workflow-graph/archived-legacy-decode";
 import {
   graphWorkflowStatusSchema,
   type GraphWorkflowStatus,
@@ -52,6 +53,19 @@ export interface GraphWorkflowArchivedExecutionsRepo {
     sessionName: string,
     executionId: string,
   ): GraphWorkflowExecution | null;
+  /**
+   * Every decodable archived execution for a session, newest first.
+   *
+   * A row that neither the current schema nor the legacy decode floor accepts
+   * is SKIPPED with a diagnostic rather than throwing: history is a list, and
+   * one unreadable record must not hide every readable one. `findByExecution`
+   * keeps throwing — a caller who named that execution is asking for it
+   * specifically and deserves the failure.
+   */
+  listBySession(
+    projectPath: string,
+    sessionName: string,
+  ): GraphWorkflowExecution[];
   /**
    * Terminal status of an archived execution by its globally-unique id, for
    * callers that hold only the execution id (e.g. a spec execution's linked
@@ -118,6 +132,50 @@ function summaryRowToDomain(
   };
 }
 
+type DecodeResult =
+  | { ok: true; value: GraphWorkflowExecution }
+  | { ok: false; issues: unknown };
+
+/**
+ * The one archived-blob read rule, shared by the point lookup and the list:
+ * parse with the current schema, and only if that fails try the read-only
+ * legacy decode floor. Never writes back — a finished run's record is what it
+ * was. Returning a result instead of throwing is what lets the list skip a
+ * broken row while the point lookup still fails loudly.
+ */
+function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "invalid_json",
+          path: ["execution_json"],
+          message: getErrorMessage(err),
+        },
+      ],
+    };
+  }
+
+  const result = graphWorkflowExecutionSchema.safeParse(parsed);
+  if (result.success) return { ok: true, value: result.data };
+
+  const decoded = graphWorkflowExecutionSchema.safeParse(
+    upgradeLegacyArchivedExecutionBlob(parsed),
+  );
+  if (decoded.success) {
+    logger.info(
+      "state-store.graph-workflow-archived-executions.legacy_decode",
+      { executionId },
+    );
+    return { ok: true, value: decoded.data };
+  }
+  return { ok: false, issues: result.error.issues };
+}
+
 function timed<T>(
   op: string,
   identifier: {
@@ -178,6 +236,12 @@ export function createGraphWorkflowArchivedExecutionsRepo(
        FROM graph_workflow_archived_executions
       WHERE project_path = ? AND session_name = ? AND execution_id = ?
       LIMIT 1`,
+  );
+  const listBySessionStmt = db.prepare(
+    `SELECT execution_id, execution_json
+       FROM graph_workflow_archived_executions
+      WHERE project_path = ? AND session_name = ?
+      ORDER BY archived_at DESC, execution_id DESC`,
   );
   const findStatusStmt = db.prepare(
     `SELECT status
@@ -251,30 +315,57 @@ export function createGraphWorkflowArchivedExecutionsRepo(
               },
             ]);
           }
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(
-              (row as { execution_json: string }).execution_json,
-            );
-          } catch (err) {
-            return logAndThrowValidationFailure(executionId, [
-              {
-                code: "invalid_json",
-                path: ["execution_json"],
-                message: getErrorMessage(err),
-              },
-            ]);
-          }
-          const result = graphWorkflowExecutionSchema.safeParse(parsed);
-          if (!result.success) {
-            return logAndThrowValidationFailure(
-              executionId,
-              result.error.issues,
-            );
-          }
-          return result.data;
+          const decoded = decodeArchivedBlob(
+            executionId,
+            (row as { execution_json: string }).execution_json,
+          );
+          if (decoded.ok) return decoded.value;
+          return logAndThrowValidationFailure(executionId, decoded.issues);
         },
       );
+    },
+    listBySession(projectPath, sessionName) {
+      return timed("listBySession", { projectPath, sessionName }, () => {
+        const rows = listBySessionStmt.all(
+          projectPath,
+          sessionName,
+        ) as unknown[];
+        const executions: GraphWorkflowExecution[] = [];
+        for (const row of rows) {
+          if (
+            typeof row !== "object" ||
+            row === null ||
+            typeof (row as { execution_id?: unknown }).execution_id !==
+              "string" ||
+            typeof (row as { execution_json?: unknown }).execution_json !==
+              "string"
+          ) {
+            logger.warn(
+              "state-store.graph-workflow-archived-executions.list_row_skipped",
+              { projectPath, sessionName, reason: "invalid_row_shape" },
+            );
+            continue;
+          }
+          const { execution_id: executionId, execution_json: executionJson } =
+            row as { execution_id: string; execution_json: string };
+          const decoded = decodeArchivedBlob(executionId, executionJson);
+          if (!decoded.ok) {
+            logger.warn(
+              "state-store.graph-workflow-archived-executions.list_row_skipped",
+              {
+                projectPath,
+                sessionName,
+                executionId,
+                reason: "undecodable",
+                issues: decoded.issues,
+              },
+            );
+            continue;
+          }
+          executions.push(decoded.value);
+        }
+        return executions;
+      });
     },
     findStatusByExecutionId(executionId) {
       return timed("findStatusByExecutionId", { executionId }, () => {

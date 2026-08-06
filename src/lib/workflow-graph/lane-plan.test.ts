@@ -4,7 +4,10 @@ import type {
   ResolvedWorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import { computeLanePlan, recomputeLanePlanForSubgraph } from "./lane-plan";
-import { createResolvedWorkflowDefinition } from "./test-fixtures";
+import {
+  createResolvedWorkflowDefinition,
+  makeProfileSnapshot,
+} from "./test-fixtures";
 
 function makeDefinition(
   contexts: Array<{ id: string; taskCount?: number }>,
@@ -34,11 +37,16 @@ function makeDefinition(
       title: c.id,
       acceptanceCriteria: "pass",
       implementer: {
-        backend: "claude" as const,
-        model: "opus" as const,
-        reasoningEffort: "medium" as const,
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: {
+          backend: "claude" as const,
+          model: "opus" as const,
+          reasoningEffort: "medium" as const,
+        },
       },
-      contextValidator: null,
+      contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { enabled: false as const },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },

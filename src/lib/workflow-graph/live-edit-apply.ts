@@ -12,6 +12,16 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
+import {
+  AgentProfileNotResolvableError,
+  createAgentProfileLibraryService,
+} from "@/lib/agent-profiles/library-service";
+import {
+  formatAgentProfileRef,
+  type AgentProfileSnapshot,
+  type ResolvedAgentProfile,
+} from "@/lib/agent-profiles/schemas";
 import { createLogger } from "@/lib/logging";
 import { readConfig } from "@/lib/config/loader";
 import { readRepoConfig } from "@/lib/projects/repo-config";
@@ -22,6 +32,10 @@ import type {
   WorkflowGraphValidationError,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
+import {
+  prepareLiveEditAssignmentSnapshots,
+  type PrepareAssignmentSnapshotsResult,
+} from "./live-edit-preparation";
 import type {
   GraphWorkflowEventDelivery,
   PublishCharterUpdatedInput,
@@ -43,8 +57,71 @@ import {
   type LiveEditSource,
   type ResolvedContextConfig,
 } from "./runtime-edits";
+import type { AgentAssignment } from "./config-schemas";
 
 const logger = createLogger("workflow.live-edit");
+
+/**
+ * Resolve every profile reachable from `projectPath` once, and return the sync
+ * lookup that snapshots the GLOBAL DEFAULT assignments a live `add-context`
+ * seeds from.
+ *
+ * Assignments arriving in an operation do NOT come through here — they are
+ * pinned by {@link buildDefaultAssignmentSnapshotPreparation}, which can locate
+ * a failure on the op that carried it. This lookup only backs the resolved
+ * defaults, which belong to no operation and so have nothing to locate.
+ */
+async function buildAssignmentSnapshotLookup(
+  projectPath: string,
+): Promise<(assignment: AgentAssignment) => AgentProfileSnapshot> {
+  const library = createAgentProfileLibraryService();
+  const { profiles } = await library.list(projectPath);
+
+  const resolved = new Map<string, ResolvedAgentProfile>();
+  await Promise.all(
+    profiles.map(async (item) => {
+      resolved.set(
+        formatAgentProfileRef(item.ref),
+        await library.resolve(projectPath, item.ref),
+      );
+    }),
+  );
+
+  return (assignment) => {
+    const profile = resolved.get(formatAgentProfileRef(assignment.profile));
+    if (!profile) {
+      throw new AgentProfileNotResolvableError(assignment.profile);
+    }
+    return buildAgentProfileSnapshot(profile, {
+      ...(assignment.focus === undefined
+        ? {}
+        : { assignmentFocus: assignment.focus }),
+    });
+  };
+}
+
+/**
+ * Production preparation step (D10): resolve, compose, and hash every
+ * assignment this batch introduces, before the write queue opens.
+ */
+export function buildDefaultAssignmentSnapshotPreparation(
+  projectPath: string,
+  operations: readonly WorkflowLiveEditOperation[],
+): Promise<PrepareAssignmentSnapshotsResult> {
+  const library = createAgentProfileLibraryService();
+  return prepareLiveEditAssignmentSnapshots({
+    operations,
+    composeSnapshot: async (assignment) =>
+      buildAgentProfileSnapshot(
+        await library.resolve(projectPath, assignment.profile),
+        {
+          ...(assignment.focus === undefined
+            ? {}
+            : { assignmentFocus: assignment.focus }),
+        },
+      ),
+  });
+}
 
 /**
  * Resolve the concrete config a new `add-context` op seeds from when no
@@ -67,14 +144,24 @@ export async function buildDefaultLiveEditDeps(
     acceptanceCriteria: "Live edit defaults",
   };
   const resolved = resolveContext(defaults, {}, syntheticContext);
+  const snapshotFor = await buildAssignmentSnapshotLookup(projectPath);
   const collaboration = resolveCollaborationConfigWithProvenance(
     defaults,
     {},
     syntheticContext,
   );
   const resolvedGlobalDefaults: ResolvedContextConfig = {
-    implementer: resolved.implementer,
-    contextValidator: resolved.contextValidator,
+    implementer: {
+      ...resolved.implementer,
+      profileSnapshot: snapshotFor(resolved.implementer),
+    },
+    contextValidator: {
+      ...resolved.contextValidator,
+      assignments: resolved.contextValidator.assignments.map((assignment) => ({
+        ...assignment,
+        profileSnapshot: snapshotFor(assignment),
+      })),
+    },
     scriptValidator: resolved.scriptValidator,
     humanApprovalGate: resolved.humanApprovalGate,
     askUserQuestions: resolved.askUserQuestions,
@@ -88,6 +175,16 @@ export async function buildDefaultLiveEditDeps(
   return {
     createTaskId: () => `task-${randomUUID()}`,
     resolvedGlobalDefaults: () => resolvedGlobalDefaults,
+    // Fail-safe, not a resolver: every assignment an OPERATION carries is
+    // pinned by preparation, and `applyLiveEditsToActiveExecution` substitutes
+    // that prepared lookup here. Reaching this would mean an assignment got
+    // into the reducer without being prepared, which is the one thing prepared-
+    // snapshot pinning exists to make impossible.
+    snapshotFor() {
+      throw new Error(
+        "live edit assignments must be resolved by prepareAssignmentSnapshots before the mutation",
+      );
+    },
     hasPreMergeCommand: () => hasPreMergeCommand,
     now: () => new Date().toISOString(),
     executionContract: createRegisteredGraphExecutionContract(),
@@ -159,6 +256,16 @@ export interface LiveEditApplyServiceDeps {
     ) => MutateActiveResult | GraphWorkflowExecution,
   ): Promise<GraphWorkflowExecution>;
   buildLiveEditDeps(projectPath: string): Promise<LiveEditDeps>;
+  /**
+   * Compose and hash the snapshot for every assignment this batch introduces,
+   * BEFORE the serialized mutation (D10). Library resolution is async and the
+   * mutation reducer is not, so this is the only place the two can meet; the
+   * reducer then commits the prepared bytes verbatim.
+   */
+  prepareAssignmentSnapshots(
+    projectPath: string,
+    operations: readonly WorkflowLiveEditOperation[],
+  ): Promise<PrepareAssignmentSnapshotsResult>;
   publishLiveEditApplied(
     input: PublishLiveEditAppliedInput,
   ): GraphWorkflowEventDelivery;
@@ -297,7 +404,30 @@ export async function applyLiveEditsToActiveExecution(
   deps: LiveEditApplyServiceDeps,
 ): Promise<LiveEditApplyOutcome> {
   const { projectPath, sessionName, request } = input;
-  const liveEditDeps = await deps.buildLiveEditDeps(projectPath);
+
+  // Preparation first (D10). A dangling reference fails here, where the op that
+  // carried it is still known, rather than as a throw out of a reducer that has
+  // no way to name it. Everything past this point is snapshot-bearing: the
+  // library is never consulted again, so a concurrent profile edit or deletion
+  // cannot change what this edit commits.
+  const preparation = await deps.prepareAssignmentSnapshots(
+    projectPath,
+    request.operations,
+  );
+  if (!preparation.ok) {
+    return rejected({
+      status: 400,
+      code: "invalid_edit",
+      error: "live edit was rejected",
+      issues: preparation.issues,
+    });
+  }
+
+  const baseLiveEditDeps = await deps.buildLiveEditDeps(projectPath);
+  const liveEditDeps: LiveEditDeps = {
+    ...baseLiveEditDeps,
+    snapshotFor: (assignment) => preparation.prepared.snapshotFor(assignment),
+  };
 
   // Dry-run — outside the write queue (D14). The state-store mutation primitive
   // always persists; a dry-run reads the snapshot via the accessor, runs the

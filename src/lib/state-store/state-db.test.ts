@@ -746,8 +746,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 2 (the evidence-kind narrowing, after the AgentSessionRef cutover at 1)", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(2);
+  it("this build understands schema version 3 (the workflow agent-assignment cutover, after AgentSessionRef at 1 and the evidence-kind narrowing at 2)", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(3);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

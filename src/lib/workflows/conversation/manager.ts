@@ -38,6 +38,7 @@ import {
   type EnsureActorInputData,
 } from "./actor-input-loader";
 import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
+import { admitConversationProfileForTurn } from "@/lib/conversations/profile-admission";
 import { scopeRefFromStoreSessionName } from "@/lib/conversations/conversation-target";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
@@ -705,6 +706,17 @@ export async function executeConversationTurn(
         result: projectTurnResult(actor),
       };
     }
+
+    // Settle the agent profile BEFORE the prompt reaches the actor (R8/D21).
+    // Awaited, and after the acceptance check so a rejected turn does not lock
+    // a profile it never ran under: once this resolves the lock is on disk, so
+    // a profile change contending with this turn is refused rather than
+    // silently replacing what the runtime is about to be given.
+    await admitConversationProfileForTurn({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+    });
 
     actor.send(event);
     await input.onAccepted?.();

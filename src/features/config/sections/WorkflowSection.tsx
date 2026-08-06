@@ -87,8 +87,10 @@ function WorkflowDefaultsSubsections({
         isDefault={implementerIsDefault}
       >
         <ImplementerFields
-          value={effective.implementer}
-          onChange={(v) => onChangeBlock("implementer", v)}
+          value={effective.implementer.agent}
+          onChange={(agent) =>
+            onChangeBlock("implementer", { ...effective.implementer, agent })
+          }
         />
       </ConfigSubsection>
 

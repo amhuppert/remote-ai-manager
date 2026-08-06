@@ -33,6 +33,8 @@ function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: CONVERSATION_ID,
     scope: "session",
     nameOrigin: "default",
@@ -374,6 +376,7 @@ describe("conversation persistence", () => {
           sourceBackendRef: { backend: "codex", ref: "thr-fork-src" },
           forkLocator: null,
           forkMode: "native",
+          forkPending: false,
         },
         role: null,
         transcriptPath: null,

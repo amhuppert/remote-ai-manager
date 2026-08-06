@@ -440,6 +440,8 @@ const baseSession: SessionState = {
   parentSessionName: null,
   conversations: [
     {
+      profileSnapshot: null,
+      profileLockedAt: null,
       id: "conv-1",
       scope: "session",
       nameOrigin: "default",

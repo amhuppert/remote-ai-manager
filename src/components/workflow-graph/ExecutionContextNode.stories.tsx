@@ -21,9 +21,13 @@ function makeContext(
       "Implement REST API endpoints for user management with authentication and validation.",
     acceptanceCriteria: "All REST endpoints exist and pass integration tests.",
     implementer: {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
     },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: {},
@@ -113,7 +117,7 @@ export const DependencyBlocked: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 5,
@@ -147,7 +151,7 @@ export const Ready: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -177,7 +181,7 @@ export const WaitingForLane: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -207,7 +211,7 @@ export const WaitingForJoin: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -237,7 +241,7 @@ export const Running: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -267,7 +271,7 @@ export const Validating: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -297,7 +301,7 @@ export const Completed: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "completed",
         totalTaskCount: 5,
@@ -327,7 +331,7 @@ export const Published: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "completed",
         totalTaskCount: 5,
@@ -361,7 +365,7 @@ export const AwaitingApproval: Story = {
           requestedAt: "2026-06-10T09:00:00.000Z",
           decision: null,
         },
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "awaiting_approval",
         totalTaskCount: 5,
@@ -391,13 +395,16 @@ export const AwaitingUserInput: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: {
-          conversationId: "conv-1",
-          lane: "implementer",
-          questionBatchId: "qb-1",
-          questions: [],
-          requestedAt: "2026-07-03T09:00:00.000Z",
-          answers: null,
+        pendingUserInputs: {
+          implementer: {
+            conversationId: "conv-1",
+            lane: "implementer",
+            questionBatchId: "qb-1",
+            questions: [],
+            requestedAt: "2026-07-03T09:00:00.000Z",
+            roundSeq: null,
+            answers: null,
+          },
         },
         contextId: "ctx-1",
         status: "awaiting_user_input",
@@ -428,7 +435,7 @@ export const BlockedBehindGate: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 5,
@@ -462,7 +469,7 @@ export const Halted: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "halted",
         totalTaskCount: 5,
@@ -503,7 +510,7 @@ export const SelectedRunning: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -534,7 +541,7 @@ export const Merging: Story = {
       mode: "execution",
       contextState: {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -573,17 +580,20 @@ export const ValidatorsClaudeAgent: Story = {
     data: {
       context: makeContext({
         contextValidator: {
-          kind: "use",
-          value: {
-            enabled: true,
-            type: "claude",
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+          enabled: true,
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
             },
-            continuity: { enabled: true },
-          },
+          ],
         },
       }),
       tasks: makeTasks(3),
@@ -597,13 +607,20 @@ export const ValidatorsCodexAgent: Story = {
     data: {
       context: makeContext({
         contextValidator: {
-          kind: "use",
-          value: {
-            enabled: true,
-            type: "codex",
-            codex: { model: "gpt-5.5", reasoningEffort: "medium" },
-            continuity: { enabled: true },
-          },
+          enabled: true,
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.5",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
       }),
       tasks: makeTasks(3),
@@ -618,17 +635,20 @@ export const ValidatorsScriptPlusClaude: Story = {
       context: makeContext({
         scriptValidator: { enabled: true },
         contextValidator: {
-          kind: "use",
-          value: {
-            enabled: true,
-            type: "claude",
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+          enabled: true,
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
             },
-            continuity: { enabled: true },
-          },
+          ],
         },
       }),
       tasks: makeTasks(3),
@@ -648,19 +668,29 @@ export const ValidatorsInheritedClaude: Story = {
         acceptanceCriteria:
           "All REST endpoints exist and pass integration tests.",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
-        contextValidator: {
-          type: "claude",
-          enabled: true,
-          continuity: { enabled: true },
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
           agent: {
             backend: "claude",
             model: "sonnet",
             reasoningEffort: "medium",
           },
+        },
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
         scriptValidator: { enabled: false },
         humanApprovalGate: { enabled: false },
@@ -687,15 +717,29 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
         acceptanceCriteria:
           "All REST endpoints exist and pass integration tests.",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         contextValidator: {
-          type: "codex",
           enabled: true,
-          continuity: { enabled: true },
-          codex: { model: "gpt-5.5", reasoningEffort: "medium" },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.5",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
         scriptValidator: { enabled: true },
         humanApprovalGate: { enabled: false },
@@ -747,15 +791,29 @@ export const ApprovalGateWithValidators: Story = {
         acceptanceCriteria:
           "All REST endpoints exist and pass integration tests.",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         contextValidator: {
-          type: "codex",
           enabled: true,
-          continuity: { enabled: true },
-          codex: { model: "gpt-5.5", reasoningEffort: "medium" },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.5",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
         scriptValidator: { enabled: true },
         humanApprovalGate: { enabled: true },
@@ -776,9 +834,13 @@ export const ImplementerCodex: Story = {
     data: {
       context: makeContext({
         implementer: {
-          backend: "codex",
-          model: "gpt-5.5",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "codex",
+            model: "gpt-5.5",
+            reasoningEffort: "medium",
+          },
         },
       }),
       tasks: makeTasks(3),

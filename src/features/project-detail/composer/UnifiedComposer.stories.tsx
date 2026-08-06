@@ -21,6 +21,8 @@ function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: "plc-1",
     scope: "project",
     nameOrigin: "default",

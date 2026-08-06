@@ -8,7 +8,11 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowSharedDocumentEntry } from "@/lib/workflow-graph/definition-schemas";
 const logger = createLogger("graph-workflow-shared-documents");
 
-const SHARED_DOCUMENT_DIRECTORY = path.join(".cc", "graph-workflow-docs");
+// Plain literal, not an all-literal path.join: Turbopack resolves that shape
+// into a DirAssetReference and walks the directory at build time. Harmless
+// here today, but it panics fatally on any symlink leaving the project root —
+// see the reserved-path note in agent-backends/codex/managed-skills-bridge.ts.
+const SHARED_DOCUMENT_DIRECTORY = ".cc/graph-workflow-docs";
 
 export interface SharedDocumentUpsertInput {
   relativePath: string;

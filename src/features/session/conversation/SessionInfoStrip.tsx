@@ -14,6 +14,8 @@ import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopov
 import AlignmentChip from "@/features/session/conversation/AlignmentChip";
 import { deriveAlignmentChipState } from "@/features/session/conversation/alignment-chip-state";
 import CompactionStatusChip from "@/features/session/conversation/CompactionStatusChip";
+import ConversationProfileChip from "@/components/conversation/ConversationProfileChip";
+import { deriveConversationProfileChipState } from "@/components/conversation/conversation-profile-chip-state";
 import { deriveCompactionChipState } from "@/features/session/conversation/compaction-chip-state";
 import { useAlignmentStateQuery } from "@/lib/session-alignment/queries";
 import { useContextArtifacts } from "@/lib/context-artifacts/queries";
@@ -23,7 +25,7 @@ import { useOpenContextArtifactPanel } from "@/stores/session-detail.store";
 import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 import type { UnmanagedConflictInfo } from "@/components/DevServerDrawer";
@@ -42,7 +44,9 @@ const SESSION_STATUS_DOT: Record<string, string> = {
 
 interface SessionInfoStripProps {
   session: SessionState;
-  activeConversation: ConversationState | undefined;
+  // The PUBLIC shape: this strip renders read-surface data, and the profile
+  // chip needs the redacted snapshot that only the public projection carries.
+  activeConversation: PublicConversationState | undefined;
   projectName: string;
   sessionName: string;
   conversationId: string;
@@ -250,6 +254,13 @@ function SessionInfoStrip({
             onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
             isStoppingUnmanaged={dsIsStoppingUnmanaged}
           />
+          <div className="@max-[760px]:hidden">
+            <ConversationProfileChip
+              state={deriveConversationProfileChipState(
+                activeConversation?.redactedProfileSnapshot,
+              )}
+            />
+          </div>
           <div className="@max-[760px]:hidden">
             <CompactionStatusChip
               state={compactionState}

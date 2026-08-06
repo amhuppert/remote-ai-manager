@@ -9,8 +9,10 @@ import {
   askQuestionItemSchema,
 } from "@/lib/conversations/schemas";
 import {
+  agentBackendIdShapeSchema,
   agentBackendSchema,
   agentSessionRefSchema,
+  type AgentBackendId,
 } from "@/lib/shared/schemas";
 import {
   laneMetricsSchema,
@@ -33,7 +35,9 @@ import {
   graphWorkflowStatusSchema,
   graphWorkflowTaskStatusSchema,
   resolvedWorkflowSemanticDefinitionSchema,
+  workflowValidatorIssueSchema,
 } from "./definition-schemas";
+import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
 
 // ============================================================
 // Graph Workflow Halt Reasons
@@ -64,18 +68,51 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("aborted"),
+    // Why the abort happened, when something other than a user's abort button
+    // caused it. `migration_cutover` is the hard-cutover migration ending a
+    // non-terminal run's resume path; `summary` explains that in the inspector,
+    // mirroring the `max_iterations.summary` precedent. Additive — a
+    // user-initiated abort (and every pre-cutover row) parses as null, and
+    // resumability is unchanged: an abort is terminal whatever caused it.
+    cause: z.enum(["migration_cutover"]).nullable().default(null),
+    summary: z.string().nullable().default(null),
   }),
   z.object({
     type: z.literal("validator_infra_error"),
     contextId: z.string().trim().min(1),
     engine: agentBackendSchema,
-    infraReason: z.enum(["exception", "unparseable", "schema_mismatch"]),
+    infraReason: z.enum([
+      "exception",
+      "unparseable",
+      "schema_mismatch",
+      // The global query semaphore never admitted the specialist. Distinct
+      // because nothing about the validator failed — the engine was saturated —
+      // and an operator reading the halt needs to know to look at load rather
+      // than at the reviewer.
+      "never_admitted",
+    ]),
     message: z.string(),
     summary: z.string().nullable().default(null),
+    // Which specialist ran out of attempts, how many it spent, and the round it
+    // spent them in. Additive: a pre-cohort halt row parses with all three null
+    // or zero, and resumability is unchanged.
+    assignmentId: z.string().nullable().default(null),
+    attempts: z.number().int().min(0).default(0),
+    roundSeq: z.number().int().positive().nullable().default(null),
   }),
   z.object({
     type: z.literal("script_validator_missing_command"),
     contextId: z.string().trim().min(1),
+    message: z.string(),
+  }),
+  // The engine could not read the tree a validation round would freeze on, and
+  // retrying did not help. Terminal rather than a retry-forever incident: a
+  // round that cannot prove what it reviewed cannot be deterministic, and
+  // returning the context to ready would spin against the same broken git.
+  z.object({
+    type: z.literal("validation_candidate_unavailable"),
+    contextId: z.string().trim().min(1),
+    attempts: z.number().int().positive(),
     message: z.string(),
   }),
   z.object({
@@ -317,20 +354,355 @@ export type GraphWorkflowUserInputAnswers = z.infer<
   typeof graphWorkflowUserInputAnswersSchema
 >;
 
-// The parked-question record on a context awaiting user input. `questions` is a
-// snapshot copied from the lane conversation at park time so the graph UI and
-// the resume prompt are self-sufficient; `answers` is null until the operator
-// answers (or is set pre-park for a fast answer).
+// The parked-question record of ONE lane on a context awaiting user input.
+// `questions` is a snapshot copied from the lane conversation at park time so
+// the graph UI and the resume prompt are self-sufficient; `answers` is null
+// until the operator answers (or is set pre-park for a fast answer).
+//
+// `roundSeq` completes the record's token: an answer is routable only if it
+// names both the batch it answers and the validation round that batch was asked
+// in. A batch id alone cannot tell a live question from one a superseded round
+// left behind, and a round that has been concluded (pause-to-edit) must refuse
+// the answer its parked validator is still holding a form for.
 export const graphWorkflowPendingUserInputSchema = z.object({
   conversationId: z.string().trim().min(1),
   lane: z.enum(["implementer", "context_validator"]),
   questionBatchId: z.string().trim().min(1),
   questions: z.array(askQuestionItemSchema),
   requestedAt: z.string().trim().min(1),
+  /** The validation round this park belongs to; null for an implementer park. */
+  roundSeq: z.number().int().positive().nullable().default(null),
   answers: graphWorkflowUserInputAnswersSchema.nullable().default(null),
 });
 export type GraphWorkflowPendingUserInput = z.infer<
   typeof graphWorkflowPendingUserInputSchema
+>;
+
+// ============================================================
+// Graph Workflow Validation Rounds
+// ============================================================
+
+/**
+ * Which lane a session belongs to. Defined here rather than beside the agent
+ * session refs below because a validator's provenance — persisted on the round
+ * record and republished on its events — needs it.
+ */
+export const graphWorkflowLaneKindSchema = z.enum([
+  "implementer",
+  "context_validator",
+]);
+export type GraphWorkflowLaneKind = z.infer<typeof graphWorkflowLaneKindSchema>;
+
+function normalizeLegacyValidationSessionRef(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  if (record.backend !== undefined) {
+    if (record.lane !== undefined && record.refKind !== undefined) return value;
+    return {
+      ...record,
+      lane: record.lane ?? "context_validator",
+      refKind: record.refKind ?? "backend",
+    };
+  }
+
+  if (record.engine === "claude") {
+    return {
+      backend: record.engine,
+      ref: record.conversationId,
+      lane: record.lane,
+      refKind: "conversation",
+      workflowConversationId: record.conversationId,
+    };
+  }
+  if (record.engine === "codex") {
+    return {
+      backend: record.engine,
+      ref: record.threadId,
+      lane: record.lane,
+      refKind: "backend",
+    };
+  }
+  return value;
+}
+
+/**
+ * Where a validator's review actually happened.
+ *
+ * Persisted on the round record AND carried on the events the round publishes:
+ * a verdict a resume carries forward has to keep pointing at the session that
+ * rendered it, or a cohort's retained lanes become unauditable the moment the
+ * process running them restarts.
+ */
+export const graphWorkflowValidationSessionRefSchema = z.preprocess(
+  normalizeLegacyValidationSessionRef,
+  z.object({
+    backend: agentBackendIdShapeSchema,
+    ref: z.string().trim().min(1),
+    lane: graphWorkflowLaneKindSchema,
+    // Which cohort member rendered this verdict. Additive and optional: rows
+    // written before cohorts existed name a lane but no assignment, and the
+    // implementer lane never renders one.
+    assignmentId: z.string().trim().min(1).optional(),
+    refKind: z.enum(["conversation", "backend"]),
+    workflowConversationId: z.string().trim().min(1).optional(),
+  }),
+);
+export type GraphWorkflowValidationSessionRef = z.infer<
+  typeof graphWorkflowValidationSessionRefSchema
+>;
+
+const graphWorkflowValidationReviewUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  cachedInputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  /** Estimated from token usage because providers do not report USD. */
+  costUsd: z.number().nullable().default(null),
+});
+
+/**
+ * Usage for conversation-strategy validators, derived from the conversation
+ * transcript after the turn. Token counts are not projected from transcripts,
+ * so this carries the billable figures the transcript does report — without
+ * it every conversation-validator decision is unpriced in cost audits.
+ */
+const graphWorkflowValidationConversationUsageSchema = z.object({
+  costUsd: z.number().nullable().default(null),
+  apiTurns: z.number().int().min(0).nullable().default(null),
+});
+export type GraphWorkflowValidationConversationUsage = z.infer<
+  typeof graphWorkflowValidationConversationUsageSchema
+>;
+
+function normalizeLegacyValidationReviewArtifact(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  if (record.backend !== undefined) return value;
+
+  if (record.engine === "claude") {
+    return {
+      backend: record.engine,
+      kind: "conversation",
+      ref: record.conversationId,
+    };
+  }
+  if (record.engine === "codex") {
+    return {
+      backend: record.engine,
+      kind: "response",
+      ref: record.threadId,
+      response: record.response,
+      usage: record.usage,
+    };
+  }
+  return value;
+}
+
+/** What a validator produced, and what it cost to produce. */
+export const graphWorkflowValidationReviewArtifactSchema = z.preprocess(
+  normalizeLegacyValidationReviewArtifact,
+  z.discriminatedUnion("kind", [
+    z.object({
+      backend: agentBackendIdShapeSchema,
+      kind: z.literal("conversation"),
+      ref: z.string().trim().min(1),
+      usage: graphWorkflowValidationConversationUsageSchema
+        .nullable()
+        .default(null),
+    }),
+    z.object({
+      backend: agentBackendIdShapeSchema,
+      kind: z.literal("response"),
+      ref: z.string().trim(),
+      response: z.string(),
+      usage: graphWorkflowValidationReviewUsageSchema.nullable().default(null),
+    }),
+  ]),
+);
+export type GraphWorkflowValidationReviewArtifact = z.infer<
+  typeof graphWorkflowValidationReviewArtifactSchema
+>;
+
+export function buildGraphWorkflowValidationReviewArtifact(input: {
+  backend: AgentBackendId;
+  strategy: "conversation" | "task";
+  ref: string | null;
+  response: string;
+  usage: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    costUsd: number | null;
+  } | null;
+  /** Transcript-derived usage for conversation-strategy validators. */
+  conversationUsage?: GraphWorkflowValidationConversationUsage | null;
+}): GraphWorkflowValidationReviewArtifact | null {
+  if (input.ref === null) return null;
+  if (input.strategy === "conversation") {
+    return {
+      backend: input.backend,
+      kind: "conversation",
+      ref: input.ref,
+      usage: input.conversationUsage ?? null,
+    };
+  }
+  return {
+    backend: input.backend,
+    kind: "response",
+    ref: input.ref,
+    response: input.response,
+    usage: input.usage,
+  };
+}
+
+/**
+ * The exact thing a validation round reviews.
+ *
+ * `candidateTreeHash` is the git tree written from the SAME temporary index the
+ * diff pipeline builds (`computeCandidateTreeHash`), so untracked content and
+ * file modes are inside the identity while gitignored build artifacts and lane
+ * logs are outside it — coextensive with what the validators actually see.
+ * `headSha` pins the base commit and `taskStateHash` covers the context's task
+ * tuples, so a task completed or reopened mid-round moves the identity too.
+ *
+ * All three components are required. A round exists to make "every specialist
+ * judged THIS tree" checkable, and an identity with a missing tree component
+ * cannot support that claim — so an unresolvable tree is an infrastructure
+ * outcome that prevents the round from opening, never a candidate with holes in
+ * it that later compares equal to itself.
+ */
+export const graphWorkflowValidationCandidateSchema = z
+  .object({
+    headSha: z.string().trim().min(1),
+    candidateTreeHash: z.string().trim().min(1),
+    taskStateHash: z.string().trim().min(1),
+  })
+  .strict();
+export type GraphWorkflowValidationCandidate = z.infer<
+  typeof graphWorkflowValidationCandidateSchema
+>;
+
+/**
+ * One frozen cohort seat. It records what the assignment WAS when the round
+ * opened, so a live config edit mid-round is visible as a divergence rather
+ * than silently redefining who reviewed the candidate.
+ */
+export const graphWorkflowValidationRosterEntrySchema = z
+  .object({
+    assignmentId: z.string().trim().min(1),
+    profileRef: agentProfileRefSchema,
+    revision: z.number().int().positive(),
+    resolvedInstructionHash: z.string().trim().min(1),
+    strategy: z.enum(["conversation", "task"]),
+  })
+  .strict();
+export type GraphWorkflowValidationRosterEntry = z.infer<
+  typeof graphWorkflowValidationRosterEntrySchema
+>;
+
+export const graphWorkflowValidationSpecialistStateSchema = z.enum([
+  "pending",
+  "running",
+  "verdict_pass",
+  "verdict_fail",
+  "infra_failed",
+  "parked",
+]);
+export type GraphWorkflowValidationSpecialistState = z.infer<
+  typeof graphWorkflowValidationSpecialistStateSchema
+>;
+
+/**
+ * Why an admitted dispatch failed as infrastructure rather than as a review.
+ * `never_admitted` is absent by construction: the queue refusing a lane costs
+ * no attempt, so it can never be the failure that spent one.
+ */
+export const graphWorkflowValidationInfraReasonSchema = z.enum([
+  "exception",
+  "unparseable",
+  "schema_mismatch",
+]);
+
+export const graphWorkflowValidationSpecialistSchema = z
+  .object({
+    state: graphWorkflowValidationSpecialistStateSchema,
+    attempts: z.number().int().min(0).default(0),
+    summary: z.string().nullable().default(null),
+    issues: z.array(workflowValidatorIssueSchema).default([]),
+    /**
+     * The parked question batch this specialist is waiting on. Per-lane, so
+     * several specialists in one context can be parked at once.
+     */
+    questionToken: z.string().nullable().default(null),
+    /**
+     * Where this lane's verdict was rendered and what it cost.
+     *
+     * Persisted rather than held in memory because a round outlives the process
+     * that ran it: a resume rebuilds its retained verdicts from this record, and
+     * a reconstruction without these would publish an aggregate whose retained
+     * specialists point at no session, no artifact, and no spend (D12).
+     */
+    sessionRef: graphWorkflowValidationSessionRefSchema
+      .nullable()
+      .default(null),
+    reviewArtifact: graphWorkflowValidationReviewArtifactSchema
+      .nullable()
+      .default(null),
+    /**
+     * The infrastructure failure that spent this lane's most recent attempt.
+     *
+     * Stored with the count it explains: `attempts` alone says a budget was
+     * consumed but not by what, so a lane recovered at its bound after a crash
+     * could only halt with a reason the restart invented. Null for a lane that
+     * has not failed on infrastructure in this round.
+     */
+    lastInfraFailure: z
+      .object({
+        reason: graphWorkflowValidationInfraReasonSchema,
+        message: z.string(),
+        engine: agentBackendSchema,
+      })
+      .nullable()
+      .default(null),
+  })
+  .strict();
+export type GraphWorkflowValidationSpecialist = z.infer<
+  typeof graphWorkflowValidationSpecialistSchema
+>;
+
+/**
+ * The context's latest validation round: what is being reviewed, by whom, and
+ * how far the round has got. The cohort owns the candidate — and the implementer
+ * is locked out — exactly while `phase` is not `concluded`.
+ *
+ * A concluded round is RETAINED rather than cleared. `seq` is what tells two
+ * rounds of one context apart when they happen to freeze byte-identical
+ * candidates, so it has to survive the round it numbers: clearing the record on
+ * conclusion would restart numbering at 1 every time and make a result from an
+ * earlier round indistinguishable from a current one.
+ */
+export const graphWorkflowValidationRoundSchema = z
+  .object({
+    seq: z.number().int().positive(),
+    candidate: graphWorkflowValidationCandidateSchema,
+    roster: z.array(graphWorkflowValidationRosterEntrySchema),
+    specialists: z.record(z.string(), graphWorkflowValidationSpecialistSchema),
+    phase: z.enum(["script", "specialists", "concluded"]),
+    /** How the round ended; null while it is still open. */
+    outcome: z
+      .enum([
+        "script_failed",
+        "candidate_mismatch",
+        "roster_drift",
+        "passed",
+        "failed",
+      ])
+      .nullable()
+      .default(null),
+    startedAt: z.string().trim().min(1),
+  })
+  .strict();
+export type GraphWorkflowValidationRound = z.infer<
+  typeof graphWorkflowValidationRoundSchema
 >;
 
 // ============================================================
@@ -375,9 +747,25 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
     .default("not-applicable"),
   lastMergeError: z.string().nullable().default(null),
   pendingApproval: graphWorkflowPendingApprovalSchema.nullable().default(null),
-  pendingUserInput: graphWorkflowPendingUserInputSchema
-    .nullable()
-    .default(null),
+  /**
+   * Parked questions, keyed by lane key (`implementer` or
+   * `context_validator:<assignmentId>` — see `lane-identity`).
+   *
+   * A record rather than a single slot because a cohort's validators ask
+   * independently: several may be waiting on the human at once, and an answer
+   * belongs to the lane that asked it. An absent key is a lane that is not
+   * parked; the empty record is a context with nothing pending.
+   */
+  pendingUserInputs: z
+    .record(z.string(), graphWorkflowPendingUserInputSchema)
+    .default({}),
+  /**
+   * The latest validation round, open or concluded, or absent/null when this
+   * context has never had one. Optional rather than defaulted, matching
+   * `reservedByBatchId`: absent, null, and "no round yet" are the same claim,
+   * and rows written before the field existed already make it correctly.
+   */
+  validationRound: graphWorkflowValidationRoundSchema.nullable().optional(),
 });
 export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
@@ -409,12 +797,6 @@ export type GraphWorkflowTaskState = z.infer<
 // ============================================================
 // Graph Workflow Session Refs + Agent Session State
 // ============================================================
-
-export const graphWorkflowLaneKindSchema = z.enum([
-  "implementer",
-  "context_validator",
-]);
-export type GraphWorkflowLaneKind = z.infer<typeof graphWorkflowLaneKindSchema>;
 
 function normalizeLegacyGraphSessionRef(value: unknown): unknown {
   if (typeof value !== "object" || value === null) return value;
@@ -500,6 +882,18 @@ export const graphWorkflowAgentSessionStateSchema = z.preprocess(
   z.object({
     lane: graphWorkflowLaneKindSchema,
     contextId: z.string().trim().min(1),
+    // Which use-site assignment owns this lane. Additive and optional: the
+    // implementer lane is per-context (one implementer per context stands) and
+    // rows written before cohorts existed carry no assignment. Validator lanes
+    // set it, and it agrees with the `laneStates` key by construction — the key
+    // is the addressing form, this is the record's own account of itself.
+    assignmentId: z.string().trim().min(1).optional(),
+    // Everything about the owning assignment a live lane has already baked in
+    // (see `assignmentFingerprint`). Rotation compares it: an assignment edited
+    // under a running execution must not keep replaying the superseded
+    // instructions on a resumed handle. Absent means "unknown, do not rotate",
+    // so legacy lanes are left alone until their next natural rotation.
+    assignmentFingerprint: z.string().min(1).optional(),
     backend: agentBackendSchema,
     refKind: z.enum(["conversation", "backend"]),
     workflowConversationId: z.string().trim().min(1).optional(),
@@ -668,6 +1062,28 @@ export type GraphWorkflowExecution = z.infer<
   typeof graphWorkflowExecutionSchema
 >;
 
+/**
+ * One entry of a session's execution history, as the HISTORY endpoint projects
+ * it. A narrow client contract over `GraphWorkflowExecutionSummary`: the fields
+ * a past run's list row actually shows, so the history list never has to load
+ * whole archived execution blobs. `haltReason` is what makes an ended run
+ * explain itself — including a cutover abort, which is the only record an
+ * operator has that their in-flight run was ended by the migration.
+ */
+export const graphWorkflowExecutionHistoryItemSchema = z.object({
+  executionId: z.string(),
+  definitionId: z.string(),
+  definitionRevision: z.number(),
+  status: graphWorkflowStatusSchema,
+  startedAt: z.string(),
+  completedAt: z.string().nullable().default(null),
+  haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
+  archived: z.boolean().default(false),
+});
+export type GraphWorkflowExecutionHistoryItem = z.infer<
+  typeof graphWorkflowExecutionHistoryItemSchema
+>;
+
 export const graphWorkflowExecutionFullResponseSchema = z.object({
   execution: graphWorkflowExecutionSchema.nullable(),
 });
@@ -679,4 +1095,15 @@ export type GraphWorkflowExecutionFullResponse = z.infer<
 export const resetExecutionContextRequestSchema = z.object({
   executionId: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
+});
+
+/**
+ * Reset ONE cohort member rather than the whole context (R8.3). The assignment
+ * id is required: an absent one would silently widen the request into the far
+ * more destructive whole-context reset.
+ */
+export const resetExecutionContextAssignmentRequestSchema = z.object({
+  executionId: z.string().trim().min(1),
+  contextId: z.string().trim().min(1),
+  assignmentId: z.string().trim().min(1),
 });

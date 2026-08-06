@@ -70,10 +70,24 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "Tickets are project-level. The session env is read only as attachment provenance, which is absent (null) at project scope rather than empty.",
   },
+  // The `agent` group splits: the RUN verbs execute in a session worktree,
+  // while the profile-library READS are project-scoped. The group default stays
+  // session-only so a new run-shaped verb fails loudly; the library verbs opt
+  // back in explicitly.
   agent: {
     support: "session-only",
     reason:
-      "Agent runs are recorded against a session and execute in its worktree; no project-root agent-run route exists. Revisit if project-scoped sub-agents are approved.",
+      "Group default. Agent runs are recorded against a session and execute in its worktree; no project-root agent-run route exists. Revisit if project-scoped sub-agents are approved.",
+  },
+  "agent list": {
+    support: "project-supported",
+    reason:
+      "The agent profile library is project-scoped: one project route tree reaches all three tiers, and no session, worktree, or run is involved. A planning agent at project scope must be able to discover the profiles it staffs assignments with.",
+  },
+  "agent get": {
+    support: "project-supported",
+    reason:
+      "Reads one library record through the same project-scoped route tree as `agent list`; the qualified tier:id names the record, and nothing about it is session-bound.",
   },
   charter: {
     support: "session-only",

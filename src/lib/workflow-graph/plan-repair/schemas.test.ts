@@ -129,11 +129,11 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
   ])("rejects update-context touching the %s control block", (block) => {
     const controlValues: Record<string, unknown> = {
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
       },
-      contextValidator: null,
+      contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
@@ -164,6 +164,66 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues[0]?.message).toContain(block);
+  });
+
+  // R11: assignment editing rides the update-context control blocks rather than
+  // a new op kind, so the allowlist that already fences those blocks off is
+  // what refuses it. Proven against a POPULATED cohort and a real implementer
+  // swap — the disabled-empty shapes above cannot show a rejected roster edit.
+  it("refuses a plan-repair batch that reorders or refocuses the validator cohort", () => {
+    const result = validatePlanRepairOperations([
+      { type: "update-task", taskId: "task-1", title: "Legal plan edit" },
+      {
+        type: "update-context",
+        contextId: "ctx-1",
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "perf",
+              profile: { tier: "project", id: "perf-reviewer" },
+              focus: "Hot paths only",
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toEqual([
+      { index: 1, message: expect.stringContaining("contextValidator") },
+    ]);
+  });
+
+  it("refuses a plan-repair batch that swaps the implementer assignment", () => {
+    const result = validatePlanRepairOperations([
+      {
+        type: "update-context",
+        contextId: "ctx-1",
+        implementer: {
+          id: "implementer",
+          profile: { tier: "project", id: "sharper-implementer" },
+          focus: "Rewrite the failing module",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.6-sol",
+            reasoningEffort: "high",
+          },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues[0]?.message).toContain("implementer");
   });
 
   // D2/D4: a too-tight `outputSchema` is exactly the impossible-contract class

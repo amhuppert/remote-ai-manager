@@ -1,7 +1,7 @@
-import {
-  conversationCreatedEventSchema,
-  type ConversationCreatedEvent,
-  type ConversationState,
+import { buildConversationCreatedEvent } from "@/lib/conversations/created-event";
+import type {
+  ConversationCreatedEvent,
+  StoredConversationState,
 } from "@/lib/conversations/schemas";
 
 /**
@@ -11,10 +11,9 @@ import {
  */
 export function buildProjectConversationCreatedEvent(
   projectName: string,
-  conversation: ConversationState,
+  conversation: StoredConversationState,
 ): ConversationCreatedEvent {
-  return conversationCreatedEventSchema.parse({
-    type: "conversation-created",
+  return buildConversationCreatedEvent({
     scope: "project",
     projectName,
     conversation,

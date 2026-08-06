@@ -107,13 +107,17 @@ Written live by `src/lib/workflow-graph/execution-logger.ts`. Every record:
   - `validation.jsonl` — validator started/invoked/result_parsed/remediation;
     `script_validation.passed/failed` carry `headSha`, `dirty`, `command` —
     the tree identity the gate result certifies
-  - `validation-transcript.jsonl` — full validator reasoning:
-    `validator.transcript_begin` (engine, attempt) +
-    `validator.transcript_item` (verbatim backend payloads)
   - `prompts/iteration-<n>.md` — exact implementer seed prompt
-  - `prompts/<n>.md` + `<n>.json` — validator prompt + response
-    (`{raw, parsed, parsePath}`; `parsePath !== "structured_output"` means
-    fallback parsing)
+  - `validators/<assignmentId>/` — one directory per cohort member:
+    - `context-validator.md` + `context-validator.json` — that specialist's
+      prompt + response (`{raw, parsed, parsePath}`;
+      `parsePath !== "structured_output"` means fallback parsing)
+    - `validation-transcript.jsonl` — that specialist's full reasoning:
+      `validator.transcript_begin` (assignmentId, engine, attempt) +
+      `validator.transcript_item` (verbatim backend payloads)
+  - Runs that predate validator cohorts keep the flat layout:
+    `validation-transcript.jsonl` and `prompts/<n>.json` directly under the
+    context directory
 
 ## 3. Transcripts — `transcripts/<conversationId>.jsonl`
 

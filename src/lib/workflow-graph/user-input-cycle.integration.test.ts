@@ -17,8 +17,14 @@ import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { _resetRegistryForTesting } from "./execution-logger";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowIterationOrchestrator } from "./iteration-orchestrator";
+import { laneStateKey } from "./lane-identity";
 import { createWorkflowExecution } from "./test-fixtures";
-import { createUserInputGateService } from "./user-input-gate";
+import {
+  createUserInputGateService,
+  type ResumeUserInputContext,
+} from "./user-input-gate";
+import type { GraphWorkflowContextValidationInput } from "./execution-validation";
+import type { CohortParkedLane } from "./validation-cohort";
 import type {
   RecordLaneTurnOutcomeInput,
   ResolveImplementerCallInput,
@@ -100,6 +106,8 @@ function claudeLaneState(input: {
  */
 function buildCycleExecution(input: {
   lane: "implementer" | "context_validator";
+  /** The assignment a validator lane belongs to; keys its lane state. */
+  assignmentId?: string;
   conversationId: string;
   planTaskCompleted: boolean;
   consecutiveFailureCount?: number;
@@ -115,7 +123,7 @@ function buildCycleExecution(input: {
   execution.activeContextIds = [CONTEXT_ID];
   execution.laneStates = {
     [CONTEXT_ID]: {
-      [input.lane]: claudeLaneState({
+      [laneStateKey(input.lane, input.assignmentId)]: claudeLaneState({
         lane: input.lane,
         conversationId: input.conversationId,
       }),
@@ -333,7 +341,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     const parked = await reloadContext();
     expect(parked.contextState.status).toBe("awaiting_user_input");
-    expect(parked.contextState.pendingUserInput).toMatchObject({
+    expect(parked.contextState.pendingUserInputs["implementer"]).toMatchObject({
       conversationId: CONV_ASK,
       lane: "implementer",
       questionBatchId: IMPL_BATCH_ID,
@@ -366,7 +374,8 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
     const answered = await reloadContext();
     expect(answered.contextState.status).toBe("awaiting_user_input");
     expect(
-      answered.contextState.pendingUserInput?.answers?.byQuestionId,
+      answered.contextState.pendingUserInputs["implementer"]?.answers
+        ?.byQuestionId,
     ).toEqual(makeAnswers());
 
     // --- Consume: the loop reads the answers, clears the record, unparks ---
@@ -375,15 +384,18 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       sessionName: SESSION_NAME,
       contextId: CONTEXT_ID,
     });
-    expect(consumed).toEqual({
-      answers: makeAnswers(),
-      questionBatchId: IMPL_BATCH_ID,
-      conversationId: CONV_ASK,
-      lane: "implementer",
-    });
+    expect(consumed).toEqual([
+      {
+        laneKey: "implementer",
+        lane: "implementer",
+        answers: makeAnswers(),
+        questionBatchId: IMPL_BATCH_ID,
+        conversationId: CONV_ASK,
+      },
+    ]);
 
     const afterConsume = await reloadContext();
-    expect(afterConsume.contextState.pendingUserInput).toBeNull();
+    expect(afterConsume.contextState.pendingUserInputs).toEqual({});
     expect(afterConsume.contextState.status).toBe("running");
 
     // --- Resume: the same conversation continues with the answers block ---
@@ -392,7 +404,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       projectName: "repo",
       sessionName: SESSION_NAME,
       contextId: CONTEXT_ID,
-      resumeUserInput: consumed!,
+      resumeUserInputs: consumed,
     });
 
     // Req 5.1: the asking conversation is pinned for the answer-delivery turn.
@@ -409,7 +421,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     const resumed = await reloadContext();
     // The record stays cleared; the context finished its work post-answer.
-    expect(resumed.contextState.pendingUserInput).toBeNull();
+    expect(resumed.contextState.pendingUserInputs).toEqual({});
     expect(resumed.contextState.status).toBe("completed");
     // Req 5.5: the resume ran as an ordinary seeded iteration (counted once).
     expect(resumed.contextState.iterationCount).toBe(1);
@@ -433,6 +445,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
     await seedExecution(
       buildCycleExecution({
         lane: "context_validator",
+        assignmentId: "general",
         conversationId: CONV_VALIDATOR,
         planTaskCompleted: true,
         consecutiveFailureCount: 1,
@@ -441,24 +454,21 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     const questions = makeQuestions();
     let validatorAsks = true;
-    let receivedResume:
-      | { conversationId: string; questionBatchId: string; lane: string }
-      | undefined;
+    let receivedResume: readonly ResumeUserInputContext[] | undefined;
     const validateContextCompletion = vi.fn(
-      async (validateInput: {
-        resumeUserInput?: {
-          conversationId: string;
-          questionBatchId: string;
-          lane: string;
-        };
-      }) => {
-        receivedResume = validateInput.resumeUserInput;
+      async (validateInput: GraphWorkflowContextValidationInput) => {
+        receivedResume = validateInput.resumeUserInputs;
         if (validatorAsks) {
           return {
             kind: "asked_user" as const,
-            conversationId: CONV_VALIDATOR,
-            questionBatchId: VALIDATOR_BATCH_ID,
-            questions,
+            parked: [
+              {
+                assignmentId: "general",
+                conversationId: CONV_VALIDATOR,
+                questionBatchId: VALIDATOR_BATCH_ID,
+                questions,
+              },
+            ] as [CohortParkedLane, ...CohortParkedLane[]],
           };
         }
         return {
@@ -507,7 +517,9 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
 
     const parked = await reloadContext();
     expect(parked.contextState.status).toBe("awaiting_user_input");
-    expect(parked.contextState.pendingUserInput).toMatchObject({
+    expect(
+      parked.contextState.pendingUserInputs["context_validator:general"],
+    ).toMatchObject({
       conversationId: CONV_VALIDATOR,
       lane: "context_validator",
       questionBatchId: VALIDATOR_BATCH_ID,
@@ -546,14 +558,17 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       sessionName: SESSION_NAME,
       contextId: CONTEXT_ID,
     });
-    expect(consumed).toMatchObject({
-      lane: "context_validator",
-      questionBatchId: VALIDATOR_BATCH_ID,
-      conversationId: CONV_VALIDATOR,
-    });
+    expect(consumed).toMatchObject([
+      {
+        laneKey: "context_validator:general",
+        lane: "context_validator",
+        questionBatchId: VALIDATOR_BATCH_ID,
+        conversationId: CONV_VALIDATOR,
+      },
+    ]);
 
     const afterConsume = await reloadContext();
-    expect(afterConsume.contextState.pendingUserInput).toBeNull();
+    expect(afterConsume.contextState.pendingUserInputs).toEqual({});
     expect(afterConsume.contextState.status).toBe("running");
 
     // --- Resume: the validator re-runs and its verdict is processed normally ---
@@ -563,7 +578,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
       projectName: "repo",
       sessionName: SESSION_NAME,
       contextId: CONTEXT_ID,
-      resumeUserInput: consumed!,
+      resumeUserInputs: consumed,
     });
 
     // Req 5.1/5.5: the validator resume forwards the answers into re-validation.
@@ -572,7 +587,7 @@ describe("user-input full cycle against real persistence (task 6.1)", () => {
     expect(resumeResult.shouldContinueInContext).toBe(false);
 
     const resumed = await reloadContext();
-    expect(resumed.contextState.pendingUserInput).toBeNull();
+    expect(resumed.contextState.pendingUserInputs).toEqual({});
     // The verdict is processed exactly as an ordinary pass would be.
     expect(resumed.contextState.status).toBe("completed");
     expect(

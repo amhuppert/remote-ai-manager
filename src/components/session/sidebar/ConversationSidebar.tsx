@@ -15,6 +15,8 @@ import type {
 } from "@/lib/active-conversations/schemas";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import { PlusIcon } from "@/components/icons";
+import NewConversationProfileButton from "@/components/agent-profiles/NewConversationProfileButton";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
@@ -427,23 +429,32 @@ function ConversationSidebar({
     }
   }, [editingId]);
 
-  const handleNewConversation = useCallback(() => {
-    if (createConvoMutation.isPending) return;
-    createConvoMutation.mutate(undefined, {
-      onSuccess: (convo) => {
-        openSessionScopedConversation(
-          { conversationId: convo.id, projectName, sessionName },
-          conversationsPageHref({ conversationId: convo.id }),
-        );
-      },
-    });
-  }, [
-    createConvoMutation,
-    projectName,
-    sessionName,
-    openSessionScopedConversation,
-  ]);
-  useAppHotkey("newConversation", handleNewConversation, {
+  // Omitting the profile is the Standard Agent (R7) — the fast path and the
+  // hotkey stay one action, and the picker beside the button supplies a
+  // reference when the author wants a specialist.
+  const handleNewConversation = useCallback(
+    (profile?: AgentProfileRef) => {
+      if (createConvoMutation.isPending) return;
+      createConvoMutation.mutate(
+        profile === undefined ? undefined : { profile },
+        {
+          onSuccess: (convo) => {
+            openSessionScopedConversation(
+              { conversationId: convo.id, projectName, sessionName },
+              conversationsPageHref({ conversationId: convo.id }),
+            );
+          },
+        },
+      );
+    },
+    [
+      createConvoMutation,
+      projectName,
+      sessionName,
+      openSessionScopedConversation,
+    ],
+  );
+  useAppHotkey("newConversation", () => handleNewConversation(), {
     enabled:
       showNewConversationButton &&
       activeConversationId.length > 0 &&
@@ -589,10 +600,14 @@ function ConversationSidebar({
   // Returns the fork promise so the triggering control (MessageActions' Fork
   // button inside the peek) can render its in-flight pending state.
   const handlePeekFork = useCallback(
-    (messageIndex: number) => {
+    (messageIndex: number, profile?: AgentProfileRef) => {
       if (peek === null || peekConversation === null) return;
       return peekForkMutation
-        .mutateAsync({ conversationId: peek.conversationId, messageIndex })
+        .mutateAsync({
+          conversationId: peek.conversationId,
+          messageIndex,
+          ...(profile === undefined ? {} : { profile }),
+        })
         .then(({ conversationId }) => {
           closePeek();
           if (onMobileClose) onMobileClose();
@@ -1017,10 +1032,17 @@ function ConversationSidebar({
           </span>
           <div className="ml-auto flex items-center gap-xs">
             {showNewConversationButton && (
+              <NewConversationProfileButton
+                projectName={projectName}
+                pending={createConvoMutation.isPending}
+                onCreate={handleNewConversation}
+              />
+            )}
+            {showNewConversationButton && (
               <WithTooltip label="New conversation">
                 <button
                   className="relative flex size-[28px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-transparent bg-transparent p-0 text-[1rem] font-medium text-cyan transition-[color,background-color,border-color] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-[var(--cc-cyan-a10)] hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-tertiary disabled:opacity-50 max-768:size-[44px] [&>svg]:size-[18px]"
-                  onClick={handleNewConversation}
+                  onClick={() => handleNewConversation()}
                   disabled={createConvoMutation.isPending}
                   aria-busy={createConvoMutation.isPending || undefined}
                   aria-label="New conversation"
@@ -1110,6 +1132,7 @@ function ConversationSidebar({
           anchorEl={peek.anchorEl}
           conversation={peekConversation}
           transcriptMessages={peekMessagesQuery.data ?? []}
+          forkProjectName={peekConversation.projectName}
           onClose={closePeek}
           onOpenFull={() => {
             openSessionScopedConversation(

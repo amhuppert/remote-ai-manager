@@ -1020,6 +1020,71 @@ describe("executeAgentCall — semantic task execution intent", () => {
     expect(capture.value?.ccSessionScope).toBeUndefined();
   });
 
+  it("carries a request-borne write policy through task resolution onto the runner request", async () => {
+    const capture = { value: null as AgentTaskRequest | null };
+    const runner = makeTaskRunner("codex", { capture });
+
+    await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "review",
+        writeCapability: "read_only",
+        fsWritePolicy: {
+          mode: "allowlist",
+          allowWrite: ["/private/tmp/lane", "/private/tmp/lane/tmp"],
+          denyWrite: ["/private/repo/worktree"],
+        },
+      },
+      {
+        taskExecution: {
+          workingDirectory: "/private/tmp/lane",
+          autonomous: true,
+        },
+        getTaskRunner: () => runner,
+      },
+    );
+
+    expect(capture.value?.fsWritePolicy).toEqual({
+      mode: "allowlist",
+      allowWrite: ["/private/tmp/lane", "/private/tmp/lane/tmp"],
+      denyWrite: ["/private/repo/worktree"],
+    });
+  });
+
+  it("keeps the request's write policy when a resolver-callback resolution omits one", async () => {
+    const capture = { value: null as AgentTaskRequest | null };
+    const runner = makeTaskRunner("codex", { capture });
+
+    // The policy is server-derived at the dispatch site; a resolver seam that
+    // knows nothing about it must not be able to drop the lane's restriction.
+    await executeAgentCall(
+      {
+        kind: "task_run",
+        backend: "codex",
+        prompt: "review",
+        fsWritePolicy: {
+          mode: "allowlist",
+          allowWrite: ["/private/tmp/lane"],
+          denyWrite: ["/private/repo/worktree"],
+        },
+      },
+      {
+        resolveTaskRunner: () => ({
+          runner,
+          capabilityView: CODEX_VIEW,
+          workingDirectory: "/private/tmp/lane",
+        }),
+      },
+    );
+
+    expect(capture.value?.fsWritePolicy).toEqual({
+      mode: "allowlist",
+      allowWrite: ["/private/tmp/lane"],
+      denyWrite: ["/private/repo/worktree"],
+    });
+  });
+
   it("forwards a resolver-supplied CC session scope verbatim to the runner", async () => {
     const capture = { value: null as AgentTaskRequest | null };
     const runner = makeTaskRunner("codex", { capture });

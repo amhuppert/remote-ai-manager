@@ -5,7 +5,10 @@ import {
 } from "@/lib/shared/route-resolution";
 import { z } from "zod";
 import { readConfig } from "@/lib/config/loader";
-import { resetExecutionContextRequestSchema } from "@/lib/workflow-graph/schemas";
+import {
+  resetExecutionContextAssignmentRequestSchema,
+  resetExecutionContextRequestSchema,
+} from "@/lib/workflow-graph/schemas";
 import {
   createConversation,
   getConversation,
@@ -57,11 +60,13 @@ import {
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   applyLiveEditsToActiveExecution,
+  buildDefaultAssignmentSnapshotPreparation,
   buildDefaultLiveEditDeps,
   defaultWriteCharterDocument,
 } from "./live-edit-apply";
 import { createPlanRepairAgentRunner } from "./plan-repair/agent-runner";
 import { createPlanRepairSupervisor } from "./plan-repair/supervisor";
+import { toPlanRepairValidationVerdict } from "./plan-repair/prompt";
 import { loadRotationHandoffNote } from "./rotation-handoff";
 import { readConversationTelemetry } from "./conversation-telemetry";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
@@ -86,6 +91,7 @@ import {
 } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
   createGraphWorkflowManager,
+  GraphWorkflowTransitionConflictError,
   WorkflowDefinitionApprovalRequiredError,
   WorkflowDefinitionRevisionMismatchError,
   WorkflowPrerequisitesUnmetError,
@@ -109,6 +115,9 @@ import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflig
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
+import { defaultGitClient } from "@/lib/git/client";
+import { computeCandidateTreeHash } from "@/lib/git/diff";
+import type { ValidationCandidateTreeResolution } from "@/lib/workflow-graph/validation-round";
 import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
@@ -119,7 +128,10 @@ import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { acquireSessionLock } from "@/lib/prompt/single-flight";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
-import { createExecutionTargetResolver } from "./execution-target-resolver";
+import {
+  createExecutionTargetResolver,
+  type ExecutionTarget,
+} from "./execution-target-resolver";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
 import {
   createApprovalGateService,
@@ -194,6 +206,13 @@ const workflowStorage = createWorkflowStorageService();
 const parallelWorktrees = createParallelWorktrees();
 
 const workflowManager = createGraphWorkflowManager({
+  retireLaneConversation: ({ projectPath, sessionName, conversationId }) =>
+    stopConversationActor(
+      projectPath,
+      sessionName,
+      conversationId,
+      "workflow_assignment_reset",
+    ),
   executionRepository,
   loadDefinition: (projectPath, definitionId, tier) =>
     workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
@@ -280,7 +299,55 @@ const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
 });
 const validationService = createGraphWorkflowValidationService({
   runContextValidator: validatorRunner.runContextValidator,
+  renderRoundCommonSections: validatorRunner.renderRoundCommonSections,
 });
+
+/**
+ * Resolves a validation round's candidate tree from the worktree the cohort
+ * will inspect: the per-context target when the context is worktree-isolated,
+ * the session worktree otherwise.
+ *
+ * A failure is reported as `unavailable` with its reason, never as a partial
+ * identity. The engine treats an unreadable tree as an infrastructure outcome —
+ * a round that cannot name what it reviewed cannot certify it — so degrading to
+ * "some components are missing" here would let a semantic verdict be published
+ * on a candidate nobody could pin down.
+ */
+const validationRoundService = {
+  async resolveCandidateTree(input: {
+    projectPath: string;
+    sessionName: string;
+    executionTarget?: ExecutionTarget;
+  }): Promise<ValidationCandidateTreeResolution> {
+    const worktreePath =
+      input.executionTarget?.worktreePath ??
+      (await defaultGetSession(input.projectPath, input.sessionName))
+        ?.worktreePath;
+    if (worktreePath === undefined) {
+      return {
+        kind: "unavailable",
+        reason: `no worktree resolved for session "${input.sessionName}"`,
+      };
+    }
+
+    const [head, candidateTreeHash] = await Promise.all([
+      defaultGitClient
+        .git(["rev-parse", "HEAD"], worktreePath)
+        .then((result) => result.stdout.trim() || null)
+        .catch(() => null),
+      computeCandidateTreeHash(worktreePath),
+    ]);
+
+    if (head === null || candidateTreeHash === null) {
+      return {
+        kind: "unavailable",
+        reason: `git could not resolve ${head === null ? "HEAD" : "the candidate tree"} in ${worktreePath}`,
+      };
+    }
+
+    return { kind: "resolved", headSha: head, candidateTreeHash };
+  },
+};
 const scriptValidatorRunner = createScriptValidatorRunner();
 
 export interface GraphWorkflowRouteScriptValidatorServiceDeps {
@@ -401,6 +468,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   },
   validationService,
   scriptValidatorService,
+  validationRoundService,
   outputCaptureService: outputCaptureRunner,
   readConversationTelemetry: (conversationId) =>
     readConversationTelemetry(conversationId),
@@ -458,6 +526,7 @@ const planRepairSupervisor = createPlanRepairSupervisor({
       getActiveExecution: getActiveGraphWorkflowExecution,
       mutateActive: executionRepository.mutateActive,
       buildLiveEditDeps: buildDefaultLiveEditDeps,
+      prepareAssignmentSnapshots: buildDefaultAssignmentSnapshotPreparation,
       publishLiveEditApplied: eventPublisher.publishLiveEditApplied,
       publishCharterUpdated: eventPublisher.publishCharterUpdated,
       getSession: defaultGetSession,
@@ -500,11 +569,7 @@ const planRepairSupervisor = createPlanRepairSupervisor({
           event.type === "graph-workflow-validation-result" &&
           event.contextId === contextId,
       )
-      .map((event) => ({
-        pass: event.pass,
-        summary: event.summary,
-        issues: event.issues,
-      }));
+      .map((event) => toPlanRepairValidationVerdict(event));
   },
   getSessionWorktreePath: async (projectPath, sessionName) =>
     (await defaultGetSession(projectPath, sessionName))?.worktreePath ?? null,
@@ -647,6 +712,12 @@ export interface GraphWorkflowExecutionRouteDeps {
     sessionName: string,
     contextId: string,
   ): Promise<GraphWorkflowExecution>;
+  resetExecutionContextAssignment(
+    projectPath: string,
+    sessionName: string,
+    contextId: string,
+    assignmentId: string,
+  ): Promise<GraphWorkflowExecution>;
   archiveExecution(projectPath: string, sessionName: string): Promise<void>;
   kickOffExecutionLoop(input: {
     projectPath: string;
@@ -741,6 +812,18 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.send(projectPath, sessionName, { type: "abort" }),
   resetExecutionContext: (projectPath, sessionName, contextId) =>
     workflowManager.resetContext(projectPath, sessionName, contextId),
+  resetExecutionContextAssignment: (
+    projectPath,
+    sessionName,
+    contextId,
+    assignmentId,
+  ) =>
+    workflowManager.resetContextAssignment(
+      projectPath,
+      sessionName,
+      contextId,
+      assignmentId,
+    ),
   archiveExecution: (projectPath, sessionName) =>
     executionRepository.archiveActive(projectPath, sessionName),
   async kickOffExecutionLoop(input) {
@@ -943,6 +1026,26 @@ function respondToManagerError(error: unknown): Response {
   const message =
     error instanceof Error ? error.message : "Graph workflow request failed";
 
+  if (error instanceof GraphWorkflowTransitionConflictError) {
+    logger.info("graph-workflow.lifecycle.transition_rejected", {
+      action: error.action,
+      currentStatus: error.currentStatus,
+      allowedStatuses: error.allowedStatuses,
+    });
+    return NextResponse.json(
+      {
+        error: error.message,
+        code: error.code,
+        details: {
+          action: error.action,
+          currentStatus: error.currentStatus,
+          allowedStatuses: error.allowedStatuses,
+        },
+      } satisfies ApiError,
+      { status: 409 },
+    );
+  }
+
   if (error instanceof GraphExecutionContractViolationError) {
     return NextResponse.json(
       {
@@ -1001,9 +1104,9 @@ function respondToManagerError(error: unknown): Response {
 
   if (
     message.includes("already has an active graph workflow execution") ||
-    message.startsWith("Only running graph workflow executions") ||
-    message.includes("graph workflow executions can be resumed") ||
     message.startsWith("Reset only allowed") ||
+    message.startsWith("Resetting a validator assignment is only allowed") ||
+    message.includes("is not configured on execution context") ||
     message.includes("is completed and cannot be reset")
   ) {
     return NextResponse.json({ error: message } satisfies ApiError, {
@@ -1676,6 +1779,63 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
   }
 
+  async function RESET_ASSIGNMENT(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    const parsed = resetExecutionContextAssignmentRequestSchema.safeParse(
+      await request.json(),
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request: executionId, contextId, and assignmentId are required",
+        } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const activeExecution = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+    if (!activeExecution) {
+      return notFound(
+        "Session does not have an active graph workflow execution",
+      );
+    }
+
+    if (activeExecution.id !== parsed.data.executionId) {
+      return NextResponse.json(
+        {
+          error:
+            "Reset request targets a stale execution; reload and try again.",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    try {
+      const execution = await deps.resetExecutionContextAssignment(
+        resolved.projectPath,
+        resolved.sessionName,
+        parsed.data.contextId,
+        parsed.data.assignmentId,
+      );
+      return NextResponse.json({
+        execution: summarizeExecution(execution, false),
+      });
+    } catch (error) {
+      return respondToManagerError(error);
+    }
+  }
+
   async function RESOLVE_APPROVAL(
     request: Request,
     context: RouteContext,
@@ -2083,6 +2243,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     RESUME,
     ABORT,
     RESET_CONTEXT,
+    RESET_ASSIGNMENT,
     RESOLVE_APPROVAL,
     APPROVE_DEFINITION,
     approveDefinition,
@@ -2196,6 +2357,9 @@ export const abortGraphWorkflowExecution = withTracing(
 );
 export const resetGraphWorkflowExecutionContext = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESET_CONTEXT,
+);
+export const resetGraphWorkflowExecutionAssignment = withTracing(
+  defaultGraphWorkflowExecutionHandlers.RESET_ASSIGNMENT,
 );
 export const resolveGraphWorkflowApproval = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESOLVE_APPROVAL,

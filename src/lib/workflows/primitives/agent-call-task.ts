@@ -68,6 +68,11 @@ export interface DispatchTaskRunDeps {
    */
   ccSessionScope?: AgentTaskRequest["ccSessionScope"];
   /**
+   * Server-derived filesystem-write envelope for the run, forwarded verbatim to
+   * the runner. Absent leaves the run unrestricted.
+   */
+  fsWritePolicy?: AgentTaskRequest["fsWritePolicy"];
+  /**
    * Backend failure classifier for thrown runner errors (the registered
    * descriptor's `errors.classify`). When absent, a thrown error normalizes
    * to `backend_error`.
@@ -161,6 +166,9 @@ export async function dispatchTaskRun(
       : {}),
     ...(deps.ccSessionScope !== undefined
       ? { ccSessionScope: deps.ccSessionScope }
+      : {}),
+    ...(deps.fsWritePolicy !== undefined
+      ? { fsWritePolicy: deps.fsWritePolicy }
       : {}),
   };
 

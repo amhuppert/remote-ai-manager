@@ -23,7 +23,7 @@ import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -44,9 +44,11 @@ const ts = "2026-01-01T00:00:00.000Z";
 
 function makeConversation(
   id: string,
-  o: Partial<ConversationState> = {},
-): ConversationState {
+  o: Partial<PublicConversationState> = {},
+): PublicConversationState {
   return {
+    redactedProfileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",
@@ -195,7 +197,7 @@ function seededClient(conversationIds: string[]): QueryClient {
 function PageHarness({
   openConversations,
 }: {
-  openConversations: ConversationState[];
+  openConversations: PublicConversationState[];
 }) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);
   const [backend, setBackend] = useState<AgentBackendId>("claude");
@@ -290,7 +292,7 @@ function pendingRows(
   );
 }
 
-async function renderCockpit(openConversations: ConversationState[]) {
+async function renderCockpit(openConversations: PublicConversationState[]) {
   const client = seededClient(openConversations.map((c) => c.id));
   render(
     <QueryClientProvider client={client}>

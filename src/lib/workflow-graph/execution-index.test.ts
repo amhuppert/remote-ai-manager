@@ -5,7 +5,7 @@ import type {
   GraphWorkflowTaskDefinition,
   ResolvedWorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import { createWorkflowExecution } from "./test-fixtures";
+import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
 import { createExecutionIndex } from "./execution-index";
 
 function createContext(id: string, title = id): GraphWorkflowResolvedContext {
@@ -14,11 +14,16 @@ function createContext(id: string, title = id): GraphWorkflowResolvedContext {
     title,
     acceptanceCriteria: "Context acceptance criteria",
     implementer: {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
     },
-    contextValidator: null,
+    contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },

@@ -110,6 +110,32 @@ function TicketGlyph(): React.JSX.Element {
   );
 }
 
+function AgentGlyph(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <rect
+        x="2.6"
+        y="4.4"
+        width="10.8"
+        height="8"
+        rx="2.2"
+        stroke="currentColor"
+        strokeWidth="1.3"
+      />
+      <path d="M8 1.6v2.8" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="6" cy="8.2" r="1" fill="currentColor" />
+      <circle cx="10" cy="8.2" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
 function WorkflowGlyph(): React.JSX.Element {
   return (
     <svg
@@ -382,6 +408,14 @@ export default function ProjectDetailView({
                   >
                     <WorkflowGlyph />
                     Workflows
+                  </Link>
+                  <Link
+                    href={`/projects/${encodeURIComponent(projectName)}/agents`}
+                    className={CC_IBTN_LINK_CLASS}
+                    title="Manage the agent profile library"
+                  >
+                    <AgentGlyph />
+                    Agents
                   </Link>
                   <button
                     type="button"

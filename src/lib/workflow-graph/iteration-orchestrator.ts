@@ -3,6 +3,7 @@ import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { assertLoopFence } from "./loop-fence";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import { refValueForBackend } from "@/lib/agent-backends/continuity";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -25,6 +26,12 @@ import type {
   GraphWorkflowValidationIssue,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowContextOutputCaptureOutcome } from "@/lib/workflow-graph/context-output-capture";
+import {
+  COHORT_SPECIALIST_ATTEMPTS,
+  type CohortCarriedProgress,
+  type CohortLane,
+  type CohortLaneProgress,
+} from "@/lib/workflow-graph/validation-cohort";
 import { resolveConsecutiveFailureThreshold } from "./constants";
 import type { ConversationTelemetrySummary } from "./conversation-telemetry";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
@@ -42,12 +49,36 @@ import {
 import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
 import {
   createGraphWorkflowValidationService,
+  type CohortSpecialistVerdict,
   type GraphWorkflowValidationService,
+  type ValidationRoundDispatch,
 } from "@/lib/workflow-graph/execution-validation";
+import { selectRunnableCohortAssignments } from "@/lib/workflow-graph/config-schemas";
+import {
+  admitSpecialists,
+  candidateIdentityMatches,
+  concludeValidationRound,
+  describeCandidateDrift,
+  freezeValidationCandidate,
+  isValidationRoundOpen,
+  openValidationRound,
+  reconcileValidationRoster,
+  type ValidationCandidateTreeResolution,
+  type ValidationRoundOutcome,
+} from "@/lib/workflow-graph/validation-round";
+import type {
+  GraphWorkflowExecutionContextState,
+  GraphWorkflowValidationCandidate,
+  GraphWorkflowValidationRound,
+} from "@/lib/workflow-graph/schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
 } from "@/lib/workflow-graph/execution-events";
+import {
+  deriveGraphWorkflowValidationSpecialistUsage,
+  type GraphWorkflowValidationSpecialistEntry,
+} from "@/lib/workflow-graph/event-schemas";
 import {
   createApprovalGateService,
   type ApprovalGateService,
@@ -75,6 +106,11 @@ import {
 import type { MutateActiveResult } from "./execution-repository";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { graphLaneContextMetrics } from "@/lib/workflow-graph/graph-lane-store";
+import {
+  assignmentFingerprint,
+  laneStateKey,
+} from "@/lib/workflow-graph/lane-identity";
+import { answeredPendingUserInputs } from "@/lib/workflow-graph/pending-user-input";
 
 interface GraphWorkflowIterationExecutionRepository {
   getActive(
@@ -186,6 +222,29 @@ interface IterationOrchestratorScriptValidatorService {
   ): Promise<ScriptValidatorOutcome>;
 }
 
+export interface IterationOrchestratorValidationRoundService {
+  /**
+   * Resolve the git identity of the tree this context's validators will
+   * inspect. Reports unavailability as its own result rather than throwing or
+   * fabricating an identity: the engine treats an unreadable tree as an
+   * infrastructure outcome, because a round that cannot say what it reviewed
+   * cannot be the deterministic thing a round is for.
+   */
+  resolveCandidateTree(input: {
+    projectPath: string;
+    sessionName: string;
+    contextId: string;
+    executionTarget?: ExecutionTarget;
+  }): Promise<ValidationCandidateTreeResolution>;
+}
+
+/**
+ * How many times the freeze re-probes an unreadable candidate before halting.
+ * Above one so a transient git blip does not end a workflow; small, because
+ * every attempt after the first is evidence the failure is not transient.
+ */
+const CANDIDATE_RESOLVE_ATTEMPTS = 2;
+
 export interface GraphWorkflowContextOutputCaptureInput {
   projectPath: string;
   sessionName: string;
@@ -228,7 +287,12 @@ export interface GraphWorkflowIterationOrchestratorDeps {
     /** `agentBackend` is not optional decoration: the conversation service
      *  defaults a new conversation to Claude, so a context configured for any
      *  other backend must say so or its turns dispatch to the wrong one. */
-    opts: { role: "iteration"; agentBackend?: AgentBackendId },
+    opts: {
+      role: "iteration";
+      agentBackend?: AgentBackendId;
+      /** The context implementer's execution-seeded snapshot (R4). */
+      profileSnapshot?: AgentProfileSnapshot;
+    },
   ): Promise<GraphWorkflowIterationConversation>;
   createToolServer(
     input: GraphWorkflowIterationToolServerInput,
@@ -243,6 +307,13 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   validationService?: GraphWorkflowValidationService;
   scriptValidatorService?: IterationOrchestratorScriptValidatorService;
   /**
+   * Resolves the git half of a validation round's candidate identity. Absent
+   * leaves rounds with a task-state-only identity: honest for a context with no
+   * resolvable worktree, and the reason the round machinery never depends on
+   * git being reachable.
+   */
+  validationRoundService?: IterationOrchestratorValidationRoundService;
+  /**
    * Dispatches the D2 format turn for a context that declares an
    * `outputSchema`. Absent (or a context without a schema) leaves the exit
    * evaluator exactly as it was — the context finalizes on validator pass.
@@ -250,7 +321,7 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   outputCaptureService?: IterationOrchestratorOutputCaptureService;
   approvalGateService?: ApprovalGateService;
   /**
-   * Gate that owns the `pendingUserInput` lifecycle. The orchestrator calls
+   * Gate that owns the `pendingUserInputs` lifecycle. The orchestrator calls
    * `enterAwaitingUserInput` from the post-turn park check; a default is built
    * from `executionRepository` + `eventPublisher` when not injected.
    */
@@ -319,13 +390,32 @@ export interface GraphWorkflowIterationInput {
    */
   executionTarget?: ExecutionTarget;
   /**
-   * Set when the loop resumes a context after its parked question was answered.
-   * The asking conversation is pinned (rotation still outranks) and the answers
-   * block is embedded in the resumed turn's prompt — the follow-up (pinned) or
-   * seed (rotated) implementer prompt, or the validator prompt when the resumed
-   * lane is `context_validator` (5.1, 5.3, 5.5).
+   * Set when the loop resumes a context after its parked questions were
+   * answered. Each entry names the lane that asked: the asking conversation is
+   * pinned (rotation still outranks) and the answers block is embedded in that
+   * lane's resumed prompt — the follow-up (pinned) or seed (rotated)
+   * implementer prompt, or the asking validator's prompt (5.1, 5.3, 5.5).
+   *
+   * A list because a cohort's validators park independently and may be answered
+   * together; each lane sees only its own answers.
    */
-  resumeUserInput?: ResumeUserInputContext;
+  resumeUserInputs?: readonly ResumeUserInputContext[];
+}
+
+/** The implementer's answers, if this resume carries any. One lane per context. */
+function implementerResumeEntry(
+  input: GraphWorkflowIterationInput,
+): ResumeUserInputContext | undefined {
+  return input.resumeUserInputs?.find((entry) => entry.lane === "implementer");
+}
+
+/** The validator lanes' answers, in the order the gate consumed them. */
+function validatorResumeEntries(
+  input: GraphWorkflowIterationInput,
+): ResumeUserInputContext[] {
+  return (input.resumeUserInputs ?? []).filter(
+    (entry) => entry.lane === "context_validator",
+  );
 }
 
 export interface GraphWorkflowIterationResult {
@@ -601,6 +691,18 @@ function buildTaskFailureMessages(input: {
     scopedIssuesByTaskId.set(issue.taskId, issues);
   }
 
+  // Several reviewers can raise indistinguishable findings, so a remediation
+  // list that named none of them would read as one reviewer repeating itself
+  // and give the implementer no way to weigh two objections separately. A round
+  // with a single reviewer needs no such disambiguation and keeps the message
+  // it has always had.
+  const attributed =
+    new Set(input.issues.map((issue) => issue.assignmentId)).size > 1;
+  const renderIssue = (issue: GraphWorkflowValidationIssue): string =>
+    attributed && issue.assignmentId
+      ? `- [${issue.assignmentId}] ${issue.title}: ${issue.description}`
+      : `- ${issue.title}: ${issue.description}`;
+
   return Object.fromEntries(
     input.reopenTaskIds.map((taskId) => {
       const scopedIssues = scopedIssuesByTaskId.get(taskId);
@@ -610,12 +712,7 @@ function buildTaskFailureMessages(input: {
 
       return [
         taskId,
-        [
-          input.summary,
-          ...scopedIssues.map(
-            (issue) => `- ${issue.title}: ${issue.description}`,
-          ),
-        ].join("\n"),
+        [input.summary, ...scopedIssues.map(renderIssue)].join("\n"),
       ];
     }),
   );
@@ -890,6 +987,15 @@ export function createGraphWorkflowIterationOrchestrator(
     publishValidationEvent?: (
       execution: GraphWorkflowExecution,
     ) => GraphWorkflowEventDelivery;
+    /**
+     * Refuses the whole write when the round this rejection belongs to is no
+     * longer the round the context is on, publishing the given incident in its
+     * place. Inside the mutation because that is the only place where "is it
+     * still current" and "reopen the tasks" cannot be separated by a race.
+     */
+    refuseIfSuperseded?: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowEventDelivery | null;
   }): Promise<GraphWorkflowExecution> {
     // Reopened-task observability captured (pure) inside the reducer and emitted
     // AFTER the mutation commits, so the write-queue critical section performs no
@@ -903,6 +1009,15 @@ export function createGraphWorkflowIterationOrchestrator(
         const nextExecution = cloneExecution(latest);
         const failureTimestamp = getNow(deps);
         reopenedTaskLog.length = 0;
+
+        const refusal = input.refuseIfSuperseded?.(nextExecution) ?? null;
+        if (refusal !== null) {
+          return {
+            execution: latest,
+            events: refusal.events,
+            pushes: refusal.pushes,
+          };
+        }
 
         for (const taskId of input.reopenTaskIds) {
           const taskState = nextExecution.taskStates[taskId];
@@ -1068,8 +1183,15 @@ export function createGraphWorkflowIterationOrchestrator(
     execLogger: ReturnType<typeof getExecutionLogger>;
     execution: GraphWorkflowExecution;
     onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
+    /**
+     * Where this stage records that the round ended on a deterministic script
+     * failure. Written here rather than by the caller because this stage can
+     * exit by halting — a failure that trips the breaker never returns — and a
+     * round released by the halt still has to say why it ended.
+     */
+    journal: RoundJournal;
   }): Promise<"pass" | "skip" | "fail"> {
-    const { input, execLogger, execution, onHalt } = params;
+    const { input, execLogger, execution, onHalt, journal } = params;
     const contextDef = getContextDefinition(execution, input.contextId);
     if (!contextDef.scriptValidator.enabled) {
       return "skip";
@@ -1153,6 +1275,11 @@ export function createGraphWorkflowIterationOrchestrator(
       throw new IterationHaltedError(recoveryReason);
     }
 
+    // Neither a pass nor an infrastructure error: the script deterministically
+    // rejected the candidate. The round's fate is settled here, before any of
+    // the accounting below can halt out of this function.
+    journal.outcome = "script_failed";
+
     execLogger?.validation(input.contextId, "script_validation.failed", {
       summary: gate.reason,
       logRelativePath: outcome.logRelativePath,
@@ -1202,56 +1329,79 @@ export function createGraphWorkflowIterationOrchestrator(
 
   /**
    * Shared awaiting-user-input park for both the implementer and context-
-   * validator lanes (design "Park detection"; Req 3.2, 3.3). Hands the batch to
-   * the user-input gate; on `"answers_ready"` (fast answer) returns null so the
-   * caller proceeds. On `"parked"` it commits the park mutation — dropping the
-   * context from `activeContextIds`, rebuilding the machine snapshot, and (for
-   * the implementer seed increment only) restoring the pre-seed iteration count
-   * so parking consumes no iteration — then re-reads and returns the parked
-   * iteration result. It never touches `consecutiveFailureCount` or reopens
-   * tasks.
+   * validator lanes (design "Park detection"; Req 3.2, 3.3). Hands every asking
+   * lane's batch to the user-input gate, one park per lane: a cohort can have
+   * several validators waiting at once, and a park that named only the first
+   * would strand the rest with questions nobody could answer.
+   *
+   * Returns null when NO lane parked — every batch already had answers recorded
+   * (fast answer), so the caller proceeds. Otherwise it commits the park
+   * mutation — dropping the context from `activeContextIds`, rebuilding the
+   * machine snapshot, and (for the implementer seed increment only) restoring
+   * the pre-seed iteration count so parking consumes no iteration — then
+   * re-reads and returns the parked iteration result. It never touches
+   * `consecutiveFailureCount` or reopens tasks.
    */
   async function parkContextForUserInput(params: {
     input: GraphWorkflowIterationInput;
     execLogger: ReturnType<typeof getExecutionLogger>;
-    lane: "implementer" | "context_validator";
+    /** The asking lanes, in cohort order. */
+    lanes: ReadonlyArray<{
+      laneKey: string;
+      conversationId: string;
+      questionBatchId: string;
+      questions: AskQuestionItem[];
+    }>;
+    /** The round the asking validators are reviewing in; null for the implementer. */
+    roundSeq?: number | null;
+    /** The conversation the parked iteration result reports. */
     conversationId: string;
-    questionBatchId: string;
-    questions: AskQuestionItem[];
     /** When set, the context's iterationCount is restored to this value. */
     restoreIterationCount?: number;
   }): Promise<GraphWorkflowIterationResult | null> {
     const {
       input,
       execLogger,
-      lane,
+      lanes,
+      roundSeq,
       conversationId,
-      questionBatchId,
-      questions,
       restoreIterationCount,
     } = params;
 
-    const outcome = await userInputGateService.enterAwaitingUserInput({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      contextId: input.contextId,
-      lane,
-      conversationId,
-      questionBatchId,
-      questions,
-    });
-
-    if (outcome === "answers_ready") {
-      execLogger?.iteration(
-        input.contextId,
-        "iteration.user_input_fast_answer",
-        { lane, conversationId, questionBatchId },
-      );
-      logger.info("graph-workflow.iteration.user_input_fast_answer", {
+    let parkedCount = 0;
+    for (const lane of lanes) {
+      const outcome = await userInputGateService.enterAwaitingUserInput({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
         contextId: input.contextId,
-        lane,
-        questionBatchId,
+        laneKey: lane.laneKey,
+        conversationId: lane.conversationId,
+        questionBatchId: lane.questionBatchId,
+        questions: lane.questions,
+        roundSeq: roundSeq ?? null,
       });
+
+      if (outcome === "answers_ready") {
+        execLogger?.iteration(
+          input.contextId,
+          "iteration.user_input_fast_answer",
+          {
+            laneKey: lane.laneKey,
+            conversationId: lane.conversationId,
+            questionBatchId: lane.questionBatchId,
+          },
+        );
+        logger.info("graph-workflow.iteration.user_input_fast_answer", {
+          contextId: input.contextId,
+          laneKey: lane.laneKey,
+          questionBatchId: lane.questionBatchId,
+        });
+        continue;
+      }
+      parkedCount += 1;
+    }
+
+    if (parkedCount === 0) {
       return null;
     }
 
@@ -1278,17 +1428,16 @@ export function createGraphWorkflowIterationOrchestrator(
       input.contextId,
       "iteration.parked_awaiting_user_input",
       {
-        lane,
-        conversationId,
-        questionBatchId,
-        questionCount: questions.length,
+        laneKeys: lanes.map((lane) => lane.laneKey),
+        parkedCount,
+        roundSeq: roundSeq ?? null,
       },
     );
     logger.info("graph-workflow.iteration.parked_awaiting_user_input", {
       executionId: parkedExecution.id,
       contextId: input.contextId,
-      lane,
-      questionBatchId,
+      laneKeys: lanes.map((lane) => lane.laneKey),
+      parkedCount,
     });
 
     return {
@@ -1298,12 +1447,631 @@ export function createGraphWorkflowIterationOrchestrator(
     };
   }
 
+  /**
+   * Resolve the candidate identity as it is RIGHT NOW: the git tree the
+   * validators would inspect, plus the context's current task-state generation.
+   * Called at the freeze and again at each re-verification point, so the two
+   * observations are produced by identical means and a difference between them
+   * is a real move rather than an artefact of how each was computed.
+   */
+  async function observeCandidate(
+    input: GraphWorkflowIterationInput,
+    execution: GraphWorkflowExecution,
+  ): Promise<
+    | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
+    | { kind: "unavailable"; reason: string }
+  > {
+    const tree: ValidationCandidateTreeResolution =
+      (await deps.validationRoundService?.resolveCandidateTree({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        ...(input.executionTarget
+          ? { executionTarget: input.executionTarget }
+          : {}),
+      })) ?? {
+        kind: "unavailable",
+        reason: "no candidate-tree resolver is configured",
+      };
+
+    if (tree.kind === "unavailable") return tree;
+
+    return {
+      kind: "resolved",
+      candidate: freezeValidationCandidate({
+        tree,
+        taskStates: execution.taskStates,
+        contextId: input.contextId,
+      }),
+    };
+  }
+
+  /**
+   * Freeze-time observation, re-probed before giving up. A round cannot open on
+   * an unreadable tree, so this is the one place that retries; every later
+   * observation compares against an identity that already exists, where an
+   * unreadable tree is simply drift.
+   */
+  async function observeCandidateForFreeze(
+    input: GraphWorkflowIterationInput,
+    execution: GraphWorkflowExecution,
+  ): Promise<
+    | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
+    | { kind: "unavailable"; reason: string; attempts: number }
+  > {
+    let last = "";
+    for (let attempt = 1; attempt <= CANDIDATE_RESOLVE_ATTEMPTS; attempt += 1) {
+      const observed = await observeCandidate(input, execution);
+      if (observed.kind === "resolved") return observed;
+      last = observed.reason;
+    }
+    return {
+      kind: "unavailable",
+      reason: last,
+      attempts: CANDIDATE_RESOLVE_ATTEMPTS,
+    };
+  }
+
+  async function writeValidationRound(
+    input: GraphWorkflowIterationInput,
+    round: GraphWorkflowValidationRound | null,
+  ): Promise<void> {
+    await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const contextState = next.contextStates[input.contextId];
+        if (contextState) {
+          contextState.validationRound = round;
+        }
+        return next;
+      },
+    );
+  }
+
+  /**
+   * Fold one lane's state change into the round record.
+   *
+   * Written per change rather than per round because the two things that read
+   * these fields — the halt an exhausted lane raises, and the resume that
+   * decides who reruns — both need them to have survived the process that
+   * produced them.
+   */
+  async function recordSpecialistProgress(
+    input: GraphWorkflowIterationInput,
+    /** The round this lane started in. A write is fenced to it. */
+    dispatchRoundSeq: number,
+    update: CohortLaneProgress,
+  ): Promise<void> {
+    await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const round = next.contextStates[input.contextId]?.validationRound;
+        if (!round) return next;
+
+        // The round a lane started in is the only round its answer describes.
+        // A late write landing on a NEWER round would credit a stranger's
+        // candidate with a verdict rendered against a tree it never had.
+        if (round.seq !== dispatchRoundSeq) {
+          const delivery = eventPublisher.publishValidationIncident({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: next,
+            contextId: input.contextId,
+            incident: "round_superseded",
+            roundSeq: dispatchRoundSeq,
+            stage: "specialist_result",
+            assignmentId: update.assignmentId,
+            attempts: update.attempts,
+            driftedComponents: `roundSeq (${dispatchRoundSeq} -> ${round.seq})`,
+            message: `${update.assignmentId} answered into validation round ${dispatchRoundSeq}, which round ${round.seq} has already superseded; the write was dropped.`,
+          });
+          return { execution: next, ...delivery };
+        }
+
+        const specialist = round.specialists[update.assignmentId];
+        if (!specialist) return next;
+        specialist.state = update.state;
+        specialist.attempts = update.attempts;
+        if (update.summary !== undefined) specialist.summary = update.summary;
+        if (update.issues !== undefined) specialist.issues = [...update.issues];
+        if (update.questionToken !== undefined) {
+          specialist.questionToken = update.questionToken;
+        }
+        // Each fact is recorded and published in the same breath, from THIS
+        // mutation — the one that accepts the change — so no event can describe
+        // round state that was never committed (D12).
+        if (update.verdict !== undefined) {
+          // Provenance belongs to the verdict, so a round rebuilt after a crash
+          // can still say WHERE each retained verdict was rendered and what it
+          // cost.
+          specialist.sessionRef = update.verdict.sessionRef;
+          specialist.reviewArtifact = update.verdict.reviewArtifact;
+          const entry = buildSpecialistEntry(round, {
+            assignmentId: update.assignmentId,
+            pass: update.verdict.pass,
+            summary: update.summary ?? "",
+            issues: [...(update.issues ?? [])],
+            sessionRef: update.verdict.sessionRef,
+            reviewArtifact: update.verdict.reviewArtifact,
+          });
+          if (entry !== null) {
+            const delivery = eventPublisher.publishValidationSpecialistResult({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              execution: next,
+              contextId: input.contextId,
+              roundSeq: round.seq,
+              specialist: entry,
+            });
+            return { execution: next, ...delivery };
+          }
+        }
+
+        if (update.infraFailure !== undefined) {
+          // Written with the count it explains: `attempts` alone cannot tell a
+          // lane recovered after a crash why its budget is gone.
+          specialist.lastInfraFailure = { ...update.infraFailure };
+          const delivery = eventPublisher.publishValidationIncident({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: next,
+            contextId: input.contextId,
+            incident: "infra_failure",
+            roundSeq: round.seq,
+            stage: "specialist_result",
+            assignmentId: update.assignmentId,
+            attempts: update.attempts,
+            driftedComponents: "",
+            message: `${update.assignmentId} spent attempt ${update.attempts} of ${COHORT_SPECIALIST_ATTEMPTS} on an infrastructure failure (${update.infraFailure.reason}): ${update.infraFailure.message}`,
+          });
+          return { execution: next, ...delivery };
+        }
+
+        return next;
+      },
+    );
+  }
+
+  /**
+   * Whether the context is still on the round this pass has been reviewing.
+   *
+   * The check is what makes a conclusion safe to write: everything the round
+   * collected describes ONE candidate, and a context that has moved to another
+   * round no longer owns that candidate. Publishing anyway would reopen tasks —
+   * or clear a failure counter — on the authority of a review of a tree the
+   * context has already left behind.
+   */
+  function roundStillCurrent(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+    round: GraphWorkflowValidationRound | null,
+  ): boolean {
+    if (round === null) return true;
+    return (
+      (execution.contextStates[contextId]?.validationRound?.seq ?? null) ===
+      round.seq
+    );
+  }
+
+  /**
+   * The incident a superseded conclusion publishes INSTEAD of its aggregate.
+   * Same mutation, so the record of the refusal is as atomic as the write it
+   * replaced (D12).
+   */
+  function publishRoundSuperseded(params: {
+    input: GraphWorkflowIterationInput;
+    execution: GraphWorkflowExecution;
+    round: GraphWorkflowValidationRound;
+  }): GraphWorkflowEventDelivery {
+    const observed =
+      params.execution.contextStates[params.input.contextId]?.validationRound
+        ?.seq ?? null;
+    return eventPublisher.publishValidationIncident({
+      projectPath: params.input.projectPath,
+      sessionName: params.input.sessionName,
+      execution: params.execution,
+      contextId: params.input.contextId,
+      incident: "round_superseded",
+      roundSeq: params.round.seq,
+      stage: "aggregate",
+      assignmentId: null,
+      driftedComponents: `roundSeq (${params.round.seq} -> ${observed ?? "none"})`,
+      message: `Validation round ${params.round.seq} concluded into a context that has already moved to round ${observed ?? "none"}; nothing was recorded and no verdict was published.`,
+    });
+  }
+
+  /**
+   * Log a conclusion that was refused because its round was superseded, and
+   * leave the round record alone: the open round belongs to whoever superseded
+   * this one, and concluding it here would end a round this pass never ran.
+   */
+  function abandonSupersededConclusion(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    round: GraphWorkflowValidationRound;
+    journal: RoundJournal;
+  }): null {
+    params.journal.leaveOpen = true;
+    params.execLogger?.validation(
+      params.input.contextId,
+      "validation_round.round_superseded",
+      { roundSeq: params.round.seq, stage: "aggregate" },
+    );
+    logger.warn("graph-workflow.validation_round.round_superseded", {
+      contextId: params.input.contextId,
+      roundSeq: params.round.seq,
+      stage: "aggregate",
+    });
+    return null;
+  }
+
+  /**
+   * One publishable specialist entry: the verdict joined to the identity the
+   * round FROZE for that seat.
+   *
+   * Identity comes from the roster and never from the live definition — the
+   * roster records which profile bytes this reviewer actually received, so the
+   * entry stays truthful after the profile is edited. A verdict from a seat the
+   * roster does not know is not publishable at all: attributing it to no
+   * profile would be worse than omitting it.
+   */
+  function buildSpecialistEntry(
+    round: GraphWorkflowValidationRound,
+    verdict: Pick<
+      GraphWorkflowValidationSpecialistEntry,
+      | "assignmentId"
+      | "pass"
+      | "summary"
+      | "issues"
+      | "sessionRef"
+      | "reviewArtifact"
+    >,
+  ): GraphWorkflowValidationSpecialistEntry | null {
+    const seat = round.roster.find(
+      (entry) => entry.assignmentId === verdict.assignmentId,
+    );
+    if (seat === undefined) return null;
+    return {
+      assignmentId: verdict.assignmentId,
+      profile: {
+        tier: seat.profileRef.tier,
+        id: seat.profileRef.id,
+        revision: seat.revision,
+      },
+      resolvedInstructionHash: seat.resolvedInstructionHash,
+      pass: verdict.pass,
+      summary: verdict.summary,
+      issues: verdict.issues,
+      sessionRef: verdict.sessionRef,
+      reviewArtifact: verdict.reviewArtifact,
+      usage: deriveGraphWorkflowValidationSpecialistUsage(
+        verdict.reviewArtifact,
+      ),
+    };
+  }
+
+  /**
+   * The cohort's verdicts as aggregate-event entries, in cohort order.
+   *
+   * Empty outside a round: with no frozen roster there is no identity to
+   * attribute a verdict to, and the pre-cohort single-reviewer shape — top-level
+   * verdict, top-level refs — is exactly what such a result should keep.
+   */
+  function buildSpecialistEntries(
+    round: GraphWorkflowValidationRound | null,
+    verdicts: readonly CohortSpecialistVerdict[] | undefined,
+  ): GraphWorkflowValidationSpecialistEntry[] {
+    if (round === null || verdicts === undefined) return [];
+    const entries: GraphWorkflowValidationSpecialistEntry[] = [];
+    for (const verdict of verdicts) {
+      const entry = buildSpecialistEntry(round, verdict);
+      if (entry !== null) entries.push(entry);
+    }
+    return entries;
+  }
+
+  /**
+   * The lanes a resumed round does NOT dispatch again, rebuilt from what the
+   * round record and the parked questions persisted.
+   *
+   * Two kinds, for one reason: re-running either would undo something that has
+   * already happened. A settled lane rendered a verdict on exactly this
+   * candidate. A lane still parked is holding a question the human is looking at
+   * right now, and dispatching it would replace that question with a new batch —
+   * so a cohort where one answer arrives before another would silently throw the
+   * later question away, which is precisely the serialization R9.1 forbids.
+   *
+   * Everything else owes this candidate a review: an infra-failed lane, a lane
+   * that was still running when the process died, and the lane whose answers
+   * this very iteration is carrying.
+   */
+  function carriedForwardCohortLanes(
+    round: GraphWorkflowValidationRound,
+    contextState: GraphWorkflowExecutionContextState | undefined,
+    input: GraphWorkflowIterationInput,
+  ): Record<string, CohortLane> {
+    const retained: Record<string, CohortLane> = {};
+    for (const seat of round.roster) {
+      const specialist = round.specialists[seat.assignmentId];
+      if (!specialist) continue;
+      if (
+        specialist.state !== "verdict_pass" &&
+        specialist.state !== "verdict_fail"
+      ) {
+        const parked = carriedParkedLane(
+          seat.assignmentId,
+          contextState,
+          input,
+        );
+        if (parked !== null) retained[seat.assignmentId] = parked;
+        continue;
+      }
+      const summary = specialist.summary ?? "";
+      // Re-stamped from the seat: the round record groups findings BY
+      // assignment, so the key is where the attribution lives and the issues
+      // themselves are stored without it. Rebuilding it here keeps a resumed
+      // round's aggregate as attributable as a fresh one's (R5.4).
+      const issues = specialist.issues.map((issue) => ({
+        ...issue,
+        assignmentId: seat.assignmentId,
+      }));
+      // The refs come back from the record too. A verdict rendered before a
+      // crash was rendered by a real session at a real cost; reconstructing it
+      // without them would make a resumed round's aggregate less attributable
+      // than an uninterrupted one's, and silently unprice its retained lanes.
+      const sessionRef = specialist.sessionRef;
+      const reviewArtifact = specialist.reviewArtifact;
+      retained[seat.assignmentId] =
+        specialist.state === "verdict_pass"
+          ? {
+              assignmentId: seat.assignmentId,
+              attempts: specialist.attempts,
+              settlement: {
+                kind: "pass",
+                summary,
+                feedback: `Context validation passed.\n${summary}`,
+                issues: [],
+                reopenTaskIds: [],
+                sessionRef,
+                reviewArtifact,
+              },
+            }
+          : {
+              assignmentId: seat.assignmentId,
+              attempts: specialist.attempts,
+              settlement: {
+                kind: "fail",
+                summary,
+                feedback: `Context validation blocked completion.\n${summary}`,
+                issues,
+                reopenTaskIds: [
+                  ...new Set(issues.map((issue) => issue.taskId)),
+                ],
+                sessionRef,
+                reviewArtifact,
+              },
+            };
+    }
+    return retained;
+  }
+
+  /**
+   * A seat's standing question, as the lane settlement that carries it through
+   * a resume without re-asking it — or null when this seat is not waiting.
+   *
+   * The PARKED RECORD is the source, not the round's specialist state: the
+   * record is what the human can actually answer, and it names the conversation
+   * and the batch that answer will arrive on. Scoped to the round it was asked
+   * in, so a question left behind by a round the context has since left cannot
+   * hold a new one open.
+   */
+  function carriedParkedLane(
+    assignmentId: string,
+    contextState: GraphWorkflowExecutionContextState | undefined,
+    input: GraphWorkflowIterationInput,
+  ): CohortLane | null {
+    const round = contextState?.validationRound;
+    if (!contextState || !round) return null;
+    const laneKey = laneStateKey("context_validator", assignmentId);
+    const record = contextState.pendingUserInputs[laneKey];
+    if (!record || record.roundSeq !== round.seq) return null;
+    // The answers this iteration carries were consumed FROM this lane's record;
+    // a record still standing for it means the answer has not been delivered, so
+    // delivering it wins over holding the lane.
+    if (input.resumeUserInputs?.some((resume) => resume.laneKey === laneKey)) {
+      return null;
+    }
+    return {
+      assignmentId,
+      attempts: round.specialists[assignmentId]?.attempts ?? 0,
+      settlement: {
+        kind: "asked_user",
+        conversationId: record.conversationId,
+        questionBatchId: record.questionBatchId,
+        questions: record.questions,
+      },
+    };
+  }
+
+  /**
+   * What each UNSETTLED lane already spent in this round.
+   *
+   * Read back rather than restarted at zero: the attempt bound is three per
+   * specialist per round, and a round survives the process that opened it. A
+   * pass that began every lane at zero would hand a failing provider three more
+   * dispatches after every crash, which is the same as having no bound (D5).
+   *
+   * A count with no recorded failure is skipped: it predates the field, and a
+   * lane cannot be settled against a reason nobody wrote down.
+   */
+  function carriedCohortProgress(
+    round: GraphWorkflowValidationRound,
+  ): Record<string, CohortCarriedProgress> {
+    const carried: Record<string, CohortCarriedProgress> = {};
+    for (const seat of round.roster) {
+      const specialist = round.specialists[seat.assignmentId];
+      if (!specialist || specialist.attempts <= 0) continue;
+      if (specialist.lastInfraFailure === null) continue;
+      carried[seat.assignmentId] = {
+        attempts: specialist.attempts,
+        lastFailure: specialist.lastInfraFailure,
+      };
+    }
+    return carried;
+  }
+
+  /**
+   * Close the round out and publish the incident that explains why, for the two
+   * outcomes where nobody judged the work. Neither charges an iteration nor a
+   * consecutive failure: an infrastructure outcome that fed the circuit breaker
+   * would eventually halt a workflow for a reason no reviewer ever raised.
+   */
+  async function concludeRoundOnIncident(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    conversationId: string;
+    round: GraphWorkflowValidationRound;
+    incident: "candidate_mismatch" | "roster_drift" | "stale_result_rejected";
+    stage: "post_script" | "diff_render" | "specialist_result" | "aggregate";
+    assignmentId: string | null;
+    /** What diverged: the moved candidate components, or the drifted seats. */
+    drifted: string;
+    message: string;
+    journal: RoundJournal;
+  }): Promise<GraphWorkflowIterationResult> {
+    const {
+      input,
+      execLogger,
+      round,
+      incident,
+      stage,
+      assignmentId,
+      drifted,
+      message,
+      journal,
+    } = params;
+
+    execLogger?.validation(input.contextId, `validation_round.${incident}`, {
+      roundSeq: round.seq,
+      stage,
+      assignmentId,
+      driftedComponents: drifted,
+    });
+    logger.warn(`graph-workflow.validation_round.${incident}`, {
+      contextId: input.contextId,
+      roundSeq: round.seq,
+      stage,
+      assignmentId,
+      driftedComponents: drifted,
+    });
+
+    journal.outcome =
+      incident === "roster_drift" ? "roster_drift" : "candidate_mismatch";
+
+    const concluded = await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const contextState = next.contextStates[input.contextId];
+        if (contextState) {
+          contextState.validationRound = concludeValidationRound(
+            round,
+            journal.outcome,
+          );
+        }
+        // Back to ready, and out of the active set: the context is neither done
+        // nor failed, it simply has no reviewed candidate. The scheduler picks
+        // it up again and the next pass freezes a fresh one.
+        next.activeContextIds = next.activeContextIds.filter(
+          (id) => id !== input.contextId,
+        );
+        transitionContextStatus(next, input.contextId, "ready", {
+          reason: `validation_round.${incident}`,
+        });
+        next.machineSnapshot = buildLifecycleSnapshot(next, {
+          hasLiveIteration: false,
+        });
+        const delivery = eventPublisher.publishValidationIncident({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          execution: next,
+          contextId: input.contextId,
+          incident,
+          roundSeq: round.seq,
+          stage,
+          assignmentId,
+          driftedComponents: drifted,
+          message,
+        });
+        return { execution: next, ...delivery };
+      },
+    );
+
+    logRoundConcluded(input, execLogger, round, journal.outcome);
+
+    return {
+      conversationId: params.conversationId,
+      execution: concluded,
+      shouldContinueInContext: false,
+    };
+  }
+
+  /** The candidate moved (or stopped being readable) under an open round. */
+  async function concludeRoundOnCandidateMismatch(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    conversationId: string;
+    round: GraphWorkflowValidationRound;
+    /** The new observation, or the reason there could not be one. */
+    observed:
+      | { kind: "resolved"; candidate: GraphWorkflowValidationCandidate }
+      | { kind: "unavailable"; reason: string };
+    stage: "post_script" | "diff_render" | "specialist_result" | "aggregate";
+    assignmentId: string | null;
+    /**
+     * What diverged, when the caller knows something a re-observation cannot
+     * recover — the shared inputs having been rendered from another tree, which
+     * leaves no trace in the worktree once the render is over.
+     */
+    driftOverride?: string;
+    /** The narrower incident, when the caller knows nothing actually moved. */
+    incidentOverride?: "stale_result_rejected";
+    journal: RoundJournal;
+  }): Promise<GraphWorkflowIterationResult> {
+    const drifted =
+      params.driftOverride ??
+      (params.observed.kind === "resolved"
+        ? describeCandidateDrift(
+            params.round.candidate,
+            params.observed.candidate,
+          )
+        : `tree unreadable (${params.observed.reason})`);
+
+    const incident = params.incidentOverride ?? "candidate_mismatch";
+    return concludeRoundOnIncident({
+      ...params,
+      incident,
+      drifted,
+      message:
+        incident === "stale_result_rejected"
+          ? `A validator result arrived for a round other than validation round ${params.round.seq}; it was rejected and the round concluded without a verdict.`
+          : `The reviewed candidate moved during validation round ${params.round.seq} (${drifted}); the round concluded without a verdict.`,
+    });
+  }
+
   async function processContextCompletionValidation(params: {
     input: GraphWorkflowIterationInput;
     execLogger: ReturnType<typeof getExecutionLogger>;
+    /** Bookkeeping id for an iteration result this stage may short-circuit. */
+    conversationId: string;
     onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
   }): Promise<GraphWorkflowIterationResult | null> {
-    const { input, execLogger, onHalt } = params;
+    const { input, execLogger, conversationId, onHalt } = params;
     const preContextValidationExecution = await loadCurrentExecution(
       input.projectPath,
       input.sessionName,
@@ -1321,14 +2089,216 @@ export function createGraphWorkflowIterationOrchestrator(
       return null;
     }
 
+    const contextDefinition = getContextDefinition(
+      preContextValidationExecution,
+      input.contextId,
+    );
+    const cohortAssignments = selectRunnableCohortAssignments(
+      contextDefinition.contextValidator,
+    );
+    // A round exists to freeze what someone will review. With no script
+    // validator and an empty cohort there is nothing to review with, so the
+    // context takes the unchanged "validation is not enabled" path.
+    const roundApplies =
+      contextDefinition.scriptValidator.enabled || cohortAssignments.length > 0;
+
+    if (!roundApplies) {
+      return runContextValidationStages({
+        input,
+        execLogger,
+        conversationId,
+        onHalt,
+        preContextValidationExecution,
+        round: null,
+        journal: { outcome: null },
+      });
+    }
+
+    // Nothing may review a tree the engine cannot identify. Terminal rather
+    // than a retry-forever incident: returning the context to ready would spin
+    // against the same broken git for as long as the workflow ran.
+    const frozenTree = await observeCandidateForFreeze(
+      input,
+      preContextValidationExecution,
+    );
+    if (frozenTree.kind === "unavailable") {
+      const message = `Could not read the candidate tree for execution context "${input.contextId}" after ${frozenTree.attempts} attempts: ${frozenTree.reason}`;
+      execLogger?.validation(
+        input.contextId,
+        "validation_round.candidate_unavailable",
+        { attempts: frozenTree.attempts, reason: frozenTree.reason },
+      );
+      logger.error("graph-workflow.validation_round.candidate_unavailable", {
+        contextId: input.contextId,
+        attempts: frozenTree.attempts,
+        reason: frozenTree.reason,
+      });
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "validation_candidate_unavailable",
+        contextId: input.contextId,
+        attempts: frozenTree.attempts,
+        message,
+      };
+      await onHalt(haltReason);
+      throw new IterationHaltedError(haltReason);
+    }
+
+    const previousRound =
+      preContextValidationExecution.contextStates[input.contextId]
+        ?.validationRound ?? null;
+
+    // A round left open by an infrastructure halt is RESUMED, not replaced, as
+    // long as the candidate it froze is still the candidate. Freezing a fresh
+    // one would discard the verdicts its settled specialists already rendered on
+    // exactly this tree and re-review work that was already reviewed (D5). The
+    // attempt counters come back with it: only an operator's resume clears them
+    // (`resetValidationRoundAttempts`), so a crash cannot buy a fresh budget.
+    const resumable =
+      previousRound !== null &&
+      isValidationRoundOpen(previousRound) &&
+      candidateIdentityMatches(previousRound.candidate, frozenTree.candidate);
+
+    // A round being REPLACED takes its parked questions with it. They were
+    // asked about a candidate this context has left behind, so nobody can act
+    // on an answer to them: leaving one standing would keep the context parked
+    // on a question its own next round would never resume, and hand the
+    // operator a question about work that no longer exists (R9.1's
+    // residue-free rule, applied to the candidate-change case rather than to
+    // pause-to-edit).
+    if (
+      !resumable &&
+      previousRound !== null &&
+      isValidationRoundOpen(previousRound)
+    ) {
+      await userInputGateService.withdrawRoundQuestions({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: preContextValidationExecution.id,
+        contextId: input.contextId,
+        // An iteration is driving this context right now; `ready` would offer
+        // it to the scheduler while this runner is still inside it.
+        releaseTo: "running",
+      });
+    }
+
+    // Freeze the candidate AND the roster before anything runs. Both freezes are
+    // one write: a roster frozen after the script phase would not be the roster
+    // that owned the candidate while the script ran.
+    const round = resumable
+      ? previousRound
+      : openValidationRound({
+          previousRound,
+          candidate: frozenTree.candidate,
+          assignments: cohortAssignments,
+          startedAt: getNow(deps),
+        });
+    const retained = resumable
+      ? carriedForwardCohortLanes(
+          previousRound,
+          preContextValidationExecution.contextStates[input.contextId],
+          input,
+        )
+      : undefined;
+    if (!resumable) await writeValidationRound(input, round);
+    const journal: RoundJournal = { outcome: null };
+
+    execLogger?.validation(
+      input.contextId,
+      resumable ? "validation_round.resumed" : "validation_round.opened",
+      {
+        roundSeq: round.seq,
+        rosterSize: round.roster.length,
+        candidateTreeHash: round.candidate.candidateTreeHash,
+        headSha: round.candidate.headSha,
+        taskStateHash: round.candidate.taskStateHash,
+        // Lanes this resume does not dispatch: settled verdicts plus any lane
+        // still holding a standing question.
+        ...(retained
+          ? { carriedForwardLanes: Object.keys(retained).length }
+          : {}),
+      },
+    );
+
+    try {
+      return await runContextValidationStages({
+        input,
+        execLogger,
+        conversationId,
+        onHalt,
+        preContextValidationExecution,
+        round,
+        journal,
+        ...(retained ? { retained } : {}),
+      });
+    } finally {
+      // The cohort owns the candidate only for the duration of this call, so the
+      // round is released on every exit — verdict, incident, halt, or thrown
+      // error alike. A round that outlived its own conclusion would keep the
+      // implementer locked out of a context nobody is reviewing.
+      //
+      // Released by CONCLUDING it, not by erasing it: `seq` has to survive so
+      // the next round can be told apart from this one.
+      //
+      // Guarded: this runs on the error path too, and a failing release must
+      // never replace the error that caused it with a less informative one.
+      try {
+        const stillOpen =
+          (await loadCurrentExecution(input.projectPath, input.sessionName))
+            .contextStates[input.contextId]?.validationRound ?? null;
+        if (
+          !journal.leaveOpen &&
+          stillOpen !== null &&
+          isValidationRoundOpen(stillOpen)
+        ) {
+          await writeValidationRound(
+            input,
+            concludeValidationRound(stillOpen, journal.outcome),
+          );
+        }
+      } catch (releaseError) {
+        logger.warn("graph-workflow.validation_round.release_failed", {
+          contextId: input.contextId,
+          roundSeq: round.seq,
+          error: getErrorMessage(releaseError),
+        });
+      }
+    }
+  }
+
+  async function runContextValidationStages(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    conversationId: string;
+    onHalt: (reason: GraphWorkflowHaltReason) => Promise<void>;
+    preContextValidationExecution: GraphWorkflowExecution;
+    round: GraphWorkflowValidationRound | null;
+    journal: RoundJournal;
+    /** Verdicts a resumed round carries forward; absent on a fresh round. */
+    retained?: Record<string, CohortLane>;
+  }): Promise<GraphWorkflowIterationResult | null> {
+    const {
+      input,
+      execLogger,
+      conversationId,
+      onHalt,
+      preContextValidationExecution,
+      round,
+      journal,
+      retained,
+    } = params;
+
     const scriptStageResult = await processScriptValidation({
       input,
       execLogger,
       execution: preContextValidationExecution,
       onHalt,
+      journal,
     });
 
     if (scriptStageResult === "fail") {
+      // A deterministic failure short-circuits the round with zero specialists
+      // launched; the script validator's own remediation accounting already ran.
+      logRoundConcluded(input, execLogger, round, "script_failed");
       return null;
     }
 
@@ -1341,14 +2311,78 @@ export function createGraphWorkflowIterationOrchestrator(
       return null;
     }
 
-    // Only a validator resume delivers the answers block into the validation
-    // prompt and pins the validator conversation. An implementer resume reaches
+    // The script phase ran commands in the worktree. Re-verify before admitting
+    // anyone: if the candidate moved, no specialist may be launched against it,
+    // and the round ends as an infrastructure outcome rather than a verdict.
+    let roundDispatch: ValidationRoundDispatch | undefined;
+    if (round !== null) {
+      const afterScript = await observeCandidate(
+        input,
+        executionForAgentValidation,
+      );
+      if (
+        afterScript.kind === "unavailable" ||
+        !candidateIdentityMatches(round.candidate, afterScript.candidate)
+      ) {
+        return await concludeRoundOnCandidateMismatch({
+          input,
+          execLogger,
+          conversationId,
+          round,
+          observed: afterScript,
+          stage: "post_script",
+          assignmentId: null,
+          journal,
+        });
+      }
+
+      // Resolve the FROZEN roster against the cohort the definition declares
+      // now. A live edit between freeze and dispatch is legal — it belongs to
+      // the next round — but running it here would mean the cohort that
+      // reviewed the candidate is not the one recorded as owning it.
+      const reconciled = reconcileValidationRoster(
+        round.roster,
+        selectRunnableCohortAssignments(
+          getContextDefinition(executionForAgentValidation, input.contextId)
+            .contextValidator,
+        ),
+      );
+      if (reconciled.kind === "drift") {
+        return await concludeRoundOnIncident({
+          input,
+          execLogger,
+          conversationId,
+          round,
+          incident: "roster_drift",
+          stage: "post_script",
+          assignmentId: null,
+          drifted: reconciled.detail,
+          message: `The cohort configured for execution context "${input.contextId}" is no longer the roster validation round ${round.seq} froze (${reconciled.detail}); the round concluded without a verdict.`,
+          journal,
+        });
+      }
+
+      const carried = carriedCohortProgress(round);
+      roundDispatch = {
+        seq: round.seq,
+        candidate: round.candidate,
+        assignments: reconciled.assignments,
+        ...(retained ? { retained } : {}),
+        ...(Object.keys(carried).length > 0 ? { carried } : {}),
+      };
+      await writeValidationRound(input, admitSpecialists(round));
+    }
+
+    // Lane progress writes are serialized behind one chain: several lanes settle
+    // concurrently, and each write is a read-modify-write of the same round
+    // record, so letting them race would lose whichever specialist lost.
+    let specialistWrites: Promise<void> = Promise.resolve();
+
+    // Only validator resumes deliver an answers block into the validation
+    // prompt and pin a validator conversation. An implementer resume reaches
     // this inline completion check on the same turn; its answers belong in the
-    // implementer prompt, never the validator's, so it is excluded here.
-    const validatorResume =
-      input.resumeUserInput?.lane === "context_validator"
-        ? input.resumeUserInput
-        : undefined;
+    // implementer prompt, never a validator's, so it is excluded here.
+    const validatorResumes = validatorResumeEntries(input);
 
     const validation = await validationService.validateContextCompletion({
       projectPath: input.projectPath,
@@ -1356,10 +2390,92 @@ export function createGraphWorkflowIterationOrchestrator(
       execution: executionForAgentValidation,
       contextId: input.contextId,
       executionTarget: input.executionTarget,
-      resumeUserInput: validatorResume,
+      resumeUserInputs: validatorResumes,
+      ...(round !== null && roundDispatch !== undefined
+        ? {
+            round: roundDispatch,
+            // Each lane's attempt count and state is written as it changes, not
+            // once at the end: the halt an exhausted lane triggers publishes the
+            // count, and a resume reads the states back to decide who reruns.
+            onSpecialistProgress: (update) => {
+              specialistWrites = specialistWrites
+                .then(() => recordSpecialistProgress(input, round.seq, update))
+                .catch((error: unknown) => {
+                  logger.warn(
+                    "graph-workflow.validation_round.specialist_write_failed",
+                    {
+                      contextId: input.contextId,
+                      assignmentId: update.assignmentId,
+                      error: getErrorMessage(error),
+                    },
+                  );
+                });
+            },
+            verifyCandidate: async () => {
+              const observed = await observeCandidate(
+                input,
+                await loadCurrentExecution(
+                  input.projectPath,
+                  input.sessionName,
+                ),
+              );
+              return (
+                observed.kind === "resolved" &&
+                candidateIdentityMatches(round.candidate, observed.candidate)
+              );
+            },
+          }
+        : {}),
     });
 
-    if (validation.kind === "infra_error") {
+    // Every lane's state is durable before anything acts on the round: the halt
+    // an exhausted lane triggers publishes its attempt count, and a resume reads
+    // these states back to decide who reruns.
+    await specialistWrites;
+
+    // The round could not be certified against what it froze — the shared diff
+    // came from another tree, or a specialist judged a candidate that had
+    // already moved. Either way the verdict is discarded rather than recorded:
+    // publishing it would attribute a judgement to a tree nobody reviewed, and
+    // nothing is charged.
+    if (validation.kind === "candidate_mismatch") {
+      if (round === null) return null;
+      return await concludeRoundOnCandidateMismatch({
+        input,
+        execLogger,
+        conversationId,
+        round,
+        observed: await observeCandidate(
+          input,
+          await loadCurrentExecution(input.projectPath, input.sessionName),
+        ),
+        stage: validation.stage,
+        assignmentId: validation.assignmentId,
+        // Nothing moved when a token is stale: the answer belongs to a round
+        // that is over. The round's fate is identical, but a reader diagnosing
+        // a stuck context needs to know which of the two it is looking at.
+        ...(validation.reason === "stale_round_token"
+          ? { incidentOverride: "stale_result_rejected" as const }
+          : {}),
+        ...(validation.stage === "diff_render"
+          ? {
+              driftOverride: `candidateTreeHash (the cohort's shared inputs were rendered from ${validation.observedTreeHash ?? "an unreadable tree"})`,
+            }
+          : {}),
+        journal,
+      });
+    }
+
+    // A specialist spent every admitted attempt on infrastructure failures, and
+    // no sibling rejected the work. All-of semantics make an unheard required
+    // validator an UNCONCLUDABLE round: the passing siblings cannot vouch for
+    // what it would have said, so the round does not end at all.
+    //
+    // Nothing is charged, and — deliberately, replacing the pre-cohort behaviour
+    // — no aggregate validation result is published. A `pass: false` aggregate
+    // here would tell every consumer that counts verdicts that a reviewer
+    // rejected the work, when in fact no reviewer spoke (D5).
+    if (validation.kind === "infra_exhausted") {
       execLogger?.validation(
         input.contextId,
         "context.validation_infra_error",
@@ -1367,6 +2483,9 @@ export function createGraphWorkflowIterationOrchestrator(
           engine: validation.engine,
           reason: validation.reason,
           message: validation.message,
+          assignmentId: validation.assignmentId,
+          attempts: validation.attempts,
+          roundSeq: round?.seq ?? null,
         },
       );
       logger.warn("graph-workflow.context_validation.infra_error", {
@@ -1374,28 +2493,39 @@ export function createGraphWorkflowIterationOrchestrator(
         contextId: input.contextId,
         engine: validation.engine,
         reason: validation.reason,
+        assignmentId: validation.assignmentId,
+        attempts: validation.attempts,
       });
-      const infraErrorSummary = `Validator infra error (${validation.reason}): ${validation.message}`;
-      await deps.executionRepository.mutateActive(
-        input.projectPath,
-        input.sessionName,
-        (latest) => {
-          const delivery = eventPublisher.publishValidationResult({
-            projectPath: input.projectPath,
-            sessionName: input.sessionName,
-            execution: latest,
-            contextId: input.contextId,
-            validatorType: "context",
-            pass: false,
-            summary: infraErrorSummary,
-            issues: [],
-            reopenTaskIds: [],
-            sessionRef: null,
-            reviewArtifact: null,
-          });
-          return { execution: latest, ...delivery };
-        },
-      );
+      // The record of what happened is an INCIDENT, never a validation result.
+      // A `pass: false` aggregate here — what the pre-cohort path published —
+      // would tell every consumer that counts verdicts that a reviewer rejected
+      // the work, when in fact no reviewer spoke (D5).
+      if (round !== null) {
+        await deps.executionRepository.mutateActive(
+          input.projectPath,
+          input.sessionName,
+          (latest) => {
+            const delivery = eventPublisher.publishValidationIncident({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              execution: latest,
+              contextId: input.contextId,
+              incident: "infra_exhausted",
+              roundSeq: round.seq,
+              stage: "specialist_result",
+              assignmentId: validation.assignmentId,
+              attempts: validation.attempts,
+              driftedComponents: "",
+              message: `Validation round ${round.seq} could not conclude: ${validation.assignmentId} spent ${validation.attempts} attempts on infrastructure failures (${validation.reason}) and rendered no verdict.`,
+            });
+            return { execution: latest, ...delivery };
+          },
+        );
+      }
+
+      // The round stays OPEN with its settled verdicts intact, so a resume can
+      // re-verify the candidate and rerun only the lanes that never settled.
+      journal.leaveOpen = round !== null;
       const haltReason: GraphWorkflowHaltReason = {
         type: "validator_infra_error",
         contextId: input.contextId,
@@ -1403,26 +2533,163 @@ export function createGraphWorkflowIterationOrchestrator(
         infraReason: validation.reason,
         message: validation.message,
         summary: null,
+        assignmentId: validation.assignmentId,
+        attempts: validation.attempts,
+        roundSeq: round?.seq ?? null,
       };
       await onHalt(haltReason);
       throw new IterationHaltedError(haltReason);
     }
 
-    // The validator turn ended with a pending question and no verdict (Req 3.2).
-    // Park the context on the context_validator lane — never reopen tasks, never
+    // At least one validator lane ended its turn with a pending question and no
+    // verdict (Req 3.2). Park every asking lane — never reopen tasks, never
     // increment consecutiveFailureCount, never record a validation-failure event
-    // (Req 3.3). `answers_ready` (fast answer) → null, and the caller falls
-    // through to the normal finalize path.
+    // (Req 3.3). Either way this iteration ends here: a lane that is waiting on
+    // the human, or that has an answer nobody has handed it yet, has not
+    // reported, so the round stays open and the context does not finalize.
     if (validation.kind === "asked_user") {
-      return parkContextForUserInput({
+      const askingLaneKeys = new Set(
+        validation.parked.map((lane) =>
+          laneStateKey("context_validator", lane.assignmentId),
+        ),
+      );
+      const parked = await parkContextForUserInput({
         input,
         execLogger,
-        lane: "context_validator",
-        conversationId: validation.conversationId,
-        questionBatchId: validation.questionBatchId,
-        questions: validation.questions,
+        lanes: validation.parked.map((lane) => ({
+          laneKey: laneStateKey("context_validator", lane.assignmentId),
+          conversationId: lane.conversationId,
+          questionBatchId: lane.questionBatchId,
+          questions: lane.questions,
+        })),
+        roundSeq: round?.seq ?? null,
+        // The parked iteration result names one conversation; the first asking
+        // lane in cohort order is the deterministic choice, and every lane's
+        // own conversation is recorded on its parked record.
+        conversationId: validation.parked[0].conversationId,
       });
+
+      if (parked !== null) {
+        // A lane waiting on the human has not reported, so the round cannot
+        // conclude. It stays OPEN with its settled verdicts intact: concluding
+        // it here would discard the siblings' verdicts on this candidate, and
+        // the answer would come back to a fresh round that re-reviewed work its
+        // reviewers had already judged (R9, D8).
+        journal.leaveOpen = round !== null;
+        execLogger?.validation(input.contextId, "validation_round.parked", {
+          roundSeq: round?.seq ?? null,
+          parkedAssignmentIds: validation.parked.map(
+            (lane) => lane.assignmentId,
+          ),
+        });
+        return parked;
+      }
+
+      // No lane parked, because an answer had already landed for it. The two
+      // windows that produce this are the same fact seen twice: the cohort's
+      // park write happens only once every lane settles, so a lane whose turn
+      // ended early can be answered while a sibling is still reviewing — and on
+      // a partial resume the answered lane may be one this pass carried forward
+      // as parked and never dispatched.
+      //
+      // Either way the answer is HERE and undelivered, and the lane it belongs
+      // to still owes this candidate a verdict. So the round stays open and the
+      // iteration ends without finalizing, which sends the loop back to its
+      // user-input wait to consume the answers and re-dispatch the asking lane.
+      // Falling through would conclude the round over a live record — discarding
+      // the siblings' verdicts on this candidate — and then complete the context
+      // on a lane that never reported, or drive finalize at an illegal
+      // `awaiting_user_input -> completed` transition when a sibling's park is
+      // still standing (R9: the round concludes only after every lane settles;
+      // R9.1: every answer delivered to its own lane exactly once).
+      const afterFastAnswer = await loadCurrentExecution(
+        input.projectPath,
+        input.sessionName,
+      );
+      const undelivered = answeredPendingUserInputs(
+        afterFastAnswer.contextStates[input.contextId] ?? {
+          pendingUserInputs: {},
+        },
+      ).filter((entry) => askingLaneKeys.has(entry.laneKey));
+      if (undelivered.length > 0) {
+        journal.leaveOpen = round !== null;
+        execLogger?.validation(
+          input.contextId,
+          "validation_round.answers_pending_delivery",
+          {
+            roundSeq: round?.seq ?? null,
+            laneKeys: undelivered.map((entry) => entry.laneKey),
+          },
+        );
+        logger.info(
+          "graph-workflow.validation_round.answers_pending_delivery",
+          {
+            executionId: afterFastAnswer.id,
+            contextId: input.contextId,
+            roundSeq: round?.seq ?? null,
+            laneKeys: undelivered.map((entry) => entry.laneKey),
+          },
+        );
+        return {
+          conversationId: validation.parked[0].conversationId,
+          execution: afterFastAnswer,
+          shouldContinueInContext: false,
+        };
+      }
+
+      // Nothing parked and nothing owed: the question was withdrawn under this
+      // pass. The caller falls through to the normal finalize path.
+      return null;
     }
+
+    // The last identity check, immediately before anything about this round
+    // becomes durable. It runs BEFORE the reopen/reset mutations, which
+    // themselves move the task-state generation — checking after them would
+    // compare the candidate against a tree this very write had just changed.
+    if (
+      round !== null &&
+      (validation.kind === "pass" || validation.kind === "fail")
+    ) {
+      const beforePublish = await observeCandidate(
+        input,
+        await loadCurrentExecution(input.projectPath, input.sessionName),
+      );
+      if (
+        beforePublish.kind === "unavailable" ||
+        !candidateIdentityMatches(round.candidate, beforePublish.candidate)
+      ) {
+        return await concludeRoundOnCandidateMismatch({
+          input,
+          execLogger,
+          conversationId,
+          round,
+          observed: beforePublish,
+          stage: "aggregate",
+          assignmentId: null,
+          journal,
+        });
+      }
+    }
+
+    // The cohort's per-member detail, joined to the identity the round froze.
+    // The top-level single-reviewer refs survive only for a cohort of one: with
+    // several reviewers, naming one at the top would attribute the round to an
+    // arbitrary member (D12).
+    const verdict =
+      validation.kind === "pass" || validation.kind === "fail"
+        ? validation
+        : null;
+    const specialistEntries = buildSpecialistEntries(
+      round,
+      verdict?.specialists,
+    );
+    const aggregateRefs =
+      specialistEntries.length > 1
+        ? { sessionRef: null, reviewArtifact: null }
+        : {
+            sessionRef: verdict?.sessionRef ?? null,
+            reviewArtifact: verdict?.reviewArtifact ?? null,
+          };
 
     if (validation.kind === "fail") {
       execLogger?.validation(input.contextId, "context.validation_reopened", {
@@ -1448,6 +2715,14 @@ export function createGraphWorkflowIterationOrchestrator(
           contextId: input.contextId,
           reopenTaskIds: validation.reopenTaskIds,
           taskFailureMessages,
+          ...(round !== null
+            ? {
+                refuseIfSuperseded: (execution) =>
+                  roundStillCurrent(execution, input.contextId, round)
+                    ? null
+                    : publishRoundSuperseded({ input, execution, round }),
+              }
+            : {}),
           publishValidationEvent: (reopened) =>
             eventPublisher.publishValidationResult({
               projectPath: input.projectPath,
@@ -1459,10 +2734,24 @@ export function createGraphWorkflowIterationOrchestrator(
               summary: validation.summary,
               issues: validation.issues,
               reopenTaskIds: validation.reopenTaskIds,
-              sessionRef: validation.sessionRef ?? null,
-              reviewArtifact: validation.reviewArtifact ?? null,
+              ...aggregateRefs,
+              ...(round !== null
+                ? { round: { seq: round.seq, specialists: specialistEntries } }
+                : {}),
             }),
         });
+
+      if (
+        round !== null &&
+        !roundStillCurrent(executionWithValidationEvent, input.contextId, round)
+      ) {
+        return abandonSupersededConclusion({
+          input,
+          execLogger,
+          round,
+          journal,
+        });
+      }
 
       const contextDef =
         executionWithValidationEvent.workingDefinition.executionContexts.find(
@@ -1488,6 +2777,8 @@ export function createGraphWorkflowIterationOrchestrator(
         await onHalt(haltReason);
         throw new IterationHaltedError(haltReason);
       }
+      journal.outcome = "failed";
+      logRoundConcluded(input, execLogger, round, "failed");
       return null;
     }
 
@@ -1500,7 +2791,7 @@ export function createGraphWorkflowIterationOrchestrator(
       kind: validation.kind,
     });
 
-    await deps.executionRepository.mutateActive(
+    const passed = await deps.executionRepository.mutateActive(
       input.projectPath,
       input.sessionName,
       (latest) => {
@@ -1510,6 +2801,21 @@ export function createGraphWorkflowIterationOrchestrator(
           throw new Error(
             `Execution context "${input.contextId}" does not exist in runtime state`,
           );
+        }
+
+        // The pass has the same authority problem as the rejection: clearing
+        // the failure counter on a superseded round would credit the context's
+        // CURRENT work with a review of a candidate it has already left.
+        if (
+          round !== null &&
+          !roundStillCurrent(reset, input.contextId, round)
+        ) {
+          const delivery = publishRoundSuperseded({
+            input,
+            execution: reset,
+            round,
+          });
+          return { execution: latest, ...delivery };
         }
         // A schema-declaring context is NOT done when its validator passes — it
         // still owes its declared output, and the validator re-runs ahead of
@@ -1533,14 +2839,58 @@ export function createGraphWorkflowIterationOrchestrator(
           summary: validation.summary,
           issues: [],
           reopenTaskIds: [],
-          sessionRef: validation.sessionRef ?? null,
-          reviewArtifact: validation.reviewArtifact ?? null,
+          ...aggregateRefs,
+          ...(round !== null
+            ? { round: { seq: round.seq, specialists: specialistEntries } }
+            : {}),
         });
         return { execution: reset, ...delivery };
       },
     );
 
+    if (round !== null && !roundStillCurrent(passed, input.contextId, round)) {
+      return abandonSupersededConclusion({ input, execLogger, round, journal });
+    }
+
+    journal.outcome = "passed";
+    logRoundConcluded(input, execLogger, round, "passed");
     return null;
+  }
+
+  /**
+   * The outcome a round is heading for, recorded as the stages decide it so the
+   * release in `finally` can conclude the round with the right one — including
+   * on the paths that return through the normal validation flow rather than
+   * through an incident.
+   */
+  interface RoundJournal {
+    outcome: ValidationRoundOutcome | null;
+    /**
+     * Set when the round must survive this call still open: a round left with
+     * only infrastructure outcomes never concluded, so concluding it on the way
+     * out would erase the very fact a resume needs — which lanes still owe a
+     * verdict on this candidate.
+     */
+    leaveOpen?: boolean;
+  }
+
+  function logRoundConcluded(
+    input: GraphWorkflowIterationInput,
+    execLogger: ReturnType<typeof getExecutionLogger>,
+    round: GraphWorkflowValidationRound | null,
+    outcome: ValidationRoundOutcome,
+  ): void {
+    if (round === null) return;
+    execLogger?.validation(input.contextId, "validation_round.concluded", {
+      roundSeq: round.seq,
+      outcome,
+      rosterSize: round.roster.length,
+    });
+    logger.info("graph-workflow.validation_round.concluded", {
+      contextId: input.contextId,
+      roundSeq: round.seq,
+      outcome,
+    });
   }
 
   interface GraphWorkflowOutputCaptureRejection {
@@ -1715,7 +3065,7 @@ export function createGraphWorkflowIterationOrchestrator(
       input,
       execution,
       laneConversationId,
-      backend: contextDef.implementer.backend,
+      backend: contextDef.implementer.agent.backend,
     });
 
     execLogger?.iteration(input.contextId, "output_capture.started", {
@@ -2182,6 +3532,7 @@ export function createGraphWorkflowIterationOrchestrator(
       parkedResult = await processContextCompletionValidation({
         input,
         execLogger,
+        conversationId,
         onHalt: signalHaltOnly,
       });
       if (parkedResult === null) {
@@ -2291,8 +3642,8 @@ export function createGraphWorkflowIterationOrchestrator(
         1,
       incompleteTaskCount: incompleteTasks.length,
       incompleteTaskIds: incompleteTasks.map((t) => t.id),
-      model: context.implementer.model,
-      reasoningEffort: context.implementer.reasoningEffort,
+      model: context.implementer.agent.model,
+      reasoningEffort: context.implementer.agent.reasoningEffort,
     });
     logger.info("graph-workflow.iteration.started", {
       executionId: initialExecution.id,
@@ -2315,8 +3666,20 @@ export function createGraphWorkflowIterationOrchestrator(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         contextId: input.contextId,
-        backend: context.implementer.backend,
-        pinnedConversationId: input.resumeUserInput?.conversationId,
+        backend: context.implementer.agent.backend,
+        // An implementer edited under the running execution rotates its lane:
+        // the seeded conversation already replayed the superseded profile
+        // block, so a resumed handle would run bytes nobody chose (R11).
+        assignmentFingerprint: assignmentFingerprint({
+          profileSnapshot: context.implementer.profileSnapshot,
+          agent: context.implementer.agent,
+          continuity: context.iterationPolicy.continuity,
+        }),
+        // The lane runs the bytes the execution was seeded with, not a fresh
+        // resolution: a lane created (or rotated) after a library edit or
+        // deletion must be unaffected by it (R4).
+        profileSnapshot: context.implementer.profileSnapshot,
+        pinnedConversationId: implementerResumeEntry(input)?.conversationId,
       });
       conversationId = resolved.conversationId;
       resolvedImplementerLaneState =
@@ -2327,7 +3690,10 @@ export function createGraphWorkflowIterationOrchestrator(
       const conversation = await deps.createConversation(
         input.projectPath,
         input.sessionName,
-        { role: "iteration" },
+        {
+          role: "iteration",
+          profileSnapshot: context.implementer.profileSnapshot,
+        },
       );
       conversationId = conversation.id;
     }
@@ -2348,6 +3714,18 @@ export function createGraphWorkflowIterationOrchestrator(
         if (!seededContextState) {
           throw new Error(
             `Execution context "${input.contextId}" does not exist in runtime state`,
+          );
+        }
+
+        // The cohort owns the candidate while a round is open, and the
+        // implementer's whole job is to change it. The engine's within-context
+        // serialization already keeps the two apart; this is the structural
+        // guard that makes a violation loud instead of silently handing a
+        // reviewer a tree that is being rewritten underneath it.
+        const latestRound = seededContextState.validationRound ?? null;
+        if (latestRound !== null && isValidationRoundOpen(latestRound)) {
+          throw new Error(
+            `Cannot seed the implementer for execution context "${input.contextId}": validation round ${latestRound.seq} still owns the candidate.`,
           );
         }
 
@@ -2571,10 +3949,15 @@ export function createGraphWorkflowIterationOrchestrator(
       return parkContextForUserInput({
         input,
         execLogger,
-        lane: "implementer",
+        lanes: [
+          {
+            laneKey: laneStateKey("implementer"),
+            conversationId: conversation.id,
+            questionBatchId: pendingQuestionId,
+            questions: laneConversation?.pendingQuestions ?? [],
+          },
+        ],
         conversationId: conversation.id,
-        questionBatchId: pendingQuestionId,
-        questions: laneConversation?.pendingQuestions ?? [],
         restoreIterationCount: iterationCountBeforeSeed,
       });
     }
@@ -2587,9 +3970,9 @@ export function createGraphWorkflowIterationOrchestrator(
         executionId: seededExecution.id,
         conversationId: conversation.id,
         contextId: input.contextId,
-        backend: context.implementer.backend,
-        model: context.implementer.model,
-        reasoningEffort: context.implementer.reasoningEffort,
+        backend: context.implementer.agent.backend,
+        model: context.implementer.agent.model,
+        reasoningEffort: context.implementer.agent.reasoningEffort,
         toolServer: toolServer.server,
         executionTarget: input.executionTarget,
         askUserQuestionsEnabled: context.askUserQuestions.enabled,
@@ -2609,7 +3992,7 @@ export function createGraphWorkflowIterationOrchestrator(
         if (latest.status !== "running") {
           return;
         }
-        const laneBackend = context.implementer.backend;
+        const laneBackend = context.implementer.agent.backend;
         const sessionRef = refValueForBackend(
           agentResult.sessionRef,
           laneBackend,
@@ -2641,10 +4024,11 @@ export function createGraphWorkflowIterationOrchestrator(
       // A resume delivers the answers block in whichever prompt this turn uses:
       // the follow-up when the asking conversation is reused (pinned), or the
       // seed when rotation forced a fresh conversation (5.1, 5.3).
-      const resumeUserInputPrompt = input.resumeUserInput
+      const implementerResume = implementerResumeEntry(input);
+      const resumeUserInputPrompt = implementerResume
         ? {
-            questionBatchId: input.resumeUserInput.questionBatchId,
-            answers: input.resumeUserInput.answers,
+            questionBatchId: implementerResume.questionBatchId,
+            answers: implementerResume.answers,
           }
         : undefined;
       const initialPrompt =
@@ -2672,11 +4056,10 @@ export function createGraphWorkflowIterationOrchestrator(
               charterAmendments: seededExecution.charterAmendments,
               askUserQuestionsEnabled: context.askUserQuestions.enabled,
               allowAgentCollaboration,
-              contextValidationAcceptanceCriteria:
-                context.contextValidator !== null &&
-                context.contextValidator.enabled
-                  ? context.acceptanceCriteria
-                  : undefined,
+              contextValidationAcceptanceCriteria: context.contextValidator
+                .enabled
+                ? context.acceptanceCriteria
+                : undefined,
               latestContextValidationFailure,
               collaborationContinuations,
               resumeUserInput: resumeUserInputPrompt,
@@ -2701,8 +4084,8 @@ export function createGraphWorkflowIterationOrchestrator(
       execLogger?.iteration(input.contextId, "iteration.prompt_sent", {
         promptMode,
         promptLength: initialPrompt.length,
-        model: context.implementer.model,
-        reasoningEffort: context.implementer.reasoningEffort,
+        model: context.implementer.agent.model,
+        reasoningEffort: context.implementer.agent.reasoningEffort,
       });
 
       // Same-Turn Tool Dispatch Contract (design §Same-Turn Tool Dispatch
@@ -3034,6 +4417,7 @@ export function createGraphWorkflowIterationOrchestrator(
         parkedResult = await processContextCompletionValidation({
           input,
           execLogger,
+          conversationId: conversation.id,
           onHalt: haltIteration,
         });
       }

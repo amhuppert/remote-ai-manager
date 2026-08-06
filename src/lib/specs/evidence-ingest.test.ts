@@ -526,6 +526,188 @@ describe("EvidenceIngest", () => {
     });
     expect(contendedQueue.withWriteQueue).not.toHaveBeenCalled();
   });
+
+  // R12.2: the aggregate is the SOLE evidence-ingestion record. A cohort round
+  // adds per-specialist detail on the aggregate and two new event kinds, and
+  // none of it may change what ingestion records or how it seals it.
+  describe("a multi-assignment cohort round", () => {
+    /** The aggregate a three-validator round publishes: no top-level session
+     *  ref (no single reviewer owns the round), detail on the entries. */
+    function cohortValidationResult(
+      contextId: string,
+      occurredAt: string,
+      pass = true,
+    ): { occurredAt: string; event: Record<string, unknown> } {
+      return {
+        occurredAt,
+        event: {
+          type: "graph-workflow-validation-result",
+          projectName: "evidence-ingest",
+          sessionName,
+          executionId: workflowExecutionId,
+          contextId,
+          validatorType: "context",
+          kind: "context_validation",
+          pass,
+          summary: "general: ok\nsecurity: ok",
+          roundSeq: 1,
+          sessionRef: null,
+          reviewArtifact: null,
+          specialists: [
+            {
+              assignmentId: "general",
+              profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
+              resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+              pass: true,
+              summary: "general: ok",
+              issues: [],
+              sessionRef: {
+                backend: "claude",
+                ref: "conversation-general",
+                lane: "context_validator",
+                assignmentId: "general",
+                refKind: "conversation",
+              },
+            },
+            {
+              assignmentId: "security",
+              profile: {
+                tier: "project",
+                id: "security-reviewer",
+                revision: 4,
+              },
+              resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+              pass,
+              summary: "security: ok",
+              issues: [],
+            },
+          ],
+        },
+      };
+    }
+
+    function specialistDetail(contextId: string, occurredAt: string) {
+      return {
+        occurredAt,
+        event: {
+          type: "graph-workflow-validation-specialist-result",
+          projectName: "evidence-ingest",
+          sessionName,
+          executionId: workflowExecutionId,
+          contextId,
+          roundSeq: 1,
+          specialist: {
+            assignmentId: "general",
+            profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
+            resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+            pass: true,
+            summary: "general: ok",
+            issues: [],
+          },
+        },
+      };
+    }
+
+    function incident(contextId: string, occurredAt: string) {
+      return {
+        occurredAt,
+        event: {
+          type: "graph-workflow-validation-incident",
+          projectName: "evidence-ingest",
+          sessionName,
+          executionId: workflowExecutionId,
+          contextId,
+          incident: "infra_failure",
+          roundSeq: 1,
+          stage: "specialist_result",
+          assignmentId: "perf",
+          attempts: 1,
+          driftedComponents: "",
+          message: "perf retried",
+        },
+      };
+    }
+
+    it("records the aggregate and ignores the detail and incident kinds", async () => {
+      appendEvents([
+        specialistDetail("context-task-1", "2026-07-18T13:57:00.000Z"),
+        incident("context-task-1", "2026-07-18T13:57:30.000Z"),
+        cohortValidationResult("context-task-1", "2026-07-18T13:58:00.000Z"),
+        laneCommit("context-task-1", "commit-abc", "2026-07-18T13:59:00.000Z"),
+      ]);
+      const service = createEvidenceIngestService(deps);
+
+      const result = await service.ingestAuthoritatively(specExecutionId);
+
+      // Four events scanned; the two new kinds contribute nothing.
+      expect(result).toMatchObject({
+        scannedEventCount: 4,
+        ignoredEventCount: 2,
+      });
+      expect(
+        readEvidence(db).map((row) => [row.kind, row.source_event_id]),
+      ).toEqual([
+        ["test_run", 3],
+        ["validator_verdict", 3],
+        ["validator_verdict", 3],
+        ["commit", 4],
+        ["commit", 4],
+      ]);
+    });
+
+    it("attributes an unowned round to the execution, not to an arbitrary member", async () => {
+      appendEvents([
+        cohortValidationResult("context-task-1", "2026-07-18T13:58:00.000Z"),
+        laneCommit("context-task-1", "commit-abc", "2026-07-18T13:59:00.000Z"),
+      ]);
+      const service = createEvidenceIngestService(deps);
+
+      await service.ingestAuthoritatively(specExecutionId);
+
+      // The existing null-safe fallback, unchanged: with no single reviewer at
+      // the top level the producer is the workflow execution itself.
+      const verdictRow = readEvidence(db).find(
+        (row) => row.kind === "validator_verdict",
+      );
+      expect(JSON.parse(verdictRow?.producer_json ?? "{}")).toEqual({
+        kind: "agent",
+        conversationId: `workflow:${workflowExecutionId}`,
+      });
+    });
+
+    it("still seals on the following lane commit and supersedes on the next round", async () => {
+      appendEvents([
+        cohortValidationResult(
+          "context-task-1",
+          "2026-07-18T13:58:00.000Z",
+          false,
+        ),
+        // A second round for the same context supersedes the first.
+        cohortValidationResult("context-task-1", "2026-07-18T13:58:30.000Z"),
+        laneCommit("context-task-1", "commit-abc", "2026-07-18T13:59:00.000Z"),
+      ]);
+      const service = createEvidenceIngestService(deps);
+
+      await service.ingestAuthoritatively(specExecutionId);
+
+      // Unchanged sealing semantics: only the round the commit FOLLOWS may
+      // claim that sha. The superseded round was remediated away, so its rows
+      // exist but carry no commit stamp.
+      const stamps = readEvidence(db)
+        .filter((row) => row.kind === "validator_verdict")
+        .map((row) => [
+          row.source_event_id,
+          (JSON.parse(row.evaluated_state_json) as { commitSha?: string })
+            .commitSha ?? null,
+        ]);
+      expect(stamps).toEqual([
+        [1, null],
+        [1, null],
+        [2, "commit-abc"],
+        [2, "commit-abc"],
+      ]);
+    });
+  });
 });
 
 function seedParents(db: Db): void {

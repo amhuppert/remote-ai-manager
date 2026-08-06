@@ -5,6 +5,9 @@ import { Badge } from "@/components/ui/Badge";
 import { StopIcon } from "@/components/icons";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
+import type { RedactedAgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
+import ConversationProfileChip from "@/components/conversation/ConversationProfileChip";
+import { deriveConversationProfileChipState } from "@/components/conversation/conversation-profile-chip-state";
 import { presentConversationStatus } from "./conversation-status";
 import DiffSlideover from "./DiffSlideover";
 
@@ -15,6 +18,13 @@ export interface ConversationPaneProps {
   projectName?: string;
   /** Active conversation status — surfaced as a header indicator (Req 12.2). */
   status?: ConversationStatus;
+  /**
+   * The active conversation's agent profile as a read surface carries it —
+   * null for a conversation that predates the library, which the header states
+   * as `No profile` rather than omitting (R6.5). Undefined only while there is
+   * no active conversation to describe.
+   */
+  redactedProfileSnapshot?: RedactedAgentProfileSnapshot | null;
   /** Whether the conversation on screen has a turn the user can stop (R5.1). */
   canStop?: boolean;
   /** Stop the turn running in the conversation on screen. */
@@ -83,6 +93,7 @@ export default function ConversationPane({
   agentBackend,
   projectName,
   status,
+  redactedProfileSnapshot,
   canStop = false,
   onStop,
   tabs,
@@ -127,6 +138,12 @@ export default function ConversationPane({
           >
             {statusPresentation.label}
           </Badge>
+        )}
+        {redactedProfileSnapshot !== undefined && (
+          <ConversationProfileChip
+            state={deriveConversationProfileChipState(redactedProfileSnapshot)}
+            className="ml-auto"
+          />
         )}
         {canStop && (
           <button

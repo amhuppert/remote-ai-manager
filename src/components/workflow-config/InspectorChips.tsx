@@ -2,7 +2,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import { findBackendCatalogEntry } from "@/lib/agent-backends/catalog";
 import type {
   GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
+  ValidatorAssignment,
 } from "@/lib/workflow-graph/config-schemas";
 import { cn } from "@/lib/ui/cn";
 
@@ -160,17 +160,10 @@ export function implementerChipLabel(config: GraphWorkflowAgentConfig): string {
   return effort ? `${agent} · ${effort}` : agent;
 }
 
-export function validatorChipLabel(
-  validator: GraphWorkflowAgentValidatorConfig,
-): string {
-  // The validator config is a per-type discriminated union, so the model
-  // field lives in a different place per member; the display label itself
-  // comes from the catalog.
-  const model =
-    validator.type === "claude"
-      ? validator.agent.model
-      : (validator.codex?.model ?? "default");
-  return `${chipBackendLabel(validator.type)} ${model}`;
+// The assignment id leads: with a cohort, "which reviewer" is the first thing
+// the chip has to answer, and two entries can share a backend and model.
+export function validatorChipLabel(validator: ValidatorAssignment): string {
+  return `${validator.id} · ${chipBackendLabel(validator.agent.backend)} ${validator.agent.model}`;
 }
 
 const CHIP_BASE =

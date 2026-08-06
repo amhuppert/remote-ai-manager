@@ -38,6 +38,35 @@ export const ccTaskSessionScopeSchema = z.object({
 
 export type CcTaskSessionScope = z.infer<typeof ccTaskSessionScopeSchema>;
 
+/**
+ * The filesystem-write envelope a task run executes under.
+ *
+ * SERVER-DERIVED ONLY: like {@link ccTaskSessionScopeSchema} this is composed by
+ * orchestration code from the lane's role, never from prompts, agent output, or
+ * request bodies — a policy an agent could author would be a policy it could
+ * widen. Absent means the run is unrestricted, so a layer that drops the field
+ * silently un-restricts the lane; every hop between the composing dispatch site
+ * and the runner carries it explicitly for that reason.
+ *
+ * `allowWrite` names the only paths the run may mutate; `denyWrite` names paths
+ * that stay unwritable even if a backend's allowlist is additive over its own
+ * defaults. Both are canonical absolute paths — the composer realpath-normalizes
+ * them so enforcement compares the same bytes the OS will.
+ *
+ * `allowWrite` is ORDERED and adapters read that order: the first entry is the
+ * run's own writable root (a backend that must relocate the run's working
+ * directory out of an unwritable tree uses it), and the last is where the run's
+ * temp files belong. A one-entry allowlist collapses both onto the same path,
+ * which is the correct degenerate case rather than a special one.
+ */
+export const fsWritePolicySchema = z.object({
+  mode: z.literal("allowlist"),
+  allowWrite: z.array(z.string().min(1)),
+  denyWrite: z.array(z.string().min(1)),
+});
+
+export type FsWritePolicy = z.infer<typeof fsWritePolicySchema>;
+
 export interface AgentTaskRequest {
   workingDirectory: string;
   prompt: string;
@@ -79,6 +108,13 @@ export interface AgentTaskRequest {
    * `CC_*` neutralized and therefore has no CC identity at all.
    */
   ccSessionScope?: CcTaskSessionScope;
+  /**
+   * Server-derived filesystem-write envelope for this run (see
+   * {@link fsWritePolicySchema}). Absent leaves the run unrestricted, which is
+   * what every implementer lane still is. An adapter whose descriptor declares
+   * `fsWriteRestriction: "enforced"` translates this onto its native mechanism.
+   */
+  fsWritePolicy?: FsWritePolicy;
 }
 
 export interface AgentTaskResult {

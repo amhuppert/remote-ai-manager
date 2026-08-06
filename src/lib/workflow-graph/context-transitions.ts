@@ -76,7 +76,12 @@ export const CONTEXT_STATUS_TRANSITIONS: Readonly<
   // again) leaves no runner behind, and only `pending`/`ready` survive a pause
   // or a restart as work the scheduler will pick up again.
   awaiting_approval: ["ready", "running", "completed", "halted"],
-  awaiting_user_input: ["running", "halted"],
+  // `awaiting_user_input -> ready` is the same abandoned-park case as the
+  // approval gate's: pause-to-edit withdraws the round's parked validator
+  // questions, so nothing is waiting on the human any more and the context owes
+  // the edited roster a fresh round. Only `pending`/`ready` survive a pause as
+  // work the scheduler picks up again.
+  awaiting_user_input: ["ready", "running", "halted"],
   halted: [
     "ready",
     "running",

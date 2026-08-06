@@ -1,4 +1,9 @@
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
+import {
+  getEffortLevelsForBackend,
+  getFsWriteRestrictionForBackend,
+} from "@/lib/agent-backends/catalog";
+import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
@@ -72,9 +77,12 @@ function createContextIdSet(definition: ValidatableDefinition): Set<string> {
  */
 export function validateWorkflowDefinition(
   definition: ValidatableDefinition,
+  deps: BackendCapabilityDeps = {},
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
     ...validateContextOutputSchemas(definition.executionContexts),
+    ...validateCohortWriteRestriction(definition.executionContexts, deps),
+    ...validateWorkflowTierCohortWriteRestriction(definition, deps),
   ];
   const seenContextIds = new Set<string>();
   const seenTaskIds = new Set<string>();
@@ -244,12 +252,13 @@ export function validateWorkflowDefinition(
  */
 export function validateAuthoredDefinition(
   definition: WorkflowSemanticDefinition,
+  deps: BackendCapabilityDeps = {},
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
     ...validatePrerequisites(definition.prerequisites),
     ...validateParameterDeclarations(definition.parameters),
     ...lintParameterReferences(definition),
-    ...validateWorkflowDefinition(definition).errors,
+    ...validateWorkflowDefinition(definition, deps).errors,
   ];
 
   return resultFromErrors(errors);
@@ -327,67 +336,163 @@ export function getEligibleContextIds(
 
 export function validateResolvedWorkflow(
   resolved: ResolvedWorkflowSemanticDefinition,
+  deps: BackendCapabilityDeps = {},
 ): WorkflowGraphValidationResult {
-  const errors: WorkflowGraphValidationError[] = [];
+  const errors: WorkflowGraphValidationError[] = [
+    ...validateCohortWriteRestriction(resolved.executionContexts, deps),
+  ];
 
-  for (const context of resolved.executionContexts) {
-    const { implementer } = context;
-    const supported = getEffortLevelsForBackend(
-      implementer.backend,
-      implementer.model,
-    );
-    if (!supported.includes(implementer.reasoningEffort)) {
+  for (const [contextIndex, context] of resolved.executionContexts.entries()) {
+    const { agent } = context.implementer;
+    const supported = getEffortLevelsForBackend(agent.backend, agent.model);
+    if (!supported.includes(agent.reasoningEffort)) {
       errors.push({
         code: "implementer-effort-unsupported",
-        message: `Context "${context.id}" implementer uses reasoning effort "${implementer.reasoningEffort}", which is not supported by ${implementer.backend} model "${implementer.model}"`,
+        message: `Context "${context.id}" implementer assignment "${context.implementer.id}" uses reasoning effort "${agent.reasoningEffort}", which is not supported by ${agent.backend} model "${agent.model}"`,
         contextId: context.id,
+        field: `executionContexts.${contextIndex}.implementer.agent.reasoningEffort`,
       });
     }
 
-    const validatorError = validateResolvedValidatorEffort(context);
-    if (validatorError) errors.push(validatorError);
+    errors.push(...validateResolvedCohortEffort(context, contextIndex));
   }
 
   return resultFromErrors(errors);
 }
 
 /**
- * Check that a resolved context validator's reasoning effort is supported by its
- * model — the validator half of the frontier's resolved-config check (doc 06).
- * A `claude`-type validator carries a full agent config (whose backend may itself
- * be Codex); a `codex`-type validator selects effort only when set (an absent
- * effort inherits the backend default, so there is nothing to reject).
+ * Backend facts a definition check needs but a definition does not carry.
+ * Injected because the write-restriction lookup is a per-backend capability
+ * declaration: a test can only prove the refusal by naming a backend that
+ * cannot enforce, and every registered one can.
  */
-function validateResolvedValidatorEffort(
+export interface BackendCapabilityDeps {
+  fsWriteRestrictionFor?(backend: AgentBackendId): FsWriteRestrictionSupport;
+}
+
+/** The cohort shape every tier — global-seeded, workflow, context — exposes. */
+interface WriteRestrictionCheckableCohort {
+  enabled: boolean;
+  assignments: readonly { id: string; agent: { backend: AgentBackendId } }[];
+}
+
+/** The cohort shape both the authored and the resolved context expose. */
+interface WriteRestrictionCheckableContext {
+  id: string;
+  contextValidator?: WriteRestrictionCheckableCohort;
+}
+
+/**
+ * Refuse every cohort member whose backend cannot mechanically confine the
+ * lane's writes (R7.2).
+ *
+ * The refusal is at definition accept-time rather than at dispatch because a
+ * validator that reached dispatch on an unenforceable backend has only two
+ * outcomes — run unsandboxed, or fail the round — and both are worse than never
+ * admitting the definition. It is attached to the STRUCTURAL validator (which
+ * every accept path calls) and to the resolved check (which sees cascade-supplied
+ * cohorts the authored document never named), because a backend id is an enum
+ * member, never a substitution target, so the check is identical on both sides
+ * of the authored → concrete transition.
+ *
+ * Implementer assignments are deliberately untouched: they are write-capable by
+ * design, so the envelope has nothing to say about them. A disabled cohort is
+ * skipped for the same reason the effort check skips it — dormant configuration,
+ * not a run — and enabling one re-enters this check through the live-edit path.
+ */
+function validateCohortWriteRestriction(
+  contexts: readonly WriteRestrictionCheckableContext[],
+  deps: BackendCapabilityDeps,
+): WorkflowGraphValidationError[] {
+  return contexts.flatMap((context, contextIndex) =>
+    checkCohortWriteRestriction(context.contextValidator, deps, {
+      contextId: context.id,
+      fieldPath: `executionContexts.${contextIndex}.contextValidator`,
+      useSite: `Context "${context.id}"`,
+    }),
+  );
+}
+
+/**
+ * The workflow-tier cohort is a use site in its own right (R7.2).
+ *
+ * Assignments replace as whole units across the cascade, so a context that
+ * declares no cohort of its own runs THIS one verbatim — an unsandboxable
+ * assignment here is not dormant configuration, it is every such context's
+ * lanes. Checking only `executionContexts` would admit the definition and leave
+ * the refusal to launch-time resolution, which is exactly the deferral the
+ * definition-validate gate exists to prevent.
+ *
+ * The global tier has no definition to validate: it enters through the cascade
+ * and is caught by `validateResolvedWorkflow` before a run is seeded.
+ */
+function validateWorkflowTierCohortWriteRestriction(
+  definition: ValidatableDefinition,
+  deps: BackendCapabilityDeps,
+): WorkflowGraphValidationError[] {
+  if (!("workflowConfig" in definition)) return [];
+  return checkCohortWriteRestriction(
+    definition.workflowConfig.contextValidator,
+    deps,
+    {
+      fieldPath: "workflowConfig.contextValidator",
+      useSite: "Workflow-level",
+    },
+  );
+}
+
+function checkCohortWriteRestriction(
+  cohort: WriteRestrictionCheckableCohort | undefined,
+  deps: BackendCapabilityDeps,
+  site: { contextId?: string; fieldPath: string; useSite: string },
+): WorkflowGraphValidationError[] {
+  if (!cohort?.enabled) return [];
+  const fsWriteRestrictionFor =
+    deps.fsWriteRestrictionFor ?? getFsWriteRestrictionForBackend;
+
+  const errors: WorkflowGraphValidationError[] = [];
+  for (const [index, assignment] of cohort.assignments.entries()) {
+    const { backend } = assignment.agent;
+    if (fsWriteRestrictionFor(backend) === "enforced") continue;
+    errors.push({
+      code: "validator-write-restriction-unsupported",
+      message: `${site.useSite} validator assignment "${assignment.id}" runs on ${backend}, which cannot enforce a filesystem write restriction; validators must be mechanically read-only, so this backend cannot hold a validator assignment`,
+      ...(site.contextId === undefined ? {} : { contextId: site.contextId }),
+      field: `${site.fieldPath}.assignments.${index}.agent.backend`,
+    });
+  }
+  return errors;
+}
+
+/**
+ * Check every validator assignment's reasoning effort against its own model —
+ * the validator half of the frontier's resolved-config check (doc 06). Each
+ * assignment carries a concrete per-backend runtime, so the check is per
+ * assignment and the error addresses the offending entry by index rather than
+ * blaming the context as a whole.
+ *
+ * A disabled cohort is skipped: its assignments are dormant configuration, not
+ * a run that could fail.
+ */
+function validateResolvedCohortEffort(
   context: ResolvedWorkflowSemanticDefinition["executionContexts"][number],
-): WorkflowGraphValidationError | null {
-  const validator = context.contextValidator;
-  if (!validator) return null;
+  contextIndex: number,
+): WorkflowGraphValidationError[] {
+  const cohort = context.contextValidator;
+  if (!cohort.enabled) return [];
 
-  const unsupported = (
-    backend: "claude" | "codex",
-    model: string,
-    effort: string,
-  ): WorkflowGraphValidationError => ({
-    code: "validator-effort-unsupported",
-    message: `Context "${context.id}" validator uses reasoning effort "${effort}", which is not supported by ${backend} model "${model}"`,
-    contextId: context.id,
-  });
-
-  if (validator.type === "claude") {
-    const { backend, model, reasoningEffort } = validator.agent;
+  const errors: WorkflowGraphValidationError[] = [];
+  for (const [index, assignment] of cohort.assignments.entries()) {
+    const { backend, model, reasoningEffort } = assignment.agent;
     const supported = getEffortLevelsForBackend(backend, model);
     if (!supported.includes(reasoningEffort)) {
-      return unsupported(backend, model, reasoningEffort);
+      errors.push({
+        code: "validator-effort-unsupported",
+        message: `Context "${context.id}" validator assignment "${assignment.id}" uses reasoning effort "${reasoningEffort}", which is not supported by ${backend} model "${model}"`,
+        contextId: context.id,
+        field: `executionContexts.${contextIndex}.contextValidator.assignments.${index}.agent.reasoningEffort`,
+      });
     }
-    return null;
   }
-
-  const { model, reasoningEffort } = validator.codex;
-  if (reasoningEffort === undefined) return null;
-  const supported = getEffortLevelsForBackend("codex", model);
-  if (!supported.includes(reasoningEffort)) {
-    return unsupported("codex", model ?? "gpt-5.4", reasoningEffort);
-  }
-  return null;
+  return errors;
 }

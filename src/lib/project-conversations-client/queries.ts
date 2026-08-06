@@ -7,8 +7,8 @@ import {
 } from "@tanstack/react-query";
 import { apiFetchOptional } from "@/lib/api/fetcher";
 import {
-  conversationStateSchema,
-  type ConversationState,
+  publicConversationStateSchema,
+  type PublicConversationState,
 } from "@/lib/conversations/schemas";
 import { stampedTranscriptMessageSchema } from "@/lib/conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
@@ -23,11 +23,13 @@ import type { ProjectConversationCreation } from "./mutations";
  * `open` is treated as open so a record predating the column still surfaces.
  * `closed = open === false && !archived`.
  */
-export function isOpenProjectConversation(c: ConversationState): boolean {
+export function isOpenProjectConversation(c: PublicConversationState): boolean {
   return c.open !== false && c.archived === false;
 }
 
-const projectConversationsResponseSchema = z.array(conversationStateSchema);
+const projectConversationsResponseSchema = z.array(
+  publicConversationStateSchema,
+);
 const projectMessagesResponseSchema = z.array(stampedTranscriptMessageSchema);
 
 /**
@@ -38,7 +40,7 @@ const projectMessagesResponseSchema = z.array(stampedTranscriptMessageSchema);
  */
 async function fetchProjectConversations(
   projectName: string,
-): Promise<ConversationState[]> {
+): Promise<PublicConversationState[]> {
   const data = await apiFetchOptional(
     `/api/projects/${encodeURIComponent(projectName)}/conversations`,
     projectConversationsResponseSchema,
@@ -53,7 +55,7 @@ async function fetchProjectConversations(
  */
 export function useProjectConversationsQuery(
   projectName: string,
-): UseQueryResult<ConversationState[]> {
+): UseQueryResult<PublicConversationState[]> {
   return useQuery({
     queryKey: projectConversationKeys.list(projectName),
     queryFn: () => fetchProjectConversations(projectName),
@@ -88,7 +90,7 @@ export function useProjectConversationCreationsQuery(
 }
 
 function selectConversationCreations(
-  all: ConversationState[],
+  all: PublicConversationState[],
 ): ProjectConversationCreation[] {
   return all.map((c) => ({
     conversationId: c.id,

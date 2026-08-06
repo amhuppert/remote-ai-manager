@@ -17,6 +17,8 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     finished: false,
     conversations: [
       {
+        profileSnapshot: null,
+        profileLockedAt: null,
         id: "conv-1",
         scope: "session",
         nameOrigin: "default",

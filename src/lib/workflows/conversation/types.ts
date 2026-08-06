@@ -6,6 +6,7 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
@@ -98,6 +99,14 @@ export interface TaskRunActive {
   systemInstructions?: string;
   tooling?: PortableMcpConfig;
   timeoutMs?: number;
+  /**
+   * Server-derived filesystem-write envelope for the turn. Its PRESENCE is what
+   * marks the turn as a write-restricted (validator) lane at the dispatch site,
+   * so it is claimed onto the active turn rather than read from the event
+   * later — a turn that lost it between claim and dispatch would run
+   * unrestricted.
+   */
+  fsWritePolicy?: FsWritePolicy;
   /** When set, persist this validated structured-output string field as the
    *  visible assistant text instead of the backend's schema transport text. */
   structuredOutputTextField?: string;
@@ -210,6 +219,8 @@ export type ConversationEvent =
       systemInstructions?: string;
       tooling?: PortableMcpConfig;
       timeoutMs?: number;
+      /** See {@link TaskRunActive.fsWritePolicy}. */
+      fsWritePolicy?: FsWritePolicy;
       structuredOutputTextField?: string;
       origin?: TranscriptMessageOrigin;
     }
@@ -440,6 +451,8 @@ export interface RunTaskRunInput {
   systemInstructions?: string;
   tooling?: PortableMcpConfig;
   timeoutMs?: number;
+  /** See {@link TaskRunActive.fsWritePolicy}. */
+  fsWritePolicy?: FsWritePolicy;
   /** See {@link TaskRunActive.structuredOutputTextField}. */
   structuredOutputTextField?: string;
   /** Forwarded onto the appended assistant TranscriptMessage so workflow-driven

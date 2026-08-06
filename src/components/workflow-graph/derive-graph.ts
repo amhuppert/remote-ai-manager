@@ -7,10 +7,10 @@ import type {
 import type {
   GraphWorkflowContextStatus,
   GraphWorkflowExecutionContextDefinition,
-  GraphWorkflowResolvedContext,
+  CascadeWorkflowSemanticDefinition,
+  GraphWorkflowCascadeContext,
   GraphWorkflowTaskDefinition,
   GraphWorkflowVisualLayout,
-  ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
@@ -20,14 +20,20 @@ import {
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import { getContextOutput } from "@/lib/workflow-graph/context-outputs";
 
+/**
+ * The graph is a read-only projection, so it takes the CASCADE shape: a seeded
+ * context is a cascade context plus `profileSnapshot`, and nothing here reads
+ * the snapshot — one type therefore serves both the builder preview (which has
+ * no snapshots) and a running execution.
+ */
 type DeriveGraphDefinition =
   | WorkflowSemanticDefinition
-  | ResolvedWorkflowSemanticDefinition;
+  | CascadeWorkflowSemanticDefinition;
 
 export type ExecutionContextNodeData = {
   context:
     | GraphWorkflowExecutionContextDefinition
-    | GraphWorkflowResolvedContext;
+    | GraphWorkflowCascadeContext;
   tasks: GraphWorkflowTaskDefinition[];
   mode: "builder" | "execution";
   contextState?: GraphWorkflowExecutionContextState;
@@ -64,18 +70,18 @@ export function getDisplayValidators(
   return { script, agent: getDisplayAgentValidator(context.contextValidator) };
 }
 
+// The node shows ONE agent-validator pill, so a cohort collapses to the backend
+// its assignments run on — or `null` when they disagree, since a single pill
+// claiming one backend for a mixed cohort would be worse than none.
 function getDisplayAgentValidator(
-  validator: ExecutionContextNodeData["context"]["contextValidator"],
+  cohort: ExecutionContextNodeData["context"]["contextValidator"],
 ): "claude" | "codex" | null {
-  if (!validator) return null;
-  // Per-context override form carried by an unresolved builder/definition
-  // context; the cascade unwraps this to the flat form before execution.
-  if ("kind" in validator) {
-    if (validator.kind === "disabled") return null;
-    return validator.value.enabled ? validator.value.type : null;
-  }
-  // Flat resolved form (post-cascade builder contexts and execution contexts).
-  return validator.enabled ? validator.type : null;
+  if (!cohort?.enabled) return null;
+  const backends = new Set(
+    cohort.assignments.map((assignment) => assignment.agent.backend),
+  );
+  if (backends.size !== 1) return null;
+  return [...backends][0] ?? null;
 }
 
 export function getDisplayApprovalGate(

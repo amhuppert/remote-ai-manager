@@ -550,6 +550,9 @@ export function createTestFakeBackend(
       runner,
       structuredOutput: "post_validation",
       transcript: taskTranscriptProjection,
+      // The fake runner records requests; it establishes no OS-level envelope,
+      // so declaring anything else here would be a lie the refusal rule trusts.
+      fsWriteRestriction: "unsupported",
     },
     managedSkills: { conversations: "hermetic", tasks: "hermetic" },
     mcp: testfakeMcpCapabilities,

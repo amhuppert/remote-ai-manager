@@ -11,12 +11,12 @@ import {
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 
 export interface UseBackendModelEffortArgs {
   conversationId: string;
-  activeConversation: ConversationState | undefined;
+  activeConversation: PublicConversationState | undefined;
   backendDefaults: BackendSelectionDefaultsById;
   lastUsedModelId?: string;
   lastUsedEffort?: string;

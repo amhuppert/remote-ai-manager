@@ -5,7 +5,16 @@ import {
   codexReasoningEffortSchema,
   effortLevelSchema,
 } from "@/lib/agent-backends/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
+import {
+  ASSIGNMENT_FOCUS_MAX_LENGTH,
+  findReservedSequence,
+  normalizeAssignmentFocus,
+} from "@/lib/agent-profiles/block";
+import {
+  agentProfileRefSchema,
+  agentProfileSnapshotSchema,
+} from "@/lib/agent-profiles/schemas";
+import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 
 // ============================================================
 // Graph Workflow Agent Configuration Schemas
@@ -101,72 +110,194 @@ export type GraphWorkflowIterationPolicy = z.infer<
   typeof graphWorkflowIterationPolicySchema
 >;
 
-const graphWorkflowValidatorBaseSchema = z.object({
-  enabled: z.boolean().default(true),
-  continuity: graphWorkflowLaneContinuityPolicySchema.default({
-    enabled: true,
-  }),
-});
-
-const graphWorkflowClaudeValidatorConfigSchema =
-  graphWorkflowValidatorBaseSchema.extend({
-    type: z.literal("claude"),
-    agent: graphWorkflowAgentConfigSchema,
-  });
-
-const graphWorkflowCodexValidatorConfigSchema =
-  graphWorkflowValidatorBaseSchema.extend({
-    type: z.literal("codex"),
-    codex: z
-      .object({
-        model: codexModelSchema.optional(),
-        reasoningEffort: codexReasoningEffortSchema.optional(),
-      })
-      .default({}),
-  });
-
-export const graphWorkflowAgentValidatorConfigSchema = z.discriminatedUnion(
-  "type",
-  [
-    graphWorkflowClaudeValidatorConfigSchema,
-    graphWorkflowCodexValidatorConfigSchema,
-  ],
-);
-export type GraphWorkflowAgentValidatorConfig = z.infer<
-  typeof graphWorkflowAgentValidatorConfigSchema
->;
-
-export interface GraphWorkflowValidatorExecutionPlan {
-  strategy: "conversation" | "task";
-  backend: AgentBackendId;
-  modelId: string | undefined;
-  reasoningEffort: string | undefined;
-}
+// ============================================================
+// Agent Assignments and Validator Cohorts
+// ============================================================
 
 /**
- * Translates the persisted validator-config variants into the semantic
- * execution contract consumed by the runner. Provider-named legacy variants
- * stay confined to this schema boundary; dispatch depends on strategy and the
- * configured backend carried by the plan.
+ * The upper bound on an assignment's `focus`. A focus is a use-site steer that
+ * narrows a library profile ("auth boundaries", "hot paths") — the durable
+ * behaviour belongs in the profile itself. Re-exported from the composer that
+ * renders the focus rather than restated: authoring must refuse exactly what
+ * rendering would refuse, or a saved assignment could fail to compose later.
  */
-export function resolveGraphWorkflowValidatorExecutionPlan(
-  validator: GraphWorkflowAgentValidatorConfig,
-): GraphWorkflowValidatorExecutionPlan {
-  if (validator.type === "claude") {
-    return {
-      strategy: "conversation",
-      backend: validator.agent.backend,
-      modelId: validator.agent.model,
-      reasoningEffort: validator.agent.reasoningEffort,
-    };
+export const AGENT_ASSIGNMENT_FOCUS_MAX_LENGTH = ASSIGNMENT_FOCUS_MAX_LENGTH;
+
+/** Lowercase kebab-case, bounded: the stable use-site identity of an assignment. */
+const ASSIGNMENT_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export const agentAssignmentIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(ASSIGNMENT_ID, {
+    message:
+      'Assignment ids are lowercase kebab-case slugs of 1-64 characters, for example "security-reviewer".',
+  });
+
+/**
+ * A use-site steer, stored in exactly the form the composer will render.
+ *
+ * Normalization happens at parse rather than at render so the persisted value
+ * IS the canonical one: two byte-different spellings of the same steer cannot
+ * survive into storage and later produce two different resolved hashes. The
+ * containment rules are the composer's, applied here so a colliding focus is
+ * refused on the authoring surface that can still fix it instead of failing
+ * when a lane tries to compose it.
+ */
+const assignmentFocusSchema = z.preprocess(
+  (val) =>
+    typeof val === "string"
+      ? (normalizeAssignmentFocus(val) ?? undefined)
+      : val,
+  z
+    .string()
+    .max(AGENT_ASSIGNMENT_FOCUS_MAX_LENGTH)
+    .superRefine((focus, ctx) => {
+      const collision = findReservedSequence(focus);
+      if (collision === null) return;
+      ctx.addIssue({
+        code: "custom",
+        message: `Assignment focus may not contain the reserved sequence ${JSON.stringify(collision.sequence)} (at offset ${collision.offset}) — it would terminate the profile block it is rendered inside.`,
+      });
+    })
+    .optional(),
+);
+
+/**
+ * Who runs at a use site: a stable id, the library profile supplying prompt
+ * identity, an optional narrowing focus, and the concrete per-backend runtime.
+ *
+ * Strict by construction — the pre-cutover singleton shapes (`type`, `codex`,
+ * a bare agent config) must FAIL here rather than parse into a half-populated
+ * assignment. There is no inbound compatibility parser; migration rewrites
+ * persisted config once, and everything else refuses loudly.
+ */
+export const agentAssignmentSchema = z
+  .object({
+    id: agentAssignmentIdSchema,
+    profile: agentProfileRefSchema,
+    focus: assignmentFocusSchema,
+    agent: graphWorkflowAgentConfigSchema,
+  })
+  .strict();
+export type AgentAssignment = z.infer<typeof agentAssignmentSchema>;
+
+/**
+ * A validator use site. Strategy is independent of backend exactly as the
+ * pre-cutover `type` field was in practice: all four backend-x-strategy
+ * combinations are expressible, and dispatch reads `strategy` directly.
+ */
+export const validatorAssignmentSchema = agentAssignmentSchema
+  .extend({
+    strategy: z.enum(["conversation", "task"]),
+    continuity: graphWorkflowLaneContinuityPolicySchema.default({
+      enabled: true,
+    }),
+  })
+  .strict();
+export type ValidatorAssignment = z.infer<typeof validatorAssignmentSchema>;
+
+/**
+ * The ordered set of validators reviewing one context, replaced as a whole unit
+ * at every cascade boundary.
+ *
+ * `enabled: false` retains its assignments rather than discarding them, so
+ * turning validation off and back on is lossless (R2). The one shape that
+ * cannot be re-enabled is an empty cohort: `{enabled: false, assignments: []}`
+ * is legal because it is the honest migration of a legacy bare disable, but
+ * flipping it to enabled is refused by the same refinement — an all-of
+ * validation over zero validators would vacuously pass.
+ */
+function checkCohortIntegrity(
+  cohort: { enabled: boolean; assignments: { id: string }[] },
+  ctx: z.RefinementCtx,
+): void {
+  if (cohort.enabled && cohort.assignments.length === 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["assignments"],
+      message:
+        "An enabled validator cohort needs at least one assignment — validation over an empty cohort would pass vacuously.",
+    });
   }
-  return {
-    strategy: "task",
-    backend: "codex",
-    modelId: validator.codex.model,
-    reasoningEffort: validator.codex.reasoningEffort,
-  };
+
+  const seen = new Set<string>();
+  for (const [index, assignment] of cohort.assignments.entries()) {
+    if (seen.has(assignment.id)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["assignments", index, "id"],
+        // The id is quoted here from an unvalidated document — the duplicate
+        // check runs alongside, not after, the id grammar check, so a malformed
+        // id reaches this message intact.
+        message: `Duplicate validator assignment id "${escapeDiagnosticValue(assignment.id)}" — ids are the stable use-site identity and must be unique within a cohort.`,
+      });
+    }
+    seen.add(assignment.id);
+  }
 }
+
+export const validatorCohortSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    assignments: z.array(validatorAssignmentSchema).default([]),
+  })
+  .strict()
+  .superRefine(checkCohortIntegrity);
+export type ValidatorCohort = z.infer<typeof validatorCohortSchema>;
+
+// ============================================================
+// Seeded (snapshot-bearing) assignments
+// ============================================================
+
+/**
+ * An assignment as it exists AFTER execution start resolved it.
+ *
+ * The authored shapes above are reference-bearing: they name a profile the
+ * library still owns. These carry the resolved bytes instead. The boundary
+ * between them is execution start, and it is one-way — nothing downstream of
+ * the seed ever consults the library again, which is what makes a later profile
+ * edit or deletion unable to reach a running execution through ANY path,
+ * including an edit that enables a dormant assignment.
+ */
+export const seededAgentAssignmentSchema = agentAssignmentSchema
+  .extend({ profileSnapshot: agentProfileSnapshotSchema })
+  .strict();
+export type SeededAgentAssignment = z.infer<typeof seededAgentAssignmentSchema>;
+
+export const seededValidatorAssignmentSchema = validatorAssignmentSchema
+  .extend({ profileSnapshot: agentProfileSnapshotSchema })
+  .strict();
+export type SeededValidatorAssignment = z.infer<
+  typeof seededValidatorAssignmentSchema
+>;
+
+/**
+ * A seeded cohort. Dormant assignments carry snapshots too: enabling one
+ * mid-run is a config edit, not a resolution, so its bytes must already be
+ * here.
+ */
+export const seededValidatorCohortSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    assignments: z.array(seededValidatorAssignmentSchema).default([]),
+  })
+  .strict()
+  .superRefine(checkCohortIntegrity);
+export type SeededValidatorCohort = z.infer<typeof seededValidatorCohortSchema>;
+
+/**
+ * The assignments a run actually invokes: the whole ordered cohort when
+ * enabled, and nothing at all when disabled — the dormant assignments a
+ * disabled cohort retains are configuration to restore, never work to dispatch.
+ */
+export function selectRunnableCohortAssignments<T extends ValidatorAssignment>(
+  cohort: Readonly<{ enabled: boolean; assignments: readonly T[] }>,
+): T[] {
+  return cohort.enabled ? [...cohort.assignments] : [];
+}
+
 export const graphWorkflowScriptValidatorConfigSchema = z.object({
   enabled: z.boolean().default(false),
 });
@@ -190,17 +321,6 @@ export const graphWorkflowAskUserQuestionsConfigSchema = z.object({
 });
 export type GraphWorkflowAskUserQuestionsConfig = z.infer<
   typeof graphWorkflowAskUserQuestionsConfigSchema
->;
-
-export const contextValidatorOverrideSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("use"),
-    value: graphWorkflowAgentValidatorConfigSchema,
-  }),
-  z.object({ kind: z.literal("disabled") }),
-]);
-export type ContextValidatorOverride = z.infer<
-  typeof contextValidatorOverrideSchema
 >;
 
 /**

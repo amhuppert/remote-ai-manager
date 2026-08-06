@@ -15,6 +15,30 @@ App Router routing layer is **isolated** in `src/app/`. All page-level UI lives 
 | `src/lib/<domain>/` | Business logic, server actions, route handlers, queries, mutations, schemas for one domain. | Each domain owns `schemas.ts`, `route-handlers.ts`, `service.ts` (or split), `queries.ts`, `mutations.ts`, `query-keys.ts`, tests. |
 | `src/lib/api/` | Shared React Query / fetch plumbing only (`fetcher.ts`, `errors.ts`, `sse-events.ts`). No domain code. | Per-domain queries/mutations live in `src/lib/<domain>/`. |
 
+### `src/lib/agent-profiles/`
+
+The agent profile library domain: `schemas.ts` (identity, tiers, refs and the
+`tier:id` parser, stored records, snapshots), `builtins.ts`, `storage.ts`,
+`library-service.ts`, `composer.ts`, `route-handlers.ts`, plus the client
+`query-keys.ts` / `queries.ts` / `sse-reactions.ts`. Two boundaries hold here:
+
+- **`library-service.ts` is the only module consumers call.** Listing with tier
+  provenance, fail-closed qualified resolution, authoring, and deletion impact
+  all live there; nothing outside the domain touches `storage.ts`. Consumers
+  (conversation service, API routes, `cctl agent list|get`, and later the
+  workflow compiler) call resolve/list.
+- **Reference holders arrive through a port, never an import.** `previewDeletion`
+  and `delete` answer with the same report, whose holder enumeration comes from
+  the `AgentProfileReferenceReporter` port the domain declares and
+  `workflow-graph/profile-reference-reporter.ts` implements. Only
+  `route-handlers.ts` wires the two together; a library built without a reporter
+  refuses both calls rather than answering "nothing references this".
+- **Mutable records are CC-owned scoped storage, not repo files** — one atomic
+  JSON document per record under `<configDir>/agent-profiles/<scopeKey>/`,
+  following the workflow template-library scoped-storage pattern. A record that
+  fails to parse is quarantined and reported as a listing diagnostic rather than
+  failing its siblings.
+
 ## Routing & Domain Boundary (the Next.js exception)
 
 Colocation applies fully **outside** `src/app/`. Inside `src/app/`, the Next.js App Router convention dictates layout, so route files stay where Next.js requires them, but they hold no logic:
@@ -43,6 +67,7 @@ One file predates the thin re-export rule and still holds real logic. Relocating
 - Each domain owns `src/lib/<domain>/schemas.ts` (Zod schemas + `z.infer` types).
 - No central `src/lib/schemas.ts`, no central `src/types/index.ts`.
 - Cross-domain shared primitives (rare) live in `src/lib/shared/schemas.ts`.
+- An aggregate holding private data splits into a stored and a public schema, with ONE projector between them, and the public schema names its redacted field differently so the compiler refuses an unprojected row at any egress typed public. The conversation aggregate is the reference: `storedConversationStateSchema` (repository-facing, carries the profile snapshot's `instructions`/`renderedInstructionBlock`) → `toPublicConversationState` → `publicConversationStateSchema` (`.strict()`, carries only `redactedProfileSnapshot`). Every route body, SSE payload, feed row, and log field on the public side; `toPublicSessionState` does the same for the session bundle's conversations.
 
 ## React Query
 

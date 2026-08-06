@@ -5,7 +5,7 @@ import { conversationKeys } from "./query-keys";
 import {
   allConversationsResponseSchema,
   conversationListItemSchema,
-  conversationStateSchema,
+  publicConversationStateSchema,
 } from "./schemas";
 
 export function useConversationsQuery(
@@ -17,7 +17,7 @@ export function useConversationsQuery(
     queryFn: () =>
       apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations`,
-        z.array(conversationStateSchema),
+        z.array(publicConversationStateSchema),
       ),
   });
 }

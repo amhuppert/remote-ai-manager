@@ -9,6 +9,7 @@ import { moveMachineSnapshotsToSidecar } from "./0007-move-machine-snapshots-to-
 import { addSpecAuthoringStage } from "./0008-add-spec-authoring-stage";
 import { narrowEvidenceKinds } from "./0009-narrow-evidence-kinds";
 import { freezeSpecExecutionLaunch } from "./0010-freeze-spec-execution-launch";
+import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -27,6 +28,7 @@ export const migrations: readonly StateMigration[] = [
   addSpecAuthoringStage,
   narrowEvidenceKinds,
   freezeSpecExecutionLaunch,
+  workflowAgentAssignments,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

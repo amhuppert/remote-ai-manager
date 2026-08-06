@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createValidatorRunner,
@@ -15,11 +18,12 @@ import type {
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  seedAssignment,
 } from "./test-fixtures";
 
 const VALIDATOR_ENGINE = "claude" as const;
@@ -43,11 +47,12 @@ const emptyTaskRunUsage: TaskRunUsage = {
 
 const emptyAgentCallUsage = {};
 
-const validatorConfig: GraphWorkflowAgentValidatorConfig = {
-  type: "claude",
-  enabled: true,
-  continuity: { enabled: false },
+const validatorConfig: ValidatorAssignment = {
+  id: "general",
+  profile: { tier: "builtin" as const, id: "general-reviewer" },
+  strategy: "conversation" as const,
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  continuity: { enabled: false },
 };
 
 /**
@@ -142,7 +147,10 @@ function buildExecutionForNewPath(): {
               ...ctx,
               acceptanceCriteria:
                 "Every task summary is complete and the plan doc is updated.",
-              contextValidator: validatorConfig,
+              contextValidator: {
+                enabled: true,
+                assignments: [seedAssignment(validatorConfig)],
+              },
             }
           : ctx,
     ),
@@ -209,6 +217,11 @@ function buildExecutionForNewPath(): {
   return { execution, contextDef };
 }
 
+// A real directory: the new path composes its lane write envelope before
+// dispatch, and that composition canonicalizes the candidate worktree and fails
+// closed when it cannot resolve.
+const stubWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-validator-wt-"));
+
 async function runNewValidatorPath(
   taskRunResult: TaskRunResult,
 ): Promise<ValidatorOutcome> {
@@ -216,7 +229,7 @@ async function runNewValidatorPath(
     async (_input: ExecuteWorkflowTaskRunInput) => taskRunResult,
   );
   const runner = createValidatorRunner({
-    resolveWorktreePath: async () => "/worktree",
+    resolveWorktreePath: async () => stubWorktreeDir,
     resolveTimeoutMs: async () => 300_000,
     executeWorkflowTaskRun,
     getProjectDisplayName: () => "test-project",
@@ -228,7 +241,7 @@ async function runNewValidatorPath(
     sessionName: "session-1",
     execution,
     context: contextDef,
-    validator: contextDef.contextValidator!,
+    validator: contextDef.contextValidator.assignments[0]!,
   });
   return result;
 }

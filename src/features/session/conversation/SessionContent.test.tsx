@@ -5,7 +5,11 @@ import { renderWithQuery } from "@/test/component-mocks";
 import SessionContent from "@/features/session/conversation/SessionContent";
 import type { ComponentProps } from "react";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import {
+  toPublicConversationState,
+  type ConversationState,
+  type PublicConversationState,
+} from "@/lib/conversations/schemas";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 
@@ -72,8 +76,11 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
 
 function makeConversation(
   overrides: Partial<ConversationState> = {},
-): ConversationState {
-  return {
+): PublicConversationState {
+  // Projected, like every conversation a client actually receives.
+  return toPublicConversationState({
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: "conv-1",
     scope: "session",
     nameOrigin: "default",
@@ -105,7 +112,7 @@ function makeConversation(
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 function makeActiveConversation(

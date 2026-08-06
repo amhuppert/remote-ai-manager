@@ -13,6 +13,11 @@ import {
   nameOriginSchema,
 } from "@/lib/conversations/schemas";
 import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
+import {
+  agentProfileSnapshotSchema,
+  redactedAgentProfileSnapshotSchema,
+  type RedactedAgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 import { debugModeStateSchema } from "@/lib/debug-log/schemas";
 import {
   mcpOverridesSchema,
@@ -178,6 +183,8 @@ export interface SharedConversationRawColumns {
   pending_queue: string | null;
   last_seen_alignment_version: number | null;
   pending_agent_notices: string | null;
+  profile_snapshot: string | null;
+  profile_locked_at: string | null;
 }
 
 const pendingQueueArraySchema = z.array(pendingQueuedMessageSchema);
@@ -331,6 +338,21 @@ export function decodeSharedConversationColumns(
     return throwConversationValidationError(id, pendingAgentNotices.issues);
   }
 
+  // A null column decodes to a null snapshot — the legacy/no-profile state, not
+  // an error. A PRESENT but unparseable snapshot is a boundary failure: unlike
+  // the tolerant ref columns, a half-understood snapshot would let a turn run
+  // under instructions nobody can account for, so it throws.
+  const profileSnapshot = parseJsonColumn(
+    "profileSnapshot",
+    row.profile_snapshot,
+    agentProfileSnapshotSchema,
+    "default",
+    null,
+  );
+  if (!profileSnapshot.ok) {
+    return throwConversationValidationError(id, profileSnapshot.issues);
+  }
+
   const candidate: Record<string, unknown> = {
     name: row.name,
     nameOrigin: nameOriginResult.data,
@@ -359,6 +381,8 @@ export function decodeSharedConversationColumns(
     pendingQueue: pendingQueue.value ?? [],
     lastSeenAlignmentVersion: row.last_seen_alignment_version,
     pendingAgentNotices: pendingAgentNotices.value ?? [],
+    profileSnapshot: profileSnapshot.value ?? null,
+    profileLockedAt: row.profile_locked_at,
   };
   if (mcpOverrides.value !== undefined) {
     candidate.mcpOverrides = mcpOverrides.value;
@@ -398,6 +422,19 @@ export interface ConversationListItemRawColumns {
   pending_questions: string | null;
   forked_from: string | null;
   unread: 0 | 1;
+  /**
+   * The redacted profile identity, already narrowed by the SELECT's
+   * `json_extract`s. `profile_snapshot` holds the profile's full instruction
+   * text, so the list tier must never pull the column itself — extracting the
+   * six safe scalars in SQL keeps this projection blob-free AND keeps the
+   * instruction bytes out of the process on a store-wide feed read.
+   */
+  profile_tier: string | null;
+  profile_id: string | null;
+  profile_name: string | null;
+  profile_revision: number | null;
+  profile_source_content_hash: string | null;
+  profile_resolved_instruction_hash: string | null;
 }
 
 /**
@@ -423,7 +460,15 @@ export type ConversationListItemFields = Pick<
   | "pendingQuestions"
   | "forkedFrom"
   | "unread"
->;
+> & {
+  /**
+   * The profile identity list surfaces render, already redacted (R6.3). Named
+   * for the PUBLIC field rather than `profileSnapshot` so this projection is
+   * structurally incapable of carrying instruction text — there is no key for
+   * it to occupy.
+   */
+  redactedProfileSnapshot: RedactedAgentProfileSnapshot | null;
+};
 
 /**
  * Decode the list-item subset of a conversation row. Reuses the same enum and
@@ -516,7 +561,37 @@ export function decodeConversationListItemColumns(
     pendingQuestions: pendingQuestions.value ?? null,
     forkedFrom: forkedFromValue,
     unread: row.unread === 1,
+    redactedProfileSnapshot: decodeRedactedProfileColumns(id, row),
   };
+}
+
+/**
+ * Rebuild the redacted snapshot from the SELECT's extracted scalars. A legacy
+ * row (null `profile_snapshot`) extracts to all-nulls and decodes to null,
+ * matching the full decoder's reading of the same column.
+ *
+ * Quarantines rather than throws: a list feed spanning every conversation in
+ * the store must not be taken down by one row whose profile columns cannot be
+ * read. The conversation still lists, showing no profile.
+ */
+function decodeRedactedProfileColumns(
+  id: string,
+  row: ConversationListItemRawColumns,
+): RedactedAgentProfileSnapshot | null {
+  if (row.profile_id === null) return null;
+
+  const parsed = redactedAgentProfileSnapshotSchema.safeParse({
+    tier: row.profile_tier,
+    id: row.profile_id,
+    name: row.profile_name,
+    revision: row.profile_revision,
+    sourceContentHash: row.profile_source_content_hash,
+    resolvedInstructionHash: row.profile_resolved_instruction_hash,
+  });
+  if (parsed.success) return parsed.data;
+
+  logRefColumnQuarantine(id, "profile_snapshot", parsed.error.issues);
+  return null;
 }
 
 /**
@@ -585,6 +660,8 @@ export interface SharedConversationBindColumns {
   pending_queue: string | null;
   last_seen_alignment_version: number | null;
   pending_agent_notices: string | null;
+  profile_snapshot: string | null;
+  profile_locked_at: string | null;
 }
 
 export function encodeSharedConversationColumns(
@@ -626,6 +703,8 @@ export function encodeSharedConversationColumns(
     pending_queue: jsonOrNull(conversation.pendingQueue),
     last_seen_alignment_version: conversation.lastSeenAlignmentVersion,
     pending_agent_notices: jsonOrNull(conversation.pendingAgentNotices),
+    profile_snapshot: jsonOrNull(conversation.profileSnapshot),
+    profile_locked_at: conversation.profileLockedAt,
   };
 }
 
@@ -742,6 +821,16 @@ const CONVERSATION_COLUMN_MAP = [
     "pendingAgentNotices",
     "pending_agent_notices",
     (c: ConversationState) => jsonOrNull(c.pendingAgentNotices),
+  ],
+  [
+    "profileSnapshot",
+    "profile_snapshot",
+    (c: ConversationState) => jsonOrNull(c.profileSnapshot),
+  ],
+  [
+    "profileLockedAt",
+    "profile_locked_at",
+    (c: ConversationState) => c.profileLockedAt,
   ],
 ] as const satisfies ReadonlyArray<
   readonly [

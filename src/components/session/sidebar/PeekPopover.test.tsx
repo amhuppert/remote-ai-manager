@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import PeekPopover from "@/components/session/sidebar/PeekPopover";
@@ -61,6 +62,8 @@ const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [
 
 function renderPeek(
   overrides: Partial<React.ComponentProps<typeof PeekPopover>> = {},
+  /** Wraps the popover — the profile picker inside it reads React Query. */
+  wrap: (ui: React.ReactElement) => React.ReactElement = (ui) => ui,
 ) {
   const anchorEl = document.createElement("button");
   anchorEl.textContent = "anchor";
@@ -75,11 +78,12 @@ function renderPeek(
     onReplyText: vi.fn(),
     onAnswerQuestion: vi.fn(),
     onFork: vi.fn(),
+    forkProjectName: "remote-ai-manager",
     ...overrides,
   };
 
   return {
-    ...render(<PeekPopover {...props} />),
+    ...render(wrap(<PeekPopover {...props} />)),
     props,
     anchorEl,
   };
@@ -580,7 +584,39 @@ describe("PeekPopover", () => {
       expect(forkButtons.length).toBe(TRANSCRIPT_MESSAGES.length);
 
       fireEvent.click(forkButtons[1]!);
-      expect(onFork).toHaveBeenCalledWith(1);
+      expect(onFork).toHaveBeenCalledWith(1, undefined);
+    });
+
+    // R7.1: the peek renders the conversation's real transcript indices, so its
+    // index-0 fork is the same fresh conversation the full transcript's is and
+    // gets the same profile selection.
+    it("offers a Standard-Agent-defaulted picker on the index-0 fork", async () => {
+      // The picker's Radix listbox and React Query both settle on timers the
+      // rest of this suite freezes to pin relative timestamps.
+      vi.useRealTimers();
+      const onFork = vi.fn();
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      renderPeek({ onFork }, (ui) => (
+        <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+      ));
+
+      fireEvent.click(
+        screen.getAllByTitle("Fork conversation from this message")[0]!,
+      );
+      expect(
+        await screen.findByRole("combobox", { name: /agent profile/i }),
+      ).toHaveTextContent("Standard Agent");
+      expect(onFork).not.toHaveBeenCalled();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Fork conversation" }),
+      );
+      expect(onFork).toHaveBeenCalledWith(0, {
+        tier: "builtin",
+        id: "standard-agent",
+      });
     });
   });
 });

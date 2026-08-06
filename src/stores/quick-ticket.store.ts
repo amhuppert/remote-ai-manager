@@ -28,6 +28,12 @@ export interface QuickTicketDraft {
   kickoffBackend: AgentBackendId | null;
   kickoffModel: string | null;
   kickoffReasoningEffort: EffortLevel | null;
+  /**
+   * Prompt identity for the started session's initial conversation, as the
+   * compact `tier:id` spelling. Null means the Standard Agent default, which
+   * the server resolves — the draft never has to name it.
+   */
+  kickoffProfile: string | null;
 }
 
 export interface QuickTicketStoreState {
@@ -76,6 +82,7 @@ function createDraft(context: ResolvedQuickTicketContext): QuickTicketDraft {
     kickoffBackend: null,
     kickoffModel: null,
     kickoffReasoningEffort: null,
+    kickoffProfile: null,
   };
 }
 

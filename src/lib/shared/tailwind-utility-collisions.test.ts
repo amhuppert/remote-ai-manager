@@ -79,6 +79,13 @@ const UTILITY_FIRST_PATHS = [
   // slices too — their not-yet-migrated classes stay rule-backed in globals.css,
   // so no bare-token collision exists for the heuristic to catch).
   `${path.sep}components${path.sep}agent-capabilities${path.sep}`,
+  // Agent profile library surfaces: authored utility-first from the start (no
+  // legacy CSS ever existed for them), so both directories are dir-scoped. The
+  // conversation profile chip is file-scoped — its still-legacy siblings under
+  // components/conversation/ stay guarded.
+  `${path.sep}components${path.sep}agent-profiles${path.sep}`,
+  `${path.sep}features${path.sep}agent-profiles${path.sep}`,
+  `${path.sep}components${path.sep}conversation${path.sep}ConversationProfileChip.tsx`,
   `${path.sep}features${path.sep}projects-index${path.sep}ProjectsIndexPage.tsx`,
   `${path.sep}components${path.sep}ConfirmDialog.tsx`,
   `${path.sep}components${path.sep}ModelSelector.tsx`,

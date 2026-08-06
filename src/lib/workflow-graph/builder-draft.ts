@@ -386,22 +386,6 @@ export function clearContextBlockOverride(
   return next;
 }
 
-export function disableContextValidator(
-  definition: WorkflowSemanticDefinition,
-  contextId: string,
-): WorkflowSemanticDefinition {
-  return setContextBlockOverride(definition, contextId, "contextValidator", {
-    kind: "disabled",
-  });
-}
-
-export function enableContextValidator(
-  definition: WorkflowSemanticDefinition,
-  contextId: string,
-): WorkflowSemanticDefinition {
-  return clearContextBlockOverride(definition, contextId, "contextValidator");
-}
-
 export function setWorkflowConfigOverride<K extends WorkflowConfigBlock>(
   definition: WorkflowSemanticDefinition,
   block: K,

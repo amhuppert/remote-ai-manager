@@ -404,7 +404,8 @@ export default function ExecutionContextNode({
 
   const implementer =
     "implementer" in context ? context.implementer : undefined;
-  const implementerBackend: AgentBackendId = implementer?.backend ?? "claude";
+  const implementerBackend: AgentBackendId =
+    implementer?.agent.backend ?? "claude";
 
   const validators = getDisplayValidators(context);
   const approvalGate = getDisplayApprovalGate(context);

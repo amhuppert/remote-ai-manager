@@ -19,6 +19,7 @@ import type {
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
+import { deriveTaskRunPermissions } from "./task-run-permissions";
 import { resolveConversationPersistenceAdapter } from "./persistence-adapter";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
@@ -135,6 +136,7 @@ import {
   drainConsumedAgentNotices,
   createBackgroundTasksLostHandler,
 } from "./pre-turn/notices-drain";
+import { resolveConversationProfileInjection } from "./pre-turn/profile-injection";
 import { resolveSyntheticForkSeed } from "./pre-turn/fork-seed";
 import { registerFocusMemoryIfPresent } from "./pre-turn/focus-memory";
 import { wireTurnAbort } from "./pre-turn/abort-wiring";
@@ -1384,6 +1386,16 @@ export async function executePromptForMachine(
     const pendingNoticesInstruction =
       buildPendingNoticesInstruction(pendingAgentNotices);
 
+    // The conversation's agent profile, replayed from its snapshot (R6). Null
+    // for a legacy conversation, which therefore receives no injection (R6.5).
+    // Both scopes read the same way: `getConversation` is session-keyed storage
+    // and the sentinel addresses the project repo.
+    const profileInjection = await resolveConversationProfileInjection(deps, {
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+    });
+
     // Build session instructions (baked into the runtime once). Project
     // conversations run in the main worktree, so they use a CC context that
     // omits the per-session dev-server promise.
@@ -1406,6 +1418,10 @@ export async function executePromptForMachine(
       deps.getCodexToolPromptHint(),
       referenceDocsPrompt,
       pendingNoticesInstruction,
+      // LAST by design. The profile is level 5 of the composer's precedence
+      // contract — a subordinate specialization lens — so it is delivered after
+      // every CC-owned layer it must not override.
+      profileInjection.instructionBlock,
     ].filter((s): s is string => s != null && s.length > 0);
     const portableMcp = await deps.composePortableMcpForConversation({
       backend: input.agentBackend,
@@ -2240,11 +2256,18 @@ export async function runTaskRunTurnForMachine(
     });
   }
 
+  // The turn's permission literals are derived from the lane's role — the
+  // presence of a server-derived write envelope — never asserted here.
+  const permissions = deriveTaskRunPermissions(input.fsWritePolicy);
+
   const request: AgentCallRequest = {
     kind: "task_run",
     prompt: effectivePrompt,
     backend: input.agentBackend,
-    writeCapability: "write_capable",
+    writeCapability: permissions.writeCapability,
+    ...(input.fsWritePolicy !== undefined
+      ? { fsWritePolicy: input.fsWritePolicy }
+      : {}),
     ...(effectiveModel !== undefined ? { modelId: effectiveModel } : {}),
     ...(effectiveEffort !== undefined
       ? { reasoningEffort: effectiveEffort }
@@ -2282,11 +2305,11 @@ export async function runTaskRunTurnForMachine(
       ...(taskStallTimeoutMs !== undefined
         ? { stallTimeoutMs: taskStallTimeoutMs }
         : {}),
-      sandboxMode: "danger-full-access",
-      approvalPolicy: "never",
-      webSearchMode: "disabled",
-      skipGitRepoCheck: true,
-      networkAccessEnabled: true,
+      sandboxMode: permissions.sandboxMode,
+      approvalPolicy: permissions.approvalPolicy,
+      webSearchMode: permissions.webSearchMode,
+      skipGitRepoCheck: permissions.skipGitRepoCheck,
+      networkAccessEnabled: permissions.networkAccessEnabled,
     },
     getTaskRunner: (backend) => deps.getTaskRunner(backend),
     getFailureClassifier: resolveFailureClassifierForBackend,

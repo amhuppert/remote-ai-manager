@@ -5,8 +5,10 @@ import type {
   WorkflowCollaborationConfig,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
+  AgentAssignment,
   GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
+  ValidatorAssignment,
+  ValidatorCohort,
   GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
@@ -20,6 +22,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
+  SEEDED_WORKFLOW_DEFAULTS,
   computeUsedBackends,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
@@ -28,21 +31,23 @@ import {
 } from "./resolve-config";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
-const GLOBAL_IMPLEMENTER: GraphWorkflowAgentConfig = {
-  backend: "claude",
-  model: "opus",
-  reasoningEffort: "medium",
+const GLOBAL_IMPLEMENTER: AgentAssignment = {
+  id: "implementer",
+  profile: { tier: "builtin", id: "general-implementer" },
+  agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
 };
 
-const GLOBAL_VALIDATOR: GraphWorkflowAgentValidatorConfig = {
-  type: "claude",
+const GLOBAL_VALIDATOR: ValidatorCohort = {
   enabled: true,
-  continuity: { enabled: true },
-  agent: {
-    backend: "claude",
-    model: "sonnet",
-    reasoningEffort: "medium",
-  },
+  assignments: [
+    {
+      id: "general",
+      profile: { tier: "builtin", id: "general-reviewer" },
+      strategy: "conversation",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      continuity: { enabled: true },
+    },
+  ],
 };
 
 const GLOBAL_ITERATION: GraphWorkflowIterationPolicy = {
@@ -147,9 +152,13 @@ describe("resolveContext", () => {
   it("inherits all blocks from workflow-level effective values when all context blocks are omitted", () => {
     const workflowConfig: WorkflowConfigOverride = {
       implementer: {
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        },
       },
       iterationPolicy: { maxIterations: 5, continuity: { enabled: false } },
     };
@@ -167,10 +176,11 @@ describe("resolveContext", () => {
   });
 
   it("uses context implementer verbatim when overridden", () => {
-    const ctxImpl: GraphWorkflowAgentConfig = {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "low",
+    const ctxImpl: AgentAssignment = {
+      id: "context-implementer",
+      profile: { tier: "project", id: "focused-implementer" },
+      focus: "the persistence layer only",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "low" },
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
@@ -182,42 +192,61 @@ describe("resolveContext", () => {
     expect(resolved.contextValidator).toEqual(GLOBAL_VALIDATOR);
   });
 
-  it("resolves contextValidator to null when the context opts out with { kind: 'disabled' }", () => {
+  it("resolves a context-disabled cohort to enabled:false, not to an absent validator", () => {
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
       {},
-      makeContext({ contextValidator: { kind: "disabled" } }),
+      makeContext({ contextValidator: { enabled: false, assignments: [] } }),
     );
 
-    expect(resolved.contextValidator).toBeNull();
+    expect(resolved.contextValidator).toEqual({
+      enabled: false,
+      assignments: [],
+    });
   });
 
-  it("resolves contextValidator using kind: 'use' value when overridden", () => {
-    const custom: GraphWorkflowAgentValidatorConfig = {
-      type: "codex",
+  it("replaces the whole cohort when the context declares one", () => {
+    const custom: ValidatorCohort = {
       enabled: true,
-      continuity: { enabled: true },
-      codex: { model: "gpt-5.4", reasoningEffort: "high" },
+      assignments: [
+        {
+          id: "security",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "task",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
       {},
-      makeContext({ contextValidator: { kind: "use", value: custom } }),
+      makeContext({ contextValidator: custom }),
     );
 
     expect(resolved.contextValidator).toEqual(custom);
   });
 
   it("inherits workflow-level validator when context omits contextValidator", () => {
-    const workflowValidator: GraphWorkflowAgentValidatorConfig = {
-      type: "claude",
+    const workflowValidator: ValidatorCohort = {
       enabled: false,
-      continuity: { enabled: true },
-      agent: {
-        backend: "claude",
-        model: "haiku",
-        reasoningEffort: "low",
-      },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "haiku",
+            reasoningEffort: "low",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     };
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
@@ -406,10 +435,14 @@ describe("resolveWorkflowConfig", () => {
   });
 
   it("uses workflow-level implementer when present, ignoring global", () => {
-    const workflowImpl: GraphWorkflowAgentConfig = {
-      backend: "codex",
-      model: "gpt-5.4-mini",
-      reasoningEffort: "high",
+    const workflowImpl: AgentAssignment = {
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: {
+        backend: "codex",
+        model: "gpt-5.4-mini",
+        reasoningEffort: "high",
+      },
     };
     const definition = makeDefinition({
       workflowConfig: { implementer: workflowImpl },
@@ -464,8 +497,7 @@ describe("resolveWorkflowConfig", () => {
   it("fills missing global blocks from seeded defaults", () => {
     const partialGlobal: WorkflowDefaults = {
       implementer: GLOBAL_IMPLEMENTER,
-      contextValidator:
-        undefined as unknown as GraphWorkflowAgentValidatorConfig,
+      contextValidator: undefined as unknown as ValidatorCohort,
       scriptValidator:
         undefined as unknown as GraphWorkflowScriptValidatorConfig,
       humanApprovalGate:
@@ -483,7 +515,9 @@ describe("resolveWorkflowConfig", () => {
     const resolved = resolveWorkflowConfig(global, makeDefinition());
 
     expect(resolved.implementer).toEqual(GLOBAL_IMPLEMENTER);
-    expect(resolved.contextValidator.type).toBe("claude");
+    expect(resolved.contextValidator.assignments).toEqual(
+      SEEDED_WORKFLOW_DEFAULTS.contextValidator.assignments,
+    );
     expect(resolved.scriptValidator.enabled).toBe(false);
     expect(resolved.humanApprovalGate.enabled).toBe(false);
     expect(resolved.askUserQuestions.enabled).toBe(false);
@@ -757,10 +791,10 @@ describe("resolveWorkflowDefinition", () => {
   });
 
   it("never inherits acceptanceCriteria across cascade tiers", () => {
-    const workflowImpl: GraphWorkflowAgentConfig = {
-      backend: "claude",
-      model: "sonnet",
-      reasoningEffort: "medium",
+    const workflowImpl: AgentAssignment = {
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     };
     const definition = makeDefinition({
       workflowConfig: { implementer: workflowImpl },
@@ -1077,27 +1111,29 @@ describe("resolveCollaborationConfigWithProvenance", () => {
 });
 
 describe("computeUsedBackends", () => {
-  const CLAUDE_IMPL: GraphWorkflowAgentConfig = {
-    backend: "claude",
-    model: "opus",
-    reasoningEffort: "medium",
+  const CLAUDE_IMPL: AgentAssignment = {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
   };
-  const CODEX_IMPL: GraphWorkflowAgentConfig = {
-    backend: "codex",
-    model: "gpt-5.4",
-    reasoningEffort: "high",
+  const CODEX_IMPL: AgentAssignment = {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
   };
-  const CLAUDE_VALIDATOR: GraphWorkflowAgentValidatorConfig = {
-    type: "claude",
-    enabled: true,
-    continuity: { enabled: true },
+  const CLAUDE_VALIDATOR: ValidatorAssignment = {
+    id: "general",
+    profile: { tier: "builtin", id: "general-reviewer" },
+    strategy: "conversation",
     agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-  };
-  const CODEX_VALIDATOR: GraphWorkflowAgentValidatorConfig = {
-    type: "codex",
-    enabled: true,
     continuity: { enabled: true },
-    codex: {},
+  };
+  const CODEX_VALIDATOR: ValidatorAssignment = {
+    id: "general",
+    profile: { tier: "builtin", id: "general-reviewer" },
+    strategy: "task",
+    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
+    continuity: { enabled: true },
   };
 
   it("returns the distinct implementer + enabled-validator backends across contexts (R5.2a)", () => {
@@ -1106,12 +1142,12 @@ describe("computeUsedBackends", () => {
         makeContext({
           id: "ctx-claude",
           implementer: CLAUDE_IMPL,
-          contextValidator: { kind: "use", value: CLAUDE_VALIDATOR },
+          contextValidator: { enabled: true, assignments: [CLAUDE_VALIDATOR] },
         }),
         makeContext({
           id: "ctx-codex",
           implementer: CODEX_IMPL,
-          contextValidator: { kind: "use", value: CODEX_VALIDATOR },
+          contextValidator: { enabled: true, assignments: [CODEX_VALIDATOR] },
         }),
       ],
     });
@@ -1127,7 +1163,7 @@ describe("computeUsedBackends", () => {
         makeContext({
           id: "ctx-1",
           implementer: CLAUDE_IMPL,
-          contextValidator: { kind: "use", value: CODEX_VALIDATOR },
+          contextValidator: { enabled: true, assignments: [CODEX_VALIDATOR] },
         }),
       ],
     });
@@ -1143,12 +1179,12 @@ describe("computeUsedBackends", () => {
         makeContext({
           id: "ctx-1",
           implementer: CLAUDE_IMPL,
-          contextValidator: { kind: "use", value: CLAUDE_VALIDATOR },
+          contextValidator: { enabled: true, assignments: [CLAUDE_VALIDATOR] },
         }),
         makeContext({
           id: "ctx-2",
           implementer: CLAUDE_IMPL,
-          contextValidator: { kind: "disabled" },
+          contextValidator: { enabled: false, assignments: [] },
         }),
       ],
     });
@@ -1159,18 +1195,14 @@ describe("computeUsedBackends", () => {
   });
 
   it("excludes a disabled validator's backend (a disabled validator does not run)", () => {
-    const disabledCodexValidator: GraphWorkflowAgentValidatorConfig = {
-      type: "codex",
-      enabled: false,
-      continuity: { enabled: true },
-      codex: {},
-    };
     const definition = makeDefinition({
       executionContexts: [
         makeContext({
           id: "ctx-1",
           implementer: CLAUDE_IMPL,
-          contextValidator: { kind: "use", value: disabledCodexValidator },
+          // Dormant, not absent: the assignment survives, but its backend is
+          // not "used" because the cohort will not run.
+          contextValidator: { enabled: false, assignments: [CODEX_VALIDATOR] },
         }),
       ],
     });
@@ -1186,7 +1218,7 @@ describe("computeUsedBackends", () => {
         makeContext({
           id: "ctx-1",
           implementer: CODEX_IMPL,
-          contextValidator: { kind: "disabled" },
+          contextValidator: { enabled: false, assignments: [] },
         }),
       ],
     });
@@ -1200,7 +1232,10 @@ describe("computeUsedBackends", () => {
     const definition = makeDefinition({
       workflowConfig: { implementer: CODEX_IMPL },
       executionContexts: [
-        makeContext({ id: "ctx-1", contextValidator: { kind: "disabled" } }),
+        makeContext({
+          id: "ctx-1",
+          contextValidator: { enabled: false, assignments: [] },
+        }),
       ],
     });
 
@@ -1218,5 +1253,186 @@ describe("computeUsedBackends", () => {
 
     // GLOBAL_DEFAULTS uses a claude implementer + an enabled claude validator.
     expect([...backends]).toEqual(["claude"]);
+  });
+});
+
+// R1.1 / R2.1: the assignment family's cascade contract. Every case here is
+// about the CASCADE (which tier's whole unit wins, and what survives it); the
+// schema family's own refusals live in agent-assignments.test.ts.
+describe("agent assignment cascade", () => {
+  const WORKFLOW_IMPLEMENTER: AgentAssignment = {
+    id: "workflow-implementer",
+    profile: { tier: "global", id: "careful-implementer" },
+    focus: "the workflow-wide steer",
+    agent: { backend: "claude", model: "sonnet", reasoningEffort: "high" },
+  };
+
+  const CONTEXT_IMPLEMENTER: AgentAssignment = {
+    id: "context-implementer",
+    profile: { tier: "project", id: "persistence-implementer" },
+    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "low" },
+  };
+
+  function cohort(
+    assignments: ValidatorAssignment[],
+    enabled = true,
+  ): ValidatorCohort {
+    return { enabled, assignments };
+  }
+
+  const CODEX_UNDER_CONVERSATION: ValidatorAssignment = {
+    id: "codex-conversational",
+    profile: { tier: "global", id: "deep-reviewer" },
+    focus: "cross-module consistency",
+    strategy: "conversation",
+    agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    continuity: { enabled: false, contextLimitTokens: 40_000 },
+  };
+
+  const CLAUDE_UNDER_TASK: ValidatorAssignment = {
+    id: "claude-task",
+    profile: { tier: "project", id: "spec-reviewer" },
+    strategy: "task",
+    agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    continuity: { enabled: true },
+  };
+
+  it("replaces the implementer as a whole unit, mixing no field across tiers", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { implementer: WORKFLOW_IMPLEMENTER },
+      makeContext({ implementer: CONTEXT_IMPLEMENTER }),
+    );
+
+    // Not just the runtime: the context's id and profile win too, and the
+    // workflow tier's `focus` does NOT survive onto the context's assignment.
+    expect(resolved.implementer).toEqual(CONTEXT_IMPLEMENTER);
+    expect(resolved.implementer.focus).toBeUndefined();
+  });
+
+  it("replaces the cohort as a whole unit rather than adding to the inherited set", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {
+        contextValidator: cohort([CODEX_UNDER_CONVERSATION, CLAUDE_UNDER_TASK]),
+      },
+      makeContext({ contextValidator: cohort([CLAUDE_UNDER_TASK]) }),
+    );
+
+    expect(resolved.contextValidator.assignments).toEqual([CLAUDE_UNDER_TASK]);
+  });
+
+  it("carries both strategies on both backends through the cascade unchanged", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {},
+      makeContext({
+        contextValidator: cohort([CODEX_UNDER_CONVERSATION, CLAUDE_UNDER_TASK]),
+      }),
+    );
+
+    expect(
+      resolved.contextValidator.assignments.map((assignment) => [
+        assignment.strategy,
+        assignment.agent.backend,
+      ]),
+    ).toEqual([
+      ["conversation", "codex"],
+      ["task", "claude"],
+    ]);
+  });
+
+  it("preserves per-assignment continuity, which differs within one cohort", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {},
+      makeContext({
+        contextValidator: cohort([CODEX_UNDER_CONVERSATION, CLAUDE_UNDER_TASK]),
+      }),
+    );
+
+    expect(
+      resolved.contextValidator.assignments.map((a) => a.continuity),
+    ).toEqual([
+      { enabled: false, contextLimitTokens: 40_000 },
+      { enabled: true },
+    ]);
+  });
+
+  it("keeps a disabled cohort's assignments so re-enabling is lossless", () => {
+    const dormant = cohort([CODEX_UNDER_CONVERSATION], false);
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {},
+      makeContext({ contextValidator: dormant }),
+    );
+
+    expect(resolved.contextValidator.enabled).toBe(false);
+    expect(resolved.contextValidator.assignments).toEqual([
+      CODEX_UNDER_CONVERSATION,
+    ]);
+  });
+
+  it("inherits from the nearest declaring tier at every level", () => {
+    const workflowCohort = cohort([CLAUDE_UNDER_TASK]);
+
+    // Context absent, workflow present → workflow wins.
+    expect(
+      resolveContext(
+        GLOBAL_DEFAULTS,
+        { contextValidator: workflowCohort },
+        makeContext({}),
+      ).contextValidator,
+    ).toEqual(workflowCohort);
+
+    // Both absent → global wins.
+    expect(
+      resolveContext(GLOBAL_DEFAULTS, {}, makeContext({})).contextValidator,
+    ).toEqual(GLOBAL_VALIDATOR);
+  });
+
+  it("resolves the seeded default to exactly one general-reviewer assignment", () => {
+    const resolved = resolveContext(
+      SEEDED_WORKFLOW_DEFAULTS,
+      {},
+      makeContext({}),
+    );
+
+    expect(resolved.contextValidator.enabled).toBe(true);
+    expect(resolved.contextValidator.assignments).toEqual([
+      {
+        id: "general",
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "conversation",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: true },
+      },
+    ]);
+    expect(resolved.implementer.profile).toEqual({
+      tier: "builtin",
+      id: "general-implementer",
+    });
+  });
+
+  it("collects every enabled cohort assignment's backend, not just the first", () => {
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({
+          id: "ctx-1",
+          contextValidator: cohort([
+            CODEX_UNDER_CONVERSATION,
+            CLAUDE_UNDER_TASK,
+          ]),
+        }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends].sort()).toEqual(["claude", "codex"]);
   });
 });

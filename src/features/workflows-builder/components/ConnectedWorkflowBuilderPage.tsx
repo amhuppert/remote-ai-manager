@@ -26,7 +26,7 @@ import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type {
   GraphWorkflowVisualLayout,
-  ResolvedWorkflowSemanticDefinition,
+  CascadeWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
@@ -80,7 +80,7 @@ const emptyLayout: GraphWorkflowVisualLayout = {
 export function resolveDefinitionClientSide(
   globalDefaults: WorkflowDefaults,
   definition: WorkflowSemanticDefinition,
-): ResolvedWorkflowSemanticDefinition {
+): CascadeWorkflowSemanticDefinition {
   return resolveWorkflowDefinition(
     { workflowDefaults: globalDefaults } as GlobalConfig,
     definition,
@@ -304,6 +304,7 @@ export default function ConnectedWorkflowBuilderPage({
                 isMobile={isMobile}
                 onAutoSwitchPanel={autoSwitchPanel}
                 voiceProjectName={projectName}
+                libraryProjectName={projectName}
               />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">

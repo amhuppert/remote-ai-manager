@@ -70,6 +70,7 @@ export const Interactive: Story = {
       <ConversationTabs
         tabs={tabs}
         activeTabId={active}
+        projectName="command-center"
         onSelect={setActive}
         onClose={(id) => {
           setTabs((prev) => {

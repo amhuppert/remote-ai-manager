@@ -28,6 +28,8 @@ import type {
 import { createTicketProjectOperationGate } from "../tickets/project-operation-gate";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { createSessionLifecycleGate } from "./lifecycle-gate";
+import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import {
   validateSessionName,
   sanitizeBranchName,
@@ -656,6 +658,29 @@ describe("createSessionNormal", () => {
     );
 
     expect(session.conversations[0]!.agentBackend).toBe("codex");
+  });
+
+  it("provisions the initial conversation under the Standard Agent profile (R7.1)", async () => {
+    mockGitSuccess(); // git worktree add
+
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "Profiled Kickoff",
+    );
+
+    // The snapshot is on the row the session is persisted with, so it is
+    // durable before this session's first conversation runtime could exist.
+    const snapshot = session.conversations[0]!.profileSnapshot;
+    expect(snapshot).not.toBeNull();
+    expect(snapshot).toMatchObject({
+      tier: "builtin",
+      id: STANDARD_AGENT_PROFILE_ID,
+    });
+    expect(computeContentHash(snapshot!.renderedInstructionBlock)).toBe(
+      snapshot!.resolvedInstructionHash,
+    );
+    // Still changeable: nothing has been sent yet.
+    expect(session.conversations[0]!.profileLockedAt).toBeNull();
   });
 
   it("provisions on claude when no defaultAgentBackend is configured", async () => {

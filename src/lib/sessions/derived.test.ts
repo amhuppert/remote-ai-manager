@@ -14,6 +14,8 @@ function makeConversation(
   },
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
     promptCount: 0,

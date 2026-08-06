@@ -8,7 +8,10 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { OUTPUT_SCHEMA_TEMPLATE } from "@/components/workflow-config/OutputSchemaField";
-import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import {
+  createWorkflowExecution,
+  makeProfileSnapshot,
+} from "@/lib/workflow-graph/test-fixtures";
 import {
   buildInitialContextState,
   buildInitialTaskState,
@@ -42,12 +45,28 @@ function fullContext(): GraphWorkflowResolvedContext {
     title: "Implement",
     description: "Do the work",
     acceptanceCriteria: "It works",
-    implementer: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    implementer: {
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    },
     contextValidator: {
-      type: "claude",
       enabled: true,
-      continuity: { enabled: true, contextLimitTokens: 50000 },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true, contextLimitTokens: 50000 },
+        },
+      ],
     },
     scriptValidator: { enabled: true },
     humanApprovalGate: { enabled: true },
@@ -88,7 +107,7 @@ function startedContextState(): GraphWorkflowExecutionContextState {
     cleanupStatus: "removed",
     lastMergeError: "conflict in file.ts",
     pendingApproval: null,
-    pendingUserInput: null,
+    pendingUserInputs: {},
   };
 }
 
@@ -160,10 +179,12 @@ describe("ContextConfigTab — display", () => {
       within(val).getByLabelText("Context validator enabled"),
     ).toBeChecked();
     expect(within(val).getByText("Sonnet")).toBeInTheDocument();
-    expect(within(val).getByLabelText("Continuity enabled")).toBeChecked();
-    expect(within(val).getByLabelText("Context limit tokens")).toHaveValue(
-      50000,
-    );
+    expect(
+      within(val).getByLabelText("Continuity enabled for general"),
+    ).toBeChecked();
+    expect(
+      within(val).getByLabelText("Context limit tokens for general"),
+    ).toHaveValue(50000);
 
     expect(screen.getByLabelText("Script validator enabled")).toBeChecked();
     expect(screen.getByLabelText("Human approval gate enabled")).toBeChecked();
@@ -217,7 +238,7 @@ describe("ContextConfigTab — display", () => {
 
   it("renders an off toggle for a null validator and omits absent collaboration", () => {
     const context = fullContext();
-    context.contextValidator = null;
+    context.contextValidator = { enabled: false, assignments: [] };
     delete (context as { collaboration?: unknown }).collaboration;
 
     render(
@@ -268,10 +289,21 @@ describe("ContextConfigTab — context validator enabled field", () => {
   it("faithfully renders a configured-but-disabled validator: switch off, config still shown", () => {
     const context = fullContext();
     context.contextValidator = {
-      type: "claude",
       enabled: false,
-      continuity: { enabled: true },
-      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "conversation",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     };
 
     render(
@@ -295,10 +327,21 @@ describe("ContextConfigTab — context validator enabled field", () => {
     const onSaveContextConfig = vi.fn();
     const context = fullContext();
     context.contextValidator = {
-      type: "codex",
       enabled: false,
-      continuity: { enabled: true },
-      codex: { model: "gpt-5.4", reasoningEffort: "high" },
+      assignments: [
+        {
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+          profileSnapshot: makeProfileSnapshot(),
+          strategy: "task",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+          },
+          continuity: { enabled: true },
+        },
+      ],
     };
 
     render(
@@ -319,10 +362,20 @@ describe("ContextConfigTab — context validator enabled field", () => {
         type: "update-context",
         contextId: "context-impl",
         contextValidator: {
-          type: "codex",
           enabled: true,
-          continuity: { enabled: true },
-          codex: { model: "gpt-5.4", reasoningEffort: "high" },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "high",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
       },
     ]);
@@ -349,14 +402,20 @@ describe("ContextConfigTab — context validator enabled field", () => {
         type: "update-context",
         contextId: "context-impl",
         contextValidator: {
-          type: "claude",
           enabled: false,
-          continuity: { enabled: true, contextLimitTokens: 50000 },
-          agent: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
-          },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true, contextLimitTokens: 50000 },
+            },
+          ],
         },
       },
     ]);
@@ -365,7 +424,7 @@ describe("ContextConfigTab — context validator enabled field", () => {
   it("seeds a default validator when enabling an absent (null) validator", () => {
     const onSaveContextConfig = vi.fn();
     const context = fullContext();
-    context.contextValidator = null;
+    context.contextValidator = { enabled: false, assignments: [] };
 
     render(
       <ContextConfigTab
@@ -385,14 +444,20 @@ describe("ContextConfigTab — context validator enabled field", () => {
         type: "update-context",
         contextId: "context-impl",
         contextValidator: {
-          type: "claude",
           enabled: true,
-          continuity: { enabled: true },
-          agent: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
-          },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
       },
     ]);
@@ -1735,5 +1800,52 @@ describe("ContextConfigTab — output schema save round trip", () => {
         outputSchema: SCHEMA,
       },
     ]);
+  });
+});
+
+/**
+ * The runtime surface's per-assignment reset (R8.3): one cohort member's lane
+ * goes back to a clean slate without the whole-context reset's blast radius.
+ */
+describe("ContextConfigTab — per-assignment reset", () => {
+  it("resets one assignment by context and use-site id", () => {
+    const onResetAssignment = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState())}
+        contextId="context-impl"
+        onResetAssignment={onResetAssignment}
+      />,
+    );
+
+    fireEvent.click(
+      within(
+        screen.getByTestId("config-block-context-validator"),
+      ).getByLabelText("Reset general"),
+    );
+    expect(onResetAssignment).toHaveBeenCalledWith("context-impl", "general");
+  });
+
+  it("offers no reset while the execution is still running", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "running",
+        })}
+        contextId="context-impl"
+        onResetAssignment={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText("Reset general")).not.toBeInTheDocument();
+  });
+
+  it("offers no reset where the host wires none", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState())}
+        contextId="context-impl"
+      />,
+    );
+    expect(screen.queryByLabelText("Reset general")).not.toBeInTheDocument();
   });
 });

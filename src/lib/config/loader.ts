@@ -10,6 +10,7 @@ import {
 } from "./schemas";
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import {
   clampEffortToModel,
   getCodexReasoningLevelsForModel,
@@ -142,56 +143,10 @@ function defaultConfig(): GlobalConfig {
     preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
     tailscaleEnabled: true,
-    workflowDefaults: {
-      implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      },
-      contextValidator: {
-        type: "claude",
-        enabled: true,
-        continuity: { enabled: true },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
-      },
-      scriptValidator: {
-        enabled: false,
-      },
-      humanApprovalGate: {
-        enabled: false,
-      },
-      askUserQuestions: {
-        enabled: false,
-      },
-      iterationPolicy: {
-        maxIterations: 20,
-        continuity: { enabled: true },
-      },
-      circuitBreaker: {
-        consecutiveFailureThreshold: 3,
-      },
-      mutability: {
-        allowAgentTaskAdd: false,
-      },
-      planRepair: {
-        enabled: true,
-        maxAttemptsPerContext: 2,
-      },
-      collaboration: {
-        enabled: false,
-        secondAgent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
-        negotiationRounds: 3,
-        autonomousResolutionThreshold: "minor",
-      },
-    },
+    // The one definition of "no workflow config anywhere" lives with the
+    // cascade resolver; a second literal here would drift from what the
+    // resolver actually falls back to.
+    workflowDefaults: SEEDED_WORKFLOW_DEFAULTS,
     compaction: {
       backend: "claude",
       conversationModel: "sonnet",

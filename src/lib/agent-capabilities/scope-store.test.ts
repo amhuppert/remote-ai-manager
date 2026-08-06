@@ -43,6 +43,8 @@ function createSqlHarness() {
 
 function projectConversation(id: string): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",
@@ -93,6 +95,8 @@ function stateWithAllScopes(): ManagerState {
             finished: false,
             conversations: [
               {
+                profileSnapshot: null,
+                profileLockedAt: null,
                 id: CONVERSATION_ID,
                 scope: "session",
                 nameOrigin: "default",

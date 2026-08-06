@@ -9,6 +9,7 @@ import {
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { workflowDefinitionEditRequestSchema } from "@/lib/workflows/edit-schemas";
+import { assignmentReferenceRefusal } from "@/lib/workflows/assignment-reference-refusal";
 
 const logger = createLogger("workflow-graph");
 
@@ -120,12 +121,28 @@ export async function runDefinitionEditRequest(
     });
   }
 
-  const persisted = await params.persist({
-    name: applied.record.name,
-    description: applied.record.description,
-    definition: applied.record.definition,
-    layout: applied.record.layout,
-  });
+  // Assignment REFERENCES are resolved at accept time, not by the pure edit
+  // application above — the ops layer has no library and no project scope. So
+  // a batch that stages a dangling reference passes every check up to here and
+  // is refused by persistence, which is the first place that can know.
+  let persisted: unknown;
+  try {
+    persisted = await params.persist({
+      name: applied.record.name,
+      description: applied.record.description,
+      definition: applied.record.definition,
+      layout: applied.record.layout,
+    });
+  } catch (error) {
+    const refusal = assignmentReferenceRefusal(error);
+    if (!refusal) throw error;
+    logger.warn("workflow-graph.definition-edit.rejected", {
+      workflowId: record.id,
+      operationCount,
+      codes: ["workflow_assignment_reference_invalid"],
+    });
+    return refusal;
+  }
   const summary = persistedItemSchema.safeParse(persisted);
   logger.info("workflow-graph.definition-edit.applied", {
     workflowId: record.id,

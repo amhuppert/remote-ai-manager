@@ -88,11 +88,15 @@ compact per-context table (id, state, completed/total tasks); `--json` returns t
 
 Endpoints exist for create/start/replace; the design adds:
 
-- `POST /api/projects/[name]/sessions/[session]/graph-workflow/validate` — runs exactly the
-  create-path Zod parse + graph structural checks (dependency cycles, unknown context refs,
-  prerequisite sanity) *without persisting*. Returns `{ ok } | { error, issues[] }`.
-- CLI: `cctl workflow validate --file plan.json` (exit 2 on issues, one per line with JSON-path
-  locations), then `cctl workflow create --file plan.json`.
+- `POST /api/projects/[name]/sessions/[session]/graph-workflow/validate[?tier=global|project]` —
+  runs exactly the create-path Zod parse + graph structural checks (dependency cycles, unknown
+  context refs, prerequisite sanity) *without persisting*, then the async agent-profile
+  assignment-reference check under the selected document scope. Returns `{ ok } | { error, issues[] }`.
+  `tier` defaults to `project`; `global` applies the global-document rule (builtin and global
+  profile references only), so a template is refused at validate for what would otherwise only be
+  refused at save. An unrecognized `tier` is a 400 rather than a silent project-scope default.
+- CLI: `cctl workflow validate --file plan.json [--tier global|project]` (exit 2 on issues, one per
+  line with JSON-path locations), then `cctl workflow create --file plan.json`.
 - This is the canonical hint-chained flow (doc 01 §6): `validate` (ok) →
   `hint: valid — create it with 'cctl workflow create --file plan.json'`; `create` →
   `hint: start it with 'cctl workflow start <id>'`.

@@ -11,7 +11,7 @@ import type {
 import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowCollaborationContinuation } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
-  GraphWorkflowResolvedContext,
+  GraphWorkflowCascadeContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
@@ -104,7 +104,7 @@ export interface LatestContextValidationFailureFeedback {
 }
 
 export interface BuildIterationPromptInput {
-  context: GraphWorkflowResolvedContext;
+  context: GraphWorkflowCascadeContext;
   tasks: GraphWorkflowTaskDefinition[];
   taskStates: Record<string, GraphWorkflowTaskState>;
   sharedDocuments: GraphWorkflowSharedDocumentEntry[];

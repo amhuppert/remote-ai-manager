@@ -216,6 +216,15 @@ function seed(): void {
     path.join(contextDir, "prompts", "2.json"),
     JSON.stringify({ raw: "y", parsed: {}, parsePath: "raw_json" }),
   );
+  // A validator cohort writes each specialist's response under its own
+  // assignment directory; an audit that only scanned `prompts/` would report
+  // zero parse fallbacks for every cohort run.
+  const reviewerDir = path.join(contextDir, "validators", "reviewer-b");
+  mkdirSync(reviewerDir, { recursive: true });
+  writeFileSync(
+    path.join(reviewerDir, "context-validator.json"),
+    JSON.stringify({ raw: "z", parsed: {}, parsePath: "fenced_json_block" }),
+  );
 }
 
 beforeEach(() => {
@@ -273,6 +282,10 @@ describe("loadAuditInput", () => {
     expect(implLogs?.validatorResponses).toEqual([
       { file: "1.json", parsePath: "structured_output" },
       { file: "2.json", parsePath: "raw_json" },
+      {
+        file: "validators/reviewer-b/context-validator.json",
+        parsePath: "fenced_json_block",
+      },
     ]);
     expect(input.paths.workflowLogsDir).toBe(path.join(logsBaseDir, ACTIVE_ID));
   });
@@ -357,8 +370,13 @@ describe("loadAuditInput", () => {
     expect(report.cost.totalUsd).toBeCloseTo(4.75);
     const impl = report.contexts.find((c) => c.contextId === "impl");
     expect(impl?.iterations).toHaveLength(1);
+    // Both fallbacks surface, and the cohort member's is attributed to it.
     expect(impl?.parseFallbacks).toEqual([
       { file: "2.json", parsePath: "raw_json" },
+      {
+        file: "validators/reviewer-b/context-validator.json",
+        parsePath: "fenced_json_block",
+      },
     ]);
   });
 });

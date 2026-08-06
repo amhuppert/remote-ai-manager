@@ -51,8 +51,15 @@ const DB_FILE_NAME = "command-center.db";
  * guards against old-build writes — an older build's wide enum and the legacy
  * permissive `spec_evidence` CHECK would re-insert dropped-kind rows the new
  * strict read path hard-fails on.
+ *
+ * Version 3 is the workflow agent-assignment cutover: migration
+ * `0011-workflow-agent-assignments` rewrites every persisted implementer and
+ * validator onto library assignments and empties the active execution table.
+ * The bump is what makes the "no inbound compatibility parser" rule hold: an
+ * older build would happily write the pre-cutover singleton shapes back into a
+ * migrated database, and nothing would ever convert them again.
  */
-export const KNOWN_SCHEMA_VERSION = 2;
+export const KNOWN_SCHEMA_VERSION = 3;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -1611,6 +1618,14 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "creation_request_id",
     type: "TEXT",
   },
+  // Resolved agent-profile snapshot, on both conversation tables. Additive and
+  // nullable with no row rewrite: null is the meaningful legacy value (D27), so
+  // every pre-feature conversation reads back as no-profile rather than being
+  // backfilled with a profile it never ran under.
+  { table: "conversations", column: "profile_snapshot", type: "TEXT" },
+  { table: "conversations", column: "profile_locked_at", type: "TEXT" },
+  { table: "project_conversations", column: "profile_snapshot", type: "TEXT" },
+  { table: "project_conversations", column: "profile_locked_at", type: "TEXT" },
   {
     table: "spec_revisions",
     column: "authoring_stage",

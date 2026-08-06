@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type { GraphWorkflowTaskState } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import type {
-  GraphWorkflowResolvedContext,
+  GraphWorkflowCascadeContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
   WorkflowSemanticDefinition,
@@ -34,12 +34,26 @@ import { buildContextValidationPrompt } from "@/lib/workflow-graph/validator-run
  */
 
 const GLOBAL_DEFAULTS: WorkflowDefaults = {
-  implementer: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  implementer: {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  },
   contextValidator: {
-    type: "claude",
     enabled: true,
-    continuity: { enabled: true },
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    assignments: [
+      {
+        id: "general",
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "conversation",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: true },
+      },
+    ],
   },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
@@ -80,11 +94,12 @@ const GLOBAL_CONFIG: GlobalConfig = {
   workflowDefaults: GLOBAL_DEFAULTS,
 };
 
-const VALIDATOR: GraphWorkflowAgentValidatorConfig = {
-  type: "claude",
-  enabled: true,
-  continuity: { enabled: true },
+const VALIDATOR: ValidatorAssignment = {
+  id: "general",
+  profile: { tier: "builtin", id: "general-reviewer" },
+  strategy: "conversation",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  continuity: { enabled: true },
 };
 
 const TASKS: GraphWorkflowTaskDefinition[] = [
@@ -169,7 +184,7 @@ function makeDefinition(): WorkflowSemanticDefinition {
  * context — it carries `context.charter` via the task 4.1 passthrough, the
  * same snapshot both roles consume.
  */
-function resolveSharedContext(): GraphWorkflowResolvedContext {
+function resolveSharedContext(): GraphWorkflowCascadeContext {
   const resolved = resolveWorkflowDefinition(GLOBAL_CONFIG, makeDefinition());
   const context = resolved.executionContexts[0];
   if (!context) {

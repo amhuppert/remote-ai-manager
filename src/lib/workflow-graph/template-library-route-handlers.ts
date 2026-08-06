@@ -17,6 +17,7 @@ import {
   type TemplateLibraryItem,
 } from "./template-library-service";
 import { runDefinitionEditRequest } from "@/lib/workflows/definition-edit-handler";
+import { assignmentReferenceRefusal } from "@/lib/workflows/assignment-reference-refusal";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -116,6 +117,8 @@ export function createTemplateLibraryRouteHandlers(
       const item = await deps.createGlobal(validation.draft);
       return NextResponse.json({ item }, { status: 201 });
     } catch (error) {
+      const refusal = assignmentReferenceRefusal(error);
+      if (refusal) return refusal;
       const message =
         error instanceof Error ? error.message : "Failed to create template";
       return NextResponse.json({ error: message } satisfies ApiError, {
@@ -155,6 +158,8 @@ export function createTemplateLibraryRouteHandlers(
       const item = await deps.updateGlobal(workflowId, validation.draft);
       return NextResponse.json({ item });
     } catch (error) {
+      const refusal = assignmentReferenceRefusal(error);
+      if (refusal) return refusal;
       const message =
         error instanceof Error ? error.message : "Failed to update template";
       // Accept-time validation throws with a graph-validation code string, which

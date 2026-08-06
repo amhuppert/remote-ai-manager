@@ -5,6 +5,7 @@ import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { StaleLoopFenceError } from "@/lib/workflow-graph/loop-fence";
 import {
   classifyContextSchedulability,
+  contextsPresentInLane,
   type ContextSchedulability,
 } from "@/lib/workflow-graph/lane-readiness";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
@@ -19,6 +20,10 @@ import {
   ResetExecutionContextError,
   resetExecutionContext,
 } from "@/lib/workflow-graph/reset-context";
+import {
+  ResetAssignmentError,
+  resetExecutionContextAssignment,
+} from "@/lib/workflow-graph/reset-assignment";
 import {
   validateContextId,
   type ParallelWorktrees,
@@ -49,6 +54,12 @@ import {
   type PreflightPrerequisiteService,
 } from "@/lib/workflow-graph/preflight-prerequisite-service";
 import { readConfig } from "@/lib/config/loader";
+import { parkedQuestionConversationIds } from "@/lib/workflow-graph/pending-user-input";
+import {
+  createUserInputGateService,
+  type UserInputGateService,
+} from "@/lib/workflow-graph/user-input-gate";
+import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
   GraphWorkflowExecution,
@@ -64,6 +75,11 @@ import {
   createRegisteredGraphExecutionContract,
   type GraphExecutionContract,
 } from "@/lib/workflow-graph/execution-contract-port";
+import {
+  contextIdsResumingInfraHalt,
+  isValidationRoundOpen,
+  resetValidationRoundAttempts,
+} from "@/lib/workflow-graph/validation-round";
 interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
   definitionId: string;
@@ -265,6 +281,42 @@ export interface GraphWorkflowResumeOptions {
   conflictGuidance?: ConflictDecisionInput[];
 }
 
+export type GraphWorkflowLifecycleAction =
+  | "pause"
+  | "resume"
+  | "abort"
+  | "complete"
+  | "halt";
+
+export class GraphWorkflowTransitionConflictError extends Error {
+  readonly code = "workflow_transition_conflict" as const;
+
+  constructor(
+    readonly action: GraphWorkflowLifecycleAction,
+    readonly currentStatus: GraphWorkflowStatus,
+    readonly allowedStatuses: readonly GraphWorkflowStatus[],
+    message: string,
+  ) {
+    super(message);
+    this.name = "GraphWorkflowTransitionConflictError";
+  }
+}
+
+function assertLifecycleTransitionAllowed(
+  execution: GraphWorkflowExecution,
+  action: GraphWorkflowLifecycleAction,
+  allowedStatuses: readonly GraphWorkflowStatus[],
+  message: string,
+): void {
+  if (allowedStatuses.includes(execution.status)) return;
+  throw new GraphWorkflowTransitionConflictError(
+    action,
+    execution.status,
+    allowedStatuses,
+    message,
+  );
+}
+
 export type GraphWorkflowManagerEvent =
   | { type: "pause" }
   | { type: "abort" }
@@ -335,6 +387,22 @@ export interface GraphWorkflowManagerDeps {
     projectPath: string;
     contextIds?: string[];
   }): Promise<void>;
+  /**
+   * User-input gate. Pause uses it to end the in-flight validation round and
+   * withdraw exactly the validator questions that round parked (pause-to-edit,
+   * R9). Defaults to a service over this manager's repository.
+   */
+  userInputGateService?: UserInputGateService;
+  /**
+   * Stop a lane conversation's actor (and with it the backend subprocess) when
+   * a per-assignment reset retires it. Best-effort: a throw is logged, never a
+   * reset failure — the durable state is already committed.
+   */
+  retireLaneConversation?(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): void;
 }
 
 export interface ScheduleEligibleContextsInput {
@@ -488,30 +556,17 @@ function markActiveContextReady(execution: GraphWorkflowExecution): void {
 }
 
 /**
- * Conversations parked on a user question. Their machines sit in
- * waitingForInput, which accepts ABORT_TURN and would persist a cleared
- * question while the execution keeps pendingUserInput — subsequent answers
- * would be rejected and the context could never be re-dispatched. A parked
- * conversation has no in-flight turn, so excluding it from cancellation
- * costs nothing.
+ * Running task conversations, minus any parked on a user question. A parked
+ * conversation's machine sits in waitingForInput, which accepts ABORT_TURN and
+ * would persist a cleared question while the execution keeps the parked record:
+ * subsequent answers would be rejected and the context could never be
+ * re-dispatched. A parked conversation has no in-flight turn, so excluding it
+ * from cancellation costs nothing.
  */
-function collectParkedQuestionConversationIds(
-  execution: GraphWorkflowExecution,
-): Set<string> {
-  const ids = new Set<string>();
-  for (const contextState of Object.values(execution.contextStates)) {
-    const conversationId = contextState.pendingUserInput?.conversationId;
-    if (conversationId) {
-      ids.add(conversationId);
-    }
-  }
-  return ids;
-}
-
 function collectRunningTaskConversationIds(
   execution: GraphWorkflowExecution,
 ): string[] {
-  const parked = collectParkedQuestionConversationIds(execution);
+  const parked = parkedQuestionConversationIds(execution);
   const ids = new Set<string>();
   for (const taskState of Object.values(execution.taskStates)) {
     if (
@@ -536,7 +591,7 @@ function collectRunningTaskConversationIds(
 function collectLaneConversationIds(
   execution: GraphWorkflowExecution,
 ): string[] {
-  const parked = collectParkedQuestionConversationIds(execution);
+  const parked = parkedQuestionConversationIds(execution);
   const ids = new Set<string>();
   for (const lanes of Object.values(execution.laneStates)) {
     for (const laneState of Object.values(lanes)) {
@@ -580,6 +635,9 @@ function transitionToNonRunningState(
   const nextExecution = cloneExecution(execution);
   const hadRunningTasks = interruptRunningTasks(nextExecution);
   markActiveContextReady(nextExecution);
+  if (execution.status === "running") {
+    nextExecution.loopEpoch += 1;
+  }
   nextExecution.status = status;
   nextExecution.completedAt = completedAt;
   nextExecution.haltReason = haltReason;
@@ -596,6 +654,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     deps.stopExecutionLaneDevServers ?? defaultStopExecutionLaneDevServers;
   const executionContract =
     deps.executionContract ?? createRegisteredGraphExecutionContract();
+  const eventPublisher =
+    deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
+  const userInputGateService =
+    deps.userInputGateService ??
+    createUserInputGateService({
+      getActive: deps.executionRepository.getActive,
+      mutateActive: deps.executionRepository.mutateActive,
+      publishUserInputPending: eventPublisher.publishUserInputPending,
+      publishUserInputResolved: eventPublisher.publishUserInputResolved,
+      deliver: eventPublisher.deliver,
+      sendConversationEvent,
+      now: () => getNow(deps),
+    });
 
   function abortRunningTaskConversations(
     projectPath: string,
@@ -1061,10 +1132,16 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
     if (event.type === "pause") {
       let conversationIdsToAbort: string[] = [];
-      const nextExecution = await deps.executionRepository.mutateActive(
+      const pausedExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
         (execution) => {
+          assertLifecycleTransitionAllowed(
+            execution,
+            "pause",
+            ["running"],
+            "Only running graph workflow executions can be paused",
+          );
           conversationIdsToAbort = collectCancellableConversationIds(execution);
           return transitionToNonRunningState(execution, "paused", null, null);
         },
@@ -1074,6 +1151,16 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName,
         conversationIdsToAbort,
       );
+      // Pause is the edit point (doc 06): the in-flight round is abandoned and
+      // its parked validator questions go with it, so the edited roster's next
+      // round starts with no residue — no stale question the human could still
+      // answer into a cohort that no longer exists. An implementer's parked
+      // question belongs to no round and survives, as it always has.
+      const nextExecution = await userInputGateService.withdrawRoundQuestions({
+        projectPath,
+        sessionName,
+        executionId: pausedExecution.id,
+      });
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.paused", { actor: "operator" });
       logger.info("graph-workflow.execution.paused", {
@@ -1084,13 +1171,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
     if (event.type === "abort") {
       let conversationIdsToAbort: string[] = [];
-      const nextExecution = await deps.executionRepository.mutateActive(
+      const abortedExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
         (execution) => {
+          assertLifecycleTransitionAllowed(
+            execution,
+            "abort",
+            ["pending", "running", "paused", "halted"],
+            "Completed or aborted graph workflow executions cannot be aborted",
+          );
           conversationIdsToAbort = collectCancellableConversationIds(execution);
           return transitionToNonRunningState(execution, "aborted", now, {
             type: "aborted",
+            cause: null,
+            summary: null,
           });
         },
       );
@@ -1099,6 +1194,18 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName,
         conversationIdsToAbort,
       );
+      // A parked question must not dangle as answerable once the execution is
+      // aborted (Req 7.4). The withdrawal belongs here, beside the transition,
+      // for two reasons: aborting a paused or halted execution has no loop to
+      // run cleanup at all, and the transition above retires the running loop's
+      // generation — a loop that reacted to the abort itself would be fenced
+      // out of the very write the cleanup needs. Pause withdraws only its
+      // round's questions; abort ends the execution, so every park goes.
+      const nextExecution = await userInputGateService.withdrawAll({
+        projectPath,
+        sessionName,
+        executionId: abortedExecution.id,
+      });
       await stopLaneDevServers({ execution: nextExecution, projectPath });
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.aborted", { actor: "operator" });
@@ -1115,9 +1222,16 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         projectPath,
         sessionName,
         (execution) => {
+          assertLifecycleTransitionAllowed(
+            execution,
+            "complete",
+            ["running"],
+            "Only running graph workflow executions can be completed",
+          );
           execution.status = "completed";
           execution.completedAt = now;
           execution.haltReason = null;
+          execution.loopEpoch += 1;
           execution.machineSnapshot = buildLifecycleSnapshot(execution, {
             lifecycleStatus: "completed",
             recoveryMode: "none",
@@ -1142,6 +1256,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
       (execution) => {
+        assertLifecycleTransitionAllowed(
+          execution,
+          "halt",
+          ["running"],
+          "Only running graph workflow executions can be halted",
+        );
         conversationIdsToAbort = collectCancellableConversationIds(execution);
         return transitionToNonRunningState(
           execution,
@@ -1191,17 +1311,24 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       projectPath,
       sessionName,
       (execution) => {
-        const resumableStatuses: GraphWorkflowStatus[] = ["paused", "halted"];
-        if (!resumableStatuses.includes(execution.status)) {
-          throw new Error(
-            "Only paused or halted graph workflow executions can be resumed",
-          );
-        }
+        assertLifecycleTransitionAllowed(
+          execution,
+          "resume",
+          ["paused", "halted"],
+          "Only paused or halted graph workflow executions can be resumed",
+        );
 
         previousStatus = execution.status;
         // Captured before the clear below: the resume event echoes which halt
         // it resolved, so lifecycle.jsonl halt→resume pairs stay verifiable.
         resumeCapture.resolvedHaltReason = execution.haltReason;
+        // Captured here for the same reason — the halt reasons are cleared
+        // below, and which contexts they named decides whose validation round
+        // gets its attempt budget back.
+        const infraHaltContextIds = contextIdsResumingInfraHalt([
+          execution.haltReason,
+          ...execution.secondaryHaltReasons,
+        ]);
 
         // Resume is a manual retry decision: concluded-failed joins go back to
         // pending (per-lane merge progress survives) so the loop re-runs them,
@@ -1235,9 +1362,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // pause/halt belongs to the superseded generation; preserving it
         // would drain-halt the replacement loop on its first pass.
         execution.pendingHaltReason = null;
-        // Start a new loop generation: resume clears the halt signals a
-        // blocked loop would otherwise observe on wake, so the epoch bump is
-        // what fences out any loop instance still alive from before the halt.
+        // Start a loop generation distinct from both the generation that was
+        // retired on entry to the quiescent state and any persisted quiescent
+        // execution restored without an in-process predecessor.
         execution.loopEpoch += 1;
 
         const retryIds: string[] = [];
@@ -1286,6 +1413,22 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           }
           if (contextState.status === "ready") {
             contextState.consecutiveFailureCount = 0;
+          }
+          // Resume is the manual retry decision for an infrastructure halt too:
+          // the lanes that never reached a verdict get their attempt budget
+          // back, so the round can actually run again. Without this the halt is
+          // resumable in name only — every unsettled lane comes back already at
+          // the bound and re-halts on the first pass (D5). Only for the contexts
+          // the halt named, though: a restart-driven resume carries no halt
+          // reason, and giving it a reset would refill the budget on every
+          // server bounce.
+          const round = contextState.validationRound;
+          if (
+            round &&
+            isValidationRoundOpen(round) &&
+            infraHaltContextIds.has(contextState.contextId)
+          ) {
+            contextState.validationRound = resetValidationRoundAttempts(round);
           }
         }
         mergeRetryContextIds = retryIds;
@@ -2083,9 +2226,13 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             if (forkFromLane !== null) {
               // Fan-out fork: provision a new worktree lane forked from the
               // parent lane's committed head. The new lane's id matches the
-              // contextId. Inherit `includedContextIds` from the parent so
-              // upstream visibility checks still recognize the parent's
-              // contribution through the forked branch.
+              // contextId. Inherit everything present in the parent's branch —
+              // what ran on it AND what a succeeded join already merged into
+              // it — so upstream visibility checks recognize the full history
+              // the fork copied. Inheriting only the parent's own
+              // `includedContextIds` strands the fork on any upstream that
+              // arrived by join: its work is in the branch, but nothing in the
+              // lane graph connects the fork to it.
               const prov = provisioned.find(
                 (p) => p.entry.contextId === contextId,
               );
@@ -2094,9 +2241,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
                   `Fork provisioning for context "${contextId}" missing from provisioned results`,
                 );
               }
-              const parentLane =
-                running.executionLanes[forkFromLane.sourceLaneId];
-              const inheritedIncluded = parentLane?.includedContextIds ?? [];
+              const inheritedIncluded = contextsPresentInLane(
+                forkFromLane.sourceLaneId,
+                running,
+              );
               const newLaneId = contextId;
               running.executionLanes[newLaneId] = {
                 laneId: newLaneId,
@@ -2423,11 +2571,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           return execution;
         }
         // A pending halt reason is a signal to a running loop's
-        // drain-then-halt path. Once a transition has parked the execution
-        // (pause/halt/abort), a late-settling turn — typically one the
-        // transition itself cancelled — must not poison the suspended state:
-        // the fence cannot reject it (same id and epoch), and resume would
-        // otherwise drain-halt the replacement loop immediately.
+        // drain-then-halt path. The loop fence rejects writes from a generation
+        // retired by pause/halt/abort; this status guard also protects unfenced
+        // callers from poisoning suspended state with a late halt signal.
         if (execution.status !== "running") {
           rejectedStatus = execution.status;
           return execution;
@@ -2649,6 +2795,112 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     return nextExecution;
   }
 
+  /**
+   * Reset ONE validator assignment on a paused or halted execution (R8.3).
+   *
+   * Narrower than {@link resetContext} by design: the sibling verdicts that
+   * judged the same candidate, the implementer's lane, and the context's task
+   * state all survive. The reducer is pure, so the two effects it implies —
+   * stopping the retired conversation and publishing the withdrawal of a
+   * question nobody can answer any more — happen here, post-commit.
+   */
+  async function resetContextAssignment(
+    projectPath: string,
+    sessionName: string,
+    contextId: string,
+    assignmentId: string,
+  ): Promise<GraphWorkflowExecution> {
+    let retiredConversationId: string | null = null;
+    let withdrawnQuestion: {
+      conversationId: string;
+      questionBatchId: string;
+    } | null = null;
+    let previousStatus: GraphWorkflowStatus | null = null;
+    let resetExecutionId: string | null = null;
+
+    let nextExecution: GraphWorkflowExecution;
+    try {
+      nextExecution = await deps.executionRepository.mutateActive(
+        projectPath,
+        sessionName,
+        (execution) => {
+          previousStatus = execution.status;
+          resetExecutionId = execution.id;
+          const result = resetExecutionContextAssignment(execution, {
+            contextId,
+            assignmentId,
+          });
+          retiredConversationId = result.retiredConversationId;
+          withdrawnQuestion = result.withdrawnQuestion;
+          return result.execution;
+        },
+      );
+    } catch (error) {
+      if (error instanceof ResetAssignmentError) {
+        logger.warn("graph-workflow.assignment.reset_rejected", {
+          executionId: resetExecutionId,
+          contextId,
+          assignmentId,
+          status: previousStatus,
+          reason: error.message,
+        });
+      }
+      throw error;
+    }
+
+    if (retiredConversationId !== null && deps.retireLaneConversation) {
+      try {
+        deps.retireLaneConversation({
+          projectPath,
+          sessionName,
+          conversationId: retiredConversationId,
+        });
+      } catch (error) {
+        logger.warn("graph-workflow.assignment.retire_lane_failed", {
+          executionId: nextExecution.id,
+          contextId,
+          assignmentId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    if (withdrawnQuestion !== null) {
+      const question: { conversationId: string; questionBatchId: string } =
+        withdrawnQuestion;
+      sendConversationEvent(projectPath, sessionName, question.conversationId, {
+        type: "CLEAR_PENDING_QUESTION",
+      });
+      eventPublisher.deliver(
+        eventPublisher.publishUserInputResolved({
+          projectPath,
+          sessionName,
+          execution: nextExecution,
+          contextId,
+          conversationId: question.conversationId,
+          questionBatchId: question.questionBatchId,
+          resolution: "withdrawn",
+          resolvedAt: getNow(deps),
+        }),
+      );
+    }
+
+    getExecutionLogger(nextExecution.id)?.lifecycle("assignment.reset", {
+      contextId,
+      assignmentId,
+      previousStatus,
+    });
+    logger.info("graph-workflow.assignment.reset_applied", {
+      executionId: nextExecution.id,
+      contextId,
+      assignmentId,
+      retiredConversation: retiredConversationId !== null,
+      withdrewQuestion: withdrawnQuestion !== null,
+    });
+
+    return nextExecution;
+  }
+
   async function mutateActive(
     projectPath: string,
     sessionName: string,
@@ -2678,6 +2930,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     recordPendingHaltReason,
     drainAndHalt,
     resetContext,
+    resetContextAssignment,
     hasActive,
     mutateActive,
     getActive,

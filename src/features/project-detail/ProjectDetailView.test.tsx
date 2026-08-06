@@ -152,6 +152,8 @@ const makeSessions = (count: number): SessionListItem[] =>
 const makeProjectConversation = (
   overrides: Partial<ConversationState> = {},
 ): ConversationState => ({
+  profileSnapshot: null,
+  profileLockedAt: null,
   id: "project-convo-1",
   scope: "project",
   nameOrigin: "default",

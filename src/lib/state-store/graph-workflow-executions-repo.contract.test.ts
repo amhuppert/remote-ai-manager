@@ -23,6 +23,7 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
+import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
@@ -60,28 +61,45 @@ function maximalExecution(): GraphWorkflowExecution {
   const base = graphWorkflowExecutionSchema.parse(
     buildMaximalGraphWorkflowExecution(),
   );
-  // Alongside the "supported" implementer lane, carry a Claude validator lane
-  // that ran a turn without occupancy metrics under a configured limit. Its
-  // honest label is "metrics_unavailable"; keeping it here proves the widened
-  // enum value survives the SQLite/Zod round-trip through the real repo.
-  const validatorLane: GraphWorkflowAgentSessionState = {
+  // Alongside the "supported" implementer lane, carry TWO validator lanes for
+  // one context — a cohort of two assignments of the same profile. They pin the
+  // widened `laneStates` inner key (`context_validator:<assignmentId>`) and the
+  // per-lane assignment identity through the real SQLite/Zod round-trip; the
+  // first also carries "metrics_unavailable", the honest label for a turn with
+  // no occupancy metrics under a configured limit.
+  const validatorLane = (
+    assignmentId: string,
+    conversationId: string,
+    limitEvaluation: GraphWorkflowAgentSessionState["limitEvaluation"],
+  ): GraphWorkflowAgentSessionState => ({
     backend: "claude",
     refKind: "conversation",
     lane: "context_validator",
     contextId: "ctx-1",
-    workflowConversationId: "conv-lane-2",
-    sessionRef: { backend: "claude", ref: "conv-lane-2" },
+    assignmentId,
+    assignmentFingerprint: `sha256:${"b".repeat(64)}|conversation|true||claude|sonnet|medium`,
+    workflowConversationId: conversationId,
+    sessionRef: { backend: "claude", ref: conversationId },
     metrics: { rotateBeforeNextTurn: false },
-    limitEvaluation: "metrics_unavailable",
+    limitEvaluation,
     lastUsedAt: "2026-01-02T02:30:00Z",
-  };
+  });
   return graphWorkflowExecutionSchema.parse({
     ...base,
     laneStates: {
       ...base.laneStates,
       "ctx-1": {
         ...base.laneStates["ctx-1"],
-        context_validator: validatorLane,
+        [laneStateKey("context_validator", "general")]: validatorLane(
+          "general",
+          "conv-lane-2",
+          "metrics_unavailable",
+        ),
+        [laneStateKey("context_validator", "security-reviewer")]: validatorLane(
+          "security-reviewer",
+          "conv-lane-3",
+          "supported",
+        ),
       },
     },
   });
@@ -140,6 +158,36 @@ describe("graph-workflow-executions-repo durability contract", () => {
         return fixture;
       },
       reload: () => repo.getActive(PROJECT_PATH, SESSION_NAME),
+    });
+  });
+
+  it("carries the attributed validator infrastructure halt in the maximal SQLite fixture", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(
+      reloaded?.secondaryHaltReasons.find(
+        (reason) => reason.type === "validator_infra_error",
+      ),
+    ).toEqual({
+      type: "validator_infra_error",
+      contextId: "ctx-1",
+      engine: "claude",
+      infraReason: "never_admitted",
+      message: "The query semaphore never admitted security-reviewer.",
+      summary: "security-reviewer was never heard in round 4.",
+      assignmentId: "security-reviewer",
+      attempts: 3,
+      roundSeq: 4,
     });
   });
 });
@@ -299,11 +347,12 @@ describe("graph-workflow-executions-repo behavior", () => {
     );
     const ctx = reloaded?.contextStates["ctx-1"];
     expect(ctx?.status).toBe("awaiting_user_input");
-    expect(ctx?.pendingUserInput).toEqual(
-      execution.contextStates["ctx-1"]?.pendingUserInput,
+    expect(ctx?.pendingUserInputs).toEqual(
+      execution.contextStates["ctx-1"]?.pendingUserInputs,
     );
     expect(
-      ctx?.pendingUserInput?.answers?.byQuestionId["q-1"]?.selected,
+      ctx?.pendingUserInputs["context_validator:security-reviewer"]?.answers
+        ?.byQuestionId["q-1"]?.selected,
     ).toEqual(["Redis"]);
   });
 

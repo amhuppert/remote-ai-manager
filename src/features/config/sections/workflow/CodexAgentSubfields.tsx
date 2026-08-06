@@ -28,7 +28,7 @@ export function CodexAgentSubfields({
     <>
       <ConfigField
         label="Codex model"
-        fieldPath="workflowDefaults.contextValidator.codex.model"
+        fieldPath="workflowDefaults.contextValidator.assignments.0.agent.model"
         isDefault={false}
         isModified={false}
       >
@@ -45,7 +45,7 @@ export function CodexAgentSubfields({
       </ConfigField>
       <ConfigField
         label="Codex effort"
-        fieldPath="workflowDefaults.contextValidator.codex.reasoningEffort"
+        fieldPath="workflowDefaults.contextValidator.assignments.0.agent.reasoningEffort"
         isDefault={false}
         isModified={false}
       >

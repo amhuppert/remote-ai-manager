@@ -25,6 +25,10 @@ import {
   _resetConversationQueueDepsForTesting,
 } from "@/lib/conversations/message-queue-drain";
 import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "@/lib/conversations/profile-admission";
+import {
   setPersistenceDeps,
   _resetForTesting as _resetSnapshotPersistenceForTesting,
 } from "@/lib/workflows/conversation/persistence";
@@ -176,12 +180,18 @@ describe("project answer after runtime + store teardown (R4.3)", () => {
     _resetMachineFactoryForTesting();
     _resetEnsureConversationActorDepsForTesting();
     _resetConversationQueueDepsForTesting();
+    _resetConversationProfileAdmissionDepsForTesting();
     _resetSnapshotPersistenceForTesting();
     fixture.close();
   });
 
   /** Point every injected store seam at the CURRENT `store` instance. */
   function rebindStoreSeams(): void {
+    // The drain settles the conversation's agent profile before it sends, so
+    // that seam has to follow the store across the teardown like every other.
+    setConversationProfileAdmissionDeps({
+      mutateConversation: store.mutateConversation,
+    });
     const svc = createMessageQueueService({
       mutateConversation: store.mutateConversation,
       getConversation: store.getConversation,

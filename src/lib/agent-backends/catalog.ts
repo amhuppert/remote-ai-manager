@@ -11,6 +11,7 @@ import {
   type AgentBackendDescriptor,
   type AgentBackendMetadata,
   type BackendConversationCapabilities,
+  type FsWriteRestrictionSupport,
   type BackendModelInfo,
   type QueueCapability,
   type SkillTriggerPrefix,
@@ -19,10 +20,12 @@ import { effortLevelSchema, type EffortLevel } from "./schemas";
 import {
   claudeBackendMetadata,
   claudeConversationCapabilities,
+  claudeTaskFsWriteRestriction,
 } from "./claude/descriptor";
 import {
   codexBackendMetadata,
   codexConversationCapabilities,
+  codexTaskFsWriteRestriction,
 } from "./codex/descriptor";
 
 // ---------------------------------------------------------------------------
@@ -139,6 +142,18 @@ const CONVERSATION_CAPABILITIES: Readonly<
 > = {
   claude: claudeConversationCapabilities,
   codex: codexConversationCapabilities,
+};
+
+/**
+ * The same literals the registered descriptors' task facets are built from —
+ * re-exposed here because definition validate is client-imported and cannot
+ * reach the registry, which holds the server-only task runners.
+ */
+const TASK_FS_WRITE_RESTRICTION: Readonly<
+  Record<AgentBackendId, FsWriteRestrictionSupport>
+> = {
+  claude: claudeTaskFsWriteRestriction,
+  codex: codexTaskFsWriteRestriction,
 };
 
 /**
@@ -259,6 +274,17 @@ export function isSelectableModelForBackend(
 
 export function getDefaultModelForBackend(backend: AgentBackendId): string {
   return getBackendCatalogEntry(backend).defaultModelId;
+}
+
+/**
+ * Whether the backend's task facet can mechanically enforce a write allowlist
+ * (see {@link FsWriteRestrictionSupport}). Read by definition validate to refuse
+ * a validator assignment that could only be asked to stay read-only.
+ */
+export function getFsWriteRestrictionForBackend(
+  backend: AgentBackendId,
+): FsWriteRestrictionSupport {
+  return TASK_FS_WRITE_RESTRICTION[backend];
 }
 
 /** Runtime inactivity default declared by the backend metadata. */

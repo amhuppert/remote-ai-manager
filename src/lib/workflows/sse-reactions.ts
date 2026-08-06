@@ -40,6 +40,8 @@ import {
   graphWorkflowUserInputPendingEventSchema,
   graphWorkflowUserInputResolvedEventSchema,
   graphWorkflowValidationResultEventSchema,
+  graphWorkflowValidationSpecialistResultEventSchema,
+  graphWorkflowValidationIncidentEventSchema,
 } from "@/lib/workflow-graph/event-schemas";
 import type { InputNeededItem } from "@/stores/notification.store";
 
@@ -187,6 +189,20 @@ export function registerWorkflowSseReactions(
     queryClient,
     "graph-workflow-validation-result",
     graphWorkflowValidationResultEventSchema,
+  );
+  // Detail only, like the aggregate above: both refresh the inspector's live
+  // per-lane view without re-fetching the event log, which renders neither.
+  registerDetailInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-validation-specialist-result",
+    graphWorkflowValidationSpecialistResultEventSchema,
+  );
+  registerDetailInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-validation-incident",
+    graphWorkflowValidationIncidentEventSchema,
   );
   registerDetailInvalidation(
     es,

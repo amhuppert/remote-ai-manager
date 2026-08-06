@@ -86,19 +86,57 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             label: "Maximal context source",
           },
           implementer: {
-            backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
-          },
-          contextValidator: {
-            type: "claude",
-            enabled: true,
-            continuity: { enabled: false, contextLimitTokens: 120_000 },
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            focus: "the persistence layer",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              model: "opus",
+              reasoningEffort: "high",
             },
+            profileSnapshot: {
+              tier: "builtin",
+              id: "general-implementer",
+              name: "General Implementer",
+              revision: 4,
+              sourceContentHash: `sha256:${"1".repeat(64)}`,
+              instructions: "Maximal implementer instructions.",
+              renderedInstructionBlock:
+                "MAXIMAL IMPLEMENTER RENDERED BLOCK\nwith the use-site focus inside it",
+              resolvedInstructionHash: `sha256:${"2".repeat(64)}`,
+            },
+          },
+          // Disabled with its assignments intact — the dormant-retention shape
+          // R1.1 requires to survive persistence.
+          contextValidator: {
+            enabled: false,
+            assignments: [
+              {
+                id: "security",
+                profile: { tier: "project", id: "security-reviewer" },
+                focus: "auth boundaries",
+                strategy: "conversation",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: false, contextLimitTokens: 120_000 },
+                // A dormant assignment carries its seeded snapshot too: it is
+                // enabled by a config edit that does no resolution.
+                profileSnapshot: {
+                  tier: "project",
+                  id: "security-reviewer",
+                  name: "Security Reviewer",
+                  revision: 9,
+                  sourceContentHash: `sha256:${"3".repeat(64)}`,
+                  instructions: "Maximal validator instructions.",
+                  renderedInstructionBlock:
+                    "MAXIMAL VALIDATOR RENDERED BLOCK\nwith the use-site focus inside it",
+                  resolvedInstructionHash: `sha256:${"4".repeat(64)}`,
+                },
+              },
+            ],
           },
           scriptValidator: { enabled: true },
           humanApprovalGate: { enabled: true },
@@ -200,7 +238,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         contextId: "ctx-1",
         // Maximal durability entry: the harness only descends into the FIRST
         // context-state record entry, so this one co-populates BOTH parked
-        // records (pendingApproval AND pendingUserInput, each with a
+        // records (pendingApproval AND pendingUserInputs, each with a
         // recorded-but-unapplied decision/answer) to prove every persisted key
         // path survives the round-trip. That superimposition is schema-valid
         // but not a reachable runtime state — a real context parks at exactly
@@ -230,44 +268,144 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             decidedAt: "2026-01-01T00:00:45.000Z",
           },
         },
-        pendingUserInput: {
-          conversationId: "conv-userinput-1",
-          lane: "context_validator",
-          questionBatchId: "qb-1",
-          requestedAt: "2026-01-01T00:01:00.000Z",
-          questions: [
-            {
-              id: "q-1",
-              question: "Which storage backend should the cache use?",
-              header: "Cache backend",
-              context: "Redis adds a dependency; in-memory is simpler.",
-              options: [
-                {
-                  label: "Redis",
-                  description: "Shared, survives restarts",
-                  recommended: true,
-                  tradeoff: {
-                    pro: "durable across restarts",
-                    con: "adds an external service",
+        pendingUserInputs: {
+          // Keyed by lane key: a cohort's validators park independently, so the
+          // durability claim has to cover an assignment-scoped key, not just a
+          // lane kind.
+          "context_validator:security-reviewer": {
+            conversationId: "conv-userinput-1",
+            lane: "context_validator",
+            questionBatchId: "qb-1",
+            requestedAt: "2026-01-01T00:01:00.000Z",
+            roundSeq: 4,
+            questions: [
+              {
+                id: "q-1",
+                question: "Which storage backend should the cache use?",
+                header: "Cache backend",
+                context: "Redis adds a dependency; in-memory is simpler.",
+                options: [
+                  {
+                    label: "Redis",
+                    description: "Shared, survives restarts",
+                    recommended: true,
+                    tradeoff: {
+                      pro: "durable across restarts",
+                      con: "adds an external service",
+                    },
                   },
+                ],
+                multiSelect: true,
+                required: false,
+                allowNote: false,
+              },
+            ],
+            answers: {
+              byQuestionId: {
+                "q-1": {
+                  selected: ["Redis"],
+                  note: "use the existing cluster",
+                  skipped: false,
+                  question: "Which storage backend should the cache use?",
                 },
-              ],
-              multiSelect: true,
-              required: false,
-              allowNote: false,
+              },
+              answeredAt: "2026-01-01T00:02:00.000Z",
+            },
+          },
+        },
+        // An open validation round, superimposed on the parked records for the
+        // same maximal-coverage reason as those. The harness descends into the
+        // FIRST specialist entry only, so that one co-populates a settled
+        // verdict (summary + issues) AND a `questionToken` — schema-valid but
+        // not a reachable runtime state, since a specialist either rendered a
+        // verdict or is waiting on an answer, never both.
+        validationRound: {
+          seq: 4,
+          candidate: {
+            headSha: "a".repeat(40),
+            candidateTreeHash: "b".repeat(40),
+            taskStateHash: "c".repeat(64),
+          },
+          roster: [
+            {
+              assignmentId: "general",
+              profileRef: { tier: "builtin", id: "general-reviewer" },
+              revision: 3,
+              resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
+              strategy: "conversation",
+            },
+            {
+              assignmentId: "security-reviewer",
+              profileRef: { tier: "project", id: "security-reviewer" },
+              revision: 7,
+              resolvedInstructionHash: `sha256:${"e".repeat(64)}`,
+              strategy: "task",
             },
           ],
-          answers: {
-            byQuestionId: {
-              "q-1": {
-                selected: ["Redis"],
-                note: "use the existing cluster",
-                skipped: false,
-                question: "Which storage backend should the cache use?",
+          specialists: {
+            general: {
+              state: "verdict_fail",
+              attempts: 2,
+              summary: "Rollback notes are still missing.",
+              issues: [
+                {
+                  taskId: "task-1",
+                  title: "Missing rollback notes",
+                  description: "Document how to revert the migration.",
+                },
+              ],
+              questionToken: "qb-general-1",
+              sessionRef: {
+                backend: "claude",
+                ref: "conversation-general-validator",
+                lane: "context_validator",
+                assignmentId: "general",
+                refKind: "conversation",
+                workflowConversationId: "conversation-general-validator",
+              },
+              reviewArtifact: {
+                backend: "claude",
+                kind: "conversation",
+                ref: "conversation-general-validator",
+                usage: { costUsd: 0.42, apiTurns: 4 },
+              },
+              lastInfraFailure: {
+                reason: "unparseable",
+                message: "the reviewer returned prose, not a verdict",
+                engine: "claude",
               },
             },
-            answeredAt: "2026-01-01T00:02:00.000Z",
+            "security-reviewer": {
+              state: "parked",
+              attempts: 1,
+              summary: null,
+              issues: [],
+              questionToken: "qb-security-1",
+              sessionRef: {
+                backend: "codex",
+                ref: "thread-security-validator",
+                lane: "context_validator",
+                assignmentId: "security-reviewer",
+                refKind: "backend",
+              },
+              reviewArtifact: {
+                backend: "codex",
+                kind: "response",
+                ref: "thread-security-validator",
+                response: '{"verdict":"fail"}',
+                usage: {
+                  inputTokens: 1200,
+                  cachedInputTokens: 400,
+                  outputTokens: 300,
+                  costUsd: 0.11,
+                },
+              },
+              lastInfraFailure: null,
+            },
           },
+          phase: "concluded",
+          outcome: "failed",
+          startedAt: "2026-01-01T00:03:00.000Z",
         },
       },
     },
@@ -418,7 +556,13 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
       message: "could not recover lane state",
     },
     secondaryHaltReasons: [
-      { type: "aborted" },
+      // Maximal abort: the additive cause/summary the assignment cutover stamps
+      // on a run it ended, so both fields are proven durable.
+      {
+        type: "aborted",
+        cause: "migration_cutover",
+        summary: "ended by the agent assignments cutover",
+      },
       // Maximal delivery-gate halt: carries the approval presentation fields
       // (refusalCode + spec deep-link block) so the optional extension is
       // proven durable through the repository round trip.
@@ -439,6 +583,17 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           specName: "Audit Log",
           projectName: "command-center",
         },
+      },
+      {
+        type: "validator_infra_error",
+        contextId: "ctx-1",
+        engine: "claude",
+        infraReason: "never_admitted",
+        message: "The query semaphore never admitted security-reviewer.",
+        summary: "security-reviewer was never heard in round 4.",
+        assignmentId: "security-reviewer",
+        attempts: 3,
+        roundSeq: 4,
       },
     ],
     pendingCollaborations: {

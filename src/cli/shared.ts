@@ -12,6 +12,7 @@ import {
 } from "@/lib/conversations/conversation-target";
 import { createLogger } from "@/lib/logging";
 import { booleanFlagNames, renderTopUsage } from "./help-registry";
+import { flattenDiagnosticText } from "@/lib/shared/diagnostic-text";
 import { getErrorMessage } from "@/lib/shared/errors";
 
 const logger = createLogger("cli.shared");
@@ -774,6 +775,26 @@ export interface RequestIssue {
   message: string;
 }
 
+/**
+ * The one located-issue rendering: `  <path>: <message>`, one issue per line
+ * (doc 01 §6).
+ *
+ * The line is flattened here rather than trusted from the server. A validation
+ * message quotes values out of the document that failed — a malformed id is
+ * exactly what it reports — and a raw newline in one would split a single issue
+ * across two lines, the second indistinguishable from a genuine located issue.
+ * Producers escape their own interpolated values; this is the surface that
+ * PROMISES one line, so it is also the one that guarantees it, whatever the
+ * message was assembled from. The JSON envelope carries the issues unflattened:
+ * JSON quoting is already unambiguous.
+ */
+export function issueDetailLines(issues: readonly RequestIssue[]): string[] {
+  return issues.map(
+    (issue) =>
+      `  ${flattenDiagnosticText(issue.path)}: ${flattenDiagnosticText(issue.message)}`,
+  );
+}
+
 export interface LintBlockedCliErrorDetails {
   findings: unknown[];
 }
@@ -1196,9 +1217,9 @@ export function failureFromRequest(
     });
   }
   const detailLines = [
-    ...(result.issues
-      ?.filter((issue) => issue.message !== result.error)
-      .map((issue) => `  ${issue.path}: ${issue.message}`) ?? []),
+    ...issueDetailLines(
+      result.issues?.filter((issue) => issue.message !== result.error) ?? [],
+    ),
     ...refusalDetailLines(result),
   ];
   const detail = detailLines.length > 0 ? detailLines.join("\n") : undefined;

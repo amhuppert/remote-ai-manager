@@ -113,6 +113,7 @@ One row per shared concept: where the canonical implementation lives, who actual
 |---|---|---|---|---|---|
 | AgentCall (normalized agent execution) | `primitives/agent-call-facade.ts` + `agent-call-vocabulary.ts` (conversation + task-run adapters) | conversation actor (`conversation/actors.ts`, `actor-implementations.ts`, `execute-workflow-task-run.ts`); collaboration (`collaboration/agent-caller-production.ts`); graph (`workflow-graph/implementer-runner.ts`, `workflow-collaborator-caller.ts`); `shared/optimistic.ts` | supported | — | — |
 | Lane (agent continuity + scheduling) | `primitives/{lane-vocabulary,lane-service,lane-scheduler,lane-store}.ts`, composed by `primitives/workflow-agent-caller.ts` | Collaboration lanes; graph implementer/validator lanes via `LaneService` over the durable `workflow-graph/graph-lane-store.ts`, composed in `workflow-graph/lane-continuity.ts` | supported | — | — |
+| Graph lane identity (who a lane belongs to) | `workflow-graph/lane-identity.ts` — `laneStateKey` (the `laneStates[contextId]` inner key: `implementer` \| `context_validator:<assignmentId>`), `graphLaneId`/`parseGraphLaneId` (primitive lane id, NUL-joined `lane`/`contextId`/`assignment`), `assignmentFingerprint` (what a lane must be rebuilt for) | `graph-lane-store.ts`, `lane-continuity.ts`, `validator-runner.ts`; per-assignment artifacts in `execution-logger.ts` | supported | — | — |
 | Typed SSE publication + lifecycle projection | `events/publication.ts` (`publishEvent`, `PublishFn`, `publishEventBestEffort`, `publishScopedStatus`) + private `events/{status-bus,lifecycle-projection}.ts` implementation | all server event publishers, including dev-server, graph, collaboration, conversation, jobs, notifications, prompts, and route modules | publication is supported; `subscribeLifecycle` remains **experimental** with zero production subscribers | raw `events/broadcaster` is restricted to `publication.ts` and the SSE transport | Keep the direct-import ratchet at zero. Land a production lifecycle subscriber or delete the dormant subscription/projection interface under the adopt-or-delete rule. |
 | ArtifactRegistry | `primitives/artifact-registry.ts` (+ `default-session-artifact-registry.ts`) | graph `shared-documents.ts`, `script-validator-runner.ts`, `charter/service.ts`; `agent-runs/` service + routes; conversation actor (focus memory) | supported | — | — |
 | WorkflowEnvelope (durable workflow lifecycle) | `primitives/workflow-envelope-{vocabulary,store,repository}.ts` + `recover-workflow-envelopes.ts` | Collaboration runs (restart discovery + recovery) | supported | `BackgroundJob`, `AgentRunRecord`, and `GraphWorkflowExecution` remain separate lifecycle vocabularies by decision | None now — four-way convergence explicitly deferred (plan D15) |
@@ -126,6 +127,9 @@ One row per shared concept: where the canonical implementation lives, who actual
 | Config cascade | `workflow-graph/resolve-config.ts` | Every graph execution (see the cascade section below) | supported | — | — |
 | Live-edit apply core | `workflow-graph/live-edit-apply.ts` (`applyLiveEditsToActiveExecution`: gates → atomic mutation → one `liveRevision` bump → mandatory events) | runtime-edits HTTP route; plan-repair supervisor | supported | — | Never add a second mutation path for a launched execution's working definition |
 | Plan-repair supervisor (D1) | `workflow-graph/plan-repair/{trigger,schemas,prompt,agent-runner,supervisor}.ts`, composed at the `kickOffExecutionLoop` seam | every loop settlement (`execution-route-handlers.ts` `runExecutionLoopWithPlanRepair`) | supported | — | — |
+| Agent profile (prompt identity for an agent role) | `agent-profiles/library-service.ts` (resolution + listing) and `agent-profiles/composer.ts` (the rendered block + snapshot) | conversation creation/admission (`conversations/profile-resolution.ts`), the library API, `cctl agent list\|get`, and workflow assignment references (`workflow-graph/assignment-references.ts`, `seed-assignment-snapshots.ts`) | supported | — | — |
+| Agent-profile deletion references | PORT: `AgentProfileReferenceReporter` declared by `agent-profiles/library-service.ts`, implemented by `workflow-graph/profile-reference-reporter.ts` | `library-service.previewDeletion` / `delete`, wired only at `agent-profiles/route-handlers.ts` | supported | — | Domain code in `agent-profiles` never imports `workflow-graph` — the reporter reaches it through the route composition, and an unwired library REFUSES rather than reporting "no holders". The delete dialog holds its confirm button until the preview is on screen (advisory content, mandatory step) |
+| Dangling-reference fail-closed check | `workflow-graph/assignment-references.ts` (`checkDefinition` + `checkWorkflowDefaults`) | `storage.ts` accept, `validate-route-handlers.ts`, execution start in `execution-repository.ts`, config PUT | supported | — | Validate and execution start must run BOTH checks: a definition inherits staffing from `workflowDefaults` it never mentions, and checking only the definition turns a dangling default into an unlocated resolve failure inside snapshot seeding |
 
 ## Testing
 
@@ -200,8 +204,8 @@ for real cascade values (`form-state.test.ts` pins the identity).
 // config.json — global tier
 {
   "workflowDefaults": {
-    "implementer":      { "backend": "claude", "model": "opus",   "reasoningEffort": "medium" },
-    "contextValidator": { "type": "claude", "enabled": true, "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } },
+    "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "medium" } },
+    "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } } ] },
     "scriptValidator":  { "enabled": false },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
@@ -240,8 +244,8 @@ Nine blocks, all individually overridable per tier:
 
 | Block | Purpose |
 |---|---|
-| `implementer` | Implementer agent config (backend, model, reasoning) |
-| `contextValidator` | Agent (LLM) validator on intent of acceptance criteria. Discriminated `type: "claude" \| "codex"` |
+| `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the runtime (backend, model, reasoning) that runs it |
+| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; a disabled cohort keeps its assignments dormant |
 | `scriptValidator` | Deterministic validator that runs project's `preMergeCommand`. `{ enabled: boolean }`. Requires `preMergeCommand` in `CommandCenter.json` |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
@@ -249,6 +253,30 @@ Nine blocks, all individually overridable per tier:
 | `askUserQuestions` | Whether lane agents may ask the operator questions mid-task via `cctl ask`. `{ enabled: boolean }`, default disabled; one value covers both the implementer and context-validator roles |
 | `planRepair` | Plan-repair agent on retry-exhaustion halts (docs/design/cc-cli/08). `{ enabled, maxAttemptsPerContext, agent? }`; **default enabled**, 2 attempts per context, repair agent defaults to claude/opus/high |
 | `collaboration` | Whether implementer agents may request a second opinion, plus the collaborator agent and negotiation policy. `enabled` defaults to `false`; when disabled, collaboration instructions and continuation results are omitted from agent prompts and the collaboration command is unavailable |
+
+**An assignment pairs prompt identity with runtime.** `profile` references the
+agent-profile library (`src/lib/agent-profiles/`, see the adoption matrix row)
+and supplies who the role IS — name, description, instructions; `agent` supplies
+which backend/model/effort runs it; the optional `focus` is a use-site steer
+that narrows the profile, never durable behaviour (that belongs in the profile).
+`id` is the stable use-site identity findings are grouped by, so renaming it
+re-keys the use site.
+
+The pre-cutover shapes — a bare implementer triple, the provider-named
+`type: "claude" | "codex"` singleton validator, the `{kind: "use" | "disabled"}`
+context wrapper — were rewritten once by migration
+`0011-workflow-agent-assignments` and are now REFUSED everywhere with a located
+error. There is no inbound compatibility parser; the single exception is the
+read-only decode floor for archived execution blobs, which are historical
+records and are never rewritten.
+
+That migration transforms shape, never values, and it fails closed rather than
+choose one. A legacy Codex validator that omitted `model`/`reasoningEffort` ran
+on the effective `agentBackends.codex` profile, and `config.json` accepts any
+model string while an assignment's runtime is catalog-bound — so if that
+effective value is off-catalog the migration refuses, naming the holder and the
+value, and startup stops until the operator states the runtime explicitly.
+Nothing is ledgered, so the fix-and-restart replays the whole cutover.
 
 ## Plan repair (retry-exhaustion halts)
 
@@ -347,9 +375,13 @@ the implementer and, when enabled, the agent context validator.
 
 Per-context validator overrides:
 
+A cohort replaces the nearest tier's cohort WHOLE — assignments are never
+field-merged across tiers, so a context naming one reviewer replaces the
+workflow's three rather than adding a fourth.
+
 ```jsonc
-{ "contextValidator": { "kind": "disabled" } }
-{ "contextValidator": { "kind": "use", "value": { "type": "codex", "enabled": true, "codex": { "reasoningEffort": "high" }, "continuity": { "enabled": true } } } }
+{ "contextValidator": { "enabled": false, "assignments": [] } }
+{ "contextValidator": { "enabled": true, "assignments": [ { "id": "security", "profile": { "tier": "builtin", "id": "general-reviewer" }, "focus": "auth boundaries", "strategy": "task", "agent": { "backend": "codex", "model": "gpt-5.4", "reasoningEffort": "high" }, "continuity": { "enabled": true } } ] } }
 ```
 
 Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns allowed levels.
@@ -387,7 +419,7 @@ Consequences when touching engine code:
 - `activeLoops` is instance-tokened: an exiting stale loop cannot unregister the live loop; do not revert it to a bare per-session Set.
 - `StaleLoopFenceError` must stay excluded from halt conversion (`runContextTask`'s catch and the loop's outer catch) — converting it to a halt re-creates the incident-622782a0 failure mode (a zombie loop halting the successor execution).
 
-Active cancellation complements the fence: user-initiated pause/abort/halt and `resume()` abort every cancellable conversation via `collectCancellableConversationIds` (running-task conversations ∪ `laneStates` lane conversations, so validator task-runs stop spending too). Task-run turns register an `AbortController` in the conversations abort-registry (`runTaskRunTurnForMachine`) and the signal threads facade → `dispatchTaskRun` → runner (both codex and claude runners fold it into their teardown path). The loop's own drain-and-halt intentionally does NOT cancel — engine halts drain so completed sibling work lands. Fence = correctness (a superseded loop cannot write); cancellation = economy (a cancelled turn stops burning tokens); keep both.
+Active cancellation complements the fence: user-initiated pause/abort/halt and `resume()` abort every cancellable conversation via `collectCancellableConversationIds` (running-task conversations ∪ `laneStates` lane conversations, so validator task-runs stop spending too). It iterates `laneStates` values, never a fixed set of lane keys — a context reviewed by a validator cohort holds one lane per assignment (`context_validator:<assignmentId>`), and keying the sweep by lane KIND would leave every specialist but one burning to completion. Task-run turns register an `AbortController` in the conversations abort-registry (`runTaskRunTurnForMachine`) and the signal threads facade → `dispatchTaskRun` → runner (both codex and claude runners fold it into their teardown path). The loop's own drain-and-halt intentionally does NOT cancel — engine halts drain so completed sibling work lands. Fence = correctness (a superseded loop cannot write); cancellation = economy (a cancelled turn stops burning tokens); keep both.
 
 ## Turn liveness (stall watchdog)
 

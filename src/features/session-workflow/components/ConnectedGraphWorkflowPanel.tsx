@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   useGraphWorkflowEventsQuery,
   useGraphWorkflowExecutionQuery,
+  useGraphWorkflowHistoryQuery,
   useWorkflowDefinitionQuery,
 } from "@/lib/workflows/queries";
 import {
@@ -11,12 +12,14 @@ import {
   useApproveGraphWorkflowDefinitionMutation,
   useClearGraphWorkflowMutation,
   usePauseGraphWorkflowMutation,
+  useResetExecutionContextAssignmentMutation,
   useResetExecutionContextMutation,
   useResumeGraphWorkflowMutation,
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
 import { createClientLogger } from "@/lib/logging/client-logger";
+import { pushToast } from "@/stores/toast.store";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import type { ExecutionControlAction } from "./ExecutionStatusBar";
@@ -41,6 +44,18 @@ function definitionApprovalErrorMessage(error: Error | null): string | null {
   return recoveryGuidance.length > 0
     ? recoveryGuidance.join(" ")
     : error.message;
+}
+
+function pauseFailureMessage(error: Error): string {
+  if (
+    error instanceof ApiCallError &&
+    error.code === "workflow_transition_conflict" &&
+    error.details?.action === "pause" &&
+    error.details.currentStatus === "completed"
+  ) {
+    return "Workflow completed before pause could be applied.";
+  }
+  return `Couldn't pause workflow: ${error.message}`;
 }
 
 interface ConnectedGraphWorkflowPanelProps {
@@ -69,6 +84,14 @@ export default function ConnectedGraphWorkflowPanel({
   const seedDefinitionQuery = useWorkflowDefinitionQuery(
     projectName,
     seedDefinitionId,
+  );
+  // The session's finished runs. `archived: false` entries are the terminal
+  // ACTIVE execution, which the panel already renders in full — showing it in
+  // "previous runs" too would double-report the run on screen.
+  const historyQuery = useGraphWorkflowHistoryQuery(projectName, sessionName);
+  const archivedExecutions = useMemo(
+    () => (historyQuery.data ?? []).filter((item) => item.archived),
+    [historyQuery.data],
   );
   const pauseMutation = usePauseGraphWorkflowMutation(projectName, sessionName);
   const resumeMutation = useResumeGraphWorkflowMutation(
@@ -108,6 +131,10 @@ export default function ConnectedGraphWorkflowPanel({
     sessionName,
   );
   const resetContextMutation = useResetExecutionContextMutation(
+    projectName,
+    sessionName,
+  );
+  const resetAssignmentMutation = useResetExecutionContextAssignmentMutation(
     projectName,
     sessionName,
   );
@@ -222,6 +249,13 @@ export default function ConnectedGraphWorkflowPanel({
     },
     [executionId, resetContextMutation],
   );
+  const handleResetAssignment = useCallback(
+    (contextId: string, assignmentId: string) => {
+      if (!executionId) return;
+      resetAssignmentMutation.mutate({ executionId, contextId, assignmentId });
+    },
+    [executionId, resetAssignmentMutation],
+  );
   const handleApproveDefinition = useCallback(() => {
     if (!executionId || !seedDefinitionId || !seedDefinitionRevision) return;
 
@@ -279,15 +313,41 @@ export default function ConnectedGraphWorkflowPanel({
           ? "clear"
           : null;
 
+  const handlePause = useCallback(() => {
+    pauseMutation.mutate(undefined, {
+      onError: (error) => {
+        const transitionConflict =
+          error instanceof ApiCallError &&
+          error.code === "workflow_transition_conflict";
+        const fields = {
+          projectName,
+          sessionName,
+          executionId,
+          error: error.message,
+          currentStatus:
+            error instanceof ApiCallError
+              ? error.details?.currentStatus
+              : undefined,
+        };
+        if (transitionConflict) {
+          logger.info("session_workflow.pause.transition_rejected", fields);
+        } else {
+          logger.warn("session_workflow.pause.failed", fields);
+        }
+        pushToast(pauseFailureMessage(error));
+      },
+    });
+  }, [executionId, pauseMutation, projectName, sessionName]);
+
   return (
     <GraphWorkflowPanel
       projectName={projectName}
       sessionName={sessionName}
       execution={execution}
       events={eventsQuery.data ?? []}
-      archivedExecutions={[]}
+      archivedExecutions={archivedExecutions}
       layout={seedDefinitionQuery.data?.item.layout ?? null}
-      onPause={() => pauseMutation.mutate()}
+      onPause={handlePause}
       onResume={(conflictGuidance) =>
         resumeMutation.mutate(
           conflictGuidance && conflictGuidance.length > 0
@@ -304,6 +364,12 @@ export default function ConnectedGraphWorkflowPanel({
       onMoveTask={handleMoveTask}
       onReorderTask={handleReorderTask}
       onResetContext={handleResetContext}
+      onResetAssignment={handleResetAssignment}
+      resettingAssignmentId={
+        resetAssignmentMutation.isPending
+          ? (resetAssignmentMutation.variables?.assignmentId ?? null)
+          : null
+      }
       onSaveContextConfig={handleSaveContextConfig}
       isSavingConfig={configEditMutation.isPending}
       isPausingExecution={pauseMutation.isPending}
@@ -322,7 +388,8 @@ export default function ConnectedGraphWorkflowPanel({
         approveDefinitionMutation.isPending ||
         runtimeEditMutation.isPending ||
         configEditMutation.isPending ||
-        resetContextMutation.isPending
+        resetContextMutation.isPending ||
+        resetAssignmentMutation.isPending
       }
       pendingAction={pendingAction}
       isMobile={isMobile}

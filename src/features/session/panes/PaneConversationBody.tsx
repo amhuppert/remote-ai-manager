@@ -132,6 +132,7 @@ export default function PaneConversationBody({
         worktreePath={sessionQuery.data?.worktreePath}
         thinkingExpansionCommand={thinkingExpansionCommand}
         onFork={handleFork}
+        forkProjectName={projectName}
         compactionTarget={compactionTarget}
         conversationName={conversationName}
         lastMessageExtras={null}
@@ -142,6 +143,7 @@ export default function PaneConversationBody({
       sessionQuery.data?.worktreePath,
       thinkingExpansionCommand,
       handleFork,
+      projectName,
       compactionTarget,
       conversationName,
     ],

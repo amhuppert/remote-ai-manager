@@ -6,7 +6,11 @@ import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createWorkflowExecution,
+  makeProfileSnapshot,
+  stubAssignmentSnapshotPreparation,
+} from "./test-fixtures";
 import type { LiveEditDeps } from "./runtime-edits";
 import {
   createGraphWorkflowRuntimeEditRouteHandlers,
@@ -21,11 +25,16 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
   createTaskId: () => "task-minted-1",
   resolvedGlobalDefaults: () => ({
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
     },
-    contextValidator: null,
+    contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
@@ -47,6 +56,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       autonomousResolutionThreshold: { value: "minor", source: "global" },
     },
   }),
+  snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
   hasPreMergeCommand: () => true,
   now: () => "2026-07-29T10:00:00.000Z",
 };
@@ -106,6 +116,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
       mutateActive: repository.mutateActive,
       buildLiveEditDeps,
+      prepareAssignmentSnapshots: stubAssignmentSnapshotPreparation(),
       publishLiveEditApplied: publisher.publishLiveEditApplied,
       publishCharterUpdated: publisher.publishCharterUpdated,
       writeCharterDocument,

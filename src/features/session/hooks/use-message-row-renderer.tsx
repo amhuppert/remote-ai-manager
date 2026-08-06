@@ -7,6 +7,7 @@ import type { ThinkingBlockExpansionCommand } from "@/components/ThinkingBlock";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 
 export interface UseMessageRowRendererArgs {
   activeConversation: ConversationState | undefined;
@@ -14,7 +15,10 @@ export interface UseMessageRowRendererArgs {
   worktreePath: string | undefined;
   thinkingExpansionCommand?: ThinkingBlockExpansionCommand;
   handleDirectPrompt: (text: string) => Promise<void>;
-  handleFork: (messageIndex: number) => Promise<void>;
+  handleFork: (
+    messageIndex: number,
+    profile?: AgentProfileRef,
+  ) => Promise<void>;
   isBusy: boolean;
   projectName: string;
   sessionName: string;
@@ -66,6 +70,7 @@ export function useMessageRowRenderer({
           worktreePath={worktreePath}
           thinkingExpansionCommand={thinkingExpansionCommand}
           onFork={handleFork}
+          forkProjectName={projectName}
           compactionTarget={compactionTarget}
           conversationName={activeConversation?.name ?? undefined}
           lastMessageExtras={extras}

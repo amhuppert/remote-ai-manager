@@ -7,6 +7,7 @@ import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
+  GraphWorkflowValidationRound,
 } from "@/lib/workflow-graph/schemas";
 import {
   createPersistenceFixture,
@@ -14,6 +15,7 @@ import {
 } from "@/lib/shared/testing/persistence-fixture";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
+import { laneStateKey } from "./lane-identity";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   createUserInputGateService,
@@ -26,6 +28,15 @@ const IMPL_CONTEXT_ID = "context-implement";
 const CONVERSATION_ID = "conv-user-input-1";
 const QUESTION_BATCH_ID = "batch-1";
 const NOW = "2026-07-03T10:00:00.000Z";
+
+const SECURITY_KEY = laneStateKey("context_validator", "security-reviewer");
+const PERF_KEY = laneStateKey("context_validator", "perf-reviewer");
+const SECURITY_CONVERSATION = "conv-security";
+const PERF_CONVERSATION = "conv-perf";
+const ROUND_SEQ = 3;
+/** A second context, reviewing its own candidate on its own round. */
+const SIBLING_CONTEXT_ID = "context-plan";
+const SIBLING_CONVERSATION = "conv-sibling-security";
 
 function makeQuestions(): AskQuestionItem[] {
   return [
@@ -99,11 +110,12 @@ function codexLaneState(input: {
 /**
  * Builds an execution whose gated context has a resolved `askUserQuestions`
  * toggle, plus `laneStates` populated with the given lane sessions keyed by
- * their lane kind.
+ * their lane key (`implementer` / `context_validator:<assignmentId>`).
  */
 function buildExecution(input: {
   askEnabled: boolean;
   lanes?: Record<string, Record<string, GraphWorkflowAgentSessionState>>;
+  round?: GraphWorkflowValidationRound;
 }): GraphWorkflowExecution {
   const execution = createWorkflowExecution();
   const context = execution.workingDefinition.executionContexts.find(
@@ -115,10 +127,31 @@ function buildExecution(input: {
   const contextState = execution.contextStates[IMPL_CONTEXT_ID];
   if (!contextState) throw new Error("fixture missing gated context state");
   contextState.status = "running";
+  if (input.round) contextState.validationRound = input.round;
   if (input.lanes) {
     execution.laneStates = input.lanes;
   }
   return execution;
+}
+
+/** An open round on the gated context, as the cohort would have frozen it. */
+function openRound(
+  overrides: Partial<GraphWorkflowValidationRound> = {},
+): GraphWorkflowValidationRound {
+  return {
+    seq: ROUND_SEQ,
+    candidate: {
+      headSha: "head-1",
+      candidateTreeHash: "tree-a",
+      taskStateHash: "tasks-a",
+    },
+    roster: [],
+    specialists: {},
+    phase: "specialists",
+    outcome: null,
+    startedAt: NOW,
+    ...overrides,
+  };
 }
 
 describe("createUserInputGateService.resolveLaneAskPermission", () => {
@@ -174,19 +207,20 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
       executionId: "execution-1",
       contextId: IMPL_CONTEXT_ID,
       lane: "implementer",
+      laneKey: "implementer",
     });
   });
 
-  it("allows a Claude context_validator lane when the toggle is enabled", async () => {
+  it("allows a Claude context_validator lane, naming the assignment's lane key", async () => {
     const service = buildService(
       buildExecution({
         askEnabled: true,
         lanes: {
           [IMPL_CONTEXT_ID]: {
-            context_validator: claudeLaneState({
+            [SECURITY_KEY]: claudeLaneState({
               lane: "context_validator",
               contextId: IMPL_CONTEXT_ID,
-              conversationId: CONVERSATION_ID,
+              conversationId: SECURITY_CONVERSATION,
             }),
           },
         },
@@ -196,11 +230,12 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
     const permission = await service.resolveLaneAskPermission(
       PROJECT_PATH,
       SESSION_NAME,
-      CONVERSATION_ID,
+      SECURITY_CONVERSATION,
     );
 
     expect(permission.allowed).toBe(true);
     expect(permission.lane).toBe("context_validator");
+    expect(permission.laneKey).toBe(SECURITY_KEY);
   });
 
   it("allows a Codex implementer lane (workflowConversationId set) when enabled", async () => {
@@ -230,6 +265,7 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
       executionId: "execution-1",
       contextId: IMPL_CONTEXT_ID,
       lane: "implementer",
+      laneKey: "implementer",
     });
   });
 
@@ -239,7 +275,7 @@ describe("createUserInputGateService.resolveLaneAskPermission", () => {
         askEnabled: true,
         lanes: {
           [IMPL_CONTEXT_ID]: {
-            context_validator: codexLaneState({
+            [SECURITY_KEY]: codexLaneState({
               lane: "context_validator",
               contextId: IMPL_CONTEXT_ID,
               // no conversationId -> workflowConversationId unset
@@ -380,12 +416,19 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     );
   }
 
-  async function reloadGatedContext() {
+  async function reloadExecution(): Promise<GraphWorkflowExecution> {
     const execution = await fixture.store.getActiveGraphWorkflowExecution(
       PROJECT_PATH,
       SESSION_NAME,
     );
-    const contextState = execution?.contextStates[IMPL_CONTEXT_ID];
+    if (!execution) throw new Error("execution missing after reload");
+    return execution;
+  }
+
+  async function reloadGatedContext() {
+    const contextState = (await reloadExecution()).contextStates[
+      IMPL_CONTEXT_ID
+    ];
     if (!contextState) throw new Error("gated context missing after reload");
     return contextState;
   }
@@ -405,7 +448,47 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     } as const;
   }
 
-  it("parks the context: snapshots questions, flips status, publishes pending", async () => {
+  /** Two question-capable validator lanes plus their open round. */
+  function cohortFixture() {
+    return {
+      askEnabled: true,
+      round: openRound(),
+      lanes: {
+        [IMPL_CONTEXT_ID]: {
+          [SECURITY_KEY]: claudeLaneState({
+            lane: "context_validator",
+            contextId: IMPL_CONTEXT_ID,
+            conversationId: SECURITY_CONVERSATION,
+          }),
+          [PERF_KEY]: claudeLaneState({
+            lane: "context_validator",
+            contextId: IMPL_CONTEXT_ID,
+            conversationId: PERF_CONVERSATION,
+          }),
+        },
+      },
+    } as const;
+  }
+
+  async function parkValidator(
+    service: ReturnType<typeof buildService>,
+    laneKey: string,
+    conversationId: string,
+    questionBatchId: string,
+  ) {
+    return await service.enterAwaitingUserInput({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: IMPL_CONTEXT_ID,
+      laneKey,
+      conversationId,
+      questionBatchId,
+      questions: makeQuestions(),
+      roundSeq: ROUND_SEQ,
+    });
+  }
+
+  it("parks the context: snapshots questions under the lane key, publishes pending", async () => {
     const service = buildService();
     await seedExecution(buildExecution(laneFixture()));
 
@@ -413,7 +496,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
+      laneKey: "implementer",
       conversationId: CONVERSATION_ID,
       questionBatchId: QUESTION_BATCH_ID,
       questions: makeQuestions(),
@@ -423,13 +506,16 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
 
     const reloaded = await reloadGatedContext();
     expect(reloaded.status).toBe("awaiting_user_input");
-    expect(reloaded.pendingUserInput).toEqual({
-      conversationId: CONVERSATION_ID,
-      lane: "implementer",
-      questionBatchId: QUESTION_BATCH_ID,
-      questions: makeQuestions(),
-      requestedAt: NOW,
-      answers: null,
+    expect(reloaded.pendingUserInputs).toEqual({
+      implementer: {
+        conversationId: CONVERSATION_ID,
+        lane: "implementer",
+        questionBatchId: QUESTION_BATCH_ID,
+        questions: makeQuestions(),
+        requestedAt: NOW,
+        roundSeq: null,
+        answers: null,
+      },
     });
 
     expect(
@@ -437,6 +523,148 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
         (event) => event.type === "graph-workflow-user-input-pending",
       ),
     ).toBe(true);
+  });
+
+  it("parks two validator lanes at once, each on its own round-scoped record", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await parkValidator(service, PERF_KEY, PERF_CONVERSATION, "batch-perf");
+
+    const reloaded = await reloadGatedContext();
+    expect(Object.keys(reloaded.pendingUserInputs).sort()).toEqual(
+      [PERF_KEY, SECURITY_KEY].sort(),
+    );
+    expect(reloaded.pendingUserInputs[SECURITY_KEY]).toMatchObject({
+      conversationId: SECURITY_CONVERSATION,
+      questionBatchId: "batch-security",
+      roundSeq: ROUND_SEQ,
+      answers: null,
+    });
+    expect(reloaded.pendingUserInputs[PERF_KEY]).toMatchObject({
+      conversationId: PERF_CONVERSATION,
+      questionBatchId: "batch-perf",
+      roundSeq: ROUND_SEQ,
+      answers: null,
+    });
+    expect(reloaded.status).toBe("awaiting_user_input");
+    expect(
+      broadcasted.filter(
+        (event) => event.type === "graph-workflow-user-input-pending",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("answering one parked lane settles only that lane", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await parkValidator(service, PERF_KEY, PERF_CONVERSATION, "batch-perf");
+
+    const recorded = await service.recordAnswers({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: SECURITY_CONVERSATION,
+      questionBatchId: "batch-security",
+      answers: makeAnswers(),
+    });
+
+    expect(recorded).toEqual({ ok: true });
+    const reloaded = await reloadGatedContext();
+    expect(
+      reloaded.pendingUserInputs[SECURITY_KEY]?.answers?.byQuestionId,
+    ).toEqual(makeAnswers());
+    expect(reloaded.pendingUserInputs[PERF_KEY]?.answers).toBeNull();
+    // The sibling is still waiting, so the context stays parked.
+    expect(reloaded.status).toBe("awaiting_user_input");
+  });
+
+  it("consumeAnswers resumes only the answered lanes and holds the park open for the rest", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await parkValidator(service, PERF_KEY, PERF_CONVERSATION, "batch-perf");
+    await service.recordAnswers({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: SECURITY_CONVERSATION,
+      questionBatchId: "batch-security",
+      answers: makeAnswers(),
+    });
+
+    const consumed = await service.consumeAnswers({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: IMPL_CONTEXT_ID,
+    });
+
+    expect(consumed).toEqual([
+      {
+        laneKey: SECURITY_KEY,
+        lane: "context_validator",
+        conversationId: SECURITY_CONVERSATION,
+        questionBatchId: "batch-security",
+        answers: makeAnswers(),
+      },
+    ]);
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingUserInputs[SECURITY_KEY]).toBeUndefined();
+    expect(reloaded.pendingUserInputs[PERF_KEY]).toBeDefined();
+    // A lane still parked keeps the context in the awaiting state.
+    expect(reloaded.status).toBe("awaiting_user_input");
+  });
+
+  it("consumeAnswers flips back to running once the last parked lane is consumed", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await parkValidator(service, PERF_KEY, PERF_CONVERSATION, "batch-perf");
+    for (const [conversationId, questionBatchId] of [
+      [SECURITY_CONVERSATION, "batch-security"],
+      [PERF_CONVERSATION, "batch-perf"],
+    ] as const) {
+      await service.recordAnswers({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        conversationId,
+        questionBatchId,
+        answers: makeAnswers(),
+      });
+    }
+
+    const consumed = await service.consumeAnswers({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: IMPL_CONTEXT_ID,
+    });
+
+    expect(consumed.map((entry) => entry.laneKey).sort()).toEqual(
+      [PERF_KEY, SECURITY_KEY].sort(),
+    );
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingUserInputs).toEqual({});
+    expect(reloaded.status).toBe("running");
   });
 
   it("returns answers_ready when answers were recorded before park (fast answer)", async () => {
@@ -456,7 +684,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
+      laneKey: "implementer",
       conversationId: CONVERSATION_ID,
       questionBatchId: QUESTION_BATCH_ID,
       questions: makeQuestions(),
@@ -466,9 +694,9 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     const reloaded = await reloadGatedContext();
     // Fast answer never flips the context into the awaiting state.
     expect(reloaded.status).toBe("running");
-    expect(reloaded.pendingUserInput?.answers?.byQuestionId).toEqual(
-      makeAnswers(),
-    );
+    expect(
+      reloaded.pendingUserInputs["implementer"]?.answers?.byQuestionId,
+    ).toEqual(makeAnswers());
   });
 
   it("recordAnswers creates the record pre-park (upsert-before-park)", async () => {
@@ -485,14 +713,42 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
 
     expect(result).toEqual({ ok: true });
     const reloaded = await reloadGatedContext();
-    expect(reloaded.pendingUserInput).not.toBeNull();
-    expect(reloaded.pendingUserInput?.questionBatchId).toBe(QUESTION_BATCH_ID);
-    expect(reloaded.pendingUserInput?.answers?.byQuestionId).toEqual(
-      makeAnswers(),
-    );
-    expect(reloaded.pendingUserInput?.answers?.answeredAt).toBe(NOW);
+    const record = reloaded.pendingUserInputs["implementer"];
+    expect(record?.questionBatchId).toBe(QUESTION_BATCH_ID);
+    expect(record?.answers?.byQuestionId).toEqual(makeAnswers());
+    expect(record?.answers?.answeredAt).toBe(NOW);
     // Recording answers before park must NOT flip the status prematurely.
     expect(reloaded.status).toBe("running");
+  });
+
+  it("upserts a validator fast answer before its park, keyed by its own lane", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+
+    // The perf lane's answer arrives before its park lands: a sibling's parked
+    // record must not make the pre-park upsert look superseded.
+    const result = await service.recordAnswers({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: PERF_CONVERSATION,
+      questionBatchId: "batch-perf",
+      answers: makeAnswers(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    const outcome = await parkValidator(
+      service,
+      PERF_KEY,
+      PERF_CONVERSATION,
+      "batch-perf",
+    );
+    expect(outcome).toBe("answers_ready");
   });
 
   it("records answers into an existing parked record", async () => {
@@ -502,7 +758,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
+      laneKey: "implementer",
       conversationId: CONVERSATION_ID,
       questionBatchId: QUESTION_BATCH_ID,
       questions: makeQuestions(),
@@ -519,9 +775,9 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     expect(result).toEqual({ ok: true });
     const reloaded = await reloadGatedContext();
     expect(reloaded.status).toBe("awaiting_user_input");
-    expect(reloaded.pendingUserInput?.answers?.byQuestionId).toEqual(
-      makeAnswers(),
-    );
+    expect(
+      reloaded.pendingUserInputs["implementer"]?.answers?.byQuestionId,
+    ).toEqual(makeAnswers());
 
     expect(
       broadcasted.some(
@@ -539,7 +795,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
+      laneKey: "implementer",
       conversationId: CONVERSATION_ID,
       questionBatchId: QUESTION_BATCH_ID,
       questions: makeQuestions(),
@@ -570,7 +826,7 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
       contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
+      laneKey: "implementer",
       conversationId: CONVERSATION_ID,
       questionBatchId: QUESTION_BATCH_ID,
       questions: makeQuestions(),
@@ -587,25 +843,63 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     expect(result).toEqual({ ok: false, reason: "not_found" });
   });
 
-  it("consumeAnswers returns the answers, clears the record, and flips status back to running", async () => {
+  it("refuses a validator answer whose round is over (dead token)", async () => {
     const service = buildService();
-    await seedExecution(buildExecution(laneFixture()));
-    await service.enterAwaitingUserInput({
+    await seedExecution(
+      buildExecution({
+        ...cohortFixture(),
+        round: openRound({ phase: "concluded" }),
+      }),
+    );
+
+    const result = await service.recordAnswers({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
-      conversationId: CONVERSATION_ID,
-      questionBatchId: QUESTION_BATCH_ID,
-      questions: makeQuestions(),
-    });
-    await service.recordAnswers({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      questionBatchId: QUESTION_BATCH_ID,
+      conversationId: SECURITY_CONVERSATION,
+      questionBatchId: "batch-security",
       answers: makeAnswers(),
     });
+
+    expect(result).toEqual({ ok: false, reason: "not_found" });
+  });
+
+  it("refuses a validator answer for a superseded round's parked record", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    // A newer round opened under the park: the recorded token is dead.
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.supersedeRound",
+      (execution) => {
+        if (execution === null) throw new Error("no active execution");
+        const contextState = execution.contextStates[IMPL_CONTEXT_ID];
+        if (!contextState?.validationRound) throw new Error("no round");
+        contextState.validationRound.seq = ROUND_SEQ + 1;
+        return { execution, events: [] };
+      },
+    );
+
+    const result = await service.recordAnswers({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: SECURITY_CONVERSATION,
+      questionBatchId: "batch-security",
+      answers: makeAnswers(),
+    });
+
+    expect(result).toEqual({ ok: false, reason: "not_found" });
+  });
+
+  it("consumeAnswers returns an empty list when the context has no recorded answers", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(laneFixture()));
 
     const consumed = await service.consumeAnswers({
       projectPath: PROJECT_PATH,
@@ -613,43 +907,19 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
       contextId: IMPL_CONTEXT_ID,
     });
 
-    expect(consumed).toEqual({
-      answers: makeAnswers(),
-      questionBatchId: QUESTION_BATCH_ID,
-      conversationId: CONVERSATION_ID,
-      lane: "implementer",
-    });
-
-    const reloaded = await reloadGatedContext();
-    expect(reloaded.pendingUserInput).toBeNull();
-    expect(reloaded.status).toBe("running");
+    expect(consumed).toEqual([]);
   });
 
-  it("consumeAnswers returns null when the context has no recorded answers", async () => {
+  it("withdrawAll clears every lane's record, dispatches CLEAR_PENDING_QUESTION, and publishes resolved(withdrawn)", async () => {
     const service = buildService();
-    await seedExecution(buildExecution(laneFixture()));
-
-    const consumed = await service.consumeAnswers({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      contextId: IMPL_CONTEXT_ID,
-    });
-
-    expect(consumed).toBeNull();
-  });
-
-  it("withdrawAll clears records, dispatches CLEAR_PENDING_QUESTION, and publishes resolved(withdrawn)", async () => {
-    const service = buildService();
-    await seedExecution(buildExecution(laneFixture()));
-    await service.enterAwaitingUserInput({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      contextId: IMPL_CONTEXT_ID,
-      lane: "implementer",
-      conversationId: CONVERSATION_ID,
-      questionBatchId: QUESTION_BATCH_ID,
-      questions: makeQuestions(),
-    });
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await parkValidator(service, PERF_KEY, PERF_CONVERSATION, "batch-perf");
 
     await service.withdrawAll({
       projectPath: PROJECT_PATH,
@@ -658,33 +928,220 @@ describe("createUserInputGateService lifecycle (real persistence)", () => {
     });
 
     const reloaded = await reloadGatedContext();
-    expect(reloaded.pendingUserInput).toBeNull();
+    expect(reloaded.pendingUserInputs).toEqual({});
     expect(reloaded.status).toBe("running");
 
-    expect(cleared).toEqual([{ conversationId: CONVERSATION_ID }]);
+    expect(cleared.map((entry) => entry.conversationId).sort()).toEqual(
+      [PERF_CONVERSATION, SECURITY_CONVERSATION].sort(),
+    );
     expect(
-      broadcasted.some(
+      broadcasted.filter(
         (event) =>
           event.type === "graph-workflow-user-input-resolved" &&
           event.resolution === "withdrawn",
       ),
-    ).toBe(true);
+    ).toHaveLength(2);
   });
 
   it("withdrawAll is idempotent when nothing is parked", async () => {
     const service = buildService();
     await seedExecution(buildExecution(laneFixture()));
 
-    await expect(
-      service.withdrawAll({
-        projectPath: PROJECT_PATH,
-        sessionName: SESSION_NAME,
-        executionId: "execution-1",
-      }),
-    ).resolves.toBeUndefined();
+    const unchanged = await service.withdrawAll({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: "execution-1",
+    });
+    expect(unchanged.contextStates["context-plan"]?.pendingUserInputs).toEqual(
+      {},
+    );
 
     expect(cleared).toEqual([]);
     const reloaded = await reloadGatedContext();
-    expect(reloaded.pendingUserInput).toBeNull();
+    expect(reloaded.pendingUserInputs).toEqual({});
+  });
+
+  it("withdrawRoundQuestions clears the open round and exactly its validator parks, once", async () => {
+    const service = buildService();
+    await seedExecution(
+      buildExecution({
+        ...cohortFixture(),
+        lanes: {
+          [IMPL_CONTEXT_ID]: {
+            ...cohortFixture().lanes[IMPL_CONTEXT_ID],
+            implementer: claudeLaneState({
+              lane: "implementer",
+              contextId: IMPL_CONTEXT_ID,
+              conversationId: CONVERSATION_ID,
+            }),
+          },
+        },
+      }),
+    );
+    await service.enterAwaitingUserInput({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: IMPL_CONTEXT_ID,
+      laneKey: "implementer",
+      conversationId: CONVERSATION_ID,
+      questionBatchId: QUESTION_BATCH_ID,
+      questions: makeQuestions(),
+    });
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await parkValidator(service, PERF_KEY, PERF_CONVERSATION, "batch-perf");
+
+    await service.withdrawRoundQuestions({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: "execution-1",
+    });
+    // A second pass finds nothing left to withdraw.
+    await service.withdrawRoundQuestions({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: "execution-1",
+    });
+
+    const reloaded = await reloadGatedContext();
+    // The implementer's park survives a pause; both validator parks are gone.
+    expect(Object.keys(reloaded.pendingUserInputs)).toEqual(["implementer"]);
+    expect(reloaded.validationRound?.phase).toBe("concluded");
+    expect(reloaded.validationRound?.outcome).toBeNull();
+    expect(cleared.map((entry) => entry.conversationId).sort()).toEqual(
+      [PERF_CONVERSATION, SECURITY_CONVERSATION].sort(),
+    );
+    expect(
+      broadcasted.filter(
+        (event) =>
+          event.type === "graph-workflow-user-input-resolved" &&
+          event.resolution === "withdrawn",
+      ),
+    ).toHaveLength(2);
+    // An implementer park still holds the context in the awaiting state.
+    expect(reloaded.status).toBe("awaiting_user_input");
+  });
+
+  it("re-asserting a standing question changes nothing and announces nothing", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    expect(
+      await parkValidator(
+        service,
+        SECURITY_KEY,
+        SECURITY_CONVERSATION,
+        "batch-security",
+      ),
+    ).toBe("parked");
+    const standing = (await reloadGatedContext()).pendingUserInputs[
+      SECURITY_KEY
+    ];
+
+    // A resumed round carries a still-parked lane through the gate again.
+    expect(
+      await parkValidator(
+        service,
+        SECURITY_KEY,
+        SECURITY_CONVERSATION,
+        "batch-security",
+      ),
+    ).toBe("parked");
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingUserInputs[SECURITY_KEY]).toEqual(standing);
+    // One pending event for one question: a second would surface a question the
+    // operator is already looking at as a new one.
+    expect(
+      broadcasted.filter(
+        (event) => event.type === "graph-workflow-user-input-pending",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("withdrawRoundQuestions scoped to one context leaves a sibling's round and park standing", async () => {
+    const service = buildService();
+    const execution = buildExecution(cohortFixture());
+    // A second context reviewing its own candidate, with its own parked lane.
+    const sibling = execution.contextStates[SIBLING_CONTEXT_ID];
+    if (!sibling) throw new Error("fixture missing sibling context state");
+    sibling.status = "running";
+    sibling.validationRound = openRound();
+    execution.laneStates[SIBLING_CONTEXT_ID] = {
+      [SECURITY_KEY]: claudeLaneState({
+        lane: "context_validator",
+        contextId: SIBLING_CONTEXT_ID,
+        conversationId: SIBLING_CONVERSATION,
+      }),
+    };
+    await seedExecution(execution);
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+    await service.enterAwaitingUserInput({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      contextId: SIBLING_CONTEXT_ID,
+      laneKey: SECURITY_KEY,
+      conversationId: SIBLING_CONVERSATION,
+      questionBatchId: "batch-sibling",
+      questions: makeQuestions(),
+      roundSeq: ROUND_SEQ,
+    });
+
+    await service.withdrawRoundQuestions({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: "execution-1",
+      contextId: IMPL_CONTEXT_ID,
+      releaseTo: "running",
+    });
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingUserInputs).toEqual({});
+    expect(reloaded.validationRound?.phase).toBe("concluded");
+    // Released to the iteration still driving it, not to the scheduler.
+    expect(reloaded.status).toBe("running");
+
+    // The sibling context is mid-review of its own candidate: its round and the
+    // question it is waiting on are untouched.
+    const siblingState = (await reloadExecution()).contextStates[
+      SIBLING_CONTEXT_ID
+    ];
+    expect(Object.keys(siblingState?.pendingUserInputs ?? {})).toEqual([
+      SECURITY_KEY,
+    ]);
+    expect(siblingState?.validationRound?.phase).toBe("specialists");
+    expect(siblingState?.status).toBe("awaiting_user_input");
+    expect(cleared.map((entry) => entry.conversationId)).toEqual([
+      SECURITY_CONVERSATION,
+    ]);
+  });
+
+  it("withdrawRoundQuestions returns a context with no surviving park to the schedulable set", async () => {
+    const service = buildService();
+    await seedExecution(buildExecution(cohortFixture()));
+    await parkValidator(
+      service,
+      SECURITY_KEY,
+      SECURITY_CONVERSATION,
+      "batch-security",
+    );
+
+    await service.withdrawRoundQuestions({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      executionId: "execution-1",
+    });
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingUserInputs).toEqual({});
+    expect(reloaded.status).toBe("ready");
   });
 });

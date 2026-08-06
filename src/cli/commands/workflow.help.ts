@@ -47,8 +47,10 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "check a plan.json without saving anything",
     description:
-      "Check a plan.json against the EXACT create-path rules (the create Zod parse plus graph structural checks: dependency cycles, unknown context refs, prerequisite sanity) without saving. On issues it exits 2 and prints one issue per line with its JSON path (e.g. definition.tasks.2.contextId: …) — fix the file and re-run. Session-scoped.",
-    usage: ["cctl workflow validate --file .cc/temp/plan.json [--json]"],
+      "Check a plan.json against the EXACT create-path rules (the create Zod parse plus graph structural checks: dependency cycles, unknown context refs, prerequisite sanity) plus the agent-profile assignment references it names, without saving. On issues it exits 2 and prints one issue per line with its JSON path (e.g. definition.tasks.2.contextId: …) — fix the file and re-run. Assignment issues read identically whichever check produced them (a malformed id and a dangling profile reference are found by different layers): the path locates the offending field, e.g. definition.executionContexts.2.contextValidator.assignments.1.profile, and the message names the qualified tier:id and the exact use site (context, role, assignment id). Validation is ADVISORY — a profile can be deleted between the check and the save — so `create`, `replace`, and `edit` re-check at accept time and refuse with those same located lines (`edit` exits 1, since the batch was well-formed and the server refused it). Session-scoped. Validate under the scope the plan is destined for: --tier global applies the global-document rule, which refuses project-tier profile references.",
+    usage: [
+      "cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]",
+    ],
     flags: [
       {
         name: "file",
@@ -56,12 +58,25 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         valuePlaceholder: "<plan.json>",
         description: "the plan authored per the graph-workflow-planning skill",
       },
+      {
+        name: "tier",
+        kind: "value",
+        valuePlaceholder: "global|project",
+        description:
+          "check as a global-library template (refuses project-tier profile refs) instead of a project definition",
+      },
     ],
     examples: [
       {
         invocation: "cctl workflow validate --file .cc/temp/plan.json",
         explanation:
           "always validate first — exit 2 lists issues one per line with their JSON path; on success it hints the create command",
+      },
+      {
+        invocation:
+          "cctl workflow validate --file .cc/temp/plan.json --tier global",
+        explanation:
+          "pre-flight a shared template: a global document may only reference builtin and global agent profiles, so a project-tier ref is refused here rather than at save",
       },
     ],
     related: [
@@ -175,7 +190,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print a definition's outline (or one section, or the full JSON)",
     description:
-      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, declared output-schema shapes (e.g. `output schema: object · 4 fields`), and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace`. At most one selector per invocation. An unknown id exits 2. No hint.",
+      "Print a saved definition's compact OUTLINE by default — structure, ids, per-context task counts + deps, declared output-schema shapes (e.g. `output schema: object · 4 fields`), and prose SIZES (not bodies). It is the navigation map for a targeted `cctl workflow edit`: it shows every id an edit addresses and the current revision, in a few hundred tokens. The `staffing (references)` block lists every agent assignment the document authors — scope, role, assignment id, the qualified `tier:id` profile reference, strategy, and runtime. A SAVED definition is reference-bearing: it names profiles the library still owns and resolves nothing, so these rows carry no profile revision and no resolved-instruction hash. Assignments retained by a switched-off cohort are listed too, marked `(cohort disabled)`. Use `cctl workflow live get` for what a running execution actually resolved. Section selectors fetch ONE full-prose slice (--context/--task/--charter/--config/--params); --full prints the entire record for a wholesale `replace`. At most one selector per invocation. An unknown id exits 2. No hint.",
     usage: [
       "cctl workflow get <id> [--full | --context <ctx> | --task <task> | --charter | --config | --params] [--tier global|project] [--json]",
     ],
@@ -232,6 +247,11 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         explanation:
           "pulls one task's full instructions (the outline shows sizes, not bodies) — a cheap targeted read before `cctl workflow edit`",
       },
+      {
+        invocation: "cctl workflow get wf-1 --config",
+        explanation:
+          "the raw assignment blocks behind the staffing rows — edit a profile reference or a cohort here, then re-validate",
+      },
     ],
     related: [
       {
@@ -242,6 +262,11 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         command: "workflow replace",
         oneLiner: "overwrite the whole definition (get it with --full first)",
+      },
+      {
+        command: "agent get",
+        oneLiner:
+          "read the instructions behind a profile reference the staffing block names",
       },
     ],
   },
@@ -461,7 +486,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "print the live outline of the active execution",
     description:
-      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count, plan-repair round count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress, and — when the context declares an outputSchema — its shape, e.g. `output schema: object · 4 fields`), per-task rows (id, order, status, title, instruction SIZE — never inlined), and a one-line config summary per context. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, plan repair, collaboration, and the outputSchema declaration itself), --charter (the current charter document rendered with its amendment log), --outputs (every schema-declaring context's capture status, plus the captured payload and its parse provenance), --full (every context expanded). At most one selector. No active execution exits 2.",
+      "Print the ACTIVE execution's live outline — a compact, server-projected map: the header (executionId, liveRevision, status, seed id@revision, whether it is editable, charter amendment count, plan-repair round count), per-context rows (status, editability tier frozen/editable/pause-to-edit from the shared lifecycle classifier, deps, task progress, iteration progress, and — when the context declares an outputSchema — its shape, e.g. `output schema: object · 4 fields`), per-task rows (id, order, status, title, instruction SIZE — never inlined), a one-line config summary per context, and a `staffing (snapshots)` block. Staffing lists one row per SEEDED assignment — context, role, assignment id, the profile as `tier:id@revision`, the short resolved-instruction hash, and the runtime. Those last two are what a live execution has that a saved definition does not: execution start resolved every assignment once and nothing consults the profile library again, so these rows are what is actually running (`cctl workflow get` shows the bare references the document authored). Two rows sharing a hash are replaying identical instructions. Assignments retained by a switched-off cohort are listed too, marked `(cohort disabled)`: they are snapshotted and a live edit can enable them without any library lookup, but nothing dispatches them — which is why the `config:` line above still reads `validator off`. The profile identity in these rows comes from the snapshot, not the authored reference. The header's liveRev is the value an edit's baseLiveRevision must match. Selectors: --context <ctx> (full prose + resolved config + full task instructions for one context), --task <task> (full instructions), --config <ctx> (one context's full resolved config — implementer, validator, script/approval/questions gates, iteration policy, circuit breaker, mutability, plan repair, collaboration, and the outputSchema declaration itself), --charter (the current charter document rendered with its amendment log), --outputs (every schema-declaring context's capture status, plus the captured payload and its parse provenance), --full (every context expanded). At most one selector. No active execution exits 2.",
     usage: [
       "cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --outputs | --full] [--json]",
     ],

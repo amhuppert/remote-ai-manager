@@ -8,6 +8,10 @@ import {
   type DrainSelf,
 } from "@/lib/conversations/message-queue-drain";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "@/lib/conversations/profile-admission";
 import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import { queueCapabilityForBackend } from "@/lib/agent-backends/catalog";
 import type { StateStore } from "@/lib/state-store/store";
@@ -66,6 +70,7 @@ describe("project message queue durability", () => {
   });
 
   afterEach(() => {
+    _resetConversationProfileAdmissionDepsForTesting();
     fixture.close();
   });
 
@@ -195,6 +200,11 @@ describe("project message queue durability", () => {
     // A restarted server: a brand-new store over the same database, holding
     // nothing in memory from the enqueue.
     const restarted = fixture.recreateStore();
+    // The drain settles the profile before it sends, so that seam follows the
+    // restarted store like the queue service does.
+    setConversationProfileAdmissionDeps({
+      mutateConversation: restarted.mutateConversation,
+    });
     const svc = queueService(restarted);
     const dispatched: ConversationEvent[] = [];
     const self: DrainSelf = {

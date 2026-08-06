@@ -5,6 +5,7 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import WorkflowEventLog from "./WorkflowEventLog";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import "./workflow-graph.css";
+import { makeProfileSnapshot } from "@/lib/workflow-graph/test-fixtures";
 
 const PROJECT = "demo";
 const SESSION = "demo-session";
@@ -33,15 +34,20 @@ function makeExecution(
           title: "Plan",
           acceptanceCriteria: "Plan approved.",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
@@ -51,23 +57,35 @@ function makeExecution(
           title: "Implement",
           acceptanceCriteria: "All tasks pass validation.",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: {
-            type: "claude",
             enabled: true,
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
-            },
-            continuity: { enabled: true },
+            assignments: [
+              {
+                id: "general",
+                profile: { tier: "builtin", id: "general-reviewer" },
+                profileSnapshot: makeProfileSnapshot(),
+                strategy: "conversation",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: true },
+              },
+            ],
           },
           scriptValidator: { enabled: true },
           humanApprovalGate: { enabled: false },

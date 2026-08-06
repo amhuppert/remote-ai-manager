@@ -1,11 +1,11 @@
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
-  ResolvedWorkflowSemanticDefinition,
+  CascadeWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 type WaitStateDefinition =
   | WorkflowSemanticDefinition
-  | ResolvedWorkflowSemanticDefinition;
+  | CascadeWorkflowSemanticDefinition;
 
 export type ContextWaitState =
   | {

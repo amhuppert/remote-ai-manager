@@ -3,6 +3,7 @@ import { buildSessionContext, buildConversationContext } from "./copy-context";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { makeProfileSnapshot } from "@/lib/workflow-graph/test-fixtures";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -40,6 +41,8 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
+    profileSnapshot: null,
+    profileLockedAt: null,
     ...overrides,
   };
 }
@@ -89,11 +92,16 @@ function makeGraphWorkflowExecution(
           description: "Implement the feature",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
@@ -107,11 +115,15 @@ function makeGraphWorkflowExecution(
           title: "Testing",
           acceptanceCriteria: "TBD",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
@@ -172,7 +184,7 @@ function makeGraphWorkflowExecution(
         cleanupStatus: "not-applicable",
         lastMergeError: null,
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -191,7 +203,7 @@ function makeGraphWorkflowExecution(
         cleanupStatus: "not-applicable",
         lastMergeError: null,
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
       },
     },
     taskStates: {

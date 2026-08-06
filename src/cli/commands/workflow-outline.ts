@@ -31,6 +31,50 @@ const CONFIG_BLOCK_KEYS = [
   "askUserQuestions",
 ] as const;
 
+/**
+ * The assignment shapes as they appear in a SAVED definition: reference-bearing.
+ * Deliberately permissive like the rest of this mirror — a definition authored
+ * against a newer server may carry fields this CLI does not render, and that
+ * must not cost the outline. What it may NOT carry is a resolved snapshot;
+ * `live get` is the surface for those.
+ */
+const outlineProfileRefSchema = z
+  .object({ tier: z.string(), id: z.string() })
+  .loose();
+
+const outlineAgentRuntimeSchema = z
+  .object({
+    backend: z.string(),
+    model: z.string(),
+    reasoningEffort: z.string(),
+  })
+  .loose();
+
+const outlineAssignmentSchema = z
+  .object({
+    id: z.string(),
+    profile: outlineProfileRefSchema,
+    focus: z.string().optional(),
+    agent: outlineAgentRuntimeSchema,
+  })
+  .loose();
+
+const outlineValidatorAssignmentSchema = outlineAssignmentSchema.extend({
+  strategy: z.string(),
+});
+
+const outlineValidatorCohortSchema = z
+  .object({
+    enabled: z.boolean(),
+    assignments: z.array(outlineValidatorAssignmentSchema),
+  })
+  .loose();
+
+const outlineStaffingSchema = z.object({
+  implementer: outlineAssignmentSchema.optional(),
+  contextValidator: outlineValidatorCohortSchema.optional(),
+});
+
 const outlineContextSchema = z
   .object({
     id: z.string(),
@@ -39,6 +83,7 @@ const outlineContextSchema = z
     acceptanceCriteria: z.string().optional(),
     outputSchema: z.record(z.string(), z.unknown()).optional(),
   })
+  .extend(outlineStaffingSchema.shape)
   .loose();
 
 const outlineTaskSchema = z
@@ -88,7 +133,10 @@ const outlineCharterSchema = z
 
 const outlineDefinitionSchema = z
   .object({
-    workflowConfig: z.record(z.string(), z.unknown()).optional(),
+    workflowConfig: z
+      .record(z.string(), z.unknown())
+      .and(outlineStaffingSchema)
+      .optional(),
     charter: outlineCharterSchema.optional(),
     parameters: z.array(outlineParameterSchema).optional(),
     prerequisites: z.array(outlinePrerequisiteSchema).optional(),
@@ -153,10 +201,31 @@ export interface OutlineData {
   };
   parameters: Array<{ name: string; type: string; required: boolean }>;
   prerequisites: Array<{ kind: string; locator: string }>;
+  /**
+   * Every assignment the document itself authors, workflow tier first and then
+   * per context in graph order. A saved definition resolves nothing, so a row
+   * carries the qualified reference and never a revision or resolved hash.
+   */
+  staffing: OutlineAssignmentRow[];
   configOverrides: {
     workflow: string[];
     contexts: Array<{ id: string; blocks: string[] }>;
   };
+}
+
+export interface OutlineAssignmentRow {
+  /** `workflow` for the workflow-tier block, otherwise the context id. */
+  scope: string;
+  role: "implementer" | "validator";
+  assignmentId: string;
+  /** The qualified `tier:id` spelling of the profile reference. */
+  profile: string;
+  focus: string | null;
+  /** `null` for an implementer — strategy is a validator-only dimension. */
+  strategy: string | null;
+  runtime: string;
+  /** True for an assignment retained by a DISABLED cohort (dormant config). */
+  dormant?: true;
 }
 
 export function buildOutlineData(record: OutlineRecord): OutlineData {
@@ -218,6 +287,10 @@ export function buildOutlineData(record: OutlineRecord): OutlineData {
       kind: prereq.kind,
       locator: prereq.path ?? prereq.skill ?? "",
     })),
+    staffing: [
+      ...staffingRows("workflow", def.workflowConfig),
+      ...contexts.flatMap((context) => staffingRows(context.id, context)),
+    ],
     configOverrides: {
       workflow: presentBlockKeys(def.workflowConfig),
       contexts: contexts
@@ -300,6 +373,8 @@ export function renderOutline(record: OutlineRecord): string {
         : "none"
     }`,
   );
+
+  lines.push(...staffingBlock(data.staffing));
 
   const workflowOverrides =
     data.configOverrides.workflow.length > 0
@@ -385,6 +460,85 @@ export function sliceParams(record: OutlineRecord): SliceResult {
 
 function formatCharCount(count: number): string {
   return count >= 1000 ? `${(count / 1000).toFixed(1)}k` : `${count}`;
+}
+
+/**
+ * The staffing block: who a saved definition NAMES, never who it resolved.
+ *
+ * The header says "references" so the distinction from `live get`'s
+ * "snapshots" block is visible without reading a row, and no row can carry a
+ * revision or resolved hash — a saved document has neither until execution
+ * start seeds one.
+ */
+function staffingBlock(rows: OutlineAssignmentRow[]): string[] {
+  if (rows.length === 0) {
+    return [
+      "staffing (references): none authored — every context inherits the cascade default",
+    ];
+  }
+  const scopeWidth = Math.max(...rows.map((row) => row.scope.length));
+  const roleWidth = Math.max(...rows.map((row) => row.role.length));
+  const idWidth = Math.max(...rows.map((row) => row.assignmentId.length));
+  const profileWidth = Math.max(...rows.map((row) => row.profile.length));
+  return [
+    "staffing (references):",
+    ...rows.map((row) => {
+      const detail = [row.strategy, row.runtime]
+        .filter((part): part is string => part !== null)
+        .join(" ");
+      const focus = row.focus !== null ? `  focus "${row.focus}"` : "";
+      const dormant = row.dormant ? "  (cohort disabled)" : "";
+      return `  ${row.scope.padEnd(scopeWidth)}  ${row.role.padEnd(
+        roleWidth,
+      )}  ${row.assignmentId.padEnd(idWidth)}  ${row.profile.padEnd(
+        profileWidth,
+      )}  ${detail}${focus}${dormant}`;
+    }),
+  ];
+}
+
+/**
+ * The assignments one cascade tier authors, as outline rows.
+ *
+ * A DISABLED cohort's assignments are reported too, flagged dormant: they are
+ * persisted configuration a later edit can re-enable without consulting the
+ * library, so an author reading the outline before an edit has to see them.
+ * Hiding them would make "turn validation back on" a blind operation.
+ */
+function staffingRows(
+  scope: string,
+  tier: z.infer<typeof outlineStaffingSchema> | undefined,
+): OutlineAssignmentRow[] {
+  if (!tier) return [];
+  const rows: OutlineAssignmentRow[] = [];
+  if (tier.implementer) {
+    rows.push(assignmentRow(scope, "implementer", tier.implementer, null));
+  }
+  const cohort = tier.contextValidator;
+  for (const assignment of cohort?.assignments ?? []) {
+    rows.push({
+      ...assignmentRow(scope, "validator", assignment, assignment.strategy),
+      ...(cohort?.enabled === false ? { dormant: true as const } : {}),
+    });
+  }
+  return rows;
+}
+
+function assignmentRow(
+  scope: string,
+  role: OutlineAssignmentRow["role"],
+  assignment: z.infer<typeof outlineAssignmentSchema>,
+  strategy: string | null,
+): OutlineAssignmentRow {
+  return {
+    scope,
+    role,
+    assignmentId: assignment.id,
+    profile: `${assignment.profile.tier}:${assignment.profile.id}`,
+    focus: assignment.focus ?? null,
+    strategy,
+    runtime: `${assignment.agent.backend} ${assignment.agent.model} ${assignment.agent.reasoningEffort}`,
+  };
 }
 
 function presentBlockKeys(obj: unknown): string[] {

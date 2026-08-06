@@ -8,11 +8,18 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
+import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import {
+  STANDARD_AGENT_PROFILE_REF,
+  STANDARD_AGENT_PROFILE_VALUE,
+  parseAgentProfilePickerValue,
+} from "@/components/agent-profiles/agent-profile-picker-state";
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import { IconButton } from "@/components/ui/IconButton";
 import { WithTooltip } from "@/components/ui/WithTooltip";
@@ -81,8 +88,13 @@ import "./styles/cockpit.css";
 
 export interface ProjectCockpitProps {
   projectName: string;
-  /** Open project conversations from the foundation (server truth). */
-  openConversations: ConversationState[];
+  /**
+   * Open project conversations from the foundation (server truth), in the
+   * PUBLIC shape the conversations query returns — the cockpit is a read
+   * surface, and its profile chip needs the redacted snapshot that only the
+   * public projection carries.
+   */
+  openConversations: PublicConversationState[];
   /**
    * Every conversation the project has with the creation it records — open,
    * closed, and archived. The second of the two sources that can name the
@@ -251,6 +263,12 @@ export default function ProjectCockpit({
   const toggleRail = useToggleRail();
   const setRailCollapsed = useSetRailCollapsed();
   const [drafts, setDrafts] = useState<ProjectDraftMap>(() => new Map());
+  // Identity for the conversation the create-and-send composer builds. The tab
+  // strip's `+ New chat` has its own picker; this one serves the composer that
+  // creates without a tab to hang one off.
+  const [createProfileValue, setCreateProfileValue] = useState(
+    STANDARD_AGENT_PROFILE_VALUE,
+  );
   const [closeConfirmTargetId, setCloseConfirmTargetId] = useState<
     string | null
   >(null);
@@ -388,14 +406,23 @@ export default function ProjectCockpit({
     backendDefaults,
   });
 
-  const handleNewChat = useCallback(() => {
-    createConversation.mutate(
-      { agentBackend: selectedBackend },
-      { onSuccess: (conv) => focusTab(conv.id) },
-    );
-  }, [createConversation, selectedBackend, focusTab]);
+  // Runtime (backend) and identity (profile) are two separate selections on one
+  // creation: the backend follows the composer, the profile defaults to the
+  // Standard Agent unless the picker names one (R7).
+  const handleNewChat = useCallback(
+    (profile?: AgentProfileRef) => {
+      createConversation.mutate(
+        {
+          agentBackend: selectedBackend,
+          ...(profile === undefined ? {} : { profile }),
+        },
+        { onSuccess: (conv) => focusTab(conv.id) },
+      );
+    },
+    [createConversation, selectedBackend, focusTab],
+  );
 
-  useAppHotkey("newConversation", handleNewChat, {
+  useAppHotkey("newConversation", () => handleNewChat(), {
     enabled: !createConversation.isPending,
   });
   useAppHotkey("viewSessions", () => setWorkspaceView("sessions"));
@@ -555,10 +582,26 @@ export default function ProjectCockpit({
         ...(input.codexFastMode !== undefined
           ? { codexFastMode: input.codexFastMode }
           : {}),
+        // Only a create target has an identity to choose, and it is sent
+        // explicitly — the picker's values are ours, so an unparseable one is
+        // the default rather than a guess (R7.1).
+        ...(activeTabId === null
+          ? {
+              profile:
+                parseAgentProfilePickerValue(createProfileValue) ??
+                STANDARD_AGENT_PROFILE_REF,
+            }
+          : {}),
       });
       return (await submission.accepted) ? "accepted" : "rejected";
     },
-    [turnActive, activeTabId, queueProjectMessage, sendPrompt],
+    [
+      turnActive,
+      activeTabId,
+      queueProjectMessage,
+      sendPrompt,
+      createProfileValue,
+    ],
   );
 
   // Stop is offered for the conversation on screen and stops that conversation,
@@ -624,7 +667,7 @@ export default function ProjectCockpit({
   // A pending question takes the composer's place, exactly as it does on the
   // session page. It is hydrated from the active conversation's persisted
   // fields, so it is there after a reload and on whichever client opens the tab.
-  const composer = (
+  const questionOrComposer = (
     <ProjectQuestionSlot
       projectName={projectName}
       conversation={activeConversation}
@@ -633,6 +676,29 @@ export default function ProjectCockpit({
     />
   );
 
+  // The next turn will create a conversation, so it is a construction site and
+  // states which profile it builds under. Runtime (backend/model/effort) stays
+  // where it is, inside the composer — two selections, never merged.
+  const composer =
+    activeTabId === null ? (
+      <div className="flex min-w-0 flex-col gap-sm">
+        <div className="flex min-w-0 items-center gap-sm">
+          <span className="shrink-0 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+            Agent profile
+          </span>
+          <AgentProfilePicker
+            projectName={projectName}
+            value={createProfileValue}
+            onChange={(selection) => setCreateProfileValue(selection.value)}
+            layoutClassName="max-w-[280px]"
+          />
+        </div>
+        {questionOrComposer}
+      </div>
+    ) : (
+      questionOrComposer
+    );
+
   const pane =
     tabs.length > 0 ? (
       <ConversationPane
@@ -640,7 +706,13 @@ export default function ProjectCockpit({
         projectName={projectName}
         canStop={canStop}
         onStop={handleStop}
-        {...(activeConversation ? { status: activeConversation.status } : {})}
+        {...(activeConversation
+          ? {
+              status: activeConversation.status,
+              redactedProfileSnapshot:
+                activeConversation.redactedProfileSnapshot,
+            }
+          : {})}
         tabs={
           <ConversationTabs
             tabs={tabs}
@@ -648,6 +720,7 @@ export default function ProjectCockpit({
             onSelect={setActiveTab}
             onClose={requestClose}
             onNewChat={handleNewChat}
+            projectName={projectName}
             creating={createConversation.isPending}
           />
         }

@@ -8,7 +8,6 @@ import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
-  GraphWorkflowLaneKind,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 export class ResetExecutionContextError extends Error {
@@ -75,9 +74,11 @@ export function resetExecutionContext(
     nextTaskStates[taskId] = buildInitialTaskState(taskDefinition);
   }
 
+  // Keyed by lane key (`implementer` | `context_validator:<assignmentId>`), so
+  // dropping a context drops every cohort member's lane with it.
   const nextLaneStates: Record<
     string,
-    Partial<Record<GraphWorkflowLaneKind, GraphWorkflowAgentSessionState>>
+    Record<string, GraphWorkflowAgentSessionState>
   > = {};
   for (const [ctxKey, contextLanes] of Object.entries(execution.laneStates)) {
     if (ctxKey === contextId) continue;

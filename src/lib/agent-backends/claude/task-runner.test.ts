@@ -857,6 +857,201 @@ describe("ClaudeTaskRunner", () => {
     expect(runner.backend).toBe("claude");
   });
 
+  /**
+   * R10.1 — governing instructions travel through Claude's privileged channel.
+   *
+   * Asserted on the options object handed to the SDK query, not on an internal
+   * seam: `systemPrompt.append` on the `claude_code` preset is the system-role
+   * channel, and the check that it is not folded into the user prompt is what
+   * keeps a role contract from silently degrading to user priority.
+   */
+  describe("privileged instruction channel", () => {
+    const INSTRUCTIONS = "# Role contract\nYou are read-only.";
+
+    it("delivers systemInstructions as a system-prompt append", async () => {
+      mockQuery.mockReturnValue(
+        makeStream([successResultMessage()]) as ReturnType<typeof query>,
+      );
+
+      await runner.run(makeRequest({ systemInstructions: [INSTRUCTIONS] }));
+
+      const options = mockQuery.mock.calls[0]?.[0]?.options;
+      expect(options?.systemPrompt).toEqual({
+        type: "preset",
+        preset: "claude_code",
+        append: INSTRUCTIONS,
+      });
+      expect(mockQuery.mock.calls[0]?.[0]?.prompt).toBe("Do the thing");
+    });
+
+    it("joins multiple instruction entries into the one append", async () => {
+      mockQuery.mockReturnValue(
+        makeStream([successResultMessage()]) as ReturnType<typeof query>,
+      );
+
+      await runner.run(
+        makeRequest({ systemInstructions: ["first", "second"] }),
+      );
+
+      const systemPrompt = mockQuery.mock.calls[0]?.[0]?.options?.systemPrompt;
+      expect(systemPrompt).toMatchObject({ append: "first\n\nsecond" });
+    });
+
+    it("appends nothing when a run governs nothing", async () => {
+      mockQuery.mockReturnValue(
+        makeStream([successResultMessage()]) as ReturnType<typeof query>,
+      );
+
+      await runner.run(makeRequest());
+
+      const systemPrompt = mockQuery.mock.calls[0]?.[0]?.options?.systemPrompt;
+      expect(systemPrompt).toEqual({
+        type: "preset",
+        preset: "claude_code",
+        append: undefined,
+      });
+    });
+  });
+
+  /**
+   * R7.1 — the adapter's half of the write envelope: what the real Claude CLI is
+   * actually launched with when a run carries a server-derived policy. The OS
+   * and the permission layer enforcing it are proven separately against the
+   * installed runner; these assertions are the reason that proof stays true for
+   * every future run.
+   */
+  describe("filesystem write envelope", () => {
+    const SCRATCH = "/private/tmp/cc-validator-lanes/exec/ctx/reviewer";
+    const LANE_TMP = `${SCRATCH}/tmp`;
+    const WORKTREE = "/test/workspace";
+    const POLICY = {
+      mode: "allowlist" as const,
+      allowWrite: [SCRATCH, LANE_TMP],
+      denyWrite: [WORKTREE],
+    };
+
+    beforeEach(() => {
+      mockQuery.mockReturnValue(
+        makeStream([successResultMessage()]) as ReturnType<typeof query>,
+      );
+    });
+
+    function deliveredOptions() {
+      return mockQuery.mock.calls[0]?.[0]?.options;
+    }
+
+    it("enables the sandbox as a hard gate carrying the policy", async () => {
+      await runner.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      expect(deliveredOptions()?.sandbox).toMatchObject({
+        enabled: true,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        filesystem: {
+          allowWrite: [SCRATCH, LANE_TMP],
+          denyWrite: [WORKTREE],
+        },
+      });
+    });
+
+    it("drops the permission bypass a write-capable lane runs under", async () => {
+      await runner.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      expect(deliveredOptions()?.permissionMode).toBe("dontAsk");
+      expect(deliveredOptions()?.allowDangerouslySkipPermissions).not.toBe(
+        true,
+      );
+    });
+
+    it("loads no filesystem settings, so a candidate-committed settings file cannot widen its reviewer", async () => {
+      await runner.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      expect(deliveredOptions()?.settingSources).toEqual([]);
+    });
+
+    it("scopes the file-mutation tools to the allowlist and denies them in the worktree", async () => {
+      await runner.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      const permissions = deliveredOptions()?.settings as
+        | { permissions?: { allow?: string[]; deny?: string[] } }
+        | undefined;
+      expect(permissions?.permissions?.allow).toEqual(
+        expect.arrayContaining([
+          `Write(//${SCRATCH}/**)`,
+          `Edit(//${SCRATCH}/**)`,
+          `NotebookEdit(//${SCRATCH}/**)`,
+        ]),
+      );
+      expect(permissions?.permissions?.deny).toEqual(
+        expect.arrayContaining([
+          `Write(//${WORKTREE}/**)`,
+          `Edit(//${WORKTREE}/**)`,
+          `NotebookEdit(//${WORKTREE}/**)`,
+        ]),
+      );
+    });
+
+    it("keeps reading the candidate from its own directory", async () => {
+      await runner.run(makeRequest({ fsWritePolicy: POLICY }));
+
+      // Only writes are confined — a reviewer still works from the tree under
+      // review, so relative paths in its instructions keep resolving.
+      expect(deliveredOptions()?.cwd).toBe(WORKTREE);
+    });
+
+    it("leaves an unrestricted run exactly as it was", async () => {
+      await runner.run(makeRequest());
+
+      expect(deliveredOptions()?.sandbox).toBeUndefined();
+      expect(deliveredOptions()?.permissionMode).toBe("bypassPermissions");
+      expect(deliveredOptions()?.settingSources).toEqual([
+        "user",
+        "project",
+        "local",
+      ]);
+    });
+
+    describe("fail-closed establishment", () => {
+      it("refuses to start a query when the policy cannot be translated", async () => {
+        const result = await runner.run(
+          makeRequest({ fsWritePolicy: { ...POLICY, allowWrite: [] } }),
+        );
+
+        expect(result.error).toMatch(/write envelope/i);
+        expect(result.failure).not.toBeNull();
+        expect(mockQuery).not.toHaveBeenCalled();
+      });
+
+      it("surfaces a sandbox that could not start as a failed run, not a quiet one", async () => {
+        mockQuery.mockReturnValue(
+          makeStream([
+            {
+              type: "result",
+              subtype: "error_during_execution",
+              session_id: "session-sandbox",
+              total_cost_usd: 0,
+              num_turns: 0,
+              duration_ms: 5,
+              usage: {
+                input_tokens: 0,
+                cache_read_input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+              },
+              errors: ["sandbox dependencies are unavailable"],
+            },
+          ]) as ReturnType<typeof query>,
+        );
+
+        const result = await runner.run(makeRequest({ fsWritePolicy: POLICY }));
+
+        expect(result.error).not.toBeNull();
+        expect(result.failure).not.toBeNull();
+        expect(result.text).toBeNull();
+      });
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

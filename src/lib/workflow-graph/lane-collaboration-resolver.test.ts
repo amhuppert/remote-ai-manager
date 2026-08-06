@@ -6,14 +6,29 @@ import {
   resolveLaneToolCollaborationConfig,
   type LaneCollaborationFallbackInputs,
 } from "./lane-collaboration-resolver";
+import { makeProfileSnapshot } from "./test-fixtures";
 
 const GLOBAL_DEFAULTS: WorkflowDefaults = {
-  implementer: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  implementer: {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  },
   contextValidator: {
-    type: "claude",
     enabled: true,
-    continuity: { enabled: true },
-    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    assignments: [
+      {
+        id: "general",
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "conversation",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: true },
+      },
+    ],
   },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
@@ -42,11 +57,16 @@ function resolvedContext(
     title: "Implement",
     acceptanceCriteria: "all tasks complete",
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
     },
-    contextValidator: null,
+    contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },

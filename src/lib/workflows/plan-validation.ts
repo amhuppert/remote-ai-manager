@@ -9,6 +9,13 @@ import {
   graphWorkflowVisualLayoutSchema,
   workflowSemanticDefinitionSchema,
 } from "@/lib/workflow-graph/definition-schemas";
+import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
+import {
+  formatAssignmentUseSite,
+  type AssignmentRoleLabel,
+  type AssignmentTierLabel,
+} from "@/lib/workflow-graph/assignment-references";
+import { findLegacyAgentShapes } from "@/lib/workflow-graph/schema-cutover-guard";
 
 /**
  * The create/replace request body: a named, laid-out workflow definition. This
@@ -104,6 +111,143 @@ function structuralIssuePath(
   return "definition.edges";
 }
 
+// ============================================================
+// Assignment use-site enrichment (R13.1)
+// ============================================================
+
+/**
+ * A shape refusal comes from a schema mounted at four different places
+ * (workflow tier and per context, implementer and cohort), so it can describe
+ * WHAT is wrong but never WHERE — `Duplicate validator assignment id "security"`
+ * is the same sentence wherever it was authored.
+ *
+ * The request body knows where. This layer is the only one holding both the
+ * issue and the document, so it appends the use site the async reference layer
+ * already names, in the same words: an author cannot tell which of the two
+ * layers refused from how the refusal reads.
+ *
+ * Everything below reads the RAW body — the parse that produced these issues
+ * failed, so there is no typed definition to consult and every read has to
+ * tolerate whatever the author actually wrote.
+ */
+function readField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  return Object.getOwnPropertyDescriptor(value, key)?.value;
+}
+
+function readElement(value: unknown, index: number): unknown {
+  return Array.isArray(value) ? value[index] : undefined;
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * The qualified `tier:id` the raw assignment spells, when it spells one.
+ *
+ * Escaped for the same reason the use site is: a malformed profile id is one of
+ * the things this diagnostic exists to report, and it reaches here unvalidated.
+ * A well-formed ref renders bare (`builtin:general-reviewer`), matching the
+ * async layer exactly.
+ */
+function readProfileRef(assignment: unknown): string | null {
+  const profile = readField(assignment, "profile");
+  const tier = readNonEmptyString(readField(profile, "tier"));
+  const id = readNonEmptyString(readField(profile, "id"));
+  return tier !== null && id !== null
+    ? `${escapeDiagnosticValue(tier)}:${escapeDiagnosticValue(id)}`
+    : null;
+}
+
+interface AssignmentSiteDescription {
+  useSite: string;
+  profile: string | null;
+}
+
+function describeAssignmentRole(
+  container: unknown,
+  tier: AssignmentTierLabel,
+  slotPath: readonly PropertyKey[],
+): AssignmentSiteDescription | null {
+  const describe = (
+    assignment: unknown,
+    kind: "implementer" | "validator",
+  ): AssignmentSiteDescription => ({
+    useSite: formatAssignmentUseSite(tier, {
+      kind,
+      assignmentId: readNonEmptyString(readField(assignment, "id")),
+    } satisfies AssignmentRoleLabel),
+    profile: readProfileRef(assignment),
+  });
+
+  if (slotPath[0] === "implementer") {
+    return describe(readField(container, "implementer"), "implementer");
+  }
+  if (slotPath[0] !== "contextValidator") return null;
+
+  const cohort = readField(container, "contextValidator");
+  const index = slotPath[2];
+  if (slotPath[1] === "assignments" && typeof index === "number") {
+    return describe(
+      readElement(readField(cohort, "assignments"), index),
+      "validator",
+    );
+  }
+  // The cohort itself is the use site: an enabled-but-empty cohort has no
+  // assignment to name, and naming one would be a fiction.
+  return {
+    useSite: formatAssignmentUseSite(tier, { kind: "cohort" }),
+    profile: null,
+  };
+}
+
+function describeAssignmentSite(
+  body: unknown,
+  path: readonly PropertyKey[],
+): AssignmentSiteDescription | null {
+  if (path[0] !== "definition") return null;
+  const definition = readField(body, "definition");
+
+  if (path[1] === "workflowConfig") {
+    return describeAssignmentRole(
+      readField(definition, "workflowConfig"),
+      { kind: "workflow" },
+      path.slice(2),
+    );
+  }
+  const contextIndex = path[2];
+  if (path[1] === "executionContexts" && typeof contextIndex === "number") {
+    const context = readElement(
+      readField(definition, "executionContexts"),
+      contextIndex,
+    );
+    const contextId = readNonEmptyString(readField(context, "id"));
+    if (contextId === null) return null;
+    return describeAssignmentRole(
+      context,
+      { kind: "context", contextId },
+      path.slice(3),
+    );
+  }
+  return null;
+}
+
+/** `<schema message> Use site: the context "x" validator assignment "y", agent profile builtin:z.` */
+function withAssignmentUseSite(
+  message: string,
+  body: unknown,
+  path: readonly PropertyKey[],
+): string {
+  const site = describeAssignmentSite(body, path);
+  if (!site) return message;
+  const profile =
+    site.profile !== null ? `, agent profile ${site.profile}` : "";
+  return `${message} Use site: ${site.useSite}${profile}.`;
+}
+
 /**
  * The shared create-path validation: the Zod parse of a workflow mutation body
  * plus the structural graph checks (dependency cycles, unknown context refs,
@@ -117,13 +261,22 @@ function structuralIssuePath(
 export function validateWorkflowPlan(
   rawBody: unknown,
 ): WorkflowPlanValidationResult {
+  // Before the Zod parse: the strict assignment schema refuses a pre-cutover
+  // singleton with "unrecognized keys", which names neither the use site nor
+  // the shape to write. Running the located detector first turns that into the
+  // actionable refusal R3.2 requires — and it is a refusal, never a rewrite.
+  const legacyAgentShapes = findLegacyAgentShapes(rawBody);
+  if (legacyAgentShapes.length > 0) {
+    return { ok: false, issues: legacyAgentShapes };
+  }
+
   const parsed = workflowDefinitionMutationSchema.safeParse(rawBody);
   if (!parsed.success) {
     return {
       ok: false,
       issues: parsed.error.issues.map((issue) => ({
         path: issue.path.join("."),
-        message: issue.message,
+        message: withAssignmentUseSite(issue.message, rawBody, issue.path),
       })),
     };
   }

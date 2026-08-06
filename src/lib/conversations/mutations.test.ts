@@ -13,6 +13,7 @@ import {
   useGenerateConversationNameMutation,
   useGenericArchiveConversationMutation,
   useArchiveOtherConversationsMutation,
+  useForkConversationMutation,
 } from "@/lib/conversations/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
@@ -122,6 +123,8 @@ function conversation(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: overrides.id,
     scope: overrides.scope ?? "session",
     nameOrigin: "default",
@@ -1524,6 +1527,58 @@ describe("useMarkConversationReadMutation", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     await waitFor(() => {
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
+  });
+});
+
+// R7.1: a fork at index 0 derives from no session, so it is a fresh
+// conversation and carries its own profile selection. Every other index
+// inherits the source snapshot verbatim and must send nothing.
+describe("useForkConversationMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        conversationId: "forked-1",
+        name: "forked-1",
+        forkMode: "synthetic",
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts the selected profile with an index-0 fork", async () => {
+    const { result } = renderHook(() => useForkConversationMutation("p", "s"), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await result.current.mutateAsync({
+      conversationId: "c1",
+      messageIndex: 0,
+      profile: { tier: "project", id: "reviewer" },
+    });
+
+    expect(JSON.parse(fetchSpy.mock.calls[0]![1]?.body as string)).toEqual({
+      messageIndex: 0,
+      profile: { tier: "project", id: "reviewer" },
+    });
+  });
+
+  it("posts only the message index for a session-derived fork", async () => {
+    const { result } = renderHook(() => useForkConversationMutation("p", "s"), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await result.current.mutateAsync({ conversationId: "c1", messageIndex: 4 });
+
+    expect(JSON.parse(fetchSpy.mock.calls[0]![1]?.body as string)).toEqual({
+      messageIndex: 4,
     });
   });
 });

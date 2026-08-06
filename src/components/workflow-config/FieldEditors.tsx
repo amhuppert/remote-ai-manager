@@ -1,284 +1,96 @@
 "use client";
 
-import { useState } from "react";
-import BackendToggle from "@/components/BackendToggle";
-import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/ui/cn";
-import ModelSelector from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import { getEffortLevelsForBackend } from "@/lib/agent-backends/catalog";
-import type {
-  ClaudeModel,
-  CodexModel,
-  CodexReasoningEffort,
-  EffortLevel,
-} from "@/lib/agent-backends/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   CollaborationAutonomousResolutionThreshold,
   WorkflowCollaborationConfig,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   PLAN_REPAIR_DEFAULT_AGENT,
-  type GraphWorkflowAgentConfig,
-  type GraphWorkflowAgentValidatorConfig,
+  type AgentAssignment,
   type GraphWorkflowCircuitBreakerPolicy,
   type GraphWorkflowIterationPolicy,
   type GraphWorkflowPlanRepairPolicy,
+  type ValidatorAssignment,
 } from "@/lib/workflow-graph/config-schemas";
+import { AgentRuntimeFields, AssignmentEditor } from "./AssignmentEditor";
+import {
+  FieldRow,
+  NumericInput,
+  ToggleControl,
+  type EditorBaseProps,
+} from "./FieldPrimitives";
 
 // Reusable, feature-agnostic config field editors (docs/design/cc-cli/06 "UI
 // plan"). Each is a controlled value+onChange component with no feature-level
 // state, so it edits authored override blocks (workflow builder) or concrete
 // resolved values (execution inspector) interchangeably.
 
-interface EditorBaseProps<T> {
-  value: T;
-  onChange: (next: T) => void;
-  readOnly?: boolean;
+/** Every assignment editor needs the same library scope and lock state. */
+interface AssignmentEditorSurfaceProps {
+  /** Scopes the profile listing; absent on the global-defaults form. */
+  libraryProjectName?: string | null;
+  /** Test/story affordance: Radix cannot open a listbox in jsdom on its own. */
+  open?: boolean;
 }
 
-// Label-grid row: label in a fixed left column, control on the right, hint
-// under the control column.
-export function FieldRow({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid grid-cols-[110px_1fr] items-center gap-x-[10px] gap-y-xs">
-      <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
-        {label}
-      </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-xs">
-        {children}
-      </div>
-      {hint ? (
-        <div className="col-start-2 font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
-          {hint}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-export function ToggleControl({
-  value,
-  onChange,
-  disabled,
-  ariaLabel,
-}: {
-  value: boolean;
-  onChange: (v: boolean) => void;
-  disabled?: boolean;
-  ariaLabel: string;
-}) {
-  return (
-    <Switch
-      checked={value}
-      onCheckedChange={onChange}
-      disabled={disabled}
-      aria-label={ariaLabel}
-    />
-  );
-}
-
-export function NumericInput({
-  value,
-  onChange,
-  disabled,
-  min,
-  placeholder,
-  ariaLabel,
-}: {
-  value: number | undefined;
-  onChange: (next: number | undefined) => void;
-  disabled?: boolean;
-  min?: number;
-  placeholder?: string;
-  ariaLabel: string;
-}) {
-  const [local, setLocal] = useState<string>(
-    value !== undefined ? String(value) : "",
-  );
-  const [prev, setPrev] = useState<number | undefined>(value);
-  if (prev !== value) {
-    setPrev(value);
-    setLocal(value !== undefined ? String(value) : "");
-  }
-  return (
-    <input
-      type="number"
-      className="w-[110px] rounded-sm border border-solid border-border-default bg-bg-surface px-[10px] py-[7px] font-mono text-[0.75rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
-      disabled={disabled}
-      value={local}
-      min={min}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      onChange={(event) => {
-        const text = event.target.value;
-        setLocal(text);
-        if (text === "") {
-          onChange(undefined);
-          return;
-        }
-        const parsed = Number(text);
-        if (Number.isFinite(parsed)) onChange(parsed);
-      }}
-    />
-  );
-}
-
+/**
+ * The implementer use site: one assignment, no strategy (there is one way to
+ * dispatch an implementer) and no continuity policy of its own.
+ */
 export function ImplementerEditor({
   value,
   onChange,
   readOnly,
-}: EditorBaseProps<GraphWorkflowAgentConfig>): React.JSX.Element {
-  const effortOptions = getEffortLevelsForBackend(value.backend, value.model);
-
-  const handleBackend = (next: AgentBackendId) => {
-    if (next === value.backend) return;
-    if (next === "codex") {
-      onChange({
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "medium",
-      });
-    } else {
-      onChange({
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      });
-    }
-  };
-
-  const handleModel = (model: string) => {
-    if (value.backend === "codex") {
-      onChange({
-        backend: "codex",
-        model: model as CodexModel,
-        reasoningEffort: value.reasoningEffort as CodexReasoningEffort,
-      });
-    } else {
-      onChange({
-        backend: "claude",
-        model: model as ClaudeModel,
-        reasoningEffort: value.reasoningEffort as EffortLevel,
-      });
-    }
-  };
-
-  const handleEffort = (level: EffortLevel) => {
-    onChange({
-      ...value,
-      reasoningEffort: level,
-    } as GraphWorkflowAgentConfig);
-  };
-
+  libraryProjectName,
+  open,
+}: EditorBaseProps<AgentAssignment> &
+  AssignmentEditorSurfaceProps): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-sm">
-      <FieldRow label="Backend">
-        <BackendToggle
-          value={value.backend}
-          onChange={handleBackend}
-          disabled={readOnly}
-        />
-      </FieldRow>
-      <FieldRow label="Model">
-        <ModelSelector
-          value={value.model}
-          backend={value.backend}
-          onChange={handleModel}
-          disabled={readOnly}
-        />
-      </FieldRow>
-      <FieldRow label="Reasoning effort">
-        <ReasoningLevelSelector
-          value={value.reasoningEffort as EffortLevel}
-          availableLevels={effortOptions}
-          onChange={handleEffort}
-          disabled={readOnly}
-        />
-      </FieldRow>
-    </div>
+    <AssignmentEditor
+      value={value}
+      onChange={onChange}
+      audience="workflow_implementer"
+      libraryProjectName={libraryProjectName}
+      readOnly={readOnly}
+      {...(open === undefined ? {} : { open })}
+    />
   );
 }
 
+/**
+ * Editor for ONE validator assignment: the shared assignment editor plus the
+ * two axes only a validator has.
+ *
+ * Strategy and backend stay independent, so a Codex agent under conversation
+ * strategy (or Claude under task) is authorable rather than implied by a
+ * provider-named type.
+ */
 export function ContextValidatorEditor({
   value,
   onChange,
   readOnly,
-}: EditorBaseProps<GraphWorkflowAgentValidatorConfig>): React.JSX.Element {
-  const continuityEnabled = value.continuity?.enabled ?? true;
-  const continuityLimit = value.continuity?.contextLimitTokens;
-
-  const handleTypeChange = (next: AgentBackendId) => {
-    if (next === value.type) return;
-    if (next === "codex") {
-      onChange({
-        type: "codex",
-        enabled: value.enabled,
-        continuity: value.continuity ?? { enabled: true },
-        codex: { model: "gpt-5.4", reasoningEffort: "medium" },
-      });
-    } else {
-      onChange({
-        type: "claude",
-        enabled: value.enabled,
-        continuity: value.continuity ?? { enabled: true },
-        agent: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
-        },
-      });
-    }
-  };
+  libraryProjectName,
+  open,
+}: EditorBaseProps<ValidatorAssignment> &
+  AssignmentEditorSurfaceProps): React.JSX.Element {
+  const continuityEnabled = value.continuity.enabled;
+  const continuityLimit = value.continuity.contextLimitTokens;
 
   return (
     <div className="flex flex-col gap-sm">
-      <FieldRow label="Type">
-        <BackendToggle
-          value={value.type}
-          onChange={handleTypeChange}
-          disabled={readOnly}
-        />
-      </FieldRow>
-
-      {value.type === "claude" && value.agent.backend === "claude" && (
-        <ClaudeValidatorSubfields
-          agent={value.agent}
-          onAgentChange={(agent) =>
-            onChange({
-              type: "claude",
-              enabled: value.enabled,
-              continuity: value.continuity,
-              agent,
-            })
-          }
-          readOnly={readOnly}
-        />
-      )}
-
-      {value.type === "codex" && (
-        <CodexValidatorSubfields
-          codex={value.codex}
-          onCodexChange={(codex) =>
-            onChange({
-              type: "codex",
-              enabled: value.enabled,
-              continuity: value.continuity,
-              codex,
-            })
-          }
-          readOnly={readOnly}
-        />
-      )}
+      <AssignmentEditor
+        value={value}
+        onChange={(next) => onChange({ ...value, ...next })}
+        strategy={{
+          value: value.strategy,
+          onChange: (strategy) => onChange({ ...value, strategy }),
+        }}
+        audience="workflow_validator"
+        libraryProjectName={libraryProjectName}
+        readOnly={readOnly}
+        {...(open === undefined ? {} : { open })}
+      />
 
       <FieldRow label="Continuity">
         <ToggleControl
@@ -295,7 +107,7 @@ export function ContextValidatorEditor({
             })
           }
           disabled={readOnly}
-          ariaLabel="Continuity enabled"
+          ariaLabel={`Continuity enabled for ${value.id}`}
         />
       </FieldRow>
 
@@ -313,108 +125,10 @@ export function ContextValidatorEditor({
             })
           }
           disabled={readOnly}
-          ariaLabel="Context limit tokens"
+          ariaLabel={`Context limit tokens for ${value.id}`}
         />
       </FieldRow>
     </div>
-  );
-}
-
-function ClaudeValidatorSubfields({
-  agent,
-  onAgentChange,
-  readOnly,
-}: {
-  agent: {
-    backend: "claude";
-    model: ClaudeModel;
-    reasoningEffort: EffortLevel;
-  };
-  onAgentChange: (next: {
-    backend: "claude";
-    model: ClaudeModel;
-    reasoningEffort: EffortLevel;
-  }) => void;
-  readOnly?: boolean;
-}) {
-  return (
-    <>
-      <FieldRow label="Agent model">
-        <ModelSelector
-          value={agent.model}
-          backend="claude"
-          disabled={readOnly}
-          onChange={(model) =>
-            onAgentChange({
-              backend: "claude",
-              model: model as ClaudeModel,
-              reasoningEffort: agent.reasoningEffort,
-            })
-          }
-        />
-      </FieldRow>
-      <FieldRow label="Agent effort">
-        <ReasoningLevelSelector
-          value={agent.reasoningEffort}
-          availableLevels={getEffortLevelsForBackend("claude", agent.model)}
-          disabled={readOnly}
-          onChange={(level) =>
-            onAgentChange({
-              backend: "claude",
-              model: agent.model,
-              reasoningEffort: level,
-            })
-          }
-        />
-      </FieldRow>
-    </>
-  );
-}
-
-function CodexValidatorSubfields({
-  codex,
-  onCodexChange,
-  readOnly,
-}: {
-  codex: { model?: CodexModel; reasoningEffort?: CodexReasoningEffort };
-  onCodexChange: (next: {
-    model?: CodexModel;
-    reasoningEffort?: CodexReasoningEffort;
-  }) => void;
-  readOnly?: boolean;
-}) {
-  const effectiveModel: CodexModel = codex.model ?? "gpt-5.4";
-  const effectiveEffort: CodexReasoningEffort =
-    codex.reasoningEffort ?? "medium";
-  return (
-    <>
-      <FieldRow label="Codex model">
-        <ModelSelector
-          value={effectiveModel}
-          backend="codex"
-          disabled={readOnly}
-          onChange={(model) =>
-            onCodexChange({
-              model: model as CodexModel,
-              reasoningEffort: effectiveEffort,
-            })
-          }
-        />
-      </FieldRow>
-      <FieldRow label="Codex effort">
-        <ReasoningLevelSelector
-          value={effectiveEffort as EffortLevel}
-          availableLevels={getEffortLevelsForBackend("codex", effectiveModel)}
-          disabled={readOnly}
-          onChange={(level) =>
-            onCodexChange({
-              model: effectiveModel,
-              reasoningEffort: level as CodexReasoningEffort,
-            })
-          }
-        />
-      </FieldRow>
-    </>
   );
 }
 
@@ -557,7 +271,7 @@ export function PlanRepairEditor({
         />
       </FieldRow>
       {value.agent ? (
-        <ImplementerEditor
+        <AgentRuntimeFields
           value={value.agent}
           onChange={(agent) => onChange({ ...value, agent })}
           readOnly={readOnly}
@@ -639,7 +353,7 @@ export function CollaborationEditor({
         <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
           Second agent
         </div>
-        <ImplementerEditor
+        <AgentRuntimeFields
           value={value.secondAgent}
           onChange={(next) => onChange({ ...value, secondAgent: next })}
           readOnly={readOnly}

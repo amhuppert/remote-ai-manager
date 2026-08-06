@@ -1,16 +1,20 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createValidatorRunner } from "./validator-runner";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  seedAssignment,
 } from "./test-fixtures";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowAgentValidatorConfig } from "@/lib/workflow-graph/config-schemas";
+import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
@@ -91,14 +95,18 @@ const floorRoundCharter: WorkflowCharter = workflowCharterSchema.parse({
   ],
 });
 
-const validatorConfig: GraphWorkflowAgentValidatorConfig = {
-  type: "claude",
-  enabled: true,
-  continuity: { enabled: true },
+const validatorConfig: ValidatorAssignment = {
+  id: "general",
+  profile: { tier: "builtin" as const, id: "general-reviewer" },
+  strategy: "conversation" as const,
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  continuity: { enabled: true },
 };
 
-const stubWorktreePath = async () => "/worktree";
+// A real directory: composing the lane write envelope canonicalizes the
+// candidate worktree and fails closed when it cannot resolve.
+const stubWorktreeDir = mkdtempSync(path.join(tmpdir(), "cc-validator-wt-"));
+const stubWorktreePath = async () => stubWorktreeDir;
 const stubTimeoutMs = async () => 300_000;
 const stubProjectDisplayName = () => "test-project";
 
@@ -116,7 +124,10 @@ function buildFloorRoundExecution(): GraphWorkflowExecution {
             ...ctx,
             title: "Implement scoring",
             acceptanceCriteria: WRONG_ACCEPTANCE_CRITERION,
-            contextValidator: validatorConfig,
+            contextValidator: {
+              enabled: true,
+              assignments: [seedAssignment(validatorConfig)],
+            },
           }
         : ctx,
     ),
@@ -232,7 +243,7 @@ describe("charter floor/round conflict behavioral fixture", () => {
       sessionName: "session-1",
       execution,
       context: contextWithCharter,
-      validator: validatorConfig,
+      validator: seedAssignment(validatorConfig),
     });
 
     expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
@@ -294,7 +305,7 @@ describe("charter floor/round conflict behavioral fixture", () => {
       sessionName: "session-1",
       execution,
       context: contextWithCharter,
-      validator: validatorConfig,
+      validator: seedAssignment(validatorConfig),
     });
 
     // The real outcome derivation (issues.length === 0 ⇒ PASS) produces a pass

@@ -1,4 +1,7 @@
-import { computeDiff as defaultComputeDiff } from "@/lib/git/diff";
+import {
+  computeCandidateSnapshot as defaultComputeCandidateSnapshot,
+  type CandidateSnapshot,
+} from "@/lib/git/diff";
 import { hasUncommittedChanges as defaultHasUncommittedChanges } from "@/lib/git/commits";
 import type { FileDiff, SessionDiff } from "@/lib/git/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -8,27 +11,40 @@ import { getErrorMessage } from "@/lib/shared/errors";
  * worktree just before its turn. Because the engine commits each context once
  * at land time (and never mid-iteration), the uncommitted working-tree delta
  * against HEAD at validation time is exactly the current context's changes.
+ *
+ * `treeHash` is the identity of the tree the patch was read from. It travels
+ * with the scope so a validation round can prove the bytes it showed reviewers
+ * came from the tree it froze, rather than trusting that two independent probes
+ * of the same worktree happened to agree.
  */
 export type ValidationDiffScope =
   | {
       kind: "available";
+      treeHash: string;
       diff: SessionDiff;
       fileCount: number;
       totalAdditions: number;
       totalDeletions: number;
     }
-  | { kind: "empty" }
+  | { kind: "empty"; treeHash: string }
   | { kind: "unavailable"; reason: string };
 
 export interface ValidationDiffScopeDeps {
-  /** Compute the uncommitted working-tree diff (untracked included) vs HEAD. */
-  computeDiff(worktreePath: string): Promise<SessionDiff>;
+  /**
+   * Read the candidate's tree hash and its patch against HEAD from ONE
+   * temporary index. Not `computeDiff`: that result is cached on HEAD plus a
+   * porcelain hash, which cannot see a content-only edit to an already-modified
+   * file, so it can hand back a patch older than the tree a round froze.
+   */
+  computeCandidateSnapshot(
+    worktreePath: string,
+  ): Promise<CandidateSnapshot | null>;
   /** Cheap porcelain probe; throws when git itself is unavailable. */
   hasUncommittedChanges(worktreePath: string): Promise<boolean>;
 }
 
 const defaultDeps: ValidationDiffScopeDeps = {
-  computeDiff: defaultComputeDiff,
+  computeCandidateSnapshot: defaultComputeCandidateSnapshot,
   hasUncommittedChanges: defaultHasUncommittedChanges,
 };
 
@@ -39,13 +55,13 @@ function describeError(error: unknown): string {
 /**
  * Resolve the validator's change-set scope for the given worktree.
  *
- * `computeDiff` collapses both a genuinely clean tree and a swallowed git
- * failure into an empty diff, so an independent `git status --porcelain` probe
- * (via `hasUncommittedChanges`) is consulted first to tell them apart:
+ * An independent `git status --porcelain` probe (via `hasUncommittedChanges`)
+ * tells a genuinely clean tree apart from a degraded read:
  * - probe throws → git unavailable → `unavailable`
- * - probe clean → genuine no-op context → `empty`
+ * - snapshot unreadable → `unavailable`
+ * - probe clean → genuine no-op context → `empty` (still carrying its identity)
  * - probe dirty + non-empty diff → `available`
- * - probe dirty + empty diff → degraded (diff swallowed a failure) → `unavailable`
+ * - probe dirty + empty diff → degraded → `unavailable`
  */
 export async function computeValidationDiffScope(
   worktreePath: string,
@@ -61,13 +77,9 @@ export async function computeValidationDiffScope(
     };
   }
 
-  if (!dirty) {
-    return { kind: "empty" };
-  }
-
-  let diff: SessionDiff;
+  let snapshot: CandidateSnapshot | null;
   try {
-    diff = await deps.computeDiff(worktreePath);
+    snapshot = await deps.computeCandidateSnapshot(worktreePath);
   } catch (error) {
     return {
       kind: "unavailable",
@@ -75,7 +87,18 @@ export async function computeValidationDiffScope(
     };
   }
 
-  if (diff.files.length === 0) {
+  if (snapshot === null) {
+    return {
+      kind: "unavailable",
+      reason: "the candidate tree could not be read",
+    };
+  }
+
+  if (!dirty) {
+    return { kind: "empty", treeHash: snapshot.treeHash };
+  }
+
+  if (snapshot.diff.files.length === 0) {
     return {
       kind: "unavailable",
       reason: "working tree is dirty but no diff could be produced",
@@ -84,11 +107,20 @@ export async function computeValidationDiffScope(
 
   return {
     kind: "available",
-    diff,
-    fileCount: diff.files.length,
-    totalAdditions: diff.totalAdditions,
-    totalDeletions: diff.totalDeletions,
+    treeHash: snapshot.treeHash,
+    diff: snapshot.diff,
+    fileCount: snapshot.diff.files.length,
+    totalAdditions: snapshot.diff.totalAdditions,
+    totalDeletions: snapshot.diff.totalDeletions,
   };
+}
+
+/**
+ * The identity of the tree a scope was read from, or null when it could not be
+ * read at all. A round compares this against its frozen candidate.
+ */
+export function diffScopeTreeHash(scope: ValidationDiffScope): string | null {
+  return scope.kind === "unavailable" ? null : scope.treeHash;
 }
 
 const HEADER = "## Changes Under Review";

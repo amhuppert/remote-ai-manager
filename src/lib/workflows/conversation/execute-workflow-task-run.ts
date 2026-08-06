@@ -18,6 +18,7 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { ContinuationDisposition } from "@/lib/agent-backends/errors";
 import type { AgentSessionRef } from "@/lib/shared/schemas";
 import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
@@ -48,6 +49,13 @@ export interface ExecuteWorkflowTaskRunInput {
   outputFormat?: StructuredOutputFormat;
   tooling?: PortableMcpConfig;
   timeoutMs?: number;
+  /**
+   * Server-derived filesystem-write envelope for this turn (see
+   * {@link FsWritePolicy}). Composed by the caller from the LANE'S ROLE — a
+   * validator lane always supplies one, an implementer lane never does — and
+   * carried unchanged to the runner. Omitting it leaves the turn unrestricted.
+   */
+  fsWritePolicy?: FsWritePolicy;
   /** Override the agent model on this turn. */
   modelId?: string;
   /** Override the agent reasoning effort / verbosity on this turn. */
@@ -205,6 +213,10 @@ async function runOnce(
     hasOutputFormat: input.outputFormat !== undefined,
     hasSystemInstructions: input.systemInstructions !== undefined,
     hasTooling: input.tooling !== undefined,
+    // Whether the turn carries a write envelope at all: the difference between
+    // a restricted lane and an unrestricted one is invisible in every other
+    // field on this event.
+    hasFsWritePolicy: input.fsWritePolicy !== undefined,
     timeoutMs: input.timeoutMs ?? null,
   });
 
@@ -222,6 +234,9 @@ async function runOnce(
       ? { systemInstructions: input.systemInstructions }
       : {}),
     ...(input.tooling !== undefined ? { tooling: input.tooling } : {}),
+    ...(input.fsWritePolicy !== undefined
+      ? { fsWritePolicy: input.fsWritePolicy }
+      : {}),
     ...(input.structuredOutputTextField !== undefined
       ? { structuredOutputTextField: input.structuredOutputTextField }
       : {}),

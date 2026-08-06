@@ -92,4 +92,30 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(logging).toContain(".kiro/steering/logs.md");
     expect(aiOutput).toContain("AI_OUTPUT=1");
   });
+
+  /**
+   * The planning skill ships twice — `.claude/skills` for Claude, `.agents/skills`
+   * for Codex — and both are read by planning agents authoring the SAME plan
+   * schema. Drift means one backend plans against a shape the other's CLI
+   * refuses, which surfaces as a validation failure nobody can reproduce.
+   */
+  it("keeps both graph-workflow-planning skill copies byte-identical", () => {
+    expect(read(".agents/skills/graph-workflow-planning/SKILL.md")).toBe(
+      read(".claude/skills/graph-workflow-planning/SKILL.md"),
+    );
+  });
+
+  it("staffs workflow assignments from the library, not a runtime-only validator", () => {
+    const skill = read(".claude/skills/graph-workflow-planning/SKILL.md");
+
+    // The library is the discovery surface; a reference is never invented.
+    expect(skill).toContain("cctl agent list");
+    expect(skill).toContain("cctl agent get <tier:id>");
+    // The cutover shapes, and the cascade rule that makes them replace whole.
+    expect(skill).toContain('"assignments"');
+    expect(skill).toContain("replace as **whole units**");
+    // The pre-cutover singleton spellings must not survive anywhere.
+    expect(skill).not.toContain('kind": "use"');
+    expect(skill).not.toContain('kind": "disabled"');
+  });
 });

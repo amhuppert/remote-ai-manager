@@ -14,10 +14,8 @@ import {
 } from "@/lib/prompt/first-turn-dispatch";
 import { getDefaultCollaborationManager } from "@/lib/workflows/collaboration/manager";
 import { publishEvent } from "@/lib/events/publication";
-import {
-  conversationCreatedEventSchema,
-  type ConversationCreatedEvent,
-} from "@/lib/conversations/schemas";
+import { buildConversationCreatedEvent } from "@/lib/conversations/created-event";
+import type { ConversationCreatedEvent } from "@/lib/conversations/schemas";
 import {
   spawnProposalSchema,
   spawnResultEventSchema,
@@ -112,8 +110,7 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
         const conversation = session.conversations[0];
         if (conversation) {
           deps.broadcast(
-            conversationCreatedEventSchema.parse({
-              type: "conversation-created",
+            buildConversationCreatedEvent({
               scope: "session",
               projectName,
               sessionName: session.sessionName,

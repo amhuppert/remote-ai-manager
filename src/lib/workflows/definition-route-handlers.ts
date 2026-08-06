@@ -13,6 +13,7 @@ import {
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import { validateWorkflowPlan } from "./plan-validation";
 import { runDefinitionEditRequest } from "./definition-edit-handler";
+import { assignmentReferenceRefusal } from "./assignment-reference-refusal";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -104,6 +105,8 @@ export function createWorkflowDefinitionRouteHandlers(
       const item = await deps.createDefinition(projectPath, validation.draft);
       return NextResponse.json({ item }, { status: 201 });
     } catch (error) {
+      const refusal = assignmentReferenceRefusal(error);
+      if (refusal) return refusal;
       const message =
         error instanceof Error ? error.message : "Failed to create workflow";
       return NextResponse.json({ error: message } satisfies ApiError, {
@@ -169,6 +172,11 @@ export function createWorkflowDefinitionRouteHandlers(
       );
       return NextResponse.json({ item });
     } catch (error) {
+      // Ordered before the 404 fallback on purpose: an unresolvable assignment
+      // reference is a refusal of the SUBMITTED document, not a missing id, and
+      // reporting it as "not found" hid its located issues entirely.
+      const refusal = assignmentReferenceRefusal(error);
+      if (refusal) return refusal;
       const message =
         error instanceof Error ? error.message : "Failed to update workflow";
       return notFound(message);

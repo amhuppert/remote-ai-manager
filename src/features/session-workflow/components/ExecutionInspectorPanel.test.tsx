@@ -11,6 +11,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
+  makeImplementerAssignment,
+  makeValidatorAssignment,
+  seedAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
 import { TESTFAKE_BACKEND_ID } from "@/lib/agent-backends/testing/testfake-backend";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
@@ -26,13 +29,20 @@ function render(ui: React.ReactElement) {
   });
 }
 import { askQuestionItemSchema } from "@/lib/conversations/schemas";
+import AskQuestionPanel from "@/components/AskQuestionPanel";
+import { Fragment } from "react";
 import type {
   GraphWorkflowExecutionEvent,
-  GraphWorkflowValidationEventSessionRef,
-  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowValidationIncidentEvent,
   GraphWorkflowValidationResultEvent,
 } from "@/lib/workflow-graph/event-schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowValidationReviewArtifact,
+  GraphWorkflowValidationRound,
+  GraphWorkflowValidationSessionRef,
+} from "@/lib/workflow-graph/schemas";
+import type { SeededValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 // Radix-backed tabs activate on pointer-down (automatic activation), not on a
 // bare synthetic click event.
 function selectDetailTab(name: RegExp | string) {
@@ -74,7 +84,7 @@ function makeValidationEvent(
 
 function conversationValidationRef(
   ref: string,
-): GraphWorkflowValidationEventSessionRef {
+): GraphWorkflowValidationSessionRef {
   return {
     backend: "claude",
     ref,
@@ -84,9 +94,7 @@ function conversationValidationRef(
   };
 }
 
-function responseValidationRef(
-  ref: string,
-): GraphWorkflowValidationEventSessionRef {
+function responseValidationRef(ref: string): GraphWorkflowValidationSessionRef {
   return {
     backend: "codex",
     ref,
@@ -619,7 +627,7 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
   it("uses workflow conversation ownership when a legacy native ref rotates", () => {
     const legacyConversationRef = (
       ref: string,
-    ): GraphWorkflowValidationEventSessionRef => ({
+    ): GraphWorkflowValidationSessionRef => ({
       backend: "claude",
       ref,
       lane: "context_validator",
@@ -764,6 +772,81 @@ describe("ExecutionInspectorPanel — reopened tasks", () => {
     expect(screen.getByText("Reopened Tasks (2)")).toBeInTheDocument();
     expect(screen.getByText("task-plan-1")).toBeInTheDocument();
     expect(screen.getByText("task-implement-1")).toBeInTheDocument();
+  });
+});
+
+// R12.2: a multi-assignment round adds specialist entries to the aggregate and
+// nulls its single-reviewer refs. The panel's newest-first derivation reads the
+// top-level verdict, which is unchanged — the entries are additive, and no
+// existing rendering may start behaving differently because they are present.
+describe("ExecutionInspectorPanel — multi-assignment cohort rounds", () => {
+  const COHORT_SPECIALISTS = [
+    {
+      assignmentId: "general",
+      profile: {
+        tier: "builtin" as const,
+        id: "general-reviewer",
+        revision: 1,
+      },
+      resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+      pass: true,
+      summary: "general: ok",
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+      usage: null,
+    },
+    {
+      assignmentId: "security",
+      profile: {
+        tier: "project" as const,
+        id: "security-reviewer",
+        revision: 4,
+      },
+      resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+      pass: false,
+      summary: "security: no",
+      issues: [],
+      sessionRef: null,
+      reviewArtifact: null,
+      usage: null,
+    },
+  ];
+
+  it("derives the newest verdict from the aggregate, ignoring the cohort detail", () => {
+    const { execution, events } = makeExecutionWithHistory([
+      makeValidationEvent({
+        pass: true,
+        summary: "An older round that passed",
+        sessionRef: conversationValidationRef("conv-older"),
+      }),
+      makeValidationEvent({
+        pass: false,
+        summary: "The cohort rejected the work",
+        reopenTaskIds: ["task-plan-1"],
+        roundSeq: 2,
+        specialists: COHORT_SPECIALISTS,
+        // No single reviewer owns a multi-specialist round.
+        sessionRef: null,
+        reviewArtifact: null,
+      }),
+    ]);
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    // Newest first: the cohort round is the verdict on top, and its aggregate
+    // reopen list renders exactly as a single reviewer's would.
+    expect(
+      screen.getByText("The cohort rejected the work"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Reopened Tasks (1)")).toBeInTheDocument();
   });
 });
 
@@ -1408,30 +1491,34 @@ describe("ExecutionInspectorPanel — Launch Inputs audit surface", () => {
   });
 });
 
-describe("ExecutionInspectorPanel — parked user-input question", () => {
+describe("ExecutionInspectorPanel — parked user-input questions", () => {
   const QUESTION_TEXT = "Which database should we use?";
-  const parkedPanel = () => ({
-    questions: [
-      askQuestionItemSchema.parse({
-        id: "q1",
-        question: QUESTION_TEXT,
-        options: [{ label: "Postgres" }, { label: "SQLite" }],
-      }),
-    ],
-    questionId: "qb-1",
-    currentIndex: 0,
-    onNavigate: vi.fn(),
-    onSubmit: vi.fn(),
-  });
+  const SECOND_QUESTION_TEXT = "Is the legacy token path in scope?";
+  const parkedPanel = (questionText: string) => (
+    <AskQuestionPanel
+      questions={[
+        askQuestionItemSchema.parse({
+          id: "q1",
+          question: questionText,
+          options: [{ label: "Postgres" }, { label: "SQLite" }],
+        }),
+      ]}
+      questionId="qb-1"
+      currentIndex={0}
+      onNavigate={vi.fn()}
+      onSubmit={vi.fn()}
+      compact
+    />
+  );
 
-  it("mounts the question panel for the selected parked context when userInputPanel is provided", () => {
+  it("mounts the question panel for the selected parked context when userInputPanels is provided", () => {
     render(
       <ExecutionInspectorPanel
         execution={createWorkflowExecution({ status: "running" })}
         events={[]}
         selectedContextId="context-plan"
         {...baseHandlers}
-        userInputPanel={parkedPanel()}
+        userInputPanels={parkedPanel(QUESTION_TEXT)}
       />,
     );
 
@@ -1439,14 +1526,34 @@ describe("ExecutionInspectorPanel — parked user-input question", () => {
     expect(screen.getByText("Postgres")).toBeInTheDocument();
   });
 
-  it("renders no question panel when userInputPanel is null", () => {
+  it("mounts one panel per waiting lane", () => {
     render(
       <ExecutionInspectorPanel
         execution={createWorkflowExecution({ status: "running" })}
         events={[]}
         selectedContextId="context-plan"
         {...baseHandlers}
-        userInputPanel={null}
+        userInputPanels={[
+          <Fragment key="implementer">{parkedPanel(QUESTION_TEXT)}</Fragment>,
+          <Fragment key="security">
+            {parkedPanel(SECOND_QUESTION_TEXT)}
+          </Fragment>,
+        ]}
+      />,
+    );
+
+    expect(screen.getByText(QUESTION_TEXT)).toBeInTheDocument();
+    expect(screen.getByText(SECOND_QUESTION_TEXT)).toBeInTheDocument();
+  });
+
+  it("renders no question panel when userInputPanels is null", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+        userInputPanels={null}
       />,
     );
 
@@ -1460,7 +1567,7 @@ describe("ExecutionInspectorPanel — parked user-input question", () => {
         events={[]}
         selectedContextId={null}
         {...baseHandlers}
-        userInputPanel={parkedPanel()}
+        userInputPanels={parkedPanel(QUESTION_TEXT)}
       />,
     );
 
@@ -2174,5 +2281,708 @@ describe("ExecutionInspectorPanel — upstream inputs", () => {
     expect(rows.map((row) => row.dataset.contextId)).toEqual(["context-plan"]);
     expect(rows[0]!.dataset.declared).toBe("false");
     expect(within(rows[0]!).getByTestId("upstream-input-prose")).toBeTruthy();
+  });
+});
+
+// R12.3: the execution inspector's per-assignment display. A cohort round is
+// the only surface on which "who reviewed this, on which bytes, and did the
+// tree move" is answerable, so every assertion here reads the frozen round
+// record and the aggregate result — never the live library or a colour.
+describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", () => {
+  const GENERAL_HASH = `sha256:${"b".repeat(64)}`;
+  const SECURITY_HASH = `sha256:${"c".repeat(64)}`;
+
+  function cohortAssignments(): SeededValidatorAssignment[] {
+    return [
+      seedAssignment(
+        makeValidatorAssignment({
+          id: "general",
+          profile: { tier: "builtin", id: "general-reviewer" },
+        }),
+        { name: "General Reviewer", resolvedInstructionHash: GENERAL_HASH },
+      ),
+      seedAssignment(
+        makeValidatorAssignment({
+          id: "security",
+          profile: { tier: "project", id: "security-reviewer" },
+          strategy: "task",
+          agent: {
+            backend: "codex",
+            model: "gpt-5.6-sol",
+            reasoningEffort: "high",
+          },
+        }),
+        {
+          name: "Security Reviewer",
+          revision: 4,
+          resolvedInstructionHash: SECURITY_HASH,
+        },
+      ),
+    ];
+  }
+
+  function makeRound(
+    overrides: Partial<GraphWorkflowValidationRound> = {},
+  ): GraphWorkflowValidationRound {
+    return {
+      seq: 2,
+      candidate: {
+        headSha: "head-sha-1",
+        candidateTreeHash: "tree-hash-1",
+        taskStateHash: "task-hash-1",
+      },
+      roster: [
+        {
+          assignmentId: "general",
+          profileRef: { tier: "builtin", id: "general-reviewer" },
+          revision: 1,
+          resolvedInstructionHash: GENERAL_HASH,
+          strategy: "conversation",
+        },
+        {
+          assignmentId: "security",
+          profileRef: { tier: "project", id: "security-reviewer" },
+          revision: 4,
+          resolvedInstructionHash: SECURITY_HASH,
+          strategy: "task",
+        },
+      ],
+      specialists: {
+        general: {
+          state: "verdict_pass",
+          attempts: 1,
+          summary: "No blocking findings.",
+          issues: [],
+          questionToken: null,
+          sessionRef: {
+            backend: "claude",
+            ref: "conv-general",
+            lane: "context_validator",
+            assignmentId: "general",
+            refKind: "conversation",
+            workflowConversationId: "conv-general",
+          },
+          reviewArtifact: null,
+          lastInfraFailure: null,
+        },
+        security: {
+          state: "infra_failed",
+          attempts: 2,
+          summary: null,
+          issues: [],
+          questionToken: null,
+          sessionRef: null,
+          reviewArtifact: null,
+          lastInfraFailure: {
+            reason: "unparseable",
+            message: "Validator returned no parseable verdict",
+            engine: "codex",
+          },
+        },
+      },
+      phase: "specialists",
+      outcome: null,
+      startedAt: "2026-03-27T10:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  function cohortExecution(
+    round: GraphWorkflowValidationRound | null,
+  ): GraphWorkflowExecution {
+    const base = createResolvedWorkflowDefinition();
+    const execution = createWorkflowExecution({
+      status: "running",
+      workingDefinition: {
+        ...base,
+        executionContexts: base.executionContexts.map((ctx) =>
+          ctx.id === "context-plan"
+            ? {
+                ...ctx,
+                implementer: seedAssignment(
+                  makeImplementerAssignment({
+                    backend: "claude",
+                    model: "opus",
+                    reasoningEffort: "high",
+                  }),
+                  { name: "General Implementer", revision: 3 },
+                ),
+                contextValidator: {
+                  enabled: true,
+                  assignments: cohortAssignments(),
+                },
+              }
+            : ctx,
+        ),
+      },
+    });
+    const planState = execution.contextStates["context-plan"];
+    if (!planState) throw new Error("fixture is missing context-plan state");
+    return {
+      ...execution,
+      contextStates: {
+        ...execution.contextStates,
+        "context-plan": {
+          ...planState,
+          validationRound: round,
+        },
+      },
+    };
+  }
+
+  function incidentEvent(
+    overrides: Partial<GraphWorkflowValidationIncidentEvent> = {},
+  ): GraphWorkflowExecutionEvent {
+    return {
+      occurredAt: "2026-03-27T10:05:00.000Z",
+      preReset: false,
+      event: {
+        type: "graph-workflow-validation-incident",
+        projectName: "project",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        contextId: "context-plan",
+        incident: "infra_failure",
+        roundSeq: 2,
+        stage: "specialist_result",
+        assignmentId: "security",
+        attempts: 2,
+        driftedComponents: "",
+        message: "Validator returned no parseable verdict",
+        ...overrides,
+      },
+    };
+  }
+
+  it("shows the implementer assignment's profile identity and revision on the context", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(makeRound())}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByTestId("setup-implementer-profile")).toHaveTextContent(
+      "builtin:general-implementer@3",
+    );
+  });
+
+  it("lists each roster seat with its frozen profile identity, revision and lane status", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(makeRound())}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+
+    const rows = screen.getAllByTestId("cohort-member");
+    expect(rows.map((row) => row.dataset.assignmentId)).toEqual([
+      "general",
+      "security",
+    ]);
+
+    expect(
+      within(rows[0]!).getByTestId("cohort-member-profile"),
+    ).toHaveTextContent("builtin:general-reviewer@1");
+    expect(
+      within(rows[0]!).getByTestId("cohort-member-state"),
+    ).toHaveTextContent("Passed");
+
+    expect(
+      within(rows[1]!).getByTestId("cohort-member-profile"),
+    ).toHaveTextContent("project:security-reviewer@4");
+    expect(
+      within(rows[1]!).getByTestId("cohort-member-state"),
+    ).toHaveTextContent("Infrastructure failure");
+  });
+
+  it("separates an infrastructure lane outcome from a semantic verdict in the round record", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(makeRound())}
+        events={[incidentEvent()]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+
+    const rows = screen.getAllByTestId("cohort-member");
+    expect(rows[0]!.dataset.outcomeKind).toBe("semantic");
+    expect(rows[1]!.dataset.outcomeKind).toBe("infrastructure");
+    // Not a verdict: the reason is spelled out, so the distinction survives
+    // without reading the tone.
+    expect(rows[1]!).toHaveTextContent(
+      "Validator returned no parseable verdict",
+    );
+    expect(rows[1]!).toHaveTextContent("2 attempts");
+
+    const incident = screen.getByTestId("cohort-incident");
+    expect(incident.dataset.incident).toBe("infra_failure");
+    expect(incident).toHaveTextContent("Infrastructure");
+  });
+
+  it("labels the round's deterministic aggregate outcome", () => {
+    const { rerender } = render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(
+          makeRound({ phase: "concluded", outcome: "failed" }),
+        )}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+    const aggregate = screen.getByTestId("cohort-round-aggregate");
+    expect(aggregate).toHaveTextContent("Cohort rejected");
+    expect(aggregate.dataset.outcomeKind).toBe("semantic");
+
+    rerender(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(
+          makeRound({ phase: "concluded", outcome: "candidate_mismatch" }),
+        )}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    const infra = screen.getByTestId("cohort-round-aggregate");
+    expect(infra).toHaveTextContent("Candidate changed under the cohort");
+    expect(infra.dataset.outcomeKind).toBe("infrastructure");
+  });
+
+  it("omits the round section entirely for a context that has never had one", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(null)}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+    expect(screen.queryByTestId("cohort-round")).not.toBeInTheDocument();
+  });
+
+  it("opens one cohort member's lane conversation with an assignment-labeled header", () => {
+    const onViewConversation = vi.fn();
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(makeRound())}
+        events={[]}
+        selectedContextId="context-plan"
+        onViewConversation={onViewConversation}
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+    const rows = screen.getAllByTestId("cohort-member");
+    fireEvent.click(
+      within(rows[0]!).getByRole("button", { name: /view transcript/i }),
+    );
+
+    expect(onViewConversation).toHaveBeenCalledWith(
+      "conv-general",
+      "context_validator",
+      "context-plan",
+      "Validator · general",
+    );
+  });
+
+  it("groups per-assignment verdicts and artifacts under one aggregate round result", async () => {
+    const { execution } = makeExecutionWithHistory([]);
+    void execution;
+    const events: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-03-27T10:10:00.000Z",
+        preReset: false,
+        event: makeValidationEvent({
+          pass: false,
+          summary: "The cohort rejected the work",
+          reopenTaskIds: ["task-plan-1"],
+          roundSeq: 2,
+          sessionRef: null,
+          reviewArtifact: null,
+          specialists: [
+            {
+              assignmentId: "general",
+              profile: {
+                tier: "builtin",
+                id: "general-reviewer",
+                revision: 1,
+              },
+              resolvedInstructionHash: GENERAL_HASH,
+              pass: true,
+              summary: "Implementation matches the criteria.",
+              issues: [],
+              sessionRef: {
+                backend: "claude",
+                ref: "conv-general",
+                lane: "context_validator",
+                assignmentId: "general",
+                refKind: "conversation",
+                workflowConversationId: "conv-general",
+              },
+              reviewArtifact: null,
+              usage: null,
+            },
+            {
+              assignmentId: "security",
+              profile: {
+                tier: "project",
+                id: "security-reviewer",
+                revision: 4,
+              },
+              resolvedInstructionHash: SECURITY_HASH,
+              pass: false,
+              summary: "Secret is logged in plaintext.",
+              issues: [
+                {
+                  taskId: "task-plan-1",
+                  title: "Plaintext secret",
+                  description: "`token` is written to the log line.",
+                },
+              ],
+              sessionRef: responseValidationRef("thread-security"),
+              reviewArtifact: responseReviewArtifact(
+                "thread-security",
+                "Reviewed the auth path.",
+              ),
+              usage: null,
+            },
+          ],
+        }),
+      },
+    ];
+
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(makeRound())}
+        events={events}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+
+    // ONE aggregate card, carrying the deterministic round verdict.
+    const aggregates = screen.getAllByTestId("validation-aggregate");
+    expect(aggregates).toHaveLength(1);
+    const aggregate = aggregates[0]!;
+    expect(aggregate).toHaveTextContent("The cohort rejected the work");
+    expect(aggregate).toHaveTextContent("Round 2");
+
+    // …with one card per assignment nested inside it.
+    const specialists = within(aggregate).getAllByTestId(
+      "validation-specialist",
+    );
+    expect(specialists.map((card) => card.dataset.assignmentId)).toEqual([
+      "general",
+      "security",
+    ]);
+    expect(
+      within(specialists[0]!).getByTestId("validation-specialist-profile"),
+    ).toHaveTextContent("builtin:general-reviewer@1");
+    expect(specialists[0]!.dataset.verdict).toBe("pass");
+    expect(specialists[1]!.dataset.verdict).toBe("fail");
+    expect(specialists[1]!).toHaveTextContent("Secret is logged in plaintext.");
+    expect(specialists[1]!).toHaveTextContent("Issues (1)");
+    // The failing member's own artifact renders under its own card. The
+    // canonical Markdown adapter is loaded lazily, so the card is re-queried on
+    // each poll rather than held across the mount.
+    await waitFor(
+      () => {
+        const securityCard = screen.getAllByTestId("validation-specialist")[1];
+        expect(securityCard).toBeDefined();
+        expect(
+          within(securityCard!).getByText("Reviewed the auth path.", {
+            exact: false,
+          }),
+        ).toBeTruthy();
+      },
+      { timeout: 15000 },
+    );
+  });
+
+  it("routes each specialist's transcript link to that assignment's lane", () => {
+    const onViewConversation = vi.fn();
+    const events: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-03-27T10:10:00.000Z",
+        preReset: false,
+        event: makeValidationEvent({
+          pass: false,
+          summary: "Cohort verdict",
+          roundSeq: 2,
+          sessionRef: null,
+          reviewArtifact: null,
+          specialists: [
+            {
+              assignmentId: "security",
+              profile: {
+                tier: "project",
+                id: "security-reviewer",
+                revision: 4,
+              },
+              resolvedInstructionHash: SECURITY_HASH,
+              pass: false,
+              summary: "No.",
+              issues: [],
+              sessionRef: {
+                backend: "claude",
+                ref: "conv-security",
+                lane: "context_validator",
+                assignmentId: "security",
+                refKind: "conversation",
+                workflowConversationId: "conv-security",
+              },
+              reviewArtifact: null,
+              usage: null,
+            },
+          ],
+        }),
+      },
+    ];
+
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(null)}
+        events={events}
+        selectedContextId="context-plan"
+        onViewConversation={onViewConversation}
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+    const specialist = screen.getByTestId("validation-specialist");
+    fireEvent.click(
+      within(specialist).getByRole("button", { name: /view transcript/i }),
+    );
+
+    expect(onViewConversation).toHaveBeenCalledWith(
+      "conv-security",
+      "context_validator",
+      "context-plan",
+      "Validator · security",
+    );
+  });
+
+  // The production shape a rejecting cohort actually publishes: `concludeCohort`
+  // concatenates every failing lane's findings onto the aggregate AND
+  // `buildSpecialistEntries` carries each lane's own copy, both stamped with the
+  // raising assignment. A card that renders both lists shows every finding
+  // twice, and the aggregate copy carries no visible attribution.
+  function cohortRejectionEvent(
+    issueOverrides: {
+      aggregateExtras?: GraphWorkflowValidationResultEvent["issues"];
+    } = {},
+  ): GraphWorkflowExecutionEvent {
+    const securityFindings = [
+      {
+        taskId: "task-plan-1",
+        title: "Plaintext secret",
+        description: "`token` is written to the log line.",
+        assignmentId: "security",
+      },
+      {
+        taskId: "task-plan-1",
+        title: "Unbounded retry",
+        description: "The auth retry loop has no ceiling.",
+        assignmentId: "security",
+      },
+    ];
+    const docsFindings = [
+      {
+        taskId: "task-plan-1",
+        title: "Undocumented route",
+        description: "`POST /login` is missing from the route table.",
+        assignmentId: "docs",
+      },
+    ];
+
+    return {
+      occurredAt: "2026-03-27T10:10:00.000Z",
+      preReset: false,
+      event: makeValidationEvent({
+        pass: false,
+        summary: "The cohort rejected the work",
+        reopenTaskIds: ["task-plan-1"],
+        roundSeq: 2,
+        sessionRef: null,
+        reviewArtifact: null,
+        // Contiguous, in cohort order — exactly what concludeCohort builds.
+        issues: [
+          ...securityFindings,
+          ...docsFindings,
+          ...(issueOverrides.aggregateExtras ?? []),
+        ],
+        specialists: [
+          {
+            assignmentId: "security",
+            profile: { tier: "project", id: "security-reviewer", revision: 4 },
+            resolvedInstructionHash: SECURITY_HASH,
+            pass: false,
+            summary: "Secret is logged in plaintext.",
+            issues: securityFindings,
+            sessionRef: {
+              backend: "claude",
+              ref: "conv-security",
+              lane: "context_validator",
+              assignmentId: "security",
+              refKind: "conversation",
+              workflowConversationId: "conv-security",
+            },
+            reviewArtifact: null,
+            usage: null,
+          },
+          {
+            assignmentId: "docs",
+            profile: { tier: "global", id: "docs-reviewer", revision: 2 },
+            resolvedInstructionHash: GENERAL_HASH,
+            pass: false,
+            summary: "The route docs are stale.",
+            issues: docsFindings,
+            sessionRef: null,
+            reviewArtifact: null,
+            usage: null,
+          },
+        ],
+      }),
+    };
+  }
+
+  it("renders each cohort finding once, inside the assignment that raised it", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(null)}
+        events={[cohortRejectionEvent()]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+
+    // No duplicate copies: every finding appears exactly once on the card.
+    for (const title of [
+      "Plaintext secret",
+      "Unbounded retry",
+      "Undocumented route",
+    ]) {
+      expect(screen.getAllByText(title)).toHaveLength(1);
+    }
+
+    // …and each one sits inside the assignment group that raised it.
+    const cards = screen.getAllByTestId("validation-specialist");
+    const security = cards.find(
+      (card) => card.dataset.assignmentId === "security",
+    );
+    const docs = cards.find((card) => card.dataset.assignmentId === "docs");
+    expect(within(security!).getByText("Plaintext secret")).toBeInTheDocument();
+    expect(within(security!).getByText("Unbounded retry")).toBeInTheDocument();
+    expect(within(docs!).getByText("Undocumented route")).toBeInTheDocument();
+
+    // The unattributed aggregate list is gone: every finding was attributed.
+    expect(
+      screen.queryByTestId("validation-aggregate-issues"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a finding no listed assignment raised visible on the aggregate", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(null)}
+        events={[
+          cohortRejectionEvent({
+            aggregateExtras: [
+              {
+                taskId: "task-plan-1",
+                title: "Round-level objection",
+                description: "Raised by nobody the round can name.",
+              },
+              {
+                taskId: "task-plan-1",
+                title: "Orphaned finding",
+                description: "Its seat produced no publishable entry.",
+                assignmentId: "dropped-seat",
+              },
+            ],
+          }),
+        ]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+
+    // Suppression is by attribution, not by "a cohort was present": a finding
+    // that names no listed assignment would otherwise vanish entirely.
+    const unattributed = screen.getByTestId("validation-aggregate-issues");
+    expect(unattributed).toHaveTextContent("Unattributed Issues (2)");
+    expect(
+      within(unattributed).getByText("Round-level objection"),
+    ).toBeInTheDocument();
+    expect(
+      within(unattributed).queryByText("Plaintext secret"),
+    ).not.toBeInTheDocument();
+
+    // A finding whose raiser produced no entry has no group to sit in, so it
+    // carries its attribution inline rather than reading as anonymous.
+    const orphan = within(unattributed)
+      .getByText("Orphaned finding")
+      .closest("li");
+    expect(orphan).not.toBeNull();
+    expect(orphan!).toHaveTextContent("dropped-seat");
+  });
+
+  it("leaves a single-reviewer result's issue list exactly as it was", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={cohortExecution(null)}
+        events={[
+          {
+            occurredAt: "2026-03-27T10:10:00.000Z",
+            preReset: false,
+            event: makeValidationEvent({
+              pass: false,
+              summary: "One reviewer rejected the work",
+              issues: [
+                {
+                  taskId: "task-plan-1",
+                  title: "Missing coverage",
+                  description: "No test for the new branch.",
+                },
+              ],
+              sessionRef: conversationValidationRef("conv-solo"),
+            }),
+          },
+        ]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    selectDetailTab("History");
+
+    const issues = screen.getByTestId("validation-aggregate-issues");
+    expect(issues).toHaveTextContent("Issues (1)");
+    expect(issues).not.toHaveTextContent("Unattributed");
+    expect(within(issues).getByText("Missing coverage")).toBeInTheDocument();
   });
 });

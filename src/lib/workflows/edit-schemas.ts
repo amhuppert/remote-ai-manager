@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { charterInvariantSchema, sourceOfTruthSchema } from "./charter-schemas";
 import {
-  contextValidatorOverrideSchema,
-  graphWorkflowAgentConfigSchema,
-  graphWorkflowAgentValidatorConfigSchema,
+  agentAssignmentSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowHumanApprovalGateConfigSchema,
@@ -11,6 +9,7 @@ import {
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
+  validatorCohortSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import {
   resolvedCollaborationConfigSchema,
@@ -51,8 +50,8 @@ export type DefinitionEditTaskPosition = z.infer<
 // Per-context config override blocks on `add-context` — additive, so plain
 // optional (the same shape a plan.json context carries).
 const definitionEditAddContextConfigShape = {
-  implementer: graphWorkflowAgentConfigSchema.optional(),
-  contextValidator: contextValidatorOverrideSchema.optional(),
+  implementer: agentAssignmentSchema.optional(),
+  contextValidator: validatorCohortSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
@@ -66,8 +65,8 @@ const definitionEditAddContextConfigShape = {
 // Per-context config override blocks on `update-context` — `null` CLEARS the
 // override (restores cascade inheritance); an absent field is untouched.
 const definitionEditUpdateContextConfigShape = {
-  implementer: graphWorkflowAgentConfigSchema.nullable().optional(),
-  contextValidator: contextValidatorOverrideSchema.nullable().optional(),
+  implementer: agentAssignmentSchema.nullable().optional(),
+  contextValidator: validatorCohortSchema.nullable().optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema
     .nullable()
     .optional(),
@@ -87,13 +86,11 @@ const definitionEditUpdateContextConfigShape = {
 };
 
 // Workflow-level cascade blocks on `update-workflow-config` — `null` CLEARS the
-// override. The workflow-level `contextValidator` is the concrete validator
-// config, not the per-context use/disabled override.
+// override. Every tier now carries the same cohort shape, so the workflow and
+// context blocks differ only in which tier they land on.
 const definitionEditWorkflowConfigShape = {
-  implementer: graphWorkflowAgentConfigSchema.nullable().optional(),
-  contextValidator: graphWorkflowAgentValidatorConfigSchema
-    .nullable()
-    .optional(),
+  implementer: agentAssignmentSchema.nullable().optional(),
+  contextValidator: validatorCohortSchema.nullable().optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema
     .nullable()
     .optional(),
@@ -275,14 +272,12 @@ export type WorkflowDefinitionEditRequest = z.infer<
 //
 // Unlike the doc-05 blocks (which edit AUTHORED overrides where `null` clears an
 // override to restore cascade inheritance), live edits set CONCRETE RESOLVED
-// values — there is no cascade at runtime (doc 06, D1). Only `contextValidator`
-// is nullable (null → disable the validator, matching the resolved context's
-// nullable field); every other block is plain optional (present = set the value).
+// values — there is no cascade at runtime (doc 06, D1). Every block is plain
+// optional (present = set the value); turning validation off is a cohort with
+// `enabled: false`, which keeps the dormant assignments a null could not.
 const liveEditContextConfigShape = {
-  implementer: graphWorkflowAgentConfigSchema.optional(),
-  contextValidator: graphWorkflowAgentValidatorConfigSchema
-    .nullable()
-    .optional(),
+  implementer: agentAssignmentSchema.optional(),
+  contextValidator: validatorCohortSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),

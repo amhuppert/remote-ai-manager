@@ -1,6 +1,18 @@
 import os from "node:os";
-import { describe, expect, it } from "vitest";
-import { createWorkflowDefinitionRouteHandlers } from "@/lib/workflows/definition-route-handlers";
+import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
+import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import {
+  createAssignmentReferenceChecker,
+  type AssignmentReferenceChecker,
+} from "@/lib/workflow-graph/assignment-references";
+import {
+  createWorkflowDefinitionRouteHandlers,
+  type WorkflowDefinitionRouteDeps,
+} from "@/lib/workflows/definition-route-handlers";
+import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createGraphWorkflowValidateHandlers } from "@/lib/workflow-graph/validate-route-handlers";
 import { createTemplateLibraryRouteHandlers } from "@/lib/workflow-graph/template-library-route-handlers";
 import {
@@ -133,6 +145,7 @@ function makeExecutionDeps(
     resumeExecution: notUsed,
     abortExecution: notUsed,
     resetExecutionContext: notUsed,
+    resetExecutionContextAssignment: notUsed,
     archiveExecution: notUsed,
     kickOffExecutionLoop: async () => {},
     getActiveExecution: async () => null,
@@ -144,11 +157,25 @@ function makeExecutionDeps(
   };
 }
 
+interface RouteHostOverrides {
+  /** Thrown by the start route, to drive a real start-failure response. */
+  startError?: Error;
+  /** The async assignment-reference checker the validate route runs. */
+  assignmentReferences?: AssignmentReferenceChecker;
+  /**
+   * Persistence deps for the definition routes. The default fakes echo a
+   * summary; the acceptance-path tests replace them with the REAL storage
+   * service so accept-time validation actually runs.
+   */
+  definitions?: Partial<WorkflowDefinitionRouteDeps>;
+}
+
 function routeHost(
   execution: GraphWorkflowExecution | null,
   files: Record<string, string> = {},
-  startError?: Error,
+  overrides: RouteHostOverrides = {},
 ): CliHost {
+  const { startError, assignmentReferences } = overrides;
   const definitionHandlers = createWorkflowDefinitionRouteHandlers({
     resolveProjectPath: async () => PROJECT_PATH,
     readConfig: notUsed,
@@ -165,6 +192,7 @@ function routeHost(
     updateDefinition: async (_projectPath, workflowId) =>
       summary({ id: workflowId, name: "Auth Setup", revision: 4 }),
     deleteDefinition: async (_projectPath, workflowId) => workflowId === "wf-1",
+    ...overrides.definitions,
   });
   const validateHandlers = createGraphWorkflowValidateHandlers({
     auth: {
@@ -177,6 +205,7 @@ function routeHost(
     },
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: async () => ({ sessionName: "sess" }),
+    ...(assignmentReferences ? { assignmentReferences } : {}),
   });
   const templateHandlers = createTemplateLibraryRouteHandlers({
     resolveProjectPath: async () => PROJECT_PATH,
@@ -436,11 +465,13 @@ describe("cctl workflow against the real workflow route handlers", () => {
       routeHost(
         null,
         {},
-        new WorkflowDefinitionApprovalRequiredError(
-          "execution-review",
-          "definition-review",
-          1,
-        ),
+        {
+          startError: new WorkflowDefinitionApprovalRequiredError(
+            "execution-review",
+            "definition-review",
+            1,
+          ),
+        },
       ),
     );
 
@@ -668,6 +699,581 @@ describe("cctl workflow author flow against the real create-path validation", ()
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("revision: 4");
     expect(result.stdout).not.toContain("hint:");
+  });
+});
+
+/**
+ * R13.1: assignment errors arrive from TWO validation layers — shape/grammar
+ * from the synchronous schema pass, reference existence and the tier-scope rule
+ * from the async project-scoped checker — and an author must not be able to
+ * tell which layer refused from how the refusal reads. Both layers run for real
+ * here (the real validate handler over a real library service on a temp profile
+ * dir), so these assert the rendered CLI contract end to end rather than the
+ * CLI's ability to echo a canned issue list.
+ */
+describe("cctl workflow validate assignment error contract (R13.1)", () => {
+  const PLAN = "/tmp/plan.json";
+  /** `  <json path>: <message>` — the one located-issue line both layers emit. */
+  const LOCATED_LINE = /^ {2}definition\.[\w.[\]]+: \S.*$/;
+
+  let profileDir: string;
+  let checker: AssignmentReferenceChecker;
+
+  beforeEach(async () => {
+    profileDir = await mkdtemp(path.join(os.tmpdir(), "cc-wf-cli-profiles-"));
+    checker = createAssignmentReferenceChecker({
+      library: createAgentProfileLibraryService({
+        storage: createAgentProfileStorage({
+          resolveConfigDir: () => profileDir,
+        }),
+      }),
+    });
+  });
+
+  afterEach(async () => {
+    await rm(profileDir, { recursive: true, force: true });
+  });
+
+  /** The fixture graph with `context-implement` staffed by one cohort. */
+  function planWithCohort(assignments: unknown[]): string {
+    const definition = createWorkflowDefinition();
+    return JSON.stringify({
+      name: "Auth Setup",
+      description: "OAuth2 workflow",
+      definition: {
+        ...definition,
+        executionContexts: definition.executionContexts.map((context) =>
+          context.id === "context-implement"
+            ? { ...context, contextValidator: { enabled: true, assignments } }
+            : context,
+        ),
+      },
+      layout: createWorkflowLayout(),
+    });
+  }
+
+  function reviewer(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "security",
+      profile: { tier: "builtin", id: "general-reviewer" },
+      strategy: "conversation",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      continuity: { enabled: true },
+      ...overrides,
+    };
+  }
+
+  /** The `  path: message` detail lines the CLI rendered, in order. */
+  function locatedLines(stderr: string): string[] {
+    return stderr.split("\n").filter((line) => LOCATED_LINE.test(line));
+  }
+
+  async function validate(plan: string, ...extraArgs: string[]) {
+    return runCli(
+      ["workflow", "validate", "--file", PLAN, ...extraArgs],
+      env,
+      routeHost(null, { [PLAN]: plan }, { assignmentReferences: checker }),
+    );
+  }
+
+  it("names the qualified ref and the exact use site for a dangling reference", async () => {
+    const result = await validate(
+      planWithCohort([
+        reviewer({ profile: { tier: "global", id: "missing-reviewer" } }),
+      ]),
+    );
+
+    expect(result.exitCode).toBe(2);
+    const lines = locatedLines(result.stderr);
+    expect(lines).toHaveLength(1);
+    // The path locates the offending field; the message carries the qualified
+    // tier:id spelling AND the use site, so a fix needs no second lookup.
+    expect(lines[0]).toContain(
+      "definition.executionContexts.1.contextValidator.assignments.0.profile:",
+    );
+    expect(lines[0]).toContain("global:missing-reviewer");
+    expect(lines[0]).toContain('validator assignment "security"');
+    expect(lines[0]).toContain('context "context-implement"');
+  });
+
+  it("locates a malformed assignment in the same line shape, also exit 2", async () => {
+    const result = await validate(
+      planWithCohort([reviewer(), reviewer({ focus: "hot paths" })]),
+    );
+
+    expect(result.exitCode).toBe(2);
+    const lines = locatedLines(result.stderr);
+    // The duplicate id is a SHAPE error, found by the other layer — and it
+    // carries the same payload: qualified ref, context, role, assignment id.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(
+      "definition.executionContexts.1.contextValidator.assignments.1.id:",
+    );
+    expect(lines[0]).toContain("builtin:general-reviewer");
+    expect(lines[0]).toContain('context "context-implement"');
+    expect(lines[0]).toContain('validator assignment "security"');
+  });
+
+  it("locates a malformed assignment id on the offending assignment", async () => {
+    const result = await validate(
+      planWithCohort([reviewer({ id: "Security Reviewer" })]),
+    );
+
+    expect(result.exitCode).toBe(2);
+    const lines = locatedLines(result.stderr);
+    expect(lines[0]).toContain(
+      "definition.executionContexts.1.contextValidator.assignments.0.id:",
+    );
+    expect(lines[0]).toContain("builtin:general-reviewer");
+    expect(lines[0]).toContain('context "context-implement"');
+  });
+
+  /**
+   * The anti-drift guard for the whole contract: the SAME assignment refused by
+   * each layer must be named with a byte-identical use-site phrase. Both runs
+   * go through the real CLI, so a future edit that reworded either layer's
+   * message independently fails here rather than in a planning agent's face.
+   */
+  it("names the use site identically whichever layer refused", async () => {
+    const shape = await validate(
+      planWithCohort([reviewer(), reviewer({ focus: "hot paths" })]),
+    );
+    const reference = await validate(
+      planWithCohort([
+        reviewer({ profile: { tier: "global", id: "missing-reviewer" } }),
+      ]),
+    );
+
+    const useSite = 'the context "context-implement" validator assignment';
+    expect(locatedLines(shape.stderr)[0]).toContain(`${useSite} "security"`);
+    expect(locatedLines(reference.stderr)[0]).toContain(
+      `${useSite} "security"`,
+    );
+  });
+
+  it("renders the scope refusal for a project-tier ref in a global document", async () => {
+    const result = await validate(
+      planWithCohort([
+        reviewer({ profile: { tier: "project", id: "house-reviewer" } }),
+      ]),
+      "--tier",
+      "global",
+    );
+
+    expect(result.exitCode).toBe(2);
+    const lines = locatedLines(result.stderr);
+    expect(lines[0]).toContain(
+      "definition.executionContexts.1.contextValidator.assignments.0.profile:",
+    );
+    expect(lines[0]).toContain("project:house-reviewer");
+    expect(lines[0]).toContain('validator assignment "security"');
+  });
+
+  it("locates a dangling implementer reference at the implementer use site", async () => {
+    const definition = createWorkflowDefinition();
+    const plan = JSON.stringify({
+      name: "Auth Setup",
+      definition: {
+        ...definition,
+        executionContexts: definition.executionContexts.map((context) =>
+          context.id === "context-plan"
+            ? {
+                ...context,
+                implementer: {
+                  ...context.implementer,
+                  profile: { tier: "global", id: "gone-implementer" },
+                },
+              }
+            : context,
+        ),
+      },
+      layout: createWorkflowLayout(),
+    });
+
+    const result = await validate(plan);
+
+    expect(result.exitCode).toBe(2);
+    const lines = locatedLines(result.stderr);
+    expect(lines[0]).toContain(
+      "definition.executionContexts.0.implementer.profile:",
+    );
+    expect(lines[0]).toContain("global:gone-implementer");
+    expect(lines[0]).toContain('implementer assignment "implementer"');
+  });
+
+  it("accepts a cohort whose references all resolve", async () => {
+    const result = await validate(
+      planWithCohort([
+        reviewer({ id: "security", focus: "auth boundaries" }),
+        reviewer({ id: "performance", focus: "hot paths" }),
+      ]),
+    );
+
+    expect(result.exitCode).toBe(0);
+  });
+
+  /**
+   * The located-issue contract is ONE LINE PER ISSUE, and the use site quotes
+   * values straight out of an untrusted file. A raw newline in an authored id
+   * would split one issue across two lines, and the second would be
+   * indistinguishable from a genuine located issue — a plan file could forge
+   * diagnostics about paths it never touched. Malformed ids are exactly the
+   * case this enrichment exists for, so the escaping is load-bearing.
+   */
+  describe("malformed values cannot forge a located line", () => {
+    const FORGERY = "\n  definition.tasks.0.contextId: this issue is fake";
+
+    it("keeps a newline-bearing assignment id to a single line", async () => {
+      const result = await validate(
+        planWithCohort([reviewer({ id: `evil${FORGERY}` })]),
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(locatedLines(result.stderr)).toHaveLength(1);
+      expect(result.stderr).not.toContain("this issue is fake\n");
+      // Escaped, not stripped: the author still sees what they wrote.
+      expect(result.stderr).toContain("\\n");
+    });
+
+    it("keeps a newline-bearing profile ref to a single line", async () => {
+      const result = await validate(
+        planWithCohort([
+          reviewer({ profile: { tier: "builtin", id: `x${FORGERY}` } }),
+        ]),
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(locatedLines(result.stderr)).toHaveLength(1);
+    });
+
+    it("keeps a newline-bearing context id to a single line", async () => {
+      const definition = createWorkflowDefinition();
+      const plan = JSON.stringify({
+        name: "Auth Setup",
+        definition: {
+          ...definition,
+          executionContexts: definition.executionContexts.map((context) =>
+            context.id === "context-implement"
+              ? {
+                  ...context,
+                  id: `context-implement${FORGERY}`,
+                  contextValidator: {
+                    enabled: true,
+                    assignments: [reviewer(), reviewer()],
+                  },
+                }
+              : context,
+          ),
+        },
+        layout: createWorkflowLayout(),
+      });
+
+      const result = await validate(plan);
+
+      expect(result.exitCode).toBe(2);
+      // The forged text survives (escaped) inside a real message, but it can
+      // never BE a located line: nothing is addressed to the path it names.
+      expect(
+        locatedLines(result.stderr).some((line) =>
+          line.startsWith("  definition.tasks.0.contextId:"),
+        ),
+      ).toBe(false);
+    });
+
+    it("escapes a quote in an id so the use site stays unambiguous", async () => {
+      const result = await validate(
+        planWithCohort([reviewer({ id: 'ev"il' })]),
+      );
+
+      expect(result.exitCode).toBe(2);
+      const lines = locatedLines(result.stderr);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('validator assignment "ev\\"il"');
+    });
+
+    /**
+     * The duplicate-id refusal quotes the id from INSIDE the cohort schema,
+     * before the use-site enrichment appends anything — so escaping only the
+     * appended text leaves this one message able to break the line contract.
+     * Every line this renders must still address the cohort it came from.
+     */
+    it("keeps duplicate newline-bearing assignment ids to one line each", async () => {
+      const id = `evil${FORGERY}`;
+
+      const result = await validate(
+        planWithCohort([reviewer({ id }), reviewer({ id })]),
+      );
+
+      expect(result.exitCode).toBe(2);
+      const lines = locatedLines(result.stderr);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(line).toMatch(
+          /^ {2}definition\.executionContexts\.1\.contextValidator\.assignments\.\d+\.id: /,
+        );
+      }
+      expect(result.stderr).toContain("\\n");
+    });
+
+    it("leaves a well-formed use site byte-identical", async () => {
+      const result = await validate(
+        planWithCohort([reviewer(), reviewer({ focus: "hot paths" })]),
+      );
+
+      const lines = locatedLines(result.stderr);
+      // No escaping artifacts on the values this renders every day.
+      expect(lines[0]).toContain(
+        'the context "context-implement" validator assignment "security"',
+      );
+      expect(lines[0]).toContain("agent profile builtin:general-reviewer.");
+    });
+  });
+});
+
+/**
+ * R13.1's second half: `validate` is advisory, but ACCEPTANCE is what protects
+ * the stored document — and a profile can be deleted between the two. So every
+ * write surface (create, replace, targeted edit) re-checks at accept time and
+ * must refuse with the SAME located payload validate rendered.
+ *
+ * The real storage service runs here over a temp config dir, so accept-time
+ * validation genuinely executes; a fake persister would prove only that the
+ * route forwards whatever it was handed.
+ */
+describe("cctl workflow acceptance assignment error contract (R13.1)", () => {
+  const PLAN = "/tmp/plan.json";
+  const EDIT = "/tmp/edit.json";
+  const LOCATED_LINE = /^ {2}definition\.[\w.[\]]+: \S.*$/;
+
+  let profileDir: string;
+  let workflowDir: string;
+  let storage: ReturnType<typeof createWorkflowStorageService>;
+
+  beforeEach(async () => {
+    profileDir = await mkdtemp(
+      path.join(os.tmpdir(), "cc-wf-accept-profiles-"),
+    );
+    workflowDir = await mkdtemp(path.join(os.tmpdir(), "cc-wf-accept-store-"));
+    storage = createWorkflowStorageService({
+      resolveConfigDir: () => workflowDir,
+      listActiveExecutions: async () => new Map(),
+      assignmentReferences: createAssignmentReferenceChecker({
+        library: createAgentProfileLibraryService({
+          storage: createAgentProfileStorage({
+            resolveConfigDir: () => profileDir,
+          }),
+        }),
+      }),
+    });
+  });
+
+  afterEach(async () => {
+    await rm(profileDir, { recursive: true, force: true });
+    await rm(workflowDir, { recursive: true, force: true });
+  });
+
+  const scope = { kind: "project" as const, projectPath: PROJECT_PATH };
+
+  /** The real storage service behind the definition routes. */
+  function acceptanceHost(files: Record<string, string>): CliHost {
+    return routeHost(null, files, {
+      definitions: {
+        getDefinition: (_projectPath, workflowId) =>
+          storage.get(scope, workflowId),
+        createDefinition: (_projectPath, draft) => storage.create(scope, draft),
+        updateDefinition: (_projectPath, workflowId, draft) =>
+          storage.update(scope, workflowId, draft),
+      },
+    });
+  }
+
+  const DANGLING = { tier: "global", id: "missing-reviewer" };
+
+  function planJson(assignments: unknown[]): string {
+    const definition = createWorkflowDefinition();
+    return JSON.stringify({
+      name: "Auth Setup",
+      definition: {
+        ...definition,
+        executionContexts: definition.executionContexts.map((context) =>
+          context.id === "context-implement"
+            ? { ...context, contextValidator: { enabled: true, assignments } }
+            : context,
+        ),
+      },
+      layout: createWorkflowLayout(),
+    });
+  }
+
+  function reviewer(profile: unknown) {
+    return {
+      id: "security",
+      profile,
+      strategy: "conversation",
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      continuity: { enabled: true },
+    };
+  }
+
+  function locatedLines(stderr: string): string[] {
+    return stderr.split("\n").filter((line) => LOCATED_LINE.test(line));
+  }
+
+  /** Every located line names the ref AND the full use site. */
+  function expectLocatedRefusal(stderr: string): void {
+    const lines = locatedLines(stderr);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(
+      "definition.executionContexts.1.contextValidator.assignments.0.profile:",
+    );
+    expect(lines[0]).toContain("global:missing-reviewer");
+    expect(lines[0]).toContain('context "context-implement"');
+    expect(lines[0]).toContain('validator assignment "security"');
+  }
+
+  it("refuses create with the located ref and use site", async () => {
+    const result = await runCli(
+      ["workflow", "create", "--file", PLAN],
+      env,
+      acceptanceHost({ [PLAN]: planJson([reviewer(DANGLING)]) }),
+    );
+
+    expect(result.exitCode).toBe(2);
+    expectLocatedRefusal(result.stderr);
+  });
+
+  it("refuses replace with the same located payload, not a 404", async () => {
+    const created = await runCli(
+      ["workflow", "create", "--file", PLAN],
+      env,
+      acceptanceHost({
+        [PLAN]: planJson([
+          reviewer({ tier: "builtin", id: "general-reviewer" }),
+        ]),
+      }),
+    );
+    expect(created.exitCode).toBe(0);
+    const saved = await storage.list(scope);
+    const workflowId = saved[0]?.id ?? "";
+
+    const result = await runCli(
+      ["workflow", "replace", workflowId, "--file", PLAN],
+      env,
+      acceptanceHost({ [PLAN]: planJson([reviewer(DANGLING)]) }),
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).not.toContain("not found");
+    expectLocatedRefusal(result.stderr);
+  });
+
+  it("refuses a targeted edit that introduces a dangling reference", async () => {
+    const created = await runCli(
+      ["workflow", "create", "--file", PLAN],
+      env,
+      acceptanceHost({
+        [PLAN]: planJson([
+          reviewer({ tier: "builtin", id: "general-reviewer" }),
+        ]),
+      }),
+    );
+    expect(created.exitCode).toBe(0);
+    const saved = await storage.list(scope);
+    const workflowId = saved[0]?.id ?? "";
+    const record = await storage.get(scope, workflowId);
+
+    const edit = JSON.stringify({
+      baseRevision: record?.revision,
+      operations: [
+        {
+          type: "update-context",
+          contextId: "context-implement",
+          contextValidator: {
+            enabled: true,
+            assignments: [reviewer(DANGLING)],
+          },
+        },
+      ],
+    });
+
+    const result = await runCli(
+      ["workflow", "edit", workflowId, "--file", EDIT],
+      env,
+      acceptanceHost({ [EDIT]: edit }),
+    );
+
+    // A code-bearing rejection of valid-shaped ops → exit 1 (doc 05), with the
+    // identical located lines. What must NOT happen is an unmapped throw.
+    expect(result.exitCode).toBe(1);
+    expectLocatedRefusal(result.stderr);
+    // The refusal is atomic: the stored definition still has the good cohort.
+    const after = await storage.get(scope, workflowId);
+    expect(after?.revision).toBe(record?.revision);
+  });
+
+  it("accepts a create whose references all resolve", async () => {
+    const result = await runCli(
+      ["workflow", "create", "--file", PLAN],
+      env,
+      acceptanceHost({
+        [PLAN]: planJson([
+          reviewer({ tier: "builtin", id: "general-reviewer" }),
+        ]),
+      }),
+    );
+
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+/**
+ * R13.1: the two staffing shapes, driven through the REAL saved-definition GET
+ * and the REAL live-outline projection in one place — because the contract is
+ * the CONTRAST between them, and asserting each surface separately would let
+ * them drift into saying the same thing.
+ */
+describe("cctl workflow assignment provenance (R13.1)", () => {
+  it("workflow get shows references — tier:id, strategy, runtime, no revision", async () => {
+    const result = await runCli(
+      ["workflow", "get", "wf-1"],
+      env,
+      routeHost(null),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const staffing = result.stdout
+      .split("staffing (references):\n")[1]
+      ?.split("\n")
+      .filter((line) => line.startsWith("  "));
+
+    expect(staffing?.length).toBeGreaterThan(0);
+    expect(staffing?.join("\n")).toContain("builtin:general-implementer");
+    // A saved definition resolved nothing: no seeded revision, no hash.
+    for (const row of staffing ?? []) {
+      expect(row).not.toMatch(/@\d/);
+      expect(row).not.toContain("#");
+    }
+  });
+
+  it("workflow live get shows snapshots — the same rows plus revision and hash", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(createWorkflowExecution()),
+    );
+
+    expect(result.exitCode).toBe(0);
+    const staffing = result.stdout
+      .split("staffing (snapshots):\n")[1]
+      ?.split("\n")
+      .filter((line) => line.startsWith("  "));
+
+    expect(staffing?.length).toBeGreaterThan(0);
+    // The seeded fixture snapshot: revision 1, the `b`-digest resolved hash.
+    for (const row of staffing ?? []) {
+      expect(row).toMatch(/@\d+/);
+      expect(row).toContain("#bbbbbbbbbbbb");
+    }
   });
 });
 

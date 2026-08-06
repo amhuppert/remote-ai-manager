@@ -102,6 +102,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       // --- definition_json tier (near-static, written only when its hash changes) ---
       "workingDefinition.**":
         "bounded: resolved workflow definition (contexts, tasks, edges, per-context charters) sized at resolve time and written on accepted live edits (lane-agent add_task and doc-06 live editing); every mutation is author-shaped content bounded by the same limits as the seeded definition. In graph_workflow_executions.definition_json.",
+      "workingDefinition.executionContexts[].contextValidator.assignments":
+        "bounded: one entry per configured validator assignment in the context's cohort, fixed by the cascade at seed time and replaced whole (never appended to) by a live config edit. Each entry carries a resolved profile snapshot whose instruction text is bounded by the agent-profile authoring limits, so the subtree's size is cohort size x one profile — not a growing series. In graph_workflow_executions.definition_json.",
       "workingDefinition.executionContexts[].outputSchema.**":
         "tracked: opaque author-declared JSON Schema document (a record of z.unknown values), validated at definition-accept time against the supported-keyword subset and unschema'd here; sized by one context's authored output shape, written only when the definition tier changes. In graph_workflow_executions.definition_json.",
       "charter.**":
@@ -121,8 +123,14 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
       contextStates:
         "bounded: keyed by the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
-      "contextStates.*.pendingUserInput.**":
-        "bounded: one in-flight AskUserQuestion set snapshotted at park (plus its recorded answers), cleared on resume or withdraw. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.pendingUserInputs.**":
+        "bounded: at most one in-flight AskUserQuestion set per LANE of the context (keyed by lane key: the one implementer plus the context's author-fixed validator cohort), each snapshotted at park with its recorded answers and cleared on resume or withdraw. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.validationRound.**":
+        "bounded: exactly one latest validation round per context; a concluded round is retained for monotonic sequence numbering until the next round replaces it. Its roster and per-assignment specialist map are sized by the context's author-fixed validator cohort, and each specialist's issues, session ref, and review artifact come from one validator turn — none of it is a series that grows across rounds. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.validationRound.specialists.*.sessionRef.backend":
+        "tracked: opaque only to this walker — the backend id of the lane that rendered the verdict, shape-validated (a non-empty registry key) because backend membership is resolved by the registry rather than by this schema. A short token, not a payload and not a series. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.validationRound.specialists.*.reviewArtifact.backend":
+        "tracked: opaque only to this walker — the backend id that produced the review artifact, shape-validated for the same reason as its sessionRef counterpart above. In graph_workflow_executions.runtime_json.",
       taskStates:
         "bounded: keyed by the author-fixed task graph. In graph_workflow_executions.runtime_json.",
       "taskStates.*.failureHistory":
@@ -144,7 +152,7 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       "executionLanes.*.commitSnapshots":
         "tracked: grows one entry per lane commit with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
       "laneStates.**":
-        "bounded: keyed by the execution lanes. In graph_workflow_executions.runtime_json.",
+        "bounded: outer keys are author-fixed execution contexts; inner keys are the one implementer plus that context's author-fixed validator assignments. In graph_workflow_executions.runtime_json.",
       "joins.**":
         "bounded: per-join merge state keyed by author-fixed joins; lane-id and conflict-file lists sized by the merge. In graph_workflow_executions.runtime_json.",
       "lanePlan.**":

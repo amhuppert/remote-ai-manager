@@ -34,12 +34,17 @@ import type { ManagedSkillBundle } from "@/lib/managed-skills/schemas";
 
 const logger = createLogger("codex:managed-skills-bridge");
 
-/** Reserved checkout-relative path — the bridge's single collision point. */
-export const MANAGED_SKILLS_LINK_RELATIVE = path.join(
-  /* turbopackIgnore: true */ ".agents",
-  "skills",
-  "command-center",
-);
+/**
+ * Reserved checkout-relative path — the bridge's single collision point.
+ *
+ * Must stay a plain literal. Turbopack statically evaluates an all-literal
+ * `path.join(...)` into a DirAssetReference and then walks that directory at
+ * build time — which for this path means walking the symlink below, out of the
+ * project root, which Turbopack rejects with a fatal panic. Because this module
+ * is reachable from the instrumentation entrypoint, that panic breaks
+ * `bun run build` in every checkout the bridge has ever linked.
+ */
+export const MANAGED_SKILLS_LINK_RELATIVE = ".agents/skills/command-center";
 
 /** Anchored exact-path exclude rule (never a broad glob). */
 export const MANAGED_SKILLS_EXCLUDE_PATTERN = "/.agents/skills/command-center";

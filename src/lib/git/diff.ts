@@ -106,37 +106,147 @@ export async function computeDiff(
   );
 }
 
+interface TemporaryIndexOpts {
+  maxBuffer: number;
+  env: { GIT_INDEX_FILE: string };
+}
+
+/**
+ * Build the temporary index every reader of "the working tree as a candidate"
+ * shares — seeded from the HEAD tree, then brought up to the working tree with
+ * `add -A` — and hand it to `run` as the git options that address it.
+ *
+ * The real index is never touched, which is what lets a caller stage untracked
+ * files without disturbing the session's own staging area. What `add -A` stages
+ * is exactly what lands inside the resulting content: untracked files and file
+ * modes are in, gitignored paths are out.
+ *
+ * Shared rather than duplicated so the diff a validator reads and the tree hash
+ * a validation round freezes on cannot describe two different candidates.
+ */
+async function withTemporaryIndex<T>(
+  worktreePath: string,
+  deps: ComputeDiffDeps,
+  run: (opts: TemporaryIndexOpts) => Promise<T>,
+): Promise<T | null> {
+  const tmpIndex = join(tmpdir(), `cc-diff-${randomUUID()}`);
+  try {
+    const tmpOpts: TemporaryIndexOpts = {
+      maxBuffer: MAX_BUFFER,
+      env: { GIT_INDEX_FILE: tmpIndex },
+    };
+    await deps.gitClient.git(["read-tree", "HEAD"], worktreePath, tmpOpts);
+    await deps.gitClient.git(["add", "-A"], worktreePath, tmpOpts);
+    return await run(tmpOpts);
+  } catch {
+    return null;
+  } finally {
+    await deps.unlink(tmpIndex).catch(() => {});
+  }
+}
+
+/**
+ * The git tree hash of the worktree's candidate content: the tree object
+ * written from the same temporary index {@link computeDiff} builds.
+ *
+ * This is a content identity for "what a reviewer is looking at" — it moves for
+ * any change the rendered diff would show, including a content-only edit to an
+ * already-modified file, which the porcelain-based diff cache token cannot see.
+ * For that reason it deliberately does not participate in that cache.
+ *
+ * Null when git state cannot be resolved (not a repository, no HEAD, git
+ * failure): the caller decides what an unresolvable identity means rather than
+ * receiving a fabricated one.
+ */
+export async function computeCandidateTreeHash(
+  worktreePath: string,
+  deps: ComputeDiffDeps = defaultComputeDiffDeps,
+): Promise<string | null> {
+  const hash = await withTemporaryIndex(worktreePath, deps, async (tmpOpts) => {
+    const { stdout } = await deps.gitClient.git(
+      ["write-tree"],
+      worktreePath,
+      tmpOpts,
+    );
+    return stdout.trim();
+  });
+  return hash === null || hash.length === 0 ? null : hash;
+}
+
+/** A candidate's content identity together with the patch that identity spans. */
+export interface CandidateSnapshot {
+  treeHash: string;
+  diff: SessionDiff;
+}
+
+/**
+ * Read the candidate ONCE: the tree object and the patch against HEAD, both
+ * produced from a single temporary index.
+ *
+ * The pairing is the point. {@link computeDiff} is cached on HEAD plus a
+ * porcelain hash, and porcelain cannot see a content-only edit to a file that
+ * was already modified — so a reader that took its tree hash from
+ * {@link computeCandidateTreeHash} and its patch from the cache could hold a
+ * patch OLDER than the tree it claims to describe. A validation round certifies
+ * a tree hash on the strength of what its reviewers read, so it reads through
+ * here instead: same index, same instant, no cache.
+ *
+ * Null when the temporary-index sequence fails, so an unresolvable candidate is
+ * distinguishable from a clean one rather than collapsing into an empty diff.
+ */
+export async function computeCandidateSnapshot(
+  worktreePath: string,
+  deps: ComputeDiffDeps = defaultComputeDiffDeps,
+): Promise<CandidateSnapshot | null> {
+  const snapshot = await withTemporaryIndex(
+    worktreePath,
+    deps,
+    async (tmpOpts) => {
+      const { stdout: treeHash } = await deps.gitClient.git(
+        ["write-tree"],
+        worktreePath,
+        tmpOpts,
+      );
+      const { stdout: rawDiff } = await deps.gitClient.git(
+        ["diff", "--cached", "HEAD", "--unified=3"],
+        worktreePath,
+        tmpOpts,
+      );
+      return { treeHash: treeHash.trim(), rawDiff };
+    },
+  );
+
+  if (snapshot === null || snapshot.treeHash.length === 0) return null;
+
+  return {
+    treeHash: snapshot.treeHash,
+    diff: snapshot.rawDiff.trim()
+      ? parseDiff(snapshot.rawDiff)
+      : { files: [], totalAdditions: 0, totalDeletions: 0 },
+  };
+}
+
 async function computeDiffImpl(
   worktreePath: string,
   deps: ComputeDiffDeps,
 ): Promise<SessionDiff> {
-  let rawDiff: string;
-  const tmpIndex = join(tmpdir(), `cc-diff-${randomUUID()}`);
-  try {
-    const tmpOpts = {
-      maxBuffer: MAX_BUFFER,
-      env: { GIT_INDEX_FILE: tmpIndex },
-    };
+  const rawDiff = await withTemporaryIndex(
+    worktreePath,
+    deps,
+    async (tmpOpts) => {
+      // Diff the temp index (working tree) against HEAD — uncommitted changes only
+      const { stdout } = await deps.gitClient.git(
+        ["diff", "--cached", "HEAD", "--unified=3"],
+        worktreePath,
+        tmpOpts,
+      );
+      return stdout;
+    },
+  );
 
-    // Build a temp index: seed from HEAD tree, then update with working tree
-    await deps.gitClient.git(["read-tree", "HEAD"], worktreePath, tmpOpts);
-    await deps.gitClient.git(["add", "-A"], worktreePath, tmpOpts);
-
-    // Diff the temp index (working tree) against HEAD — uncommitted changes only
-    const { stdout } = await deps.gitClient.git(
-      ["diff", "--cached", "HEAD", "--unified=3"],
-      worktreePath,
-      tmpOpts,
-    );
-    rawDiff = stdout;
-  } catch {
-    // If diff fails, return empty
-    return { files: [], totalAdditions: 0, totalDeletions: 0 };
-  } finally {
-    await deps.unlink(tmpIndex).catch(() => {});
-  }
-
-  if (!rawDiff.trim()) {
+  // A null result means the temp-index sequence failed; an empty diff and a
+  // failed diff both render as "no uncommitted changes" here, as before.
+  if (rawDiff === null || !rawDiff.trim()) {
     return { files: [], totalAdditions: 0, totalDeletions: 0 };
   }
 

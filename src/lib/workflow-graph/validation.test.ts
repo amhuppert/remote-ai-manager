@@ -4,6 +4,8 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,
   createWorkflowExecution,
+  makeProfileSnapshot,
+  seedAssignment,
 } from "./test-fixtures";
 import {
   getEligibleContextIds,
@@ -622,6 +624,147 @@ describe("structural validator stays lint-free (R5.1, R5.5)", () => {
   });
 });
 
+describe("validator write-restriction refusal at the authoring gate (R7.2)", () => {
+  it("refuses an authored validator assignment on a backend without an enforceable envelope", () => {
+    const base = createWorkflowDefinition();
+    const definition = createWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                enabled: true,
+                assignments: [
+                  {
+                    id: "unsandboxed-reviewer",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    strategy: "task",
+                    agent: {
+                      backend: "codex",
+                      model: "gpt-5.4",
+                      reasoningEffort: "medium",
+                    },
+                    continuity: { enabled: true },
+                  },
+                ],
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    // The authoring gate (`cctl workflow validate`, create/replace, the
+    // builder) sees the assignment before any execution exists; refusing only
+    // at seed time would let an unsandboxable validator sit in a saved plan.
+    const result = validateAuthoredDefinition(definition, {
+      fsWriteRestrictionFor: (backend) =>
+        backend === "codex" ? "unsupported" : "enforced",
+    });
+
+    expect(result.ok).toBe(false);
+    const errors = result.errors.filter(
+      (e) => e.code === "validator-write-restriction-unsupported",
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.field).toBe(
+      "executionContexts.0.contextValidator.assignments.0.agent.backend",
+    );
+    expect(errors[0]?.message).toContain("codex");
+  });
+
+  it("refuses a workflow-tier cohort on a backend without an enforceable envelope", () => {
+    // The workflow tier is a real use site, not a comment: a context that names
+    // no cohort of its own inherits this one verbatim (assignments replace as
+    // whole units), so an unsandboxable assignment here reaches every such
+    // context's lanes. Checking only `executionContexts` would admit the
+    // definition and defer the refusal to launch-time resolution.
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "unsandboxed-reviewer",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
+        },
+      },
+    });
+
+    const result = validateAuthoredDefinition(definition, {
+      fsWriteRestrictionFor: (backend) =>
+        backend === "codex" ? "unsupported" : "enforced",
+    });
+
+    expect(result.ok).toBe(false);
+    const errors = result.errors.filter(
+      (e) => e.code === "validator-write-restriction-unsupported",
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.field).toBe(
+      "workflowConfig.contextValidator.assignments.0.agent.backend",
+    );
+    expect(errors[0]?.contextId).toBeUndefined();
+    expect(errors[0]?.message).toContain("codex");
+    expect(errors[0]?.message).toContain('"unsandboxed-reviewer"');
+  });
+
+  it("admits a workflow-tier cohort whose backends all enforce", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            {
+              id: "general-reviewer",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "claude",
+                model: "sonnet",
+                reasoningEffort: "medium",
+              },
+              continuity: { enabled: true },
+            },
+          ],
+        },
+      },
+    });
+
+    const result = validateAuthoredDefinition(definition, {
+      fsWriteRestrictionFor: () => "enforced",
+    });
+
+    expect(
+      result.errors.filter(
+        (e) => e.code === "validator-write-restriction-unsupported",
+      ),
+    ).toEqual([]);
+  });
+
+  it("admits an authored definition that names no cohort at all", () => {
+    // Cohorts are cascade-supplied when the document omits them; the authoring
+    // gate has nothing to check and must not invent a refusal.
+    const result = validateAuthoredDefinition(createWorkflowDefinition(), {
+      fsWriteRestrictionFor: () => "unsupported",
+    });
+
+    expect(
+      result.errors.filter(
+        (e) => e.code === "validator-write-restriction-unsupported",
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("validateResolvedWorkflow", () => {
   it("passes when every resolved context's implementer effort is supported", () => {
     const resolved = createResolvedWorkflowDefinition();
@@ -638,9 +781,14 @@ describe("validateResolvedWorkflow", () => {
           ? {
               ...ctx,
               implementer: {
-                backend: "claude",
-                model: "haiku",
-                reasoningEffort: "xhigh",
+                id: "implementer",
+                profile: { tier: "builtin", id: "general-implementer" },
+                profileSnapshot: makeProfileSnapshot(),
+                agent: {
+                  backend: "claude",
+                  model: "haiku",
+                  reasoningEffort: "xhigh",
+                },
               },
             }
           : ctx,
@@ -666,9 +814,14 @@ describe("validateResolvedWorkflow", () => {
           ? {
               ...ctx,
               implementer: {
-                backend: "codex",
-                model: "gpt-5.4",
-                reasoningEffort: "minimal",
+                id: "implementer",
+                profile: { tier: "builtin", id: "general-implementer" },
+                profileSnapshot: makeProfileSnapshot(),
+                agent: {
+                  backend: "codex",
+                  model: "gpt-5.4",
+                  reasoningEffort: "minimal",
+                },
               },
             }
           : ctx,
@@ -694,10 +847,21 @@ describe("validateResolvedWorkflow", () => {
           ? {
               ...ctx,
               contextValidator: {
-                type: "codex",
                 enabled: true,
-                continuity: { enabled: true },
-                codex: { model: "gpt-5.4", reasoningEffort: "minimal" },
+                assignments: [
+                  {
+                    id: "general",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    profileSnapshot: makeProfileSnapshot(),
+                    strategy: "task",
+                    agent: {
+                      backend: "codex",
+                      model: "gpt-5.4",
+                      reasoningEffort: "minimal",
+                    },
+                    continuity: { enabled: true },
+                  },
+                ],
               },
             }
           : ctx,
@@ -723,14 +887,21 @@ describe("validateResolvedWorkflow", () => {
           ? {
               ...ctx,
               contextValidator: {
-                type: "claude",
                 enabled: true,
-                continuity: { enabled: true },
-                agent: {
-                  backend: "codex",
-                  model: "gpt-5.4",
-                  reasoningEffort: "minimal",
-                },
+                assignments: [
+                  {
+                    id: "general",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    profileSnapshot: makeProfileSnapshot(),
+                    strategy: "conversation",
+                    agent: {
+                      backend: "codex",
+                      model: "gpt-5.4",
+                      reasoningEffort: "minimal",
+                    },
+                    continuity: { enabled: true },
+                  },
+                ],
               },
             }
           : ctx,
@@ -748,6 +919,219 @@ describe("validateResolvedWorkflow", () => {
     ).toBe(true);
   });
 
+  it("addresses the offending cohort entry by index and skips a disabled cohort", () => {
+    const base = createResolvedWorkflowDefinition();
+    const reviewer = (id: string, reasoningEffort: "medium" | "minimal") => ({
+      id,
+      profile: { tier: "builtin" as const, id: "general-reviewer" },
+      strategy: "task" as const,
+      agent: {
+        backend: "codex" as const,
+        model: "gpt-5.4" as const,
+        reasoningEffort,
+      },
+      continuity: { enabled: true },
+    });
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                enabled: true,
+                // Entry 0 is fine; entry 1 is the one that cannot run.
+                assignments: [
+                  seedAssignment(reviewer("ok", "medium")),
+                  seedAssignment(reviewer("bad", "minimal")),
+                ],
+              },
+            }
+          : index === 1
+            ? {
+                ...ctx,
+                // Disabled: dormant config, so it contributes no error.
+                contextValidator: {
+                  enabled: false,
+                  assignments: [seedAssignment(reviewer("dormant", "minimal"))],
+                },
+              }
+            : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+
+    const errors = result.errors.filter(
+      (e) => e.code === "validator-effort-unsupported",
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.field).toBe(
+      "executionContexts.0.contextValidator.assignments.1.agent.reasoningEffort",
+    );
+    expect(errors[0]?.message).toContain('"bad"');
+  });
+
+  it("refuses a validator assignment on a backend without an enforceable write envelope (R7.2)", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                enabled: true,
+                assignments: [
+                  seedAssignment({
+                    id: "ok-reviewer",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    strategy: "task",
+                    agent: {
+                      backend: "claude",
+                      model: "sonnet",
+                      reasoningEffort: "medium",
+                    },
+                    continuity: { enabled: true },
+                  }),
+                  seedAssignment({
+                    id: "unsandboxed-reviewer",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    strategy: "conversation",
+                    agent: {
+                      backend: "codex",
+                      model: "gpt-5.4",
+                      reasoningEffort: "medium",
+                    },
+                    continuity: { enabled: true },
+                  }),
+                ],
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved, {
+      fsWriteRestrictionFor: (backend) =>
+        backend === "codex" ? "unsupported" : "enforced",
+    });
+
+    expect(result.ok).toBe(false);
+    const errors = result.errors.filter(
+      (e) => e.code === "validator-write-restriction-unsupported",
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.contextId).toBe(resolved.executionContexts[0]?.id);
+    // The use site, not just the context: a cohort can hold several
+    // assignments and only one of them may be unsandboxable.
+    expect(errors[0]?.field).toBe(
+      "executionContexts.0.contextValidator.assignments.1.agent.backend",
+    );
+    expect(errors[0]?.message).toContain("codex");
+    expect(errors[0]?.message).toContain('"unsandboxed-reviewer"');
+  });
+
+  it("does not refuse an implementer assignment on a backend without an enforceable envelope", () => {
+    // Implementers are write-capable by design; the envelope constrains
+    // validators only, so an unsupported backend must not block one.
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx) => ({
+        ...ctx,
+        contextValidator: { enabled: false, assignments: [] },
+      })),
+    });
+
+    const result = validateResolvedWorkflow(resolved, {
+      fsWriteRestrictionFor: () => "unsupported",
+    });
+
+    expect(
+      result.errors.filter(
+        (e) => e.code === "validator-write-restriction-unsupported",
+      ),
+    ).toEqual([]);
+    expect(base.executionContexts[0]?.implementer).toBeDefined();
+  });
+
+  it("accepts every validator assignment when the default lookup is used", () => {
+    // The registered backends both declare an enforceable envelope, so the
+    // production default refuses nothing — the refusal above is the rule, not
+    // a standing rejection of a shipped backend.
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                enabled: true,
+                assignments: [
+                  seedAssignment({
+                    id: "codex-reviewer",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    strategy: "task",
+                    agent: {
+                      backend: "codex",
+                      model: "gpt-5.4",
+                      reasoningEffort: "medium",
+                    },
+                    continuity: { enabled: true },
+                  }),
+                ],
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved);
+
+    expect(
+      result.errors.filter(
+        (e) => e.code === "validator-write-restriction-unsupported",
+      ),
+    ).toEqual([]);
+  });
+
+  it("skips a disabled cohort's dormant assignments", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      executionContexts: base.executionContexts.map((ctx, index) =>
+        index === 0
+          ? {
+              ...ctx,
+              contextValidator: {
+                enabled: false,
+                assignments: [
+                  seedAssignment({
+                    id: "dormant-reviewer",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    strategy: "task",
+                    agent: {
+                      backend: "codex",
+                      model: "gpt-5.4",
+                      reasoningEffort: "medium",
+                    },
+                    continuity: { enabled: true },
+                  }),
+                ],
+              },
+            }
+          : ctx,
+      ),
+    });
+
+    const result = validateResolvedWorkflow(resolved, {
+      fsWriteRestrictionFor: () => "unsupported",
+    });
+
+    expect(
+      result.errors.filter(
+        (e) => e.code === "validator-write-restriction-unsupported",
+      ),
+    ).toEqual([]);
+  });
+
   it("passes a validator whose model supports the configured effort", () => {
     const base = createResolvedWorkflowDefinition();
     const resolved = createResolvedWorkflowDefinition({
@@ -756,14 +1140,21 @@ describe("validateResolvedWorkflow", () => {
           ? {
               ...ctx,
               contextValidator: {
-                type: "claude",
                 enabled: true,
-                continuity: { enabled: true },
-                agent: {
-                  backend: "claude",
-                  model: "sonnet",
-                  reasoningEffort: "medium",
-                },
+                assignments: [
+                  {
+                    id: "general",
+                    profile: { tier: "builtin", id: "general-reviewer" },
+                    profileSnapshot: makeProfileSnapshot(),
+                    strategy: "conversation",
+                    agent: {
+                      backend: "claude",
+                      model: "sonnet",
+                      reasoningEffort: "medium",
+                    },
+                    continuity: { enabled: true },
+                  },
+                ],
               },
             }
           : ctx,

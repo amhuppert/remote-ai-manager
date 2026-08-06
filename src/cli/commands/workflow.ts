@@ -11,6 +11,7 @@ import {
   failure,
   failureFromRequest,
   failureFromRequestNotFoundAsUsage,
+  issueDetailLines,
   readJsonObjectFile,
   render,
   resolveLaneContext,
@@ -202,9 +203,7 @@ function workflowEditFailure(
     const semantic = result.code !== undefined;
     const detail =
       result.issues && result.issues.length > 0
-        ? result.issues
-            .map((issue) => `  ${issue.path}: ${issue.message}`)
-            .join("\n")
+        ? issueDetailLines(result.issues).join("\n")
         : undefined;
     return failure({
       exitCode: semantic ? EXIT_OPERATION_FAILED : EXIT_USAGE,
@@ -233,9 +232,7 @@ function workflowLiveFailure(
   if (result.kind === "error" && result.code !== undefined) {
     const detail =
       result.issues && result.issues.length > 0
-        ? result.issues
-            .map((issue) => `  ${issue.path}: ${issue.message}`)
-            .join("\n")
+        ? issueDetailLines(result.issues).join("\n")
         : undefined;
     return failure({
       exitCode: EXIT_OPERATION_FAILED,
@@ -314,6 +311,13 @@ async function runWorkflowValidate(
     return usageFailure("workflow validate requires --file <plan.json>", json);
   }
 
+  // The scope the plan is destined for, not merely where it is being checked
+  // from: a global template may reference only builtin and global agent
+  // profiles, so validating it under the default project rules would pass a
+  // plan the save then refuses (R4.2).
+  const tier = resolveTierFlag(values, json);
+  if (!tier.ok) return tier.result;
+
   const plan = await readJsonObjectFile(host, filePath, "plan", json);
   if (!plan.ok) return plan.result;
 
@@ -328,7 +332,7 @@ async function runWorkflowValidate(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "POST",
-    path: `${graphWorkflowPath(context)}/validate`,
+    path: `${graphWorkflowPath(context)}/validate${tier.tier === "global" ? "?tier=global" : ""}`,
     body: plan.value,
   });
   // A 400 carries { error, issues[] }; the shared mapping renders each issue on
@@ -339,7 +343,13 @@ async function runWorkflowValidate(
     exitCode: EXIT_OK,
     stdout: render(json, "plan is valid\n", {
       ok: true,
-      hint: `valid — create it with 'cctl workflow create --file ${filePath}'`,
+      // `workflow create` writes into THIS project, so it is not the next step
+      // for a plan validated as a global template — hinting it would send the
+      // author to the wrong tier after they deliberately selected the other one.
+      hint:
+        tier.tier === "global"
+          ? "valid as a global-scope template — note 'cctl workflow create' saves under this project, not the global library"
+          : `valid — create it with 'cctl workflow create --file ${filePath}'`,
     }),
     stderr: "",
   };

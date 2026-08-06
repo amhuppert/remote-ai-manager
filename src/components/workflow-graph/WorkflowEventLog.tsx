@@ -10,6 +10,7 @@ import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowSSEEvent,
+  GraphWorkflowValidationIncidentEvent,
 } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
@@ -159,6 +160,30 @@ function contextStatusVerb(status: GraphWorkflowContextStatus): string {
   }
 }
 
+/**
+ * What a non-verdict outcome did to the round, said in the reader's terms.
+ *
+ * The distinction that matters on a log is whether anything happens next on its
+ * own: a restarted round re-freezes and re-runs, an unconcludable one waits for
+ * an operator, and a dropped write changed nothing at all.
+ */
+function incidentHeadline(
+  incident: GraphWorkflowValidationIncidentEvent["incident"],
+): string {
+  switch (incident) {
+    case "infra_exhausted":
+      return "Validation round could not conclude:";
+    case "infra_failure":
+      return "Validator retrying after an infrastructure failure in round";
+    case "round_superseded":
+      return "Dropped a validator result for superseded round";
+    case "stale_result_rejected":
+      return "Rejected a stale validator result in round";
+    default:
+      return "Validation round restarted:";
+  }
+}
+
 function normalizeEvent(
   entry: GraphWorkflowExecutionEvent,
   index: number,
@@ -276,6 +301,27 @@ function normalizeEvent(
               ))}
             </ul>
           ) : null,
+      };
+    }
+
+    // A cohort member's own verdict, while the round is still running. The log
+    // shows the round's conclusion, not each reviewer reporting in — rendering
+    // both would read as one context failing validation several times.
+    case "graph-workflow-validation-specialist-result":
+      return null;
+
+    case "graph-workflow-validation-incident": {
+      const title = contextLookup.get(event.contextId) ?? event.contextId;
+      // Deliberately NOT a pass/fail dot: nobody rendered a verdict here, and a
+      // red "fail" dot would read as the reviewer rejecting the work.
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot: "retry",
+        title: `${incidentHeadline(event.incident)} ${event.roundSeq} · ${title}`,
+        detail: <p>{event.message}</p>,
+        expandable: null,
       };
     }
 

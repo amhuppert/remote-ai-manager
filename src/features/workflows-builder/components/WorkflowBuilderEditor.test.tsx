@@ -108,9 +108,13 @@ describe("WorkflowBuilderEditor", () => {
           title: "",
           acceptanceCriteria: "Some criteria",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},

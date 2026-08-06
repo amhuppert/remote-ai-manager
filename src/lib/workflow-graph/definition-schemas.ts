@@ -3,9 +3,7 @@ import { agentBackendSchema } from "@/lib/shared/schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import {
   DEFAULT_PLAN_REPAIR_POLICY,
-  contextValidatorOverrideSchema,
-  graphWorkflowAgentConfigSchema,
-  graphWorkflowAgentValidatorConfigSchema,
+  agentAssignmentSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowHumanApprovalGateConfigSchema,
@@ -13,6 +11,9 @@ import {
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
+  seededAgentAssignmentSchema,
+  seededValidatorCohortSchema,
+  validatorCohortSchema,
 } from "./config-schemas";
 import {
   resolvedCollaborationConfigSchema,
@@ -20,8 +21,8 @@ import {
 } from "./collaboration-schemas";
 
 export const workflowConfigOverrideSchema = z.object({
-  implementer: graphWorkflowAgentConfigSchema.optional(),
-  contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
+  implementer: agentAssignmentSchema.optional(),
+  contextValidator: validatorCohortSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
@@ -79,8 +80,8 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   ),
   acceptanceCriteria: z.string().trim().min(1),
   outputSchema: contextOutputSchemaSchema.optional(),
-  implementer: graphWorkflowAgentConfigSchema.optional(),
-  contextValidator: contextValidatorOverrideSchema.optional(),
+  implementer: agentAssignmentSchema.optional(),
+  contextValidator: validatorCohortSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
@@ -303,8 +304,16 @@ export const graphWorkflowResolvedContextSchema = z.object({
   // cascade result. Absent on contexts whose author declared none, and on every
   // execution seeded before the field existed.
   outputSchema: contextOutputSchemaSchema.optional(),
-  implementer: graphWorkflowAgentConfigSchema,
-  contextValidator: graphWorkflowAgentValidatorConfigSchema.nullable(),
+  // Snapshot-bearing, not reference-bearing: by the time a context is in a
+  // working definition, execution start has already resolved every assignment
+  // — the implementer, every enabled cohort member, and every dormant
+  // assignment in a disabled cohort — through the library and stored the
+  // rendered bytes. Nothing downstream resolves again (R4).
+  implementer: seededAgentAssignmentSchema,
+  // Never null: a disabled cohort is `enabled: false` carrying its dormant
+  // assignments, so the resolved snapshot a run is seeded from can be
+  // re-enabled without having lost who was configured to review (R2).
+  contextValidator: seededValidatorCohortSchema,
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.default({
     enabled: false,
   }),
@@ -346,6 +355,36 @@ export const resolvedWorkflowSemanticDefinitionSchema = z.object({
 });
 export type ResolvedWorkflowSemanticDefinition = z.infer<
   typeof resolvedWorkflowSemanticDefinitionSchema
+>;
+
+/**
+ * The cascade result BEFORE assignments are resolved: every operational field
+ * settled by the global → workflow → context cascade, with assignments still
+ * naming library profiles.
+ *
+ * This is what the pure, synchronous resolver produces, and it is the shape the
+ * builder's client-side preview works in — a browser has no library service and
+ * a draft has no delivered bytes to snapshot. Execution start takes this shape,
+ * resolves every assignment, and produces the seeded shape above; because a
+ * seeded assignment is a cascade assignment plus `profileSnapshot`, a read-only
+ * consumer that only needs identity and runtime can be typed on the cascade
+ * shape and serve both.
+ */
+export const graphWorkflowCascadeContextSchema =
+  graphWorkflowResolvedContextSchema.extend({
+    implementer: agentAssignmentSchema,
+    contextValidator: validatorCohortSchema,
+  });
+export type GraphWorkflowCascadeContext = z.infer<
+  typeof graphWorkflowCascadeContextSchema
+>;
+
+export const cascadeWorkflowSemanticDefinitionSchema =
+  resolvedWorkflowSemanticDefinitionSchema.extend({
+    executionContexts: z.array(graphWorkflowCascadeContextSchema).default([]),
+  });
+export type CascadeWorkflowSemanticDefinition = z.infer<
+  typeof cascadeWorkflowSemanticDefinitionSchema
 >;
 
 const graphWorkflowPositionSchema = z.object({
@@ -403,11 +442,19 @@ export type WorkflowValidatorIssue = z.infer<
  * payload, not by task. `path` carries that location; for a task-scoped issue it
  * is simply absent. The agent validator's parse contract keeps `taskId`
  * required, so widening here cannot loosen what a validator may return.
+ *
+ * `assignmentId` names the validator assignment that raised the finding. It is
+ * stamped by the engine rather than reported by the validator — a reviewer
+ * writes about the work, not about itself, so two specialists can word one
+ * objection identically and nothing in the text would tell them apart. Absent
+ * on findings that no assignment raised (an output-schema rejection) and on
+ * rows written before cohorts existed.
  */
 export const graphWorkflowValidationIssueSchema =
   workflowValidatorIssueSchema.extend({
     taskId: z.string().trim().min(1).optional(),
     path: z.string().trim().min(1).optional(),
+    assignmentId: z.string().trim().min(1).optional(),
   });
 export type GraphWorkflowValidationIssue = z.infer<
   typeof graphWorkflowValidationIssueSchema

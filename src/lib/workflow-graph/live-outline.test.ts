@@ -12,6 +12,7 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import { projectLiveOutline } from "./live-outline";
+import { makeProfileSnapshot } from "./test-fixtures";
 
 /**
  * A three-context execution mirroring the doc-06 outline example: `plan`
@@ -27,19 +28,34 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       description: "Lay out the approach",
       acceptanceCriteria: "A plan exists",
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      },
-      contextValidator: {
-        type: "claude",
-        enabled: true,
-        continuity: { enabled: true },
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "sonnet",
+          model: "opus",
           reasoningEffort: "medium",
         },
+      },
+      contextValidator: {
+        enabled: true,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin", id: "general-reviewer" },
+            profileSnapshot: makeProfileSnapshot({
+              tier: "builtin",
+              id: "general-reviewer",
+            }),
+            strategy: "conversation",
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
@@ -53,19 +69,34 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       title: "Build inspector UI",
       acceptanceCriteria: "UI ships",
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      },
-      contextValidator: {
-        type: "claude",
-        enabled: true,
-        continuity: { enabled: true },
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
         agent: {
           backend: "claude",
-          model: "sonnet",
+          model: "opus",
           reasoningEffort: "medium",
         },
+      },
+      contextValidator: {
+        enabled: true,
+        assignments: [
+          {
+            id: "general",
+            profile: { tier: "builtin", id: "general-reviewer" },
+            profileSnapshot: makeProfileSnapshot({
+              tier: "builtin",
+              id: "general-reviewer",
+            }),
+            strategy: "conversation",
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+            continuity: { enabled: true },
+          },
+        ],
       },
       scriptValidator: { enabled: true },
       humanApprovalGate: { enabled: true },
@@ -79,11 +110,42 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       title: "Verify",
       acceptanceCriteria: "All green",
       implementer: {
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        },
       },
-      contextValidator: null,
+      // A DISABLED cohort that retains its assignment: the shape disabling
+      // produces, since turning validation off is lossless. Execution start
+      // snapshots dormant assignments too, so the outline has one to report.
+      contextValidator: {
+        enabled: false,
+        assignments: [
+          {
+            id: "dormant-security",
+            // Reference and snapshot deliberately DISAGREE, so a summary that
+            // reads the reference is distinguishable from one that reads the
+            // bytes the lane would replay.
+            profile: { tier: "global", id: "stale-reference" },
+            profileSnapshot: makeProfileSnapshot({
+              tier: "builtin",
+              id: "general-reviewer",
+              revision: 4,
+            }),
+            strategy: "task",
+            agent: {
+              backend: "codex",
+              model: "gpt-5.4",
+              reasoningEffort: "low",
+            },
+            continuity: { enabled: false },
+          },
+        ],
+      },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
@@ -382,7 +444,16 @@ describe("projectLiveOutline — config summaries", () => {
         model: "opus",
         reasoningEffort: "medium",
       },
-      validator: { type: "claude", model: "sonnet", reasoningEffort: "medium" },
+      validators: [
+        {
+          assignmentId: "general",
+          profile: "builtin:general-reviewer",
+          strategy: "conversation",
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+      ],
       scriptValidator: false,
       humanApprovalGate: false,
       askUserQuestions: false,
@@ -391,15 +462,95 @@ describe("projectLiveOutline — config summaries", () => {
       scriptValidator: true,
       humanApprovalGate: true,
     });
-    // verify: codex implementer, validator off.
+    // verify: codex implementer, cohort disabled — but its dormant assignment
+    // is still reported, flagged by the cohort switch rather than dropped.
     expect(byId["verify"]).toMatchObject({
       implementer: {
         backend: "codex",
         model: "gpt-5.4",
         reasoningEffort: "high",
       },
-      validator: null,
+      validatorCohortEnabled: false,
+      validators: [{ assignmentId: "dormant-security", strategy: "task" }],
     });
+  });
+
+  /**
+   * R13.1: a disabled cohort's assignments are SEEDED — start snapshotted them
+   * so a mid-run edit can enable one without a library lookup. Dropping them
+   * from the outline would make "turn validation back on" a blind operation on
+   * the one surface that shows what a running execution holds.
+   */
+  it("reports the dormant assignments of a disabled cohort", () => {
+    const result = projectLiveOutline(buildExecution(), { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    const verify = result.outline.config.find((c) => c.contextId === "verify");
+
+    expect(verify?.validatorCohortEnabled).toBe(false);
+    expect(verify?.validators).toHaveLength(1);
+    expect(verify?.validators[0]).toMatchObject({
+      assignmentId: "dormant-security",
+      revision: 4,
+      backend: "codex",
+    });
+  });
+
+  /**
+   * The snapshot is the side that RAN. A reference can only disagree with it if
+   * something bypassed seeding, and in that case the reference is the wrong
+   * answer — so provenance is read from the snapshot, never the reference.
+   */
+  it("derives the profile from the snapshot, not the authored reference", () => {
+    const result = projectLiveOutline(buildExecution(), { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    const verify = result.outline.config.find((c) => c.contextId === "verify");
+
+    expect(verify?.validators[0]?.profile).toBe("builtin:general-reviewer");
+    expect(verify?.validators[0]?.profile).not.toBe("global:stale-reference");
+  });
+
+  /**
+   * R13.1: a LIVE execution is SNAPSHOT-bearing. Its assignments were resolved
+   * once at start and nothing consults the library again, so the outline
+   * reports the seeded revision and the resolved-instruction hash — the two
+   * values that say what is actually running, as opposed to the bare reference
+   * a saved definition carries.
+   */
+  it("carries seeded snapshot provenance on every assignment summary", () => {
+    const result = projectLiveOutline(buildExecution(), { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    const byId = Object.fromEntries(
+      result.outline.config.map((c) => [c.contextId, c]),
+    );
+
+    expect(byId["plan"]?.implementer).toMatchObject({
+      assignmentId: "implementer",
+      profile: "builtin:general-implementer",
+      revision: 1,
+      resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+    });
+    expect(byId["plan"]?.validators[0]).toMatchObject({
+      assignmentId: "general",
+      profile: "builtin:general-reviewer",
+      revision: 1,
+      resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+    });
+  });
+
+  it("keeps instruction text out of the outline summaries", () => {
+    const result = projectLiveOutline(buildExecution(), { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+
+    for (const entry of result.outline.config) {
+      for (const summary of [entry.implementer, ...entry.validators]) {
+        expect(summary).not.toHaveProperty("instructions");
+        expect(summary).not.toHaveProperty("renderedInstructionBlock");
+      }
+    }
   });
 });
 
@@ -427,8 +578,8 @@ describe("projectLiveOutline — section selectors", () => {
       allowAgentTaskAdd: false,
     });
     expect(result.context.config.contextValidator).toMatchObject({
-      type: "claude",
       enabled: true,
+      assignments: [{ id: "general", strategy: "conversation" }],
     });
     const apiTask = result.context.tasks.find((t) => t.id === "impl-api");
     expect(apiTask?.instructions).toHaveLength(812);
@@ -461,11 +612,21 @@ describe("projectLiveOutline — section selectors", () => {
     expect(result.config).toMatchObject({
       contextId: "verify",
       implementer: {
-        backend: "codex",
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        },
       },
-      contextValidator: null,
+      // The raw section returns the resolved cohort verbatim, dormant
+      // assignments included — they are configuration a live edit can enable.
+      contextValidator: {
+        enabled: false,
+        assignments: [{ id: "dormant-security" }],
+      },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },

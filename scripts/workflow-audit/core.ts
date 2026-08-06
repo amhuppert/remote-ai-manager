@@ -2380,7 +2380,7 @@ export function renderMarkdown(report: AuditReport): string {
   if (report.pointers.workflowLogsDir !== null) {
     lines.push(`- Execution logs: \`${report.pointers.workflowLogsDir}\``);
     lines.push(
-      `  - per-context: \`contexts/<id>/{iterations,tasks,validation,validation-transcript}.jsonl\` and full prompts under \`contexts/<id>/prompts/\``,
+      `  - per-context: \`contexts/<id>/{iterations,tasks,validation}.jsonl\`, implementer prompts under \`contexts/<id>/prompts/\`, and each validator assignment's prompt, response, and transcript under \`contexts/<id>/validators/<assignmentId>/\``,
     );
   }
   for (const transcript of report.pointers.transcripts) {

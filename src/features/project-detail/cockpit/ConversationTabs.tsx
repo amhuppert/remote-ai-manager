@@ -1,6 +1,8 @@
 import { CloseIcon, PlusIcon } from "@/components/icons";
+import NewConversationProfileButton from "@/components/agent-profiles/NewConversationProfileButton";
 import { Spinner } from "@/components/ui/Spinner";
 import { StatusDot } from "@/components/ui/StatusDot";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import { presentConversationStatus } from "./conversation-status";
@@ -19,7 +21,9 @@ export interface ConversationTabsProps {
   activeTabId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  onNewChat: () => void;
+  /** Omitting the profile creates under the Standard Agent default (R7). */
+  onNewChat: (profile?: AgentProfileRef) => void;
+  projectName: string;
   /** True while the create-conversation mutation is pending — the `+ New chat`
    * affordance disables and shows in-progress state. */
   creating?: boolean;
@@ -56,12 +60,18 @@ const TAB_NEWCHAT_CLASS =
  * The conversation-pane tab strip: one tab per open project conversation, the
  * active tab marked with a cyan top-edge, a non-active tab with unread activity
  * marked with an amber dot, a per-tab close control, and a `+ New chat`
- * affordance. Presentational — selection/close/new-chat are wired by the page
- * to the view-state store and lifecycle mutations.
+ * affordance. Selection/close/new-chat are wired by the page to the view-state
+ * store and lifecycle mutations.
+ *
+ * The `+ New chat` control stays a single click under the Standard Agent
+ * default; its profile companion is what makes the identity selection visible
+ * on this creation path (R7.1), and it reads the library itself because the
+ * affordance it belongs to lives here.
  */
 export default function ConversationTabs({
   tabs,
   activeTabId,
+  projectName,
   onSelect,
   onClose,
   onNewChat,
@@ -124,7 +134,7 @@ export default function ConversationTabs({
       <button
         type="button"
         className={TAB_NEWCHAT_CLASS}
-        onClick={onNewChat}
+        onClick={() => onNewChat()}
         disabled={creating}
         aria-busy={creating || undefined}
         aria-label="New chat"
@@ -136,6 +146,11 @@ export default function ConversationTabs({
         )}
         {creating ? "Creating…" : "New chat"}
       </button>
+      <NewConversationProfileButton
+        projectName={projectName}
+        pending={creating === true}
+        onCreate={onNewChat}
+      />
     </div>
   );
 }

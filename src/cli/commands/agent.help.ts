@@ -1,17 +1,17 @@
 import type { CommandHelpEntry } from "../help-types";
 
 /**
- * Help-registry entries for `cctl agent`: the group hub plus the
- * run/status/cancel leaves. Flags match `agent.ts`'s `checkFlags`
- * (run: file/wait/timeout; status and cancel: none).
+ * Help-registry entries for `cctl agent`: the group hub, the run/status/cancel
+ * job leaves, and the list/get profile-library leaves. Flags match `agent.ts`'s
+ * `checkFlags` (run: file/wait/timeout; every other verb: none).
  */
 export const agentHelpEntries: CommandHelpEntry[] = [
   {
     path: ["agent"],
-    summary: "run, poll, and cancel one-shot sub-agent jobs",
+    summary: "run one-shot sub-agent jobs; read the agent profile library",
     description:
-      "Run a backend agent (e.g. OpenAI Codex) as a one-shot sub-agent in this worktree. Job-shaped: the server runs it and the CLI observes it, so a run that outlives a killed client is recovered with `status`. The prompt payload names the backend.",
-    usage: ["cctl agent <run|status|cancel>"],
+      "Two capabilities behind one noun. `run`/`status`/`cancel` execute a backend agent (e.g. OpenAI Codex) as a one-shot sub-agent in this worktree — job-shaped, so a run that outlives a killed client is recovered with `status`. `list`/`get` read the agent profile library: the prompt identities (name, description, instructions) a conversation or a workflow assignment can be staffed with.",
+    usage: ["cctl agent <run|status|cancel|list|get>"],
     flags: [],
     examples: [],
     related: [],
@@ -102,6 +102,55 @@ export const agentHelpEntries: CommandHelpEntry[] = [
     related: [
       { command: "agent status", oneLiner: "check a run before cancelling it" },
       { command: "agent run", oneLiner: "start a new run" },
+    ],
+  },
+  {
+    path: ["agent", "list"],
+    summary: "list the agent profile library across every tier",
+    description:
+      "List every agent profile reachable from this project: the curated `builtin` set, `global` profiles shared by every project on this install, and this project's own `project` profiles. This is the machine-discoverable selection surface — staff an assignment by reading each profile's description. Each record carries its qualified `tier:id`, revision, name, description, advisory `recommendedFor`, and tags. Instruction text is never in a listing; read it with `agent get`. A stored record that fails to parse is reported under `diagnostics` rather than failing the listing.",
+    usage: ["cctl agent list [--json]"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl agent list --json",
+        explanation:
+          "pick a profile by description; `recommendedFor` is advisory — filter and warn on it, never refuse on it",
+      },
+    ],
+    related: [
+      {
+        command: "agent get",
+        oneLiner: "read one profile's full instructions by tier:id",
+      },
+    ],
+    domainContext:
+      "Tiers are sibling scopes, not a shadowing chain: `global:reviewer` and `project:reviewer` are two different profiles and both list. A profile is prompt identity only — it carries no backend, model, effort, or tool policy.",
+  },
+  {
+    path: ["agent", "get"],
+    summary: "read one agent profile, including its instructions",
+    description:
+      "Read one profile by its QUALIFIED reference `tier:id` (`builtin`, `global`, or `project`). This is the one surface that carries instruction text. A bare id is refused before any request (exit 2): sibling tiers can hold the same id, so an unqualified reference would have to guess. An unknown tier, a malformed id, and a reference that resolves to nothing each exit 2 with a typed refusal naming the offending reference.",
+    usage: ["cctl agent get <tier:id> [--json]"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl agent get builtin:security-reviewer",
+        explanation:
+          "the qualified spelling is mandatory — `cctl agent get security-reviewer` is refused as unqualified",
+      },
+      {
+        invocation: "cctl agent get project:contract-reviewer --json",
+        explanation:
+          "the JSON envelope's `profile` carries the full record (instructions included) at its current revision",
+      },
+    ],
+    related: [
+      {
+        command: "agent list",
+        oneLiner: "discover the qualified references to read",
+      },
     ],
   },
 ];

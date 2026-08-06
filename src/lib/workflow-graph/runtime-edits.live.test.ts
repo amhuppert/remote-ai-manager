@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createWorkflowExecution } from "./test-fixtures";
+import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
 import {
   applyLiveExecutionEdits,
   type LiveEditDeps,
@@ -14,8 +14,13 @@ import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
-  implementer: { backend: "claude", model: "opus", reasoningEffort: "medium" },
-  contextValidator: null,
+  implementer: {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    profileSnapshot: makeProfileSnapshot(),
+    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  },
+  contextValidator: { enabled: false, assignments: [] },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
@@ -39,6 +44,7 @@ function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
   return {
     createTaskId: () => `task-minted-${(counter += 1)}`,
     resolvedGlobalDefaults: () => RESOLVED_DEFAULTS,
+    snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
     hasPreMergeCommand: () => true,
     now: () => "2026-07-29T00:00:00.000Z",
     ...overrides,
@@ -178,9 +184,13 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
         title: "Implement carefully",
         description: null,
         implementer: {
-          backend: "claude",
-          model: "opus",
-          reasoningEffort: "high",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
         },
         scriptValidator: { enabled: false },
         mutability: { allowAgentTaskAdd: true },
@@ -194,7 +204,7 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     );
     expect(context?.title).toBe("Implement carefully");
     expect(context?.description).toBeUndefined();
-    expect(context?.implementer.reasoningEffort).toBe("high");
+    expect(context?.implementer.agent.reasoningEffort).toBe("high");
     expect(context?.mutability.allowAgentTaskAdd).toBe(true);
     expect(result.affectedContextIds).toContain("context-implement");
   });
@@ -211,14 +221,21 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
               ? {
                   ...ctx,
                   contextValidator: {
-                    type: "claude",
                     enabled: true,
-                    continuity: { enabled: true },
-                    agent: {
-                      backend: "claude",
-                      model: "sonnet",
-                      reasoningEffort: "medium",
-                    },
+                    assignments: [
+                      {
+                        id: "general",
+                        profile: { tier: "builtin", id: "general-reviewer" },
+                        profileSnapshot: makeProfileSnapshot(),
+                        strategy: "conversation",
+                        agent: {
+                          backend: "claude",
+                          model: "sonnet",
+                          reasoningEffort: "medium",
+                        },
+                        continuity: { enabled: true },
+                      },
+                    ],
                   },
                 }
               : ctx,
@@ -230,7 +247,7 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
       {
         type: "update-context",
         contextId: "context-implement",
-        contextValidator: null,
+        contextValidator: { enabled: false, assignments: [] },
       },
     ]);
 
@@ -239,7 +256,12 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     const context = result.execution.workingDefinition.executionContexts.find(
       (entry) => entry.id === "context-implement",
     );
-    expect(context?.contextValidator).toBeNull();
+    // Off is a cohort with `enabled: false`, never an absent validator — that
+    // is what preserves the dormant assignments across a live edit.
+    expect(context?.contextValidator).toEqual({
+      enabled: false,
+      assignments: [],
+    });
   });
 
   it("rejects editing a completed (frozen) context with code frozen", () => {
@@ -620,7 +642,9 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     );
     expect(context?.implementer).toEqual(RESOLVED_DEFAULTS.implementer);
     expect(context?.collaboration).toEqual(RESOLVED_DEFAULTS.collaboration);
-    expect(context?.contextValidator).toBeNull();
+    expect(context?.contextValidator).toEqual(
+      RESOLVED_DEFAULTS.contextValidator,
+    );
     const state = result.execution.contextStates["context-review"];
     expect(state).toMatchObject({
       status: "pending",
@@ -650,7 +674,7 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
       (entry) => entry.id === "context-review",
     );
     // context-plan resolves to claude/opus/high; the explicit iterationPolicy wins.
-    expect(context?.implementer).toEqual({
+    expect(context?.implementer.agent).toEqual({
       backend: "claude",
       model: "opus",
       reasoningEffort: "high",
@@ -901,9 +925,13 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
         type: "update-context",
         contextId: "context-implement",
         implementer: {
-          backend: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "minimal",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "minimal",
+          },
         },
       },
     ]);
@@ -971,10 +999,20 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
         type: "update-context",
         contextId: "context-implement",
         contextValidator: {
-          type: "codex",
           enabled: true,
-          continuity: { enabled: true },
-          codex: { model: "gpt-5.4", reasoningEffort: "minimal" },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "task",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "minimal",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
       },
     ]);
@@ -997,14 +1035,20 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
         title: "Review",
         acceptanceCriteria: "Reviewed.",
         contextValidator: {
-          type: "claude",
           enabled: true,
-          continuity: { enabled: true },
-          agent: {
-            backend: "codex",
-            model: "gpt-5.4",
-            reasoningEffort: "minimal",
-          },
+          assignments: [
+            {
+              id: "general",
+              profile: { tier: "builtin", id: "general-reviewer" },
+              strategy: "conversation",
+              agent: {
+                backend: "codex",
+                model: "gpt-5.4",
+                reasoningEffort: "minimal",
+              },
+              continuity: { enabled: true },
+            },
+          ],
         },
       },
     ]);

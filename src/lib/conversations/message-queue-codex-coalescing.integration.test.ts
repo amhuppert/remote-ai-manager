@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 
 // Logging is module-load-time infrastructure; mocking it is the sanctioned
 // exception (CLAUDE.md / engineering-principles). Both the queue service and the
@@ -30,10 +30,31 @@ import {
   type ConversationQueueDeps,
   type DrainSelf,
 } from "./message-queue-drain";
+import {
+  setConversationProfileAdmissionDeps,
+  _resetConversationProfileAdmissionDepsForTesting,
+} from "./profile-admission";
 import type { ConversationContext } from "@/lib/workflows/conversation/types";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 
 const NOW = "2026-06-07T12:00:00.000Z";
+
+// The drain settles the conversation's agent profile before it sends. These
+// cases are about coalescing, not profiles, so the seam answers as a legacy
+// conversation would — no profile, no lock, no write.
+beforeEach(() => {
+  setConversationProfileAdmissionDeps({
+    mutateConversation: async (_p, _s, _c, _label, mutate) =>
+      mutate({
+        profileSnapshot: null,
+        profileLockedAt: null,
+      } as unknown as ConversationState),
+  });
+});
+
+afterEach(() => {
+  _resetConversationProfileAdmissionDepsForTesting();
+});
 
 const KEY = {
   projectPath: "/repos/my-project",

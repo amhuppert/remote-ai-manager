@@ -6,7 +6,11 @@ import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { createWorkflowExecution } from "./test-fixtures";
+import {
+  createWorkflowExecution,
+  makeProfileSnapshot,
+  stubAssignmentSnapshotPreparation,
+} from "./test-fixtures";
 import type { LiveEditDeps } from "./runtime-edits";
 import {
   createGraphWorkflowRuntimeEditRouteHandlers,
@@ -36,11 +40,16 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
   createTaskId: () => "task-minted-loop",
   resolvedGlobalDefaults: () => ({
     implementer: {
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "medium",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+      },
     },
-    contextValidator: null,
+    contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
@@ -62,6 +71,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       autonomousResolutionThreshold: { value: "minor", source: "global" },
     },
   }),
+  snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
   hasPreMergeCommand: () => true,
   now: () => "2026-07-29T10:00:00.000Z",
 };
@@ -187,6 +197,7 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       getActiveExecution: fixture.store.getActiveGraphWorkflowExecution,
       mutateActive: repository.mutateActive,
       buildLiveEditDeps: async () => TEST_LIVE_EDIT_DEPS,
+      prepareAssignmentSnapshots: stubAssignmentSnapshotPreparation(),
       publishLiveEditApplied: publisher.publishLiveEditApplied,
       publishCharterUpdated: publisher.publishCharterUpdated,
       writeCharterDocument: async () => {},
@@ -283,9 +294,13 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
             type: "update-context",
             contextId: "context-implement",
             implementer: {
-              backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              id: "implementer",
+              profile: { tier: "builtin", id: "general-implementer" },
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "high",
+              },
             },
           },
         ],
@@ -313,9 +328,13 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
             type: "update-context",
             contextId: "context-implement",
             implementer: {
-              backend: "claude",
-              model: "opus",
-              reasoningEffort: "high",
+              id: "implementer",
+              profile: { tier: "builtin", id: "general-implementer" },
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "high",
+              },
             },
           },
           {
@@ -343,9 +362,10 @@ describe("graph-workflow live editing — canonical pause/edit/resume loop (doc 
       (c) => c.id === "context-implement",
     );
     expect(implement?.implementer).toEqual({
-      backend: "claude",
-      model: "opus",
-      reasoningEffort: "high",
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
     });
     expect(
       afterEdit.workingDefinition.tasks.some(

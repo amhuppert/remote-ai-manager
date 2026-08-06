@@ -34,6 +34,7 @@ import {
   type AskQuestionAnswer,
   type TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SerializedPromptDoc } from "@/lib/prompt-editor";
 
@@ -56,7 +57,13 @@ interface PeekPopoverProps {
   /** Reply mutation in flight — the send control shows a visible sending state. */
   isSendingReply?: boolean;
   onAnswerQuestion: (answers: Record<string, AskQuestionAnswer>) => void;
-  onFork: (messageIndex: number) => void;
+  onFork: (messageIndex: number, profile?: AgentProfileRef) => void;
+  /**
+   * Project whose profile library the index-0 fork picker lists. The peek
+   * renders the conversation's real transcript indices, so index 0 here is the
+   * same fresh-conversation fork the full transcript offers (R7.1).
+   */
+  forkProjectName: string;
   approvalGate?: PeekApprovalGate | null;
 }
 
@@ -207,6 +214,7 @@ export default function PeekPopover({
   isSendingReply = false,
   onAnswerQuestion,
   onFork,
+  forkProjectName,
   approvalGate = null,
 }: PeekPopoverProps): React.JSX.Element | null {
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -455,6 +463,7 @@ export default function PeekPopover({
                     selectedBackend={conversation.agentBackend}
                     worktreePath={conversation.worktreePath}
                     onFork={onFork}
+                    forkProjectName={forkProjectName}
                     lastMessageExtras={null}
                   />
                 ))

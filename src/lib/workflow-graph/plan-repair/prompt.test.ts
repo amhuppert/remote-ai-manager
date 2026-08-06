@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "../test-fixtures";
 import type { GraphWorkflowExecution } from "../schemas";
-import { buildPlanRepairPrompt, type PlanRepairPromptInput } from "./prompt";
+import {
+  buildPlanRepairPrompt,
+  toPlanRepairValidationVerdict,
+  type PlanRepairPromptInput,
+} from "./prompt";
 
 function makeInput(
   overrides: Partial<PlanRepairPromptInput> = {},
@@ -198,5 +202,174 @@ describe("buildPlanRepairPrompt", () => {
 
     expect(prompt).toContain("First repair clarified the AC wording");
     expect(prompt).toContain("attempt 2");
+  });
+});
+
+// R14.1: a breaker trip from a multi-validator cohort. What the repair agent
+// must be able to tell apart is "one reviewer keeps failing the same thing"
+// from "several lenses each found something different" — the first is usually
+// an implementation problem, the second is where a planning defect lives.
+describe("buildPlanRepairPrompt: cohort evidence", () => {
+  const COHORT_VERDICT = {
+    pass: false,
+    summary: "general: ok\nsecurity: no\nperf: no",
+    issues: [
+      {
+        taskId: "task-implement-1",
+        title: "Secrets in the log line",
+        description: "The handler logs the bearer token.",
+        assignmentId: "security",
+      },
+      {
+        taskId: "task-implement-1",
+        title: "N+1 on the members query",
+        description: "One query per row.",
+        assignmentId: "perf",
+      },
+    ],
+    specialists: [
+      {
+        assignmentId: "general",
+        profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
+        pass: true,
+        summary: "general: ok",
+        issues: [],
+      },
+      {
+        assignmentId: "security",
+        profile: { tier: "project", id: "security-reviewer", revision: 4 },
+        pass: false,
+        summary: "security: no",
+        issues: [
+          {
+            taskId: "task-implement-1",
+            title: "Secrets in the log line",
+            description: "The handler logs the bearer token.",
+            assignmentId: "security",
+          },
+        ],
+      },
+      {
+        assignmentId: "perf",
+        profile: { tier: "global", id: "perf-reviewer", revision: 7 },
+        pass: false,
+        summary: "perf: no",
+        issues: [
+          {
+            taskId: "task-implement-1",
+            title: "N+1 on the members query",
+            description: "One query per row.",
+            assignmentId: "perf",
+          },
+        ],
+      },
+    ],
+  };
+
+  it("groups findings by assignment and names the profile that produced each", () => {
+    const prompt = buildPlanRepairPrompt(
+      makeInput({ validationHistory: [COHORT_VERDICT] }),
+    );
+
+    expect(prompt).toContain(
+      "- security (project/security-reviewer rev 4) [fail]",
+    );
+    expect(prompt).toContain("- perf (global/perf-reviewer rev 7) [fail]");
+    // A passing member is shown too: "two of three objected" is a different
+    // diagnosis from "the whole cohort objected".
+    expect(prompt).toContain(
+      "- general (builtin/general-reviewer rev 1) [pass]",
+    );
+
+    // Each finding sits under the specialist that raised it.
+    const securityBlock = prompt.slice(
+      prompt.indexOf("- security ("),
+      prompt.indexOf("- perf ("),
+    );
+    expect(securityBlock).toContain("Secrets in the log line");
+    expect(securityBlock).not.toContain("N+1 on the members query");
+  });
+
+  it("keeps the flat rendering for a single-reviewer round", () => {
+    const prompt = buildPlanRepairPrompt(makeInput());
+
+    expect(prompt).toContain("Impossible endpoint");
+    expect(prompt).not.toContain("rev 1) [");
+  });
+
+  // The repair agent may rewrite plan artifacts, never the cohort. A vocabulary
+  // that offered assignment operations would let a repair silence the reviewer
+  // that keeps objecting instead of fixing what it objects to.
+  it("offers no assignment operations, even for a cohort trip", () => {
+    const prompt = buildPlanRepairPrompt(
+      makeInput({ validationHistory: [COHORT_VERDICT] }),
+    );
+
+    const vocabulary = prompt.slice(
+      prompt.indexOf("## Allowed repair operations"),
+    );
+    for (const forbidden of [
+      "add-validator",
+      "remove-validator",
+      "update-validator",
+      "set-validator",
+      "add-assignment",
+      "remove-assignment",
+      "update-assignment",
+      "contextValidator",
+      "assignments",
+      "profileSnapshot",
+      "implementer",
+    ]) {
+      expect(vocabulary).not.toContain(forbidden);
+    }
+    // The allowed vocabulary is exactly the plan-artifact set.
+    expect(
+      // Line-anchored: each operation shape occupies its own line, so a
+      // nested `{"type": "object"}` inside a JSON Schema example is not one.
+      [...vocabulary.matchAll(/^\{"type": "([a-z-]+)"/gm)].map(
+        (match) => match[1],
+      ),
+    ).toEqual([
+      "amend-charter",
+      "update-context",
+      "add-task",
+      "update-task",
+      "remove-task",
+      "reorder-tasks",
+    ]);
+  });
+});
+
+describe("toPlanRepairValidationVerdict", () => {
+  it("carries the aggregate's specialist entries into the prompt's evidence", () => {
+    const verdict = toPlanRepairValidationVerdict({
+      pass: false,
+      summary: "security: no",
+      issues: [{ taskId: "t", title: "a", description: "b" }],
+      specialists: [
+        {
+          assignmentId: "security",
+          profile: { tier: "project", id: "security-reviewer", revision: 4 },
+          pass: false,
+          summary: "security: no",
+          issues: [{ taskId: "t", title: "a", description: "b" }],
+        },
+      ],
+    });
+
+    expect(verdict.specialists).toHaveLength(1);
+    expect(verdict.specialists?.[0]?.profile.revision).toBe(4);
+  });
+
+  it("omits the grouping entirely for a legacy row with no entries", () => {
+    const verdict = toPlanRepairValidationVerdict({
+      pass: true,
+      summary: "ok",
+      issues: [],
+      specialists: [],
+    });
+
+    expect(verdict.specialists).toBeUndefined();
   });
 });

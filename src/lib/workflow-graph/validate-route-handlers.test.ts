@@ -7,13 +7,22 @@ import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import {
   createWorkflowDefinition,
   createWorkflowLayout,
+  makeValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
+import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import { createAssignmentReferenceChecker } from "./assignment-references";
 import { createGraphWorkflowValidateHandlers } from "./validate-route-handlers";
 
-function makeRequest(body?: unknown, token = "good-token"): NextRequest {
+function makeRequest(
+  body?: unknown,
+  token = "good-token",
+  query = "",
+): NextRequest {
   return new NextRequest(
-    "http://localhost/api/projects/repo/sessions/sess/graph-workflow/validate",
+    `http://localhost/api/projects/repo/sessions/sess/graph-workflow/validate${query}`,
     {
       method: "POST",
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -67,16 +76,130 @@ describe("graph-workflow validate route handler", () => {
       ) => Promise<{ sessionName: string } | null>
     >();
 
-  const handlers = createGraphWorkflowValidateHandlers({
-    auth: tokenAuth("good-token"),
-    resolveProjectPath,
-    getSession,
-  });
+  let profileDir: string;
+  let handlers: ReturnType<typeof createGraphWorkflowValidateHandlers>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetAllMocks();
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue({ sessionName: "sess" });
+
+    profileDir = await mkdtemp(path.join(tmpdir(), "cc-validate-profiles-"));
+    handlers = createGraphWorkflowValidateHandlers({
+      auth: tokenAuth("good-token"),
+      resolveProjectPath,
+      getSession,
+      assignmentReferences: createAssignmentReferenceChecker({
+        library: createAgentProfileLibraryService({
+          storage: createAgentProfileStorage({
+            resolveConfigDir: () => profileDir,
+          }),
+        }),
+      }),
+    });
+  });
+
+  afterEach(async () => {
+    await rm(profileDir, { recursive: true, force: true });
+  });
+
+  it("returns 400 naming the dangling qualified ref and its use site", async () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      executionContexts: base.executionContexts.map((context, index) =>
+        index === 0
+          ? {
+              ...context,
+              contextValidator: {
+                enabled: true,
+                assignments: [
+                  {
+                    id: "security",
+                    profile: { tier: "global" as const, id: "never-created" },
+                    strategy: "conversation" as const,
+                    agent: {
+                      backend: "claude" as const,
+                      model: "sonnet" as const,
+                      reasoningEffort: "medium" as const,
+                    },
+                    continuity: { enabled: true },
+                  },
+                ],
+              },
+            }
+          : context,
+      ),
+    };
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(definition)),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      issues: { path: string; message: string }[];
+    };
+    expect(body.issues.map((issue) => issue.path)).toContain(
+      "definition.executionContexts.0.contextValidator.assignments.0.profile",
+    );
+    expect(body.issues[0]?.message).toContain("global:never-created");
+    expect(body.issues[0]?.message).toContain("security");
+  });
+
+  /**
+   * A plan can be flawless and still be unlaunchable, because the cascade
+   * staffs it from `workflowDefaults` the plan never mentions. Validate is the
+   * pre-flight for a launch, so it has to answer the question the launch will
+   * actually ask — and locate the answer in the config field to fix, not in the
+   * plan, which is innocent.
+   */
+  it("returns 400 located at workflowDefaults when the inherited defaults reference a deleted profile", async () => {
+    const handlersWithDefaults = createGraphWorkflowValidateHandlers({
+      auth: tokenAuth("good-token"),
+      resolveProjectPath,
+      getSession,
+      assignmentReferences: createAssignmentReferenceChecker({
+        library: createAgentProfileLibraryService({
+          storage: createAgentProfileStorage({
+            resolveConfigDir: () => profileDir,
+          }),
+        }),
+      }),
+      readConfig: async () =>
+        ({
+          workflowDefaults: {
+            contextValidator: {
+              enabled: true,
+              assignments: [
+                makeValidatorAssignment({
+                  id: "house",
+                  profile: { tier: "global", id: "since-deleted" },
+                }),
+              ],
+            },
+          },
+        }) as GlobalConfig,
+    });
+
+    // The plan itself authors no validator at all — every reference to the
+    // missing profile arrives through the cascade.
+    const response = await handlersWithDefaults.POST(
+      makeRequest(makePlan()),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      issues: { path: string; message: string }[];
+    };
+    expect(body.issues).toHaveLength(1);
+    expect(body.issues[0]?.path).toBe(
+      "workflowDefaults.contextValidator.assignments.0.profile",
+    );
+    expect(body.issues[0]?.message).toContain("global:since-deleted");
+    expect(body.issues[0]?.message).toContain("global-defaults");
   });
 
   it("returns { ok: true } for a well-formed plan", async () => {
@@ -142,6 +265,111 @@ describe("graph-workflow validate route handler", () => {
     expect(paths).toContain("definition.edges");
   });
 
+  // R4.2: validate is the pre-flight for a save, so it has to be held to the
+  // scope the plan is destined for. Without a scope selector a plan authored as
+  // a global template validates under project rules and only fails later, at
+  // save — the exact "passes validate, refused at save" split R4.2 forbids.
+  describe("document scope selector (R4.2)", () => {
+    /** A project-tier profile that genuinely resolves under /repo. */
+    async function seedProjectProfile(): Promise<void> {
+      await createAgentProfileLibraryService({
+        storage: createAgentProfileStorage({
+          resolveConfigDir: () => profileDir,
+        }),
+      }).create({
+        projectPath: "/repo",
+        tier: "project",
+        id: "repo-reviewer",
+        name: "Repo Reviewer",
+        description: "This repository's review lens",
+        instructions: "Review against this repository's conventions.",
+      });
+    }
+
+    function planReferencingProjectTier() {
+      const base = createWorkflowDefinition();
+      return makePlan({
+        ...base,
+        executionContexts: base.executionContexts.map((context, index) =>
+          index === 0
+            ? {
+                ...context,
+                contextValidator: {
+                  enabled: true,
+                  assignments: [
+                    {
+                      id: "repo",
+                      profile: {
+                        tier: "project" as const,
+                        id: "repo-reviewer",
+                      },
+                      strategy: "conversation" as const,
+                      agent: {
+                        backend: "claude" as const,
+                        model: "sonnet" as const,
+                        reasoningEffort: "medium" as const,
+                      },
+                      continuity: { enabled: true },
+                    },
+                  ],
+                },
+              }
+            : context,
+        ),
+      });
+    }
+
+    it("refuses a project-tier reference under ?tier=global, naming the scope rule", async () => {
+      await seedProjectProfile();
+
+      const response = await handlers.POST(
+        makeRequest(planReferencingProjectTier(), "good-token", "?tier=global"),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as {
+        issues: { path: string; message: string }[];
+      };
+      expect(body.issues.map((issue) => issue.path)).toContain(
+        "definition.executionContexts.0.contextValidator.assignments.0.profile",
+      );
+      expect(body.issues[0]?.message).toMatch(/project-tier/i);
+      expect(body.issues[0]?.message).toContain("project:repo-reviewer");
+    });
+
+    it("accepts the same project-tier reference under the default project scope", async () => {
+      await seedProjectProfile();
+
+      const response = await handlers.POST(
+        makeRequest(planReferencingProjectTier()),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it("accepts a builtin-tier plan under ?tier=global", async () => {
+      const response = await handlers.POST(
+        makeRequest(makePlan(), "good-token", "?tier=global"),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it("rejects an unknown tier value rather than silently validating as project", async () => {
+      const response = await handlers.POST(
+        makeRequest(makePlan(), "good-token", "?tier=bogus"),
+        makeContext(),
+      );
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: string };
+      expect(body.error).toMatch(/tier/i);
+    });
+  });
+
   it("returns 400 when the body is not JSON", async () => {
     const request = new NextRequest(
       "http://localhost/api/projects/repo/sessions/sess/graph-workflow/validate",
@@ -182,6 +410,13 @@ describe("graph-workflow validate persists nothing", () => {
       auth: tokenAuth("good-token"),
       resolveProjectPath: async () => "/repo",
       getSession: async () => ({ sessionName: "sess" }),
+      assignmentReferences: createAssignmentReferenceChecker({
+        library: createAgentProfileLibraryService({
+          storage: createAgentProfileStorage({
+            resolveConfigDir: () => tempDir,
+          }),
+        }),
+      }),
     });
 
     const response = await handlers.POST(

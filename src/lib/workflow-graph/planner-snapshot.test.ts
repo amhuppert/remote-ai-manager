@@ -32,9 +32,13 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
       acceptanceCriteria:
         "plan.md describes the change in implementable detail.",
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "high",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "high",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
@@ -50,9 +54,13 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
       acceptanceCriteria:
         "feature behaves as described when exercised end-to-end.",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
@@ -204,9 +212,16 @@ describe("planner workflow generation — fixture snapshot", () => {
               "description": "Inspect the implementation surface.",
               "id": "context-plan",
               "implementer": {
-                "backend": "claude",
-                "model": "opus",
-                "reasoningEffort": "high",
+                "agent": {
+                  "backend": "claude",
+                  "model": "opus",
+                  "reasoningEffort": "high",
+                },
+                "id": "implementer",
+                "profile": {
+                  "id": "general-implementer",
+                  "tier": "builtin",
+                },
               },
               "iterationPolicy": {
                 "continuity": {
@@ -225,9 +240,16 @@ describe("planner workflow generation — fixture snapshot", () => {
               "description": "Apply the planned change.",
               "id": "context-implement",
               "implementer": {
-                "backend": "claude",
-                "model": "sonnet",
-                "reasoningEffort": "medium",
+                "agent": {
+                  "backend": "claude",
+                  "model": "sonnet",
+                  "reasoningEffort": "medium",
+                },
+                "id": "implementer",
+                "profile": {
+                  "id": "general-implementer",
+                  "tier": "builtin",
+                },
               },
               "iterationPolicy": {
                 "continuity": {

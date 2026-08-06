@@ -13,9 +13,13 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
+import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
+import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import { createAssignmentReferenceChecker } from "./assignment-references";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
+  makeImplementerAssignment,
 } from "./test-fixtures";
 import { createWorkflowStorageService, type WorkflowScope } from "./storage";
 
@@ -45,7 +49,28 @@ afterEach(async () => {
 });
 
 function storageFor() {
-  return createWorkflowStorageService({ resolveConfigDir: () => tempDir });
+  return createWorkflowStorageService({
+    resolveConfigDir: () => tempDir,
+    assignmentReferences: createAssignmentReferenceChecker({
+      library: createAgentProfileLibraryService({
+        storage: createAgentProfileStorage({ resolveConfigDir: () => tempDir }),
+      }),
+    }),
+  });
+}
+
+/** A project-tier profile that genuinely exists under PROJECT_PATH. */
+async function seedProjectProfile(): Promise<void> {
+  await createAgentProfileLibraryService({
+    storage: createAgentProfileStorage({ resolveConfigDir: () => tempDir }),
+  }).create({
+    projectPath: PROJECT_PATH,
+    tier: "project",
+    id: "repo-reviewer",
+    name: "Repo Reviewer",
+    description: "This repository's review lens",
+    instructions: "Review against this repository's conventions.",
+  });
 }
 
 function draft() {
@@ -142,6 +167,134 @@ describe("workflow storage — global scope round-trip", () => {
         }),
       }),
     ).rejects.toThrow("undeclared-parameter-reference");
+  });
+});
+
+describe("workflow storage — assignment reference scope rule (R4.2)", () => {
+  function definitionReferencing(profile: { tier: string; id: string }) {
+    const base = createWorkflowDefinition();
+    return createWorkflowDefinition({
+      executionContexts: base.executionContexts.map((context, index) =>
+        index === 0
+          ? {
+              ...context,
+              implementer: makeImplementerAssignment(
+                { backend: "claude", model: "opus", reasoningEffort: "high" },
+                // The authored ref is the subject; the cast keeps the fixture
+                // free of a tier-typed helper it does not otherwise need.
+                { profile: profile as never },
+              ),
+            }
+          : context,
+      ),
+    });
+  }
+
+  it("refuses a global-scope template referencing a project-tier profile, naming the scope rule", async () => {
+    await seedProjectProfile();
+    const storage = storageFor();
+
+    await expect(
+      storage.create(GLOBAL_SCOPE, {
+        ...draft(),
+        definition: definitionReferencing({
+          tier: "project",
+          id: "repo-reviewer",
+        }),
+      }),
+    ).rejects.toThrow(/project-tier/i);
+
+    // Nothing was written: acceptance fails closed.
+    expect(await storage.list(GLOBAL_SCOPE)).toHaveLength(0);
+  });
+
+  it("refuses the same project-tier reference on update, not only on create", async () => {
+    await seedProjectProfile();
+    const storage = storageFor();
+    const created = await storage.create(GLOBAL_SCOPE, draft());
+
+    await expect(
+      storage.update(GLOBAL_SCOPE, created.id, {
+        ...draft(),
+        definition: definitionReferencing({
+          tier: "project",
+          id: "repo-reviewer",
+        }),
+      }),
+    ).rejects.toThrow(/project-tier/i);
+
+    const reloaded = await storage.get(GLOBAL_SCOPE, created.id);
+    expect(reloaded?.revision).toBe(1);
+  });
+
+  it("accepts a project definition referencing builtin, global, and project tiers", async () => {
+    await seedProjectProfile();
+    const library = createAgentProfileLibraryService({
+      storage: createAgentProfileStorage({ resolveConfigDir: () => tempDir }),
+    });
+    await library.create({
+      projectPath: PROJECT_PATH,
+      tier: "global",
+      id: "org-reviewer",
+      name: "Org Reviewer",
+      description: "The org-wide review lens",
+      instructions: "Review against the org standards.",
+    });
+
+    const storage = storageFor();
+    const base = createWorkflowDefinition();
+    const created = await storage.create(PROJECT_SCOPE, {
+      ...draft(),
+      definition: createWorkflowDefinition({
+        workflowConfig: {
+          contextValidator: {
+            enabled: true,
+            assignments: [
+              {
+                id: "org",
+                profile: { tier: "global", id: "org-reviewer" },
+                strategy: "conversation",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: true },
+              },
+              {
+                id: "repo",
+                profile: { tier: "project", id: "repo-reviewer" },
+                strategy: "conversation",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: true },
+              },
+            ],
+          },
+        },
+        // Context 0's implementer already references builtin:general-implementer.
+        executionContexts: base.executionContexts,
+      }),
+    });
+
+    expect(created.revision).toBe(1);
+  });
+
+  it("refuses a dangling reference in a project definition", async () => {
+    const storage = storageFor();
+
+    await expect(
+      storage.create(PROJECT_SCOPE, {
+        ...draft(),
+        definition: definitionReferencing({
+          tier: "project",
+          id: "never-created",
+        }),
+      }),
+    ).rejects.toThrow(/project:never-created/);
   });
 });
 

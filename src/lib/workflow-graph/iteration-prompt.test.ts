@@ -14,6 +14,7 @@ import type {
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
+import { makeProfileSnapshot } from "./test-fixtures";
 
 function makeCharter(
   overrides: Partial<WorkflowCharter> = {},
@@ -52,8 +53,13 @@ function makeContext(
     title: "Plan",
     description: "Plan the implementation",
     acceptanceCriteria: "Planning complete.",
-    implementer: { backend: "claude", model: "opus", reasoningEffort: "high" },
-    contextValidator: null,
+    implementer: {
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      profileSnapshot: makeProfileSnapshot(),
+      agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
+    },
+    contextValidator: { enabled: false, assignments: [] },
     scriptValidator: { enabled: false },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },

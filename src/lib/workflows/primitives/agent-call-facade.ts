@@ -122,6 +122,12 @@ interface TaskRunnerResolution {
    * it, so no registry-resolved intent path can.
    */
   ccSessionScope?: AgentTaskRequest["ccSessionScope"];
+  /**
+   * The run's filesystem-write envelope. Sourced from the request rather than
+   * from a resolver seam — see the normalization in
+   * {@link resolveTaskRunnerResolution}.
+   */
+  fsWritePolicy?: AgentTaskRequest["fsWritePolicy"];
 }
 
 /**
@@ -262,7 +268,16 @@ export function buildStructuredOutputRepairRequest(input: {
       : {}),
   };
   return request.kind === "task_run"
-    ? { kind: "task_run", backend, ...carried }
+    ? {
+        kind: "task_run",
+        backend,
+        ...carried,
+        // A repair turn runs the same agent against the same worktree; letting
+        // it drop the envelope would make schema repair the way out of it.
+        ...(request.fsWritePolicy !== undefined
+          ? { fsWritePolicy: request.fsWritePolicy }
+          : {}),
+      }
     : { kind: "conversation_turn", backend, ...carried };
 }
 
@@ -450,7 +465,26 @@ async function executeConversationTurn(
   );
 }
 
+/**
+ * Resolve the runner, then re-assert the request's write envelope over whatever
+ * the resolution produced.
+ *
+ * The policy is server-derived at the dispatch site, so a resolver seam — which
+ * may predate the envelope entirely — must not be able to drop it. A resolution
+ * may still supply one for a request that carries none (the legacy callback
+ * path's only way to restrict a run).
+ */
 async function resolveTaskRunnerResolution(
+  request: Extract<AgentCallRequest, { kind: "task_run" }>,
+  deps: AgentCallFacadeDeps,
+): Promise<TaskRunnerResolution> {
+  const resolution = await resolveTaskRunnerTarget(request, deps);
+  return request.fsWritePolicy !== undefined
+    ? { ...resolution, fsWritePolicy: request.fsWritePolicy }
+    : resolution;
+}
+
+async function resolveTaskRunnerTarget(
   request: Extract<AgentCallRequest, { kind: "task_run" }>,
   deps: AgentCallFacadeDeps,
 ): Promise<TaskRunnerResolution> {
@@ -569,6 +603,9 @@ async function executeTaskRun(
     ...(resolution.signal !== undefined ? { signal: resolution.signal } : {}),
     ...(resolution.ccSessionScope !== undefined
       ? { ccSessionScope: resolution.ccSessionScope }
+      : {}),
+    ...(resolution.fsWritePolicy !== undefined
+      ? { fsWritePolicy: resolution.fsWritePolicy }
       : {}),
     ...(request.imageRefs !== undefined
       ? { imagePaths: request.imageRefs.map((ref) => ref.path) }

@@ -525,7 +525,9 @@ describe("ConfigPage — Workflow Defaults", () => {
     );
     const defaults = savedConfig().workflowDefaults;
     expect(defaults).toEqual({
-      implementer: expect.objectContaining({ model: "sonnet" }),
+      implementer: expect.objectContaining({
+        agent: expect.objectContaining({ model: "sonnet" }),
+      }),
     });
   });
 

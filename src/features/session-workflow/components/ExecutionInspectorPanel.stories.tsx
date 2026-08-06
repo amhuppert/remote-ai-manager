@@ -2,9 +2,13 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowValidationRound,
+} from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+import { makeProfileSnapshot } from "@/lib/workflow-graph/test-fixtures";
 
 const overviewEvents: GraphWorkflowExecutionEvent[] = [
   {
@@ -220,9 +224,14 @@ function makeExecution(
 > Note: The existing \`/api/health\` endpoint pattern should be followed for consistency.`,
           acceptanceCriteria: "Validate the completed context output",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: {},
@@ -232,14 +241,21 @@ function makeExecution(
           },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: {
-            type: "claude",
             enabled: true,
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
-            },
-            continuity: { enabled: true },
+            assignments: [
+              {
+                id: "general",
+                profile: { tier: "builtin", id: "general-reviewer" },
+                profileSnapshot: makeProfileSnapshot(),
+                strategy: "conversation",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: true },
+              },
+            ],
           },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
@@ -251,11 +267,16 @@ function makeExecution(
           description: "Build React components for the user management UI.",
           acceptanceCriteria: "UI components render and handle edit flows.",
           implementer: {
-            backend: "claude",
-            model: "sonnet",
-            reasoningEffort: "medium",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
@@ -269,11 +290,16 @@ function makeExecution(
           title: "Database Migrations",
           acceptanceCriteria: "Schema changes applied and reversible.",
           implementer: {
-            backend: "claude",
-            model: "haiku",
-            reasoningEffort: "low",
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
+            agent: {
+              backend: "claude",
+              model: "haiku",
+              reasoningEffort: "low",
+            },
           },
-          contextValidator: null,
+          contextValidator: { enabled: false, assignments: [] },
           scriptValidator: { enabled: false },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
@@ -359,7 +385,7 @@ const createUserSchema = z.object({
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 3,
@@ -378,7 +404,7 @@ const createUserSchema = z.object({
       },
       "ctx-2": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-2",
         status: "pending",
         totalTaskCount: 2,
@@ -397,7 +423,7 @@ const createUserSchema = z.object({
       },
       "ctx-3": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-3",
         status: "completed",
         totalTaskCount: 1,
@@ -508,7 +534,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "halted",
         totalTaskCount: 3,
@@ -527,7 +553,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       "ctx-2": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-2",
         status: "pending",
         totalTaskCount: 2,
@@ -546,7 +572,7 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
       "ctx-3": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-3",
         status: "completed",
         totalTaskCount: 1,
@@ -616,6 +642,280 @@ function makeHaltedExecution(): GraphWorkflowExecution {
       },
     },
   });
+}
+
+// ---- R12.3 cohort fixtures ----
+
+const COHORT_ROSTER = [
+  {
+    assignmentId: "general",
+    profileRef: { tier: "builtin" as const, id: "general-reviewer" },
+    revision: 1,
+    resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+    strategy: "conversation" as const,
+  },
+  {
+    assignmentId: "security",
+    profileRef: { tier: "project" as const, id: "security-reviewer" },
+    revision: 4,
+    resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+    strategy: "task" as const,
+  },
+  {
+    assignmentId: "docs",
+    profileRef: { tier: "global" as const, id: "docs-reviewer" },
+    revision: 2,
+    resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
+    strategy: "conversation" as const,
+  },
+];
+
+function makeCohortRound(): GraphWorkflowValidationRound {
+  return {
+    seq: 3,
+    candidate: {
+      headSha: "9f1c2ab7",
+      candidateTreeHash: "4c7d91ea0b3f",
+      taskStateHash: "tasks-7",
+    },
+    roster: COHORT_ROSTER,
+    specialists: {
+      general: {
+        state: "verdict_pass",
+        attempts: 1,
+        summary: "Endpoints match the acceptance criteria.",
+        issues: [],
+        questionToken: null,
+        sessionRef: {
+          backend: "claude",
+          ref: "conv-general",
+          lane: "context_validator",
+          assignmentId: "general",
+          refKind: "conversation",
+          workflowConversationId: "conv-general",
+        },
+        reviewArtifact: null,
+        lastInfraFailure: null,
+      },
+      security: {
+        state: "infra_failed",
+        attempts: 2,
+        summary: null,
+        issues: [],
+        questionToken: null,
+        sessionRef: null,
+        reviewArtifact: null,
+        lastInfraFailure: {
+          reason: "unparseable",
+          message: "Validator returned no parseable verdict",
+          engine: "codex",
+        },
+      },
+      docs: {
+        state: "running",
+        attempts: 1,
+        summary: null,
+        issues: [],
+        questionToken: null,
+        sessionRef: null,
+        reviewArtifact: null,
+        lastInfraFailure: null,
+      },
+    },
+    phase: "specialists",
+    outcome: null,
+    startedAt: "2026-03-30T10:35:00Z",
+  };
+}
+
+const cohortEvents: GraphWorkflowExecutionEvent[] = [
+  {
+    occurredAt: "2026-03-30T10:38:00Z",
+    preReset: false,
+    event: {
+      type: "graph-workflow-validation-incident",
+      projectName: "test",
+      sessionName: "test",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      incident: "infra_failure",
+      roundSeq: 3,
+      stage: "specialist_result",
+      assignmentId: "security",
+      attempts: 2,
+      driftedComponents: "",
+      message: "Validator returned no parseable verdict; retrying the lane.",
+    },
+  },
+];
+
+const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
+  occurredAt: "2026-03-30T10:45:00Z",
+  preReset: false,
+  event: {
+    type: "graph-workflow-validation-result",
+    projectName: "test",
+    sessionName: "test",
+    executionId: "exec-1",
+    contextId: "ctx-1",
+    validatorType: "context",
+    kind: "context_validation",
+    rejectedOutput: null,
+    gateRepairAttempts: null,
+    gateRepairBudget: null,
+    pass: false,
+    summary: "The cohort rejected the candidate: 1 of 3 validators refused.",
+    // Production shape: `concludeCohort` concatenates every failing lane's
+    // findings onto the aggregate, stamped with the assignment that raised
+    // them, while each lane's entry below carries its own copy. The card
+    // renders the attributed copy inside its assignment group only.
+    issues: [
+      {
+        taskId: "task-2",
+        title: "Plaintext secret in logs",
+        description:
+          "`req.headers.authorization` is logged verbatim in the auth middleware.",
+        assignmentId: "security",
+      },
+    ],
+    reopenTaskIds: ["task-2"],
+    roundSeq: 3,
+    sessionRef: null,
+    reviewArtifact: null,
+    specialists: [
+      {
+        assignmentId: "general",
+        profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
+        resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+        pass: true,
+        summary: "Endpoints match the acceptance criteria.",
+        issues: [],
+        sessionRef: {
+          backend: "claude",
+          ref: "conv-general",
+          lane: "context_validator",
+          assignmentId: "general",
+          refKind: "conversation",
+          workflowConversationId: "conv-general",
+        },
+        reviewArtifact: null,
+        usage: null,
+      },
+      {
+        assignmentId: "security",
+        profile: { tier: "project", id: "security-reviewer", revision: 4 },
+        resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+        pass: false,
+        summary: "The bearer token is written to the request log.",
+        issues: [
+          {
+            taskId: "task-2",
+            title: "Plaintext secret in logs",
+            description:
+              "`req.headers.authorization` is logged verbatim in the auth middleware.",
+            assignmentId: "security",
+          },
+        ],
+        sessionRef: {
+          backend: "codex",
+          ref: "thread-security",
+          lane: "context_validator",
+          assignmentId: "security",
+          refKind: "backend",
+        },
+        reviewArtifact: {
+          backend: "codex",
+          kind: "response",
+          ref: "thread-security",
+          response:
+            "Reviewed the auth middleware and the request logger. The bearer token reaches the log sink unredacted.",
+          usage: {
+            inputTokens: 2130,
+            cachedInputTokens: 1600,
+            outputTokens: 284,
+            costUsd: null,
+          },
+        },
+        usage: null,
+      },
+      {
+        assignmentId: "docs",
+        profile: { tier: "global", id: "docs-reviewer", revision: 2 },
+        resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
+        pass: true,
+        summary: "The route docs cover every new endpoint.",
+        issues: [],
+        sessionRef: {
+          backend: "claude",
+          ref: "conv-docs",
+          lane: "context_validator",
+          assignmentId: "docs",
+          refKind: "conversation",
+          workflowConversationId: "conv-docs",
+        },
+        reviewArtifact: null,
+        usage: null,
+      },
+    ],
+  },
+};
+
+function makeCohortExecution({
+  round,
+  status,
+}: {
+  round: GraphWorkflowValidationRound;
+  status: GraphWorkflowExecution["status"];
+}): GraphWorkflowExecution {
+  const base = makeExecution({ status });
+  const planContext = base.workingDefinition.executionContexts[0]!;
+  const planState = base.contextStates["ctx-1"]!;
+  return {
+    ...base,
+    workingDefinition: {
+      ...base.workingDefinition,
+      executionContexts: [
+        {
+          ...planContext,
+          implementer: {
+            ...planContext.implementer,
+            profileSnapshot: makeProfileSnapshot({ revision: 3 }),
+          },
+          contextValidator: {
+            enabled: true,
+            assignments: COHORT_ROSTER.map((seat) => ({
+              id: seat.assignmentId,
+              profile: seat.profileRef,
+              profileSnapshot: makeProfileSnapshot({
+                tier: seat.profileRef.tier,
+                id: seat.profileRef.id,
+                revision: seat.revision,
+              }),
+              strategy: seat.strategy,
+              agent:
+                seat.strategy === "task"
+                  ? {
+                      backend: "codex" as const,
+                      model: "gpt-5.6-sol" as const,
+                      reasoningEffort: "medium" as const,
+                    }
+                  : {
+                      backend: "claude" as const,
+                      model: "sonnet" as const,
+                      reasoningEffort: "medium" as const,
+                    },
+              continuity: { enabled: true },
+            })),
+          },
+        },
+        ...base.workingDefinition.executionContexts.slice(1),
+      ],
+    },
+    contextStates: {
+      ...base.contextStates,
+      "ctx-1": { ...planState, validationRound: round },
+    },
+  };
 }
 
 const sharedHandlers = {
@@ -735,6 +1035,92 @@ export const ContextHistoryTab: Story = {
   args: {
     execution: makeHaltedExecution(),
     events: haltedEvents,
+    selectedContextId: "ctx-1",
+    ...sharedHandlers,
+  },
+};
+
+// R12.3: a cohort round mid-flight — one seat has passed, one is still
+// reviewing, and one spent an attempt on infrastructure. Select the History tab
+// to read the round record.
+export const ContextCohortRoundRunning: Story = {
+  name: "Context — Cohort Round (running)",
+  args: {
+    execution: makeCohortExecution({
+      round: makeCohortRound(),
+      status: "running",
+    }),
+    events: cohortEvents,
+    selectedContextId: "ctx-1",
+    ...sharedHandlers,
+  },
+};
+
+// The same round after a semantic conclusion: one aggregate verdict, with each
+// member's own verdict, issues and artifact grouped beneath it.
+export const ContextCohortRoundRejected: Story = {
+  name: "Context — Cohort Round (rejected)",
+  args: {
+    execution: makeCohortExecution({
+      round: {
+        ...makeCohortRound(),
+        phase: "concluded",
+        outcome: "failed",
+        specialists: {
+          ...makeCohortRound().specialists,
+          security: {
+            ...makeCohortRound().specialists.security!,
+            state: "verdict_fail",
+            attempts: 1,
+            summary: "Secret is logged in plaintext.",
+            lastInfraFailure: null,
+          },
+        },
+      },
+      status: "running",
+    }),
+    events: [...cohortEvents, cohortAggregateEvent],
+    selectedContextId: "ctx-1",
+    ...sharedHandlers,
+  },
+};
+
+// An infrastructure conclusion: the tree moved under the cohort, so the round
+// has no verdict at all. The distinction is carried by the label and the
+// incident text, not by the chip tone.
+export const ContextCohortRoundInfrastructure: Story = {
+  name: "Context — Cohort Round (infrastructure)",
+  args: {
+    execution: makeCohortExecution({
+      round: {
+        ...makeCohortRound(),
+        phase: "concluded",
+        outcome: "candidate_mismatch",
+      },
+      status: "running",
+    }),
+    events: [
+      ...cohortEvents,
+      {
+        occurredAt: "2026-03-30T10:41:00Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-validation-incident",
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-1",
+          incident: "candidate_mismatch",
+          roundSeq: 3,
+          stage: "aggregate",
+          assignmentId: null,
+          attempts: 0,
+          driftedComponents: "candidateTreeHash",
+          message:
+            "The worktree changed while the cohort was reviewing; the round was discarded and will re-freeze.",
+        },
+      },
+    ],
     selectedContextId: "ctx-1",
     ...sharedHandlers,
   },

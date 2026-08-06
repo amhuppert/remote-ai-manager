@@ -26,7 +26,7 @@ import { _useCockpitViewStore } from "./use-cockpit-view-state";
 import { useToastStoreForTesting } from "@/stores/toast.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type {
-  ConversationState,
+  PublicConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
@@ -114,9 +114,11 @@ function runCloseTabFromLauncher() {
 
 function makeConversation(
   id: string,
-  o: Partial<ConversationState> = {},
-): ConversationState {
+  o: Partial<PublicConversationState> = {},
+): PublicConversationState {
   return {
+    redactedProfileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",
@@ -217,7 +219,7 @@ afterEach(() => {
 function PageHarness({
   openConversations,
 }: {
-  openConversations: ConversationState[];
+  openConversations: PublicConversationState[];
 }) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);
   const [backend, setBackend] = useState<AgentBackendId>("claude");

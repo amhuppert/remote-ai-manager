@@ -48,7 +48,7 @@ function makeContextState(
     cleanupStatus: "not-applicable",
     lastMergeError: null,
     pendingApproval: null,
-    pendingUserInput: null,
+    pendingUserInputs: {},
     ...overrides,
   };
 }
@@ -373,13 +373,16 @@ describe("deriveContextWaitState", () => {
           status: "awaiting_user_input",
           totalTaskCount: 2,
           completedTaskCount: 1,
-          pendingUserInput: {
-            conversationId: "conv-1",
-            lane: "implementer",
-            questionBatchId: "qb-1",
-            questions: [],
-            requestedAt: "2026-07-03T09:00:00.000Z",
-            answers: null,
+          pendingUserInputs: {
+            implementer: {
+              conversationId: "conv-1",
+              lane: "implementer",
+              questionBatchId: "qb-1",
+              questions: [],
+              requestedAt: "2026-07-03T09:00:00.000Z",
+              roundSeq: null,
+              answers: null,
+            },
           },
         }),
       },

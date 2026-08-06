@@ -13,7 +13,10 @@ import {
   workflowDefinitionGetResponseSchema,
 } from "@/lib/workflow-definitions/schemas";
 import { graphWorkflowExecutionEventsResponseSchema } from "@/lib/workflow-graph/event-schemas";
-import { graphWorkflowExecutionFullResponseSchema } from "@/lib/workflow-graph/schemas";
+import {
+  graphWorkflowExecutionFullResponseSchema,
+  graphWorkflowExecutionHistoryItemSchema,
+} from "@/lib/workflow-graph/schemas";
 import {
   parameterDeclarationSchema,
   prerequisiteSchema,
@@ -147,7 +150,7 @@ export function useGraphWorkflowExecutionQuery(
 }
 
 const graphWorkflowHistoryResponseSchema = z.object({
-  items: z.array(z.object({ executionId: z.string() }).loose()),
+  items: z.array(graphWorkflowExecutionHistoryItemSchema),
 });
 
 /**

@@ -15,6 +15,8 @@ function makeConvo(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: "convo-1",
     scope: "session",
     nameOrigin: "default",

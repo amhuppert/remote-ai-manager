@@ -62,13 +62,33 @@ refusal, single-source editor lint, real capture (`parse raw_json`), SQLite-dura
 captured-output UI, node indicator states, and the CLI `--outputs` view. The spec's
 delivery gate lands with the session's delivering merge.
 
-### D3 — Specialist validators and implementors
+### D3 — Agent profile library, conversation profiles, and specialist validator cohorts
 
 Multiple named context validators per context, each with a custom prompt/focus
-(security, type safety, etc.), plus configurable implementor personas — extending the
-existing `contextValidator`/`implementer` config cascade rather than new machinery.
-Independent of everything else, an immediate quality win, and multiple adversarial
-validators is already most of the Adversarial Verification pattern in first-class form.
+(security, type safety, etc.), plus configurable implementor personas. An immediate
+quality win, and multiple adversarial validators is already most of the Adversarial
+Verification pattern in first-class form. D3 is two sequenced specs (below): the
+workflow-consumer spec depends on the library spec's service, snapshot contract, and
+composer being merged first — it is not independent of the library half.
+
+**Scope widened 2026-08-01.** The personas are not a workflow-local config field: the
+same prompt identities are worth choosing for an ordinary conversation, and one library
+serving both is what makes them discoverable and reusable. D3 is therefore two specs:
+
+- **`agent-profile-library`** — the general library plus conversation initialization. A
+  curated built-in set available to every project, plus user-authored profiles at the
+  global (whole install) and project tiers, as CC-owned revisioned records. Tiers are
+  sibling scopes with qualified `{tier, id}` identity — nothing shadows. A profile is
+  prompt identity only (name, description, instructions, advisory `recommendedFor`,
+  tags) and carries no runtime or policy, so it composes with the existing per-backend
+  runtime cascade instead of competing with it. Every new-conversation path can select
+  one (explicit Standard Agent default); forks inherit the source snapshot verbatim; the
+  resolved profile is snapshotted so library edits never change live work. The library
+  is machine-discoverable through `cctl agent list|get` so a planning agent can staff
+  assignments by description.
+- **`workflow-validator-cohorts`** — the workflow consumers, reading that same library:
+  implementer assignments and specialist validator cohorts, extending the existing
+  `contextValidator`/`implementer` config cascade rather than adding new machinery.
 
 ### D4 — Dynamic graph primitives
 
@@ -126,7 +146,7 @@ constructs into the by-then-proven D4 building blocks.
 | Phase | Deliverables | Why here |
 |---|---|---|
 | 0 | D0 land doc 05 + doc 06 | Mutation surface everything dynamic depends on |
-| 1 | D1 plan-repair, D2 structured output, D3 specialist validators | Mutually independent; highest value-per-effort; can run in parallel |
+| 1 | D1 plan-repair, D2 structured output, D3 agent profile library → validator cohorts | Mutually independent; highest value-per-effort; can run in parallel. D3's two specs are ordered: the library first, its workflow consumers second |
 | 2 | D4 dynamic graph primitives | Needs D2 for branching; the pattern enabler |
 | 3 | D5 lightweight parallelism → D6 pattern proving ground | D5 makes fan-out patterns affordable; D6 validates the vision's central goal |
 | 4 | D7 ephemeral workflows | Worthwhile once execution is light |

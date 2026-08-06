@@ -132,6 +132,66 @@ describe("query-semaphore", () => {
       expect(error!.message).toContain("Query semaphore timeout");
     });
 
+    it("rejects admission timeouts with a typed error a caller can classify", async () => {
+      vi.useFakeTimers();
+
+      const {
+        acquireQuerySlot,
+        QuerySlotAdmissionTimeoutError,
+        isQuerySlotAdmissionTimeout,
+      } = await import("./query-semaphore");
+
+      await acquireQuerySlot("test:1");
+      await acquireQuerySlot("test:2");
+
+      let error: unknown;
+      const thirdPromise = acquireQuerySlot("test:3").catch((e: unknown) => {
+        error = e;
+      });
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
+      await thirdPromise;
+
+      // Never admitted, so nothing about the callee failed: the caller has to be
+      // able to tell queue pressure apart from a run that started and broke.
+      expect(error).toBeInstanceOf(QuerySlotAdmissionTimeoutError);
+      expect(isQuerySlotAdmissionTimeout(error)).toBe(true);
+    });
+
+    it("carries the classification in the message, for callers that only see text", async () => {
+      vi.useFakeTimers();
+
+      const { acquireQuerySlot, isQuerySlotAdmissionTimeout } =
+        await import("./query-semaphore");
+
+      await acquireQuerySlot("test:1");
+      await acquireQuerySlot("test:2");
+
+      let message = "";
+      const thirdPromise = acquireQuerySlot("test:3").catch((e: Error) => {
+        message = e.message;
+      });
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1);
+      await thirdPromise;
+
+      // The error crosses boundaries that keep only the text — a task run
+      // surfaces its failure as a string — so the marker has to survive there
+      // too or the classification is lost exactly where it is needed.
+      expect(isQuerySlotAdmissionTimeout(message)).toBe(true);
+    });
+
+    it("does not classify an unrelated failure as queue pressure", async () => {
+      const { isQuerySlotAdmissionTimeout } = await import("./query-semaphore");
+
+      expect(isQuerySlotAdmissionTimeout(new Error("provider 500"))).toBe(
+        false,
+      );
+      expect(isQuerySlotAdmissionTimeout("model overloaded")).toBe(false);
+      expect(isQuerySlotAdmissionTimeout(null)).toBe(false);
+      expect(isQuerySlotAdmissionTimeout(undefined)).toBe(false);
+    });
+
     it("idempotent release — double release is safe", async () => {
       const { acquireQuerySlot, getQuerySemaphoreStatus } =
         await import("./query-semaphore");

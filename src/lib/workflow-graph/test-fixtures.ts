@@ -1,3 +1,4 @@
+import type { ValidationCandidateTreeResolution } from "@/lib/workflow-graph/validation-round";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowVisualLayout,
@@ -5,8 +6,176 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import type {
+  AgentAssignment,
+  GraphWorkflowAgentConfig,
+  SeededAgentAssignment,
+  SeededValidatorAssignment,
+  SeededValidatorCohort,
+  ValidatorAssignment,
+  ValidatorCohort,
+} from "@/lib/workflow-graph/config-schemas";
+import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
+import {
+  prepareLiveEditAssignmentSnapshots,
+  type PrepareAssignmentSnapshotsResult,
+} from "@/lib/workflow-graph/live-edit-preparation";
 const timestamp = "2026-03-27T12:00:00.000Z";
+
+/**
+ * Assignment builders for tests whose subject is something other than the
+ * assignment itself. They keep the required identity fields (id, profile) out
+ * of every unrelated fixture while leaving each one free to override exactly
+ * the field it is about.
+ */
+export function makeImplementerAssignment(
+  agent: GraphWorkflowAgentConfig,
+  overrides: Partial<AgentAssignment> = {},
+): AgentAssignment {
+  return {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    agent,
+    ...overrides,
+  };
+}
+
+export function makeValidatorAssignment(
+  overrides: Partial<ValidatorAssignment> = {},
+): ValidatorAssignment {
+  return {
+    id: "general",
+    profile: { tier: "builtin", id: "general-reviewer" },
+    strategy: "conversation",
+    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    continuity: { enabled: true },
+    ...overrides,
+  };
+}
+
+export function makeValidatorCohort(
+  overrides: Partial<ValidatorCohort> = {},
+): ValidatorCohort {
+  return {
+    enabled: true,
+    assignments: [makeValidatorAssignment()],
+    ...overrides,
+  };
+}
+
+/**
+ * A resolved profile snapshot, as execution start would have stored one.
+ *
+ * The hashes are fixtures, not computed: this module is imported by browser-
+ * project stories and tests, which cannot reach `node:crypto`. Any test whose
+ * subject is hash provenance should compose a real snapshot through
+ * `buildAgentProfileSnapshot` instead of overriding these.
+ */
+export function makeProfileSnapshot(
+  overrides: Partial<AgentProfileSnapshot> = {},
+): AgentProfileSnapshot {
+  const instructions = "Fixture profile instructions.";
+  return {
+    tier: "builtin",
+    id: "general-implementer",
+    name: "General Implementer",
+    revision: 1,
+    sourceContentHash: `sha256:${"a".repeat(64)}`,
+    instructions,
+    renderedInstructionBlock: `# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\n${instructions}\n<<<CC_AGENT_PROFILE_END>>>`,
+    resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+    ...overrides,
+  };
+}
+
+/**
+ * The seeded counterparts, for fixtures that stand in for a WORKING definition
+ * rather than an authored one. `seedAssignment` mirrors what execution start
+ * does — attach the snapshot without disturbing anything else — so a fixture
+ * built from an authored assignment stays in step with it.
+ */
+export function seedAssignment<T extends AgentAssignment>(
+  assignment: T,
+  snapshot: Partial<AgentProfileSnapshot> = {},
+): T & { profileSnapshot: AgentProfileSnapshot } {
+  return {
+    ...assignment,
+    profileSnapshot: makeProfileSnapshot({
+      tier: assignment.profile.tier,
+      id: assignment.profile.id,
+      ...snapshot,
+    }),
+  };
+}
+
+export function makeSeededImplementerAssignment(
+  agent: GraphWorkflowAgentConfig,
+  overrides: Partial<AgentAssignment> = {},
+): SeededAgentAssignment {
+  return seedAssignment(makeImplementerAssignment(agent, overrides));
+}
+
+export function makeSeededValidatorAssignment(
+  overrides: Partial<ValidatorAssignment> = {},
+): SeededValidatorAssignment {
+  return seedAssignment(makeValidatorAssignment(overrides));
+}
+
+/**
+ * A candidate-tree resolver that always resolves, for tests whose subject is
+ * something other than candidate identity. The engine refuses to open a round on
+ * an unreadable tree, so a test that enables any validator has to say what the
+ * tree is — this is the "nothing interesting here" answer.
+ */
+export function stubValidationRoundService(
+  tree: { headSha?: string; candidateTreeHash?: string } = {},
+): {
+  resolveCandidateTree(): Promise<ValidationCandidateTreeResolution>;
+} {
+  return {
+    async resolveCandidateTree() {
+      return {
+        kind: "resolved",
+        headSha: tree.headSha ?? "stub-head",
+        candidateTreeHash: tree.candidateTreeHash ?? "stub-tree",
+      };
+    },
+  };
+}
+
+export function makeSeededValidatorCohort(
+  overrides: Partial<ValidatorCohort> = {},
+): SeededValidatorCohort {
+  const cohort = makeValidatorCohort(overrides);
+  return {
+    ...cohort,
+    assignments: cohort.assignments.map((assignment) =>
+      seedAssignment(assignment),
+    ),
+  };
+}
+
+/**
+ * Live-edit snapshot preparation over an always-resolvable library, for tests
+ * whose subject is something other than profile resolution. A test about a
+ * dangling reference should inject its own `composeSnapshot` instead.
+ */
+export function stubAssignmentSnapshotPreparation(): (
+  projectPath: string,
+  operations: readonly WorkflowLiveEditOperation[],
+) => Promise<PrepareAssignmentSnapshotsResult> {
+  return (_projectPath, operations) =>
+    prepareLiveEditAssignmentSnapshots({
+      operations,
+      composeSnapshot: async (assignment) =>
+        makeProfileSnapshot({
+          tier: assignment.profile.tier,
+          id: assignment.profile.id,
+        }),
+    });
+}
 
 export function createWorkflowDefinition(
   overrides: Partial<WorkflowSemanticDefinition> = {},
@@ -23,11 +192,11 @@ export function createWorkflowDefinition(
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "Plan is documented",
-        implementer: {
+        implementer: makeImplementerAssignment({
           backend: "claude",
           model: "opus",
           reasoningEffort: "high",
-        },
+        }),
         mutability: {
           allowAgentTaskAdd: true,
         },
@@ -42,11 +211,11 @@ export function createWorkflowDefinition(
         title: "Implement",
         description: "Implement the feature",
         acceptanceCriteria: "Feature implemented",
-        implementer: {
+        implementer: makeImplementerAssignment({
           backend: "claude",
           model: "sonnet",
           reasoningEffort: "medium",
-        },
+        }),
         mutability: {
           allowAgentTaskAdd: false,
         },
@@ -61,11 +230,11 @@ export function createWorkflowDefinition(
         title: "Verify",
         description: "Verify the result",
         acceptanceCriteria: "Verification passes",
-        implementer: {
+        implementer: makeImplementerAssignment({
           backend: "claude",
           model: "opus",
           reasoningEffort: "medium",
-        },
+        }),
         mutability: {
           allowAgentTaskAdd: false,
         },
@@ -163,12 +332,18 @@ export function createResolvedWorkflowDefinition(
         ? { description: ctx.description }
         : {}),
       acceptanceCriteria: ctx.acceptanceCriteria,
-      implementer: ctx.implementer ?? {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
-      },
-      contextValidator: null,
+      implementer: seedAssignment(
+        ctx.implementer ??
+          makeImplementerAssignment({
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "medium",
+          }),
+      ),
+      contextValidator: makeSeededValidatorCohort({
+        enabled: false,
+        assignments: [],
+      }),
       scriptValidator: ctx.scriptValidator ?? { enabled: false },
       humanApprovalGate: ctx.humanApprovalGate ?? { enabled: false },
       askUserQuestions: { enabled: false },
@@ -214,7 +389,7 @@ export function createWorkflowExecution(
     contextStates: {
       "context-plan": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-plan",
         status: "pending",
         totalTaskCount: 1,
@@ -233,7 +408,7 @@ export function createWorkflowExecution(
       },
       "context-implement": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-implement",
         status: "pending",
         totalTaskCount: 1,
@@ -252,7 +427,7 @@ export function createWorkflowExecution(
       },
       "context-verify": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,

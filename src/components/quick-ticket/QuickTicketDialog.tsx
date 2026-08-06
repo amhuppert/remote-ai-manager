@@ -14,7 +14,13 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useQueryClient } from "@tanstack/react-query";
 
+import AgentProfilePicker from "@/components/agent-profiles/AgentProfilePicker";
+import {
+  parseAgentProfilePickerValue,
+  STANDARD_AGENT_PROFILE_VALUE,
+} from "@/components/agent-profiles/agent-profile-picker-state";
 import BackendToggle from "@/components/BackendToggle";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { ChatIcon, ChevronRightIcon, CloseIcon } from "@/components/icons";
@@ -594,6 +600,7 @@ export default function QuickTicketDialog({
     ticket: Pick<TicketDetail, "id" | "projectName" | "number">,
     toastId: string,
     kickoff: ResolvedKickoffSelection | null,
+    profile: AgentProfileRef | undefined,
   ) => {
     const identifier = formatTicketIdentifier(
       ticket.projectName,
@@ -606,6 +613,7 @@ export default function QuickTicketDialog({
           projectName: ticket.projectName,
           number: ticket.number,
           mode: "agent",
+          ...(profile === undefined ? {} : { profile }),
           ...(kickoff === null
             ? {}
             : {
@@ -839,6 +847,12 @@ export default function QuickTicketDialog({
           result.ticket,
           createdToastId,
           kickoffSelection,
+          // Always explicit, including the untouched default: the wire says
+          // which profile this session runs under rather than leaving it to be
+          // inferred (R7.1).
+          parseAgentProfilePickerValue(
+            draft.kickoffProfile ?? STANDARD_AGENT_PROFILE_VALUE,
+          ) ?? undefined,
         );
       }
     } catch (error) {
@@ -1563,6 +1577,25 @@ export default function QuickTicketDialog({
                     })
                   }
                 />
+                {draft.autoStart ? (
+                  <div className="mt-md flex flex-col gap-2xs">
+                    <span className="font-mono text-[0.6rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                      Agent profile
+                    </span>
+                    <AgentProfilePicker
+                      projectName={draft.projectName}
+                      value={
+                        draft.kickoffProfile ?? STANDARD_AGENT_PROFILE_VALUE
+                      }
+                      onChange={(selection) =>
+                        useQuickTicketStore.getState().updateQuickTicketDraft({
+                          kickoffProfile: selection.value,
+                        })
+                      }
+                      disabled={pending}
+                    />
+                  </div>
+                ) : null}
                 {draft.autoStart && kickoffSelection !== null ? (
                   <div className="mt-md flex flex-wrap items-end gap-lg">
                     <div className="flex flex-col gap-2xs">

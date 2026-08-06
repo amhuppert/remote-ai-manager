@@ -53,19 +53,29 @@ vi.mock("@/components/Topbar", () => ({
 const record = createWorkflowDefinitionRecord();
 const workflowDefaults: WorkflowDefaults = {
   implementer: {
-    backend: "claude",
-    model: "opus",
-    reasoningEffort: "medium",
-  },
-  contextValidator: {
-    type: "claude",
-    enabled: true,
-    continuity: { enabled: true },
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
     agent: {
       backend: "claude",
-      model: "sonnet",
+      model: "opus",
       reasoningEffort: "medium",
     },
+  },
+  contextValidator: {
+    enabled: true,
+    assignments: [
+      {
+        id: "general",
+        profile: { tier: "builtin", id: "general-reviewer" },
+        strategy: "conversation",
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        continuity: { enabled: true },
+      },
+    ],
   },
   scriptValidator: { enabled: false },
   humanApprovalGate: { enabled: false },

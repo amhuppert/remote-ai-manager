@@ -51,6 +51,7 @@ import {
   ensureCodexManagedSkillsBridgeForLaunch,
   type CodexManagedSkillsBridgeResult,
 } from "./managed-skills-bridge";
+import { buildCodexFsWriteEnvelope } from "./fs-write-envelope";
 
 const logger = createLogger("codex:task-runner");
 const codexFailureClassifier = createCodexFailureClassifier();
@@ -183,20 +184,38 @@ const defaultDeps: CodexTaskRunnerDeps = {
   ensureManagedSkillsBridge: ensureCodexManagedSkillsBridgeForLaunch,
 };
 
-function buildPrompt(input: AgentTaskRequest): CodexTaskInput {
-  const parts: string[] = [];
+/**
+ * Governing instructions as Codex's privileged channel takes them, or undefined
+ * when the run governs nothing.
+ *
+ * `developer_instructions` emits at the developer role, above user input, which
+ * is what R10 requires of a role contract: it is never delivered as inline
+ * user-prompt text while this channel exists. The fenced "## System
+ * Instructions" block this replaced sat at user priority and was, on top of
+ * that, terminable by a fence in any text it carried.
+ */
+function developerInstructions(input: AgentTaskRequest): string | undefined {
+  return input.systemInstructions?.length
+    ? input.systemInstructions.join("\n\n")
+    : undefined;
+}
 
-  if (input.systemInstructions?.length) {
-    parts.push(
-      "```\n## System Instructions\n" +
-        input.systemInstructions.join("\n\n") +
-        "\n```",
-    );
-  }
+/**
+ * A restricted run executes from its own scratch directory rather than from the
+ * directory it is reasoning about, so the subject has to be named absolutely —
+ * a relative path would silently resolve inside the scratch dir.
+ */
+function workspaceNotice(worktreePath: string): string {
+  return `The directory under review is ${worktreePath}. Address it by absolute path: your working directory is elsewhere and is the only place you can write.`;
+}
 
-  parts.push(input.prompt);
-
-  const prompt = parts.join("\n\n");
+function buildPrompt(
+  input: AgentTaskRequest,
+  relocatedFromWorktree: boolean,
+): CodexTaskInput {
+  const prompt = relocatedFromWorktree
+    ? `${workspaceNotice(input.workingDirectory)}\n\n${input.prompt}`
+    : input.prompt;
   if (!input.imagePaths?.length) return prompt;
   return [
     { type: "text", text: prompt },
@@ -310,11 +329,56 @@ export class CodexTaskRunner implements AgentTaskRunner {
       validatedReasoningEffort = effortResult.data;
     }
 
+    // The isolated one-shot profile is already read-only, which forbids strictly
+    // more than any allowlist can: a policy on such a run is satisfied by
+    // leaving it alone, and translating it would WIDEN the run to
+    // workspace-write. So the write envelope governs only the runs that are
+    // otherwise write-capable.
+    const writeEnvelope =
+      input.fsWritePolicy !== undefined && !isolatedOneShot
+        ? buildCodexFsWriteEnvelope(input.fsWritePolicy)
+        : null;
+    const unestablishableReason =
+      writeEnvelope === null
+        ? null
+        : writeEnvelope.kind === "unestablishable"
+          ? writeEnvelope.reason
+          : // Two contradictions the adapter refuses rather than resolves. Both
+            // widen workspace-write beyond the allowlist — full disk access
+            // outright, extra directories by joining the writable workspace —
+            // and a lane that cannot establish its envelope as written never
+            // runs on a guess about which half the caller meant.
+            input.sandboxMode === "danger-full-access"
+            ? "the run asks for full disk access"
+            : input.additionalDirectories?.length
+              ? "the run asks for writable directories outside the allowlist"
+              : null;
+    if (unestablishableReason !== null) {
+      const reason = unestablishableReason;
+      const error = `Cannot establish the Codex filesystem write envelope: ${reason}`;
+      logger.error("codex-task-runner.write_envelope_unestablishable", {
+        workingDirectory: input.workingDirectory,
+        reason,
+      });
+      return {
+        ...classifiedContinuation(null, error),
+        text: null,
+        usage: null,
+        error,
+        timedOut: false,
+      };
+    }
+    const restricted =
+      writeEnvelope?.kind === "envelope" ? writeEnvelope : null;
+
     const threadOptions: ThreadOptions = {
-      workingDirectory: input.workingDirectory,
+      workingDirectory:
+        restricted?.envelope.workingDirectory ?? input.workingDirectory,
       sandboxMode: isolatedOneShot
         ? "read-only"
-        : (input.sandboxMode ?? "danger-full-access"),
+        : restricted
+          ? "workspace-write"
+          : (input.sandboxMode ?? "danger-full-access"),
       approvalPolicy: isolatedOneShot
         ? "never"
         : (input.approvalPolicy ?? "never"),
@@ -353,6 +417,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       executionProfile: input.executionProfile ?? "standard",
       hasCcSessionScope: input.ccSessionScope !== undefined,
       codexFastModeOverride: input.codexFastMode ?? null,
+      fsWriteRestricted: restricted !== null,
     });
 
     if (
@@ -380,6 +445,9 @@ export class CodexTaskRunner implements AgentTaskRunner {
     const neutralizedEnv: SessionEnv = {
       ...neutralizeAmbientCcEnv({ ...this.deps.buildChildEnv() }),
       CLAUDECODE: "",
+      // The sandbox excludes the inherited temp roots, so a run that kept the
+      // ambient TMPDIR would have a temp directory it cannot write to.
+      ...(restricted ? { TMPDIR: restricted.envelope.tmpDir } : {}),
     };
 
     let sessionEnv = neutralizedEnv;
@@ -439,7 +507,10 @@ export class CodexTaskRunner implements AgentTaskRunner {
     });
 
     let mcpServersConfig: Record<string, unknown> | undefined;
-    if (isolatedOneShot) {
+    // A restricted lane gets the same treatment as the isolated profile: only
+    // servers CC composed are reachable, so nothing the machine happens to have
+    // configured can hand the lane a tool outside the envelope.
+    if (isolatedOneShot || restricted) {
       const nativeServers = await listNativeMcpServers(
         input.workingDirectory,
         env,
@@ -502,14 +573,27 @@ export class CodexTaskRunner implements AgentTaskRunner {
             include_instructions: false,
           },
         }
-      : mcpServersConfig !== undefined
-        ? { mcp_servers: mcpServersConfig }
-        : undefined;
+      : restricted
+        ? {
+            ...restricted.envelope.config,
+            mcp_servers: mcpServersConfig ?? {},
+          }
+        : mcpServersConfig !== undefined
+          ? { mcp_servers: mcpServersConfig }
+          : undefined;
     // Managed skill bundle bridge: standard task runs reconcile the same
     // namespaced link as conversations; the isolated one-shot profile is
     // hermetic by contract. A conflict degrades to skill-less, never a
     // failed run.
-    if (!isolatedOneShot) {
+    //
+    // A restricted lane is skipped for a different reason than the isolated
+    // profile: the bridge materializes a symlink INSIDE the checkout, and this
+    // lane's whole contract is that the directory it reviews comes out of the
+    // run exactly as it went in. Skill-less is the correct trade — the
+    // alternative is a reviewer whose own launch path writes to the candidate.
+    // (Claude has no equivalent skip: its bundle attaches as a plugin option
+    // and never touches the checkout.)
+    if (!isolatedOneShot && !restricted) {
       const bridgeResult = await this.deps.ensureManagedSkillsBridge(
         input.workingDirectory,
       );
@@ -521,15 +605,25 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
     }
 
+    // Layered LAST so it wins over the isolated-one-shot blank: that blank
+    // drops AMBIENT developer instructions, and a payload the caller supplied
+    // for this run is the opposite of ambient. The override rides the client
+    // config, so it applies to a resumed thread exactly as to a fresh one.
+    const developerPayload = developerInstructions(input);
     const codexOptions: CodexOptions = {
       env,
       config: withCodexFastMode(
-        baseConfig as CodexOptions["config"],
+        {
+          ...(baseConfig as CodexOptions["config"]),
+          ...(developerPayload !== undefined
+            ? { developer_instructions: developerPayload }
+            : {}),
+        },
         codexFastMode,
       ),
     };
 
-    const prompt = buildPrompt(input);
+    const prompt = buildPrompt(input, restricted !== null);
 
     let timedOut = false;
 

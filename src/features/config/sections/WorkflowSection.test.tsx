@@ -1,16 +1,52 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
+import {
+  render as rtlRender,
+  screen,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
+import { agentProfileKeys } from "@/lib/agent-profiles/query-keys";
+import type { AgentProfileLibraryListing } from "@/lib/agent-profiles/schemas";
+import type { ValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
 import { WorkflowSection } from "./WorkflowSection";
 import { makeController } from "./test-controller";
+
+// The global-defaults form belongs to no project, so its pickers read the
+// GLOBAL library listing — seeded here through the production query key so the
+// scope wiring is what these assertions exercise.
+const GLOBAL_LISTING: AgentProfileLibraryListing = {
+  profiles: [
+    {
+      ref: { tier: "builtin", id: "general-reviewer" },
+      name: "General Reviewer",
+      description: "Reviews a diff against acceptance criteria.",
+      revision: 1,
+      recommendedFor: ["workflow_validator"],
+      tags: [],
+      readOnly: true,
+    },
+    {
+      ref: { tier: "global", id: "security-reviewer" },
+      name: "Security Reviewer",
+      description: "Reads a diff for exploitable defects.",
+      revision: 2,
+      recommendedFor: ["workflow_validator"],
+      tags: [],
+      readOnly: false,
+    },
+  ],
+  diagnostics: [],
+};
 
 function render(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  client.setQueryData(agentProfileKeys.globalList(), GLOBAL_LISTING);
   return rtlRender(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );
@@ -147,5 +183,199 @@ describe("WorkflowSection", () => {
     );
     expect(texts).not.toContain("disabled");
     expect(texts).not.toContain("use");
+  });
+
+  /**
+   * The cohort editor on the global-defaults (Settings) surface (R12.1). The
+   * same component is asserted on the workflow-definition surface in
+   * `src/features/workflows-builder/components/WorkflowInspectorPanel.test.tsx`.
+   */
+  describe("validator cohort editor", () => {
+    function cohortDefaults(
+      assignments: ValidatorAssignment[],
+      enabled = true,
+    ): WorkflowDefaults {
+      return {
+        ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
+        contextValidator: { enabled, assignments },
+      };
+    }
+
+    const SECURITY: ValidatorAssignment = {
+      id: "security",
+      profile: { tier: "global", id: "security-reviewer" },
+      strategy: "task",
+      continuity: { enabled: true },
+      agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
+    };
+
+    const GENERAL: ValidatorAssignment = {
+      id: "general",
+      profile: { tier: "builtin", id: "general-reviewer" },
+      strategy: "conversation",
+      continuity: { enabled: true },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    };
+
+    function validatorBlock(container: HTMLElement): HTMLElement {
+      return container.querySelector<HTMLElement>(
+        '[data-subsection="contextValidator"]',
+      )!;
+    }
+
+    it("lists the cohort in order with each assignment's tier badge", () => {
+      const { controller } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      const block = validatorBlock(container);
+
+      expect(
+        within(block)
+          .getAllByTestId(/^cohort-assignment-/)
+          .map((row) => row.getAttribute("data-assignment-id")),
+      ).toEqual(["general", "security"]);
+      expect(
+        within(block)
+          .getAllByTestId("cohort-tier-badge")
+          .map((badge) => badge.textContent),
+      ).toEqual(["Built-in", "Global"]);
+    });
+
+    it("resolves each assignment's profile against the GLOBAL library listing", () => {
+      const { controller } = makeController({
+        workflowDefaults: cohortDefaults([SECURITY]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      expect(
+        within(validatorBlock(container)).getByLabelText("Agent profile")
+          .textContent,
+      ).toContain("Security Reviewer");
+    });
+
+    it("reorders the cohort through the controller", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      fireEvent.click(
+        within(validatorBlock(container)).getByLabelText("Move security up"),
+      );
+      expect(
+        getState().workflowDefaults?.contextValidator?.assignments.map(
+          (a) => a.id,
+        ),
+      ).toEqual(["security", "general"]);
+    });
+
+    it("adds a validator without colliding with an existing use-site id", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      fireEvent.click(
+        within(validatorBlock(container)).getByRole("button", {
+          name: "Add validator",
+        }),
+      );
+      const ids =
+        getState().workflowDefaults?.contextValidator?.assignments.map(
+          (a) => a.id,
+        ) ?? [];
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size).toBe(2);
+    });
+
+    it("edits one assignment's focus and runtime", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      const block = validatorBlock(container);
+
+      fireEvent.change(within(block).getByLabelText("Focus for security"), {
+        target: { value: "auth boundaries" },
+      });
+      expect(
+        getState().workflowDefaults?.contextValidator?.assignments[1]?.focus,
+      ).toBe("auth boundaries");
+
+      fireEvent.click(
+        within(
+          within(validatorBlock(container)).getByTestId(
+            "cohort-assignment-general",
+          ),
+        ).getByRole("button", { name: /codex/i }),
+      );
+      expect(
+        getState().workflowDefaults?.contextValidator?.assignments[0]?.agent
+          .backend,
+      ).toBe("codex");
+    });
+
+    it("names the tier the global cohort is in use at", () => {
+      const { controller } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      const provenance = within(validatorBlock(container)).getByTestId(
+        "cohort-cascade",
+      );
+      expect(provenance).toHaveAttribute("data-cascade-state", "use");
+      expect(provenance.textContent).toContain("every workflow");
+    });
+
+    it("keeps a switched-off cohort dormant, visible, and restorable", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+
+      fireEvent.click(
+        within(validatorBlock(container)).getByLabelText(
+          "Context validator enabled",
+        ),
+      );
+      const off = getState().workflowDefaults?.contextValidator;
+      expect(off?.enabled).toBe(false);
+      expect(off?.assignments.map((a) => a.id)).toEqual([
+        "general",
+        "security",
+      ]);
+    });
+
+    it("shows a disabled cohort's dormant assignments and its cascade state", () => {
+      const { controller } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY], false),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      const block = validatorBlock(container);
+
+      expect(within(block).getByTestId("cohort-dormant-notice")).toBeVisible();
+      expect(
+        within(block)
+          .getAllByTestId(/^cohort-assignment-/)
+          .map((row) => row.getAttribute("data-dormant")),
+      ).toEqual(["true", "true"]);
+      expect(within(block).getByTestId("cohort-cascade")).toHaveAttribute(
+        "data-cascade-state",
+        "disabled",
+      );
+    });
+
+    it("restores every dormant assignment, in order, when re-enabled", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY], false),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      fireEvent.click(
+        within(validatorBlock(container)).getByLabelText(
+          "Context validator enabled",
+        ),
+      );
+      const restored = getState().workflowDefaults?.contextValidator;
+      expect(restored?.enabled).toBe(true);
+      expect(restored?.assignments).toEqual([GENERAL, SECURITY]);
+    });
   });
 });

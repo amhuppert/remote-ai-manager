@@ -12,6 +12,7 @@ import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
   DEFAULT_AGENT_BACKEND_ID,
@@ -483,6 +484,12 @@ export interface PromptStreamOptions {
    */
   workflowContext?: { executionId: string; contextId: string };
   skipConversationLock?: boolean;
+  /**
+   * Profile for the conversation this call CREATES (no `conversationId` was
+   * supplied). An existing conversation's profile is already resolved and
+   * settles at admission, so this is ignored there.
+   */
+  profile?: AgentProfileRef;
   // `outputFormat` is intentionally opt-in. Regular user-facing chat is
   // free-form markdown by design — requiring a JSON schema would prevent the
   // streaming chat response the UI renders. Workflow callers (debug mode,
@@ -681,7 +688,10 @@ export async function executePromptStream(
     const conversation = await resolvedDeps.createConversation(
       projectPath,
       session.sessionName,
-      { agentBackend: resolvedBackend },
+      {
+        agentBackend: resolvedBackend,
+        ...(options?.profile !== undefined ? { profile: options.profile } : {}),
+      },
     );
     conversationId = conversation.id;
   }

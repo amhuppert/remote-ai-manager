@@ -41,6 +41,8 @@ interface WorkflowBuilderEditorProps {
   isMobile?: boolean;
   onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
   voiceProjectName?: string | null;
+  /** Scopes the agent-profile listing the assignment pickers offer. */
+  libraryProjectName?: string | null;
 }
 
 export default function WorkflowBuilderEditor(
@@ -69,6 +71,7 @@ function WorkflowBuilderEditorInner({
   isMobile,
   onAutoSwitchPanel,
   voiceProjectName,
+  libraryProjectName,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
   const { getNodes } = useReactFlow();
   const draftDefinition = _useGraphWorkflowBuilderStore(
@@ -230,6 +233,7 @@ function WorkflowBuilderEditorInner({
           activeTab={activeTab}
           onTabChange={onTabChange}
           voiceProjectName={voiceProjectName}
+          libraryProjectName={libraryProjectName}
           onOutputSchemaBlockedChange={setOutputSchemaBlocked}
         />
       </div>

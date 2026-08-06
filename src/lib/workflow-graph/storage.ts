@@ -24,12 +24,18 @@ import {
   regionLockedInstruction,
   regionLockedMessage,
 } from "./locked-regions";
+import {
+  WorkflowAssignmentReferenceError,
+  createAssignmentReferenceChecker,
+  type AssignmentReferenceChecker,
+} from "./assignment-references";
 
 const logger = createLogger("workflow-storage");
 
 export interface WorkflowStorageDeps {
   resolveConfigDir?: () => string;
   listActiveExecutions?(): Promise<ReadonlyMap<string, GraphWorkflowExecution>>;
+  assignmentReferences?: AssignmentReferenceChecker;
 }
 
 export class WorkflowRegionLockedError extends Error {
@@ -93,6 +99,25 @@ function getScopeStorageDir(configDir: string, scope: WorkflowScope): string {
   return path.join(configDir, "workflows", scopeKey);
 }
 
+function readScopeDirs(configDir: string): Promise<string[]> {
+  const root = path.join(configDir, "workflows");
+  if (!existsSync(root)) return Promise.resolve([]);
+  return readdir(root);
+}
+
+/**
+ * The inverse of {@link getScopeStorageDir}. A name that does not round-trip
+ * through the encoding was not written by this module — a stray file, an
+ * editor artifact — and is skipped rather than decoded into an invented
+ * project path.
+ */
+function scopeFromDirName(name: string): WorkflowScope | null {
+  if (name === GLOBAL_SCOPE_KEY) return { kind: "global" };
+  const projectPath = Buffer.from(name, "base64url").toString();
+  if (Buffer.from(projectPath).toString("base64url") !== name) return null;
+  return { kind: "project", projectPath };
+}
+
 async function readRecord(filePath: string): Promise<WorkflowDefinitionRecord> {
   const raw = await readFile(filePath, "utf-8");
   return assertDefinitionRecordSupported(JSON.parse(raw));
@@ -111,6 +136,35 @@ function assertValidDefinition(definition: WorkflowSemanticDefinition): void {
 
 export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   const resolveConfigDir = deps.resolveConfigDir ?? getConfigDirPath;
+  const assignmentReferences =
+    deps.assignmentReferences ?? createAssignmentReferenceChecker();
+
+  /**
+   * Reference existence and the tier-scope rule, checked against the SAME scope
+   * the record is being written to — so a global template is held to the
+   * global-document rule while a project definition may reach all three tiers.
+   * Async, and therefore separate from the synchronous shape validation above.
+   */
+  async function assertResolvableAssignments(
+    scope: WorkflowScope,
+    definition: WorkflowSemanticDefinition,
+  ): Promise<void> {
+    const issues = await assignmentReferences.checkDefinition(
+      definition,
+      scope,
+      "definition",
+    );
+    if (issues.length === 0) return;
+
+    // Paths only — an issue message quotes authored assignment ids, which are
+    // author content and stay out of the log for the same reason the shape
+    // rejection above logs codes rather than values.
+    logger.warn("workflow-storage.assignment-reference-rejected", {
+      scope: scope.kind,
+      paths: issues.map((issue) => issue.path),
+    });
+    throw new WorkflowAssignmentReferenceError(issues);
+  }
 
   async function listActiveExecutions(): Promise<
     ReadonlyMap<string, GraphWorkflowExecution>
@@ -156,6 +210,22 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       locked.sourceUri,
       regionLockedMessage(locked),
     );
+  }
+
+  /**
+   * Every scope that currently stores workflows.
+   *
+   * Exists so the base64url scope encoding stays private to this module: a
+   * caller that has to sweep all scopes — the agent-profile deletion reference
+   * reporter, which must find a global-tier profile's holders in every
+   * project — asks for scopes rather than for directory names it would have to
+   * decode itself.
+   */
+  async function listScopes(): Promise<WorkflowScope[]> {
+    const names = await readScopeDirs(resolveConfigDir());
+    return names
+      .map(scopeFromDirName)
+      .filter((scope): scope is WorkflowScope => scope !== null);
   }
 
   async function list(
@@ -224,6 +294,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       "Workflow definition (save)",
     );
     assertValidDefinition(draft.definition);
+    await assertResolvableAssignments(scope, draft.definition);
 
     const workflowId = randomUUID();
 
@@ -268,6 +339,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       "Workflow definition (save)",
     );
     assertValidDefinition(draft.definition);
+    await assertResolvableAssignments(scope, draft.definition);
 
     return timed(
       logger,
@@ -329,6 +401,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   }
 
   return {
+    listScopes,
     list,
     get,
     create,

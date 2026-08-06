@@ -591,6 +591,86 @@ describe("cctl workflow validate", () => {
     expect(host.requests).toHaveLength(0);
   });
 
+  // R4.2: a plan destined for the global library must be validatable under the
+  // global-document rules, or its project-tier reference passes validate and is
+  // only refused at save.
+  it("carries --tier global to the route so the scope rule applies", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile, "--tier", "global"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const url = new URL(host.requests[0]?.url ?? "");
+    expect(url.pathname).toBe(
+      "/api/projects/cc/sessions/my-session/graph-workflow/validate",
+    );
+    expect(url.searchParams.get("tier")).toBe("global");
+    // `workflow create` is project-scoped, so it must not be hinted as the next
+    // step for a plan deliberately validated as a global template.
+    expect(result.stdout).not.toContain("create it with");
+  });
+
+  it("sends no tier selector by default (project scope)", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(new URL(host.requests[0]?.url ?? "").searchParams.get("tier")).toBe(
+      null,
+    );
+  });
+
+  it("renders the scope-rule refusal with its JSON path and exits 2", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error: "Workflow plan is invalid",
+            issues: [
+              {
+                path: "definition.executionContexts.0.contextValidator.assignments.0.profile",
+                message:
+                  "A global-scope workflow document may not reference the project-tier profile project:repo-reviewer.",
+              },
+            ],
+          },
+          400,
+        ),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile, "--tier", "global"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(
+      "definition.executionContexts.0.contextValidator.assignments.0.profile",
+    );
+    expect(result.stderr).toContain(
+      "project-tier profile project:repo-reviewer",
+    );
+  });
+
+  it("exits 2 for an invalid --tier without reaching the server", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile, "--tier", "bogus"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("exits 2 without a session identity", async () => {
     const host = makeHost(() => jsonResponse({ ok: true }), files);
     const noSession: CliEnv = {

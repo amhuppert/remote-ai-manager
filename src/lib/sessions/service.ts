@@ -15,6 +15,11 @@ import { defaultGitClient, type GitClient } from "../git/client";
 import { ensureCcArtifactsExcluded as defaultEnsureCcArtifactsExcluded } from "../git/worktree";
 import { fastRemoveWorktree as defaultFastRemoveWorktree } from "../git/worktree-fast-remove";
 import { buildConversation } from "@/lib/conversations/build-conversation";
+import { resolveConversationProfileSnapshot } from "@/lib/conversations/profile-resolution";
+import type {
+  AgentProfileRef,
+  AgentProfileSnapshot,
+} from "@/lib/agent-profiles/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode, SessionState } from "@/lib/sessions/schemas";
 import {
@@ -90,6 +95,12 @@ interface ProvisionSessionOptions {
   // by chat-spawning so a reviewed/edited branch is exactly what gets
   // created (and a duplicate/invalid branch is rejected by `worktree add`).
   branchName?: string;
+  /**
+   * Profile for the session's initial conversation. Omitted (every system
+   * creator, and any flow whose surface offers no picker) yields the explicit
+   * Standard Agent snapshot rather than a profile-less conversation (R7).
+   */
+  profile?: AgentProfileRef | null;
 }
 
 export type DeleteSessionIfCurrentResult =
@@ -142,6 +153,15 @@ export interface SessionDeps {
   deleteProjectRow: typeof deleteProjectRow;
   readConfig: typeof readConfig;
   readRepoConfig: typeof readRepoConfig;
+  /**
+   * Resolve and compose the profile the session's initial conversation runs
+   * under. Optional so the production resolver is the default everywhere; a
+   * test substitutes it only to prove a non-built-in tier.
+   */
+  resolveProfileSnapshot?(
+    projectPath: string,
+    ref?: AgentProfileRef | null,
+  ): Promise<AgentProfileSnapshot>;
   stopAllForSession: typeof stopAllForSession;
   getProjectDisplayName: typeof getProjectDisplayName;
   executeOptimisticWorkflow: typeof executeOptimisticWorkflow;
@@ -493,12 +513,19 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     // (GET /sessions) sees the new directory before the session is in state
     // and imports it as a duplicate with conversations: [].
     const now = new Date().toISOString();
+    // Resolved before the session row is written, so the initial conversation
+    // is durable with its profile in place (R6) — no window in which a runtime
+    // could be created for a snapshot-less row.
+    const profileSnapshot = await (
+      deps.resolveProfileSnapshot ?? resolveConversationProfileSnapshot
+    )(projectPath, opts.profile);
     const initialConversation = buildConversation({
       id: crypto.randomUUID(),
       scope: "session",
       name: `${sessionName} 1`,
       createdAt: now,
       agentBackend: globalConfig.defaultAgentBackend ?? "claude",
+      profileSnapshot,
     });
     const session: SessionState = {
       sessionName,
@@ -700,6 +727,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       baseBranch?: string;
       targetBranch?: string;
       parentSessionName?: string;
+      /** Profile for the initial conversation; default when absent (R7). */
+      profile?: AgentProfileRef;
     },
   ): Promise<SessionState> {
     const validationError = validateSessionName(sessionName);
@@ -741,6 +770,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       baseBranch?: string;
       targetBranch?: string;
       parentSessionName?: string;
+      /** Profile for the initial conversation; default when absent (R7). */
+      profile?: AgentProfileRef;
     },
   ): Promise<SessionState> {
     const [baseName, existingSessions] = await Promise.all([

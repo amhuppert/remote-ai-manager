@@ -320,7 +320,15 @@ export function formatGraphWorkflowHaltReason(
       };
     case "validator_infra_error":
       return {
-        headline: `Validator infrastructure error in ${reason.contextId}`,
+        // Name the specialist when the cohort recorded one: the actionable fact
+        // is which reviewer was never heard, not that something in validation
+        // broke. The attempt count is omitted at zero, where it would read as a
+        // contradiction rather than as "the queue never admitted it".
+        headline: reason.assignmentId
+          ? `${reason.assignmentId} never returned a verdict in ${reason.contextId}${
+              reason.attempts > 0 ? ` (${reason.attempts} attempts)` : ""
+            }`
+          : `Validator infrastructure error in ${reason.contextId}`,
         detail: <pre className={haltPreClass}>{reason.message}</pre>,
         action: null,
       };
@@ -330,7 +338,24 @@ export function formatGraphWorkflowHaltReason(
         detail: <pre className={haltPreClass}>{reason.message}</pre>,
         action: null,
       };
+    case "validation_candidate_unavailable":
+      return {
+        headline: `Could not read the reviewed tree in ${reason.contextId}`,
+        detail: <pre className={haltPreClass}>{reason.message}</pre>,
+        action: null,
+      };
     case "aborted":
+      // A cutover abort was not the operator's doing, so it must say who ended
+      // the run and why — otherwise an archived entry reads as if someone hit
+      // Abort. `summary` carries the migration's own wording.
+      if (reason.cause === "migration_cutover") {
+        return {
+          headline: "Execution ended by a Command Center schema cutover",
+          detail: reason.summary === null ? null : <p>{reason.summary}</p>,
+          action: "Relaunch the workflow to continue this work.",
+          tone: "attention",
+        };
+      }
       return { headline: "Execution aborted", detail: null, action: null };
     case "collaboration_failure":
       return {

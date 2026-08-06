@@ -111,6 +111,7 @@ function makeDescriptor(
       transcript: {
         projectAssistantMetadata: () => undefined,
       },
+      fsWriteRestriction: "enforced",
     },
     managedSkills: { conversations: "bundled", tasks: "bundled" },
     mcp: fakeMcp(backend),

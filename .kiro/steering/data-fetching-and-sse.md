@@ -94,6 +94,35 @@ domain code → publication.publishEvent(event) → broadcaster adapter → all 
 - Every route that mutates state and would otherwise require the client to poll publishes one event before returning.
 - A `202 Accepted` response must not await the work it accepts. It returns once intent is recorded and the work is initiated, then the client observes completion through SSE — never by the route blocking until the work is done. Work expected to exceed ~1s runs as a job that reports progress over SSE; the accepting route responds promptly with the current status and readiness propagates through the existing event reactions (e.g. dev-server start returns `202` at its acceptance boundary while `dev-server-status` events carry the later readiness transition).
 
+### An event's scope names what it invalidates
+
+When one event kind reaches consumers at more than one scope, the payload states which —
+a consumer must never have to choose between over-invalidating everything and missing the
+right query. `agent-profile-library-changed` (the agent profile library, `src/lib/agent-profiles/`)
+is the worked example:
+
+```typescript
+// src/lib/agent-profiles/schemas.ts — discriminated on `scope`
+type AgentProfileLibraryChangedEvent =
+  | { type: "agent-profile-library-changed"; scope: "global"; tier: "global"; id: string; revision: number; action: AgentProfileLibraryChangeAction }
+  | { type: "agent-profile-library-changed"; scope: "project"; projectPath: string; tier: "project"; id: string; revision: number; action: AgentProfileLibraryChangeAction };
+```
+
+- `scope`/`tier` describe the **changed record**, not the route the change arrived on. A
+  global-tier profile edited from inside one project is visible to every project, so it
+  invalidates every project's library queries; a project-tier change invalidates only that
+  project's (`src/lib/agent-profiles/sse-reactions.ts`).
+- `projectPath` is present **exactly on the project variant**, structurally — the union
+  makes a project-tier change that cannot name its project unspellable. Query keys are
+  addressed by project NAME, and `agentProfileProjectNameFromPath` bridges the two.
+- `action` is `created | updated | deleted`, published **after** the write commits, and
+  best-effort — a refused or conflicted write publishes nothing at all.
+- Which profile a CONVERSATION runs under is a different event at a different scope, and
+  both carry the REDACTED snapshot only: `conversation-created` through
+  `publicConversationStateSchema`, and `conversation-profile-changed` (a pre-lock swap)
+  through `redactedProfileSnapshot`. An SSE frame is a read surface like any response
+  body, so instruction text never rides one.
+
 ---
 
 ## TanStack Query

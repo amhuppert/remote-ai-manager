@@ -298,19 +298,53 @@ function buildMaximalExecution(): unknown {
             label: "Implementation context",
           },
           implementer: {
-            backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
-          },
-          contextValidator: {
-            type: "claude",
-            enabled: true,
-            continuity: { enabled: false, contextLimitTokens: 120_000 },
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            focus: "the persistence layer",
             agent: {
               backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
+              model: "opus",
+              reasoningEffort: "high",
             },
+            profileSnapshot: {
+              tier: "builtin",
+              id: "general-implementer",
+              name: "General Implementer",
+              revision: 4,
+              sourceContentHash: `sha256:${"1".repeat(64)}`,
+              instructions: "Maximal implementer instructions.",
+              renderedInstructionBlock:
+                "MAXIMAL IMPLEMENTER RENDERED BLOCK\nwith the use-site focus inside it",
+              resolvedInstructionHash: `sha256:${"2".repeat(64)}`,
+            },
+          },
+          contextValidator: {
+            enabled: false,
+            assignments: [
+              {
+                id: "security",
+                profile: { tier: "project", id: "security-reviewer" },
+                focus: "auth boundaries",
+                strategy: "conversation",
+                agent: {
+                  backend: "claude",
+                  model: "sonnet",
+                  reasoningEffort: "medium",
+                },
+                continuity: { enabled: false, contextLimitTokens: 120_000 },
+                profileSnapshot: {
+                  tier: "project",
+                  id: "security-reviewer",
+                  name: "Security Reviewer",
+                  revision: 9,
+                  sourceContentHash: `sha256:${"3".repeat(64)}`,
+                  instructions: "Maximal validator instructions.",
+                  renderedInstructionBlock:
+                    "MAXIMAL VALIDATOR RENDERED BLOCK\nwith the use-site focus inside it",
+                  resolvedInstructionHash: `sha256:${"4".repeat(64)}`,
+                },
+              },
+            ],
           },
           scriptValidator: { enabled: true },
           humanApprovalGate: { enabled: true },
@@ -402,7 +436,7 @@ function buildMaximalExecution(): unknown {
         contextId: "ctx-1",
         // Maximal durability entry: the harness only descends into the FIRST
         // context-state record entry, so this one co-populates BOTH parked
-        // records (pendingApproval AND pendingUserInput) to prove every
+        // records (pendingApproval AND pendingUserInputs) to prove every
         // persisted key path survives the round-trip — a schema-valid but not
         // runtime-reachable superimposition. `status` uses the user-input value
         // so the widened enum value is exercised on write.
@@ -433,44 +467,107 @@ function buildMaximalExecution(): unknown {
             decidedAt: "2026-01-01T00:00:45.000Z",
           },
         },
-        pendingUserInput: {
-          conversationId: "conv-userinput-1",
-          lane: "context_validator",
-          questionBatchId: "qb-1",
-          requestedAt: "2026-01-01T00:01:00.000Z",
-          questions: [
-            {
-              id: "q-1",
-              question: "Which storage backend should the cache use?",
-              header: "Cache backend",
-              context: "Redis adds a dependency; in-memory is simpler.",
-              options: [
-                {
-                  label: "Redis",
-                  description: "Shared, survives restarts",
-                  recommended: true,
-                  tradeoff: {
-                    pro: "durable across restarts",
-                    con: "adds an external service",
+        pendingUserInputs: {
+          // Keyed by lane key: a cohort's validators park independently, so the
+          // durability claim has to cover an assignment-scoped key.
+          "context_validator:security-reviewer": {
+            conversationId: "conv-userinput-1",
+            lane: "context_validator",
+            questionBatchId: "qb-1",
+            requestedAt: "2026-01-01T00:01:00.000Z",
+            roundSeq: 4,
+            questions: [
+              {
+                id: "q-1",
+                question: "Which storage backend should the cache use?",
+                header: "Cache backend",
+                context: "Redis adds a dependency; in-memory is simpler.",
+                options: [
+                  {
+                    label: "Redis",
+                    description: "Shared, survives restarts",
+                    recommended: true,
+                    tradeoff: {
+                      pro: "durable across restarts",
+                      con: "adds an external service",
+                    },
                   },
+                ],
+                multiSelect: true,
+                required: false,
+                allowNote: false,
+              },
+            ],
+            answers: {
+              byQuestionId: {
+                "q-1": {
+                  selected: ["Redis"],
+                  note: "use the existing cluster",
+                  skipped: false,
+                  question: "Which storage backend should the cache use?",
                 },
-              ],
-              multiSelect: true,
-              required: false,
-              allowNote: false,
+              },
+              answeredAt: "2026-01-01T00:02:00.000Z",
+            },
+          },
+        },
+        // An open validation round. Archived under the same superimposition
+        // rule as the parked records above: the harness descends into the FIRST
+        // specialist entry only, so that one carries a settled verdict AND a
+        // question token — every persisted key path, not a reachable state.
+        validationRound: {
+          seq: 4,
+          candidate: {
+            headSha: "a".repeat(40),
+            candidateTreeHash: "b".repeat(40),
+            taskStateHash: "c".repeat(64),
+          },
+          roster: [
+            {
+              assignmentId: "general",
+              profileRef: { tier: "builtin", id: "general-reviewer" },
+              revision: 3,
+              resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
+              strategy: "conversation",
             },
           ],
-          answers: {
-            byQuestionId: {
-              "q-1": {
-                selected: ["Redis"],
-                note: "use the existing cluster",
-                skipped: false,
-                question: "Which storage backend should the cache use?",
+          specialists: {
+            general: {
+              state: "verdict_fail",
+              attempts: 2,
+              summary: "Rollback notes are still missing.",
+              issues: [
+                {
+                  taskId: "task-1",
+                  title: "Missing rollback notes",
+                  description: "Document how to revert the migration.",
+                },
+              ],
+              questionToken: "qb-general-1",
+              sessionRef: {
+                backend: "claude",
+                ref: "conv-general-validator",
+                lane: "context_validator",
+                assignmentId: "general",
+                refKind: "conversation",
+                workflowConversationId: "conv-general-validator",
+              },
+              reviewArtifact: {
+                backend: "claude",
+                kind: "conversation",
+                ref: "conv-general-validator",
+                usage: { costUsd: 0.42, apiTurns: 4 },
+              },
+              lastInfraFailure: {
+                reason: "unparseable",
+                message: "the reviewer returned prose, not a verdict",
+                engine: "claude",
               },
             },
-            answeredAt: "2026-01-01T00:02:00.000Z",
           },
+          phase: "concluded",
+          outcome: "failed",
+          startedAt: "2026-01-01T00:03:00.000Z",
         },
       },
     },
@@ -545,6 +642,49 @@ function buildMaximalExecution(): unknown {
           rotateBeforeNextTurn: true,
           limitEvaluation: "supported",
           lastUsedAt: "2026-01-02T02:00:00Z",
+        },
+        "context_validator:general": {
+          backend: "claude",
+          refKind: "conversation",
+          lane: "context_validator",
+          contextId: "ctx-1",
+          assignmentId: "general",
+          assignmentFingerprint: `sha256:${"d".repeat(64)}|conversation|true||claude|sonnet|medium`,
+          workflowConversationId: "conv-general-validator",
+          sessionRef: {
+            backend: "claude",
+            ref: "conv-general-validator",
+          },
+          metrics: {
+            contextTokens: 42_000,
+            contextWindowMax: 200_000,
+            rotateBeforeNextTurn: false,
+          },
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-01-02T02:30:00Z",
+        },
+        "context_validator:security-reviewer": {
+          backend: "codex",
+          refKind: "backend",
+          lane: "context_validator",
+          contextId: "ctx-1",
+          assignmentId: "security-reviewer",
+          assignmentFingerprint: `sha256:${"e".repeat(64)}|task|true|60000|codex|gpt-5.4|high`,
+          workflowConversationId: "conv-security-validator",
+          sessionRef: {
+            backend: "codex",
+            ref: "thread-security-validator",
+          },
+          metrics: {
+            lastTurnUsage: {
+              inputTokens: 1200,
+              cachedInputTokens: 400,
+              outputTokens: 300,
+            },
+            rotateBeforeNextTurn: false,
+          },
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-01-02T02:45:00Z",
         },
       },
     },
@@ -687,6 +827,21 @@ function buildMaximalExecution(): unknown {
           projectName: "command-center",
         },
       },
+      // Maximal cohort infrastructure halt: which specialist ran out of
+      // attempts, how many it spent, and the round it spent them in. A resume
+      // reads these back to explain a halt nobody's review caused, so they have
+      // to survive archival.
+      {
+        type: "validator_infra_error",
+        contextId: "ctx-1",
+        engine: "claude",
+        infraReason: "never_admitted",
+        message: "The query semaphore never admitted security-reviewer.",
+        summary: "security-reviewer was never heard in round 4.",
+        assignmentId: "security-reviewer",
+        attempts: 3,
+        roundSeq: 4,
+      },
     ],
     pendingCollaborations: {
       "collab-1": {
@@ -739,6 +894,28 @@ describe("graph-workflow-archived-executions-repo durability contract", () => {
       },
       reload: (expected) =>
         repo.findByExecution(PROJECT_PATH, SESSION_NAME, expected.id),
+    });
+  });
+
+  it("carries assignment-scoped validator lanes and fingerprints in the maximal SQLite fixture", () => {
+    const execution = graphWorkflowExecutionSchema.parse(
+      buildMaximalExecution(),
+    );
+    repo.insert(makeRow({ executionId: execution.id, execution }));
+
+    const reloaded = repo.findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution.id,
+    );
+    expect(
+      reloaded?.laneStates["ctx-1"]?.["context_validator:security-reviewer"],
+    ).toMatchObject({
+      lane: "context_validator",
+      contextId: "ctx-1",
+      assignmentId: "security-reviewer",
+      assignmentFingerprint: `sha256:${"e".repeat(64)}|task|true|60000|codex|gpt-5.4|high`,
+      sessionRef: { backend: "codex", ref: "thread-security-validator" },
     });
   });
 

@@ -20,6 +20,7 @@ import {
   ForkValidationError,
 } from "@/lib/conversations/service";
 import { forkRequestSchema } from "@/lib/conversations/schemas";
+import type { z } from "zod";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 
@@ -51,7 +52,7 @@ export const forkConversation = withTracing(async (request, { params }) => {
     return notFound("Conversation not found");
   }
 
-  let body: { messageIndex: number };
+  let body: z.infer<typeof forkRequestSchema>;
   try {
     body = forkRequestSchema.parse(await bodyPromise);
   } catch {
@@ -75,6 +76,7 @@ export const forkConversation = withTracing(async (request, { params }) => {
       sessionName,
       sourceConversationId: conversationId,
       messageIndex: body.messageIndex,
+      ...(body.profile !== undefined ? { profile: body.profile } : {}),
     });
 
     if (result.forkMode === "synthetic") {

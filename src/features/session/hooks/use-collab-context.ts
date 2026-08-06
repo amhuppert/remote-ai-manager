@@ -25,7 +25,7 @@ import {
 } from "@/features/session/conversation/collab/page-helpers";
 import type { CollaborationReference } from "@/lib/workflows/collaboration/types";
 import type {
-  ConversationState,
+  PublicConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import type { CollaborationEnvelope } from "@/lib/collaboration/schemas";
@@ -39,7 +39,7 @@ export interface UseCollabContextArgs {
   sessionName: string;
   conversationId: string;
   collaborationListQuery: CollaborationListQueryResult;
-  activeConversation: ConversationState | undefined;
+  activeConversation: PublicConversationState | undefined;
   rawMessages: readonly TranscriptMessage[];
   openDocById: (docId: string) => void;
 }

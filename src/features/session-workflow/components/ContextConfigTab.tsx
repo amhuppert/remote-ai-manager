@@ -9,12 +9,15 @@ import {
 import {
   CircuitBreakerEditor,
   CollaborationEditor,
-  ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
   PlanRepairEditor,
-  ToggleControl,
 } from "@/components/workflow-config/FieldEditors";
+import {
+  CohortEditor,
+  toggleCohortEnabled,
+} from "@/components/workflow-config/CohortEditor";
+import { ToggleControl } from "@/components/workflow-config/FieldPrimitives";
 import {
   OutputSchemaField,
   lintOutputSchemaText,
@@ -31,8 +34,8 @@ import type {
   WorkflowCollaborationConfig,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
-  GraphWorkflowAgentConfig,
-  GraphWorkflowAgentValidatorConfig,
+  AgentAssignment,
+  ValidatorCohort,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
   GraphWorkflowPlanRepairPolicy,
@@ -89,15 +92,6 @@ function toProvenancedCollaboration(
   };
 }
 
-// Seed for enabling a previously-off context validator: a concrete Claude
-// validator the operator can then refine.
-const DEFAULT_CONTEXT_VALIDATOR: GraphWorkflowAgentValidatorConfig = {
-  type: "claude",
-  enabled: true,
-  continuity: { enabled: true },
-  agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
-};
-
 // The editable projection of a resolved context: prose plus every concrete
 // config block the live-edit endpoint accepts. Collaboration is held flat
 // (null when the resolved context has none — editing it is out of scope until
@@ -110,8 +104,8 @@ interface ConfigDraft {
    * survive a re-render and an SSE rebase, and only a text draft can hold one.
    * Parsed to object-or-null at diff time (D8/R7.5). */
   outputSchema: string;
-  implementer: GraphWorkflowAgentConfig;
-  contextValidator: GraphWorkflowAgentValidatorConfig | null;
+  implementer: AgentAssignment;
+  contextValidator: ValidatorCohort;
   scriptValidator: boolean;
   humanApprovalGate: boolean;
   askUserQuestions: boolean;
@@ -155,14 +149,34 @@ function serializeOutputSchemaText(
   return schema ? JSON.stringify(schema, null, 2) : "";
 }
 
+/**
+ * Drop the execution-seeded profile snapshot, leaving the authored assignment.
+ *
+ * The editor reads a WORKING definition, whose assignments carry the bytes the
+ * run was seeded with, but it writes an `update-context` op, whose schema is
+ * reference-bearing and strict. Echoing the snapshot back would be refused at
+ * accept time — and would also be wrong: an edit names a profile, and the
+ * live-edit boundary resolves it.
+ */
+function toAuthoredAssignment<T extends { profileSnapshot?: unknown }>(
+  assignment: T,
+): Omit<T, "profileSnapshot"> {
+  const { profileSnapshot: _seeded, ...authored } = assignment;
+  return authored;
+}
+
 function toDraft(context: ResolvedContext): ConfigDraft {
   return {
     title: context.title,
     description: context.description ?? "",
     acceptanceCriteria: context.acceptanceCriteria,
     outputSchema: serializeOutputSchemaText(context.outputSchema),
-    implementer: context.implementer,
-    contextValidator: context.contextValidator,
+    implementer: toAuthoredAssignment(context.implementer),
+    contextValidator: {
+      ...context.contextValidator,
+      assignments:
+        context.contextValidator.assignments.map(toAuthoredAssignment),
+    },
     scriptValidator: context.scriptValidator.enabled,
     humanApprovalGate: context.humanApprovalGate.enabled,
     askUserQuestions: context.askUserQuestions.enabled,
@@ -508,6 +522,16 @@ interface ContextConfigTabProps {
   editConflict?: boolean;
   /** The last save succeeded — offer Resume for the pause-to-edit flow. */
   saveSucceeded?: boolean;
+  /** Scopes the agent-profile listing the assignment pickers offer. */
+  libraryProjectName?: string | null;
+  /**
+   * Take ONE cohort member's lane back to a clean slate (R8.3) without
+   * discarding the sibling verdicts a whole-context reset would take with it.
+   * Absent when the execution is not in a state that can be reset.
+   */
+  onResetAssignment?: (contextId: string, assignmentId: string) => void;
+  /** The assignment whose reset is in flight, if any. */
+  resettingAssignmentId?: string | null;
 }
 
 /**
@@ -530,6 +554,9 @@ export default function ContextConfigTab({
   isResuming = false,
   editConflict = false,
   saveSucceeded = false,
+  libraryProjectName,
+  onResetAssignment,
+  resettingAssignmentId,
 }: ContextConfigTabProps): React.JSX.Element | null {
   const descriptionId = useId();
   const acceptanceCriteriaId = useId();
@@ -612,6 +639,12 @@ export default function ContextConfigTab({
   const affordance = resolveAffordance(execution, contextId);
   const editable = affordance.mode === "editable";
   const readOnly = !editable;
+  // The reducer refuses a per-assignment reset unless the run is paused or
+  // halted (`workflow-graph/reset-assignment.ts`); offering the control while
+  // it is running would promise an action the endpoint would reject. Restated
+  // here rather than imported because that module reaches the server logger.
+  const resetEligible =
+    execution.status === "paused" || execution.status === "halted";
 
   const pendingOp = useMemo(
     () =>
@@ -637,7 +670,6 @@ export default function ContextConfigTab({
 
   const iterationCount = contextState?.iterationCount ?? 0;
   const maxIterations = draft.iterationPolicy.maxIterations;
-
   function patch(next: Partial<ConfigDraft>) {
     setDraft((prev) => (prev ? { ...prev, ...next } : prev));
   }
@@ -829,7 +861,8 @@ export default function ContextConfigTab({
           <ConfigBlock testId="config-block-implementer" label="Implementer">
             <ImplementerEditor
               value={draft.implementer}
-              onChange={(next) => patch({ implementer: next })}
+              onChange={(implementer) => patch({ implementer })}
+              libraryProjectName={libraryProjectName}
               readOnly={readOnly}
             />
           </ConfigBlock>
@@ -839,30 +872,34 @@ export default function ContextConfigTab({
             label="Context validator"
             headerRight={
               <ToggleControl
-                value={draft.contextValidator?.enabled ?? false}
-                onChange={(next) => {
-                  const current = draft.contextValidator;
-                  if (current) {
-                    // Preserve the resolved config (type/model/continuity/…) and
-                    // flip only `enabled` — a non-null validator with
-                    // `enabled:false` is a distinct, valid resolved state.
-                    patch({ contextValidator: { ...current, enabled: next } });
-                  } else if (next) {
-                    // No validator resolved — seed a concrete one to enable it.
-                    patch({ contextValidator: DEFAULT_CONTEXT_VALIDATOR });
-                  }
-                }}
+                value={draft.contextValidator.enabled}
+                onChange={(enabled) =>
+                  patch({
+                    contextValidator: toggleCohortEnabled(
+                      draft.contextValidator,
+                      enabled,
+                    ),
+                  })
+                }
                 disabled={readOnly}
                 ariaLabel="Context validator enabled"
               />
             }
           >
-            {draft.contextValidator === null ? (
+            {draft.contextValidator.assignments.length === 0 ? (
               <p className={BLOCK_TEXT}>Off — no validator for this context.</p>
             ) : (
-              <ContextValidatorEditor
+              <CohortEditor
                 value={draft.contextValidator}
-                onChange={(next) => patch({ contextValidator: next })}
+                onChange={(contextValidator) => patch({ contextValidator })}
+                libraryProjectName={libraryProjectName}
+                {...(onResetAssignment && resetEligible
+                  ? {
+                      onResetAssignment: (assignmentId: string) =>
+                        onResetAssignment(contextId, assignmentId),
+                    }
+                  : {})}
+                resettingAssignmentId={resettingAssignmentId}
                 readOnly={readOnly}
               />
             )}

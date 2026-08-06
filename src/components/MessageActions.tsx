@@ -15,6 +15,8 @@ import {
 } from "@/lib/context-artifacts/queries";
 import { useCompactMutation } from "@/lib/context-artifacts/mutations";
 import type { ContextArtifactTarget } from "@/lib/context-artifacts/query-keys";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
+import AgentProfileChoicePopover from "@/components/agent-profiles/AgentProfileChoicePopover";
 import MessageCompactionViewer from "@/components/context-artifacts/MessageCompactionViewer";
 import CopyMessageButton, { msgActionBtnClass } from "./CopyMessageButton";
 import CopyMessageRefButton, {
@@ -37,8 +39,20 @@ interface MessageActionsProps {
    * Omit to hide the Fork action (e.g. surfaces with no fork backend).
    * Returning a promise puts the Fork button into a visible pending state
    * (spinner + disabled) until it settles.
+   *
+   * The profile is supplied only for a fork at index 0, which derives from no
+   * session and is therefore a fresh conversation with an identity to choose;
+   * every later index inherits the source snapshot verbatim (R7).
    */
-  onFork?: (messageIndex: number) => void | Promise<void>;
+  onFork?: (
+    messageIndex: number,
+    profile?: AgentProfileRef,
+  ) => void | Promise<void>;
+  /**
+   * Project whose profile library the index-0 fork picker lists. Omit and that
+   * fork stays one-click, creating under the Standard Agent.
+   */
+  forkProjectName?: string;
   /**
    * Conversation identity for per-message compaction. Omit to hide the
    * Compact action (hosts without project/session/conversation identity).
@@ -79,6 +93,7 @@ function CompactableMessageActions({
   content,
   role,
   onFork,
+  forkProjectName,
   compactionTarget,
   messageRef,
 }: MessageActionsProps & { compactionTarget: ContextArtifactTarget }) {
@@ -132,6 +147,7 @@ function CompactableMessageActions({
         content={content}
         role={role}
         onFork={onFork}
+        forkProjectName={forkProjectName}
         compactionTarget={compactionTarget}
         messageRef={messageRef}
       >
@@ -170,6 +186,7 @@ function ActionBar({
   content,
   role,
   onFork,
+  forkProjectName,
   compactionTarget,
   messageRef,
   children,
@@ -179,25 +196,12 @@ function ActionBar({
   | "content"
   | "role"
   | "onFork"
+  | "forkProjectName"
   | "compactionTarget"
   | "messageRef"
 > & {
   children?: React.ReactNode;
 }) {
-  const [forking, setForking] = useState(false);
-
-  const handleFork = useCallback(() => {
-    if (forking) return;
-    const result = onFork?.(messageIndex);
-    if (result instanceof Promise) {
-      setForking(true);
-      result.then(
-        () => setForking(false),
-        () => setForking(false),
-      );
-    }
-  }, [messageIndex, onFork, forking]);
-
   return (
     <div className="mt-xs ml-auto flex w-fit items-center gap-[2px]">
       <CopyMessageButton content={content} />
@@ -216,20 +220,90 @@ function ActionBar({
         />
       )}
       {onFork && (
-        <WithTooltip label={forking ? "Forking…" : "Fork"}>
+        <ForkAction
+          messageIndex={messageIndex}
+          onFork={onFork}
+          {...(forkProjectName === undefined ? {} : { forkProjectName })}
+        />
+      )}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Fork this message into a new conversation.
+ *
+ * A fork at index 0 derives from no session, so the conversation it creates is
+ * a fresh one with an identity to choose and the control opens a profile panel;
+ * every later index inherits the source snapshot verbatim, so it stays the
+ * one-click action it has always been (R7).
+ */
+function ForkAction({
+  messageIndex,
+  onFork,
+  forkProjectName,
+}: {
+  messageIndex: number;
+  onFork: NonNullable<MessageActionsProps["onFork"]>;
+  forkProjectName?: string;
+}) {
+  const [forking, setForking] = useState(false);
+
+  const runFork = useCallback(
+    (profile?: AgentProfileRef) => {
+      if (forking) return;
+      const result = onFork(messageIndex, profile);
+      if (result instanceof Promise) {
+        setForking(true);
+        result.then(
+          () => setForking(false),
+          () => setForking(false),
+        );
+      }
+    },
+    [messageIndex, onFork, forking],
+  );
+
+  const label = forking ? "Forking…" : "Fork";
+  const glyph = forking ? <Spinner size="sm" tone="inherit" /> : <ForkIcon />;
+
+  if (messageIndex === 0 && forkProjectName !== undefined) {
+    return (
+      <AgentProfileChoicePopover
+        projectName={forkProjectName}
+        triggerLabel={label}
+        title="Fork as a new conversation"
+        confirmLabel="Fork conversation"
+        onConfirm={runFork}
+        disabled={forking}
+        // The popover owns the click: opening the panel is not forking.
+        trigger={
           <button
             className={msgActionBtnClass}
-            onClick={handleFork}
             disabled={forking}
             aria-busy={forking || undefined}
             title="Fork conversation from this message"
           >
-            {forking ? <Spinner size="sm" tone="inherit" /> : <ForkIcon />}
+            {glyph}
           </button>
-        </WithTooltip>
-      )}
-      {children}
-    </div>
+        }
+      />
+    );
+  }
+
+  return (
+    <WithTooltip label={label}>
+      <button
+        className={msgActionBtnClass}
+        onClick={() => runFork()}
+        disabled={forking}
+        aria-busy={forking || undefined}
+        title="Fork conversation from this message"
+      >
+        {glyph}
+      </button>
+    </WithTooltip>
   );
 }
 

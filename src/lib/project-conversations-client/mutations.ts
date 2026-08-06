@@ -8,10 +8,10 @@ import { mutationFetch } from "@/lib/api/fetcher";
 import { cacheUpdate, createOptimisticMutation } from "@/lib/api/optimistic";
 import { consumePromptStream } from "@/lib/prompt/stream-transport";
 import {
-  conversationStateSchema,
+  publicConversationStateSchema,
   type AnswerQuestionRequest,
   type AskQuestionItem,
-  type ConversationState,
+  type PublicConversationState,
   type MessageContentBlock,
 } from "@/lib/conversations/schemas";
 import {
@@ -37,6 +37,7 @@ import type {
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentProfileRef } from "@/lib/agent-profiles/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { OptimisticAgentSettings } from "@/stores/session-detail/types";
 import { backendSupportsFastMode } from "@/lib/agent-backends/catalog";
@@ -62,9 +63,9 @@ function patchListedConversation(
   queryClient: ReturnType<typeof useQueryClient>,
   projectName: string,
   conversationId: string,
-  patch: (c: ConversationState) => ConversationState,
+  patch: (c: PublicConversationState) => PublicConversationState,
 ): void {
-  queryClient.setQueryData<ConversationState[]>(
+  queryClient.setQueryData<PublicConversationState[]>(
     projectConversationKeys.list(projectName),
     (old) => old?.map((c) => (c.id === conversationId ? patch(c) : c)),
   );
@@ -105,13 +106,21 @@ function patchedActiveConversation(
   };
 }
 
-/** Create a new project conversation (defaults backend via config when omitted). */
+/**
+ * Create a new project conversation (defaults backend via config when omitted).
+ * `profile` is the identity selection and stays separate from `agentBackend`:
+ * omitting it resolves the Standard Agent server-side (R7).
+ */
 export function useCreateProjectConversation(
   projectName: string,
 ): UseMutationResult<
-  ConversationState,
+  PublicConversationState,
   Error,
-  { agentBackend?: AgentBackendId; name?: string } | void
+  {
+    agentBackend?: AgentBackendId;
+    name?: string;
+    profile?: AgentProfileRef;
+  } | void
 > {
   const queryClient = useQueryClient();
   return useMutation({
@@ -124,7 +133,7 @@ export function useCreateProjectConversation(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input ?? {}),
         },
-        conversationStateSchema,
+        publicConversationStateSchema,
       ),
     onSuccess: () => invalidateProjectLifecycle(queryClient, projectName),
   });
@@ -151,7 +160,7 @@ function useProjectOpenMutation(
       // The open-conversation count derives from the list cache, so patching
       // the list updates the count optimistically too.
       updates: [
-        cacheUpdate<string, ConversationState[]>({
+        cacheUpdate<string, PublicConversationState[]>({
           key: () => projectConversationKeys.list(projectName),
           update: (old, conversationId) =>
             old?.map((c) => (c.id === conversationId ? { ...c, open } : c)),
@@ -269,7 +278,7 @@ export function useAnswerProjectQuestionMutation(
         throw new Error(`Answer submission failed: ${res.status}`);
       },
       updates: [
-        cacheUpdate<AnswerQuestionRequest, ConversationState[]>({
+        cacheUpdate<AnswerQuestionRequest, PublicConversationState[]>({
           key: () => projectConversationKeys.list(projectName),
           update: (old) =>
             old?.map((c) =>
@@ -504,6 +513,13 @@ export interface SendProjectPromptInput {
   modelId?: string;
   effort?: string;
   codexFastMode?: boolean;
+  /**
+   * Identity for the conversation a `create` target builds — the create-and-send
+   * composer's own picker, travelling beside the runtime fields rather than
+   * inside them. Ignored for a conversation target: that one's profile is
+   * already resolved, and changing it is the profile PATCH route's business.
+   */
+  profile?: AgentProfileRef;
 }
 
 function projectPromptAgentSettings(
@@ -1008,9 +1024,11 @@ export function useSendProjectPrompt(
 
       const body: Record<string, unknown> = { prompt: input.text };
       // Sent only on the create-and-send entry, which is the only request that
-      // creates a conversation this client cannot yet name.
+      // creates a conversation this client cannot yet name — and the only one
+      // whose conversation has an identity still to be chosen.
       if (unnamedTurn !== null) {
         body.creationRequestId = unnamedTurn.creationRequestId;
+        if (input.profile !== undefined) body.profile = input.profile;
       }
       if (input.modelId !== undefined) body.modelId = input.modelId;
       if (input.effort !== undefined) body.effort = input.effort;

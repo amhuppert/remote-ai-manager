@@ -103,6 +103,17 @@ interface Manifest {
   files: Record<string, string>;
 }
 
+/**
+ * Where one validator assignment's artifacts live. A context reviewed by a
+ * cohort produces one prompt, response, and transcript PER specialist; without
+ * the assignment segment the last reviewer of each round would overwrite the
+ * others' evidence and a failed round would be unreconstructable.
+ */
+export interface ValidatorArtifactScope {
+  contextId: string;
+  assignmentId: string;
+}
+
 // -- Logger factory ----------------------------------------------------------
 
 export interface ExecutionLogger {
@@ -129,9 +140,13 @@ export interface ExecutionLogger {
   ): void;
 
   // Prompt/response storage
-  writePrompt(contextId: string, filename: string, content: string): void;
+  writePrompt(
+    scope: string | ValidatorArtifactScope,
+    filename: string,
+    content: string,
+  ): void;
   writeValidatorResponse(
-    contextId: string,
+    scope: ValidatorArtifactScope,
     filename: string,
     data: {
       raw: string;
@@ -142,15 +157,15 @@ export interface ExecutionLogger {
 
   /**
    * Append a validator's full agent transcript (reasoning, tool/command items,
-   * messages) to `contexts/<contextId>/validation-transcript.jsonl`, alongside
-   * the verdict events in `validation.jsonl`. Each invocation is preceded by a
-   * `validator.transcript_begin` marker carrying an `attempt` counter that
-   * increments per (context, lane) so re-validations stay distinguishable.
-   * A no-op when `entries` is empty (e.g. a timed-out or errored turn that
-   * produced no items).
+   * messages) to that assignment's `validation-transcript.jsonl`, alongside
+   * the verdict events in the context's `validation.jsonl`. Each invocation is
+   * preceded by a `validator.transcript_begin` marker carrying an `attempt`
+   * counter that increments per (context, assignment, lane) so re-validations
+   * stay distinguishable. A no-op when `entries` is empty (e.g. a timed-out or
+   * errored turn that produced no items).
    */
   writeValidatorTranscript(
-    contextId: string,
+    scope: ValidatorArtifactScope,
     meta: { lane: string; engine: AgentBackendId },
     entries: AgentTranscriptEntry[],
   ): void;
@@ -191,16 +206,26 @@ export function createExecutionLogger(
     return path.join(logDir, "contexts", contextId);
   }
 
+  /** `contexts/<contextId>/validators/<assignmentId>/`. */
+  function validatorDir(scope: ValidatorArtifactScope): string {
+    return path.join(
+      contextDir(scope.contextId),
+      "validators",
+      scope.assignmentId,
+    );
+  }
+
   function decisionsPath(): string {
     return path.join(logDir, "decisions.jsonl");
   }
 
   function nextTranscriptAttempt(
-    contextId: string,
+    scope: ValidatorArtifactScope,
     lane: string,
     filePath: string,
   ): number {
-    const attemptKey = `${contextId}:${lane}`;
+    const contextId = scope.contextId;
+    const attemptKey = `${contextId}:${scope.assignmentId}:${lane}`;
     const cached = transcriptAttempts.get(attemptKey);
     if (cached !== undefined) {
       transcriptAttempts.set(attemptKey, cached + 1);
@@ -267,11 +292,12 @@ export function createExecutionLogger(
           "contexts/<id>/tasks.jsonl":
             "Task completions, agent-added tasks, validation feedback.",
           "contexts/<id>/validation.jsonl":
-            "Validator invocations and results.",
-          "contexts/<id>/validation-transcript.jsonl":
-            "Full validator agent transcripts (reasoning, tool/command items, messages), one begin-marker + item events per invocation.",
-          "contexts/<id>/prompts/":
-            "Full prompt text (.md) and validator responses (.json).",
+            "Validator invocations and results, for the whole cohort.",
+          "contexts/<id>/validators/<assignmentId>/validation-transcript.jsonl":
+            "One cohort member's full agent transcripts (reasoning, tool/command items, messages), one begin-marker + item events per invocation.",
+          "contexts/<id>/validators/<assignmentId>/":
+            "One cohort member's validation prompt (.md) and parsed response (.json).",
+          "contexts/<id>/prompts/": "Full implementer prompt text (.md).",
           "decisions.jsonl":
             "Cross-cutting: rotation and circuit breaker decisions.",
         },
@@ -317,12 +343,20 @@ export function createExecutionLogger(
       );
     },
 
-    writePrompt(contextId: string, filename: string, content: string): void {
-      writeText(path.join(contextDir(contextId), "prompts", filename), content);
+    writePrompt(
+      scope: string | ValidatorArtifactScope,
+      filename: string,
+      content: string,
+    ): void {
+      const dir =
+        typeof scope === "string"
+          ? path.join(contextDir(scope), "prompts")
+          : validatorDir(scope);
+      writeText(path.join(dir, filename), content);
     },
 
     writeValidatorResponse(
-      contextId: string,
+      scope: ValidatorArtifactScope,
       filename: string,
       data: {
         raw: string;
@@ -330,25 +364,26 @@ export function createExecutionLogger(
         parsePath: string;
       },
     ): void {
-      writeJson(path.join(contextDir(contextId), "prompts", filename), data);
+      writeJson(path.join(validatorDir(scope), filename), data);
     },
 
     writeValidatorTranscript(
-      contextId: string,
+      scope: ValidatorArtifactScope,
       meta: { lane: string; engine: AgentBackendId },
       entries: AgentTranscriptEntry[],
     ): void {
       if (entries.length === 0) return;
 
       const filePath = path.join(
-        contextDir(contextId),
+        validatorDir(scope),
         "validation-transcript.jsonl",
       );
-      const attempt = nextTranscriptAttempt(contextId, meta.lane, filePath);
+      const attempt = nextTranscriptAttempt(scope, meta.lane, filePath);
       appendJsonl(
         filePath,
         timestamped("validator.transcript_begin", {
-          contextId,
+          contextId: scope.contextId,
+          assignmentId: scope.assignmentId,
           lane: meta.lane,
           engine: meta.engine,
           attempt,
@@ -359,7 +394,8 @@ export function createExecutionLogger(
         appendJsonl(
           filePath,
           timestamped("validator.transcript_item", {
-            contextId,
+            contextId: scope.contextId,
+            assignmentId: scope.assignmentId,
             attempt,
             seq: entry.seq,
             backend: entry.backend,

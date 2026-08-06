@@ -1,4 +1,14 @@
 import {
+  agentProfileLibraryEntrySchema,
+  agentProfileLibraryListingSchema,
+  formatAgentProfileRef,
+  parseAgentProfileRef,
+  type AgentProfileLibraryDiagnostic,
+  type AgentProfileLibraryEntry,
+  type AgentProfileLibraryItem,
+  type AgentProfileRefParseFailureKind,
+} from "@/lib/agent-profiles/schemas";
+import {
   agentRunCreatedResponseSchema,
   agentRunStatusResponseSchema,
   type AgentRunStatusResponse,
@@ -8,6 +18,7 @@ import { flagNamesFor } from "../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
+  EXIT_USAGE,
   checkFlags,
   cliRequest,
   encodePathSegment,
@@ -15,21 +26,34 @@ import {
   failureFromRequestNotFoundAsUsage,
   readJsonObjectFile,
   render,
+  resolveProjectContext,
   resolveSessionContext,
   usageFailure,
   type CliEnv,
   type CliHost,
   type CliResult,
   type GlobalFlags,
+  type ProjectContext,
   type SessionContext,
 } from "../shared";
 
 /**
- * `cctl agent run|status|cancel` — the job-shaped one-shot sub-agent runner.
- * The prompt payload names the backend (`{"backend": "codex", ...}`);
- * execution stays server-side. The CLI creates a run, optionally long-polls it
- * to completion (`--wait`), and can recover or abort a run that outlived a
- * killed client via `status`/`cancel`.
+ * `cctl agent` covers two capabilities behind one noun.
+ *
+ * `run|status|cancel` is the job-shaped one-shot sub-agent runner. The prompt
+ * payload names the backend (`{"backend": "codex", ...}`); execution stays
+ * server-side. The CLI creates a run, optionally long-polls it to completion
+ * (`--wait`), and can recover or abort a run that outlived a killed client via
+ * `status`/`cancel`. These are session-scoped: a run executes in a session's
+ * worktree.
+ *
+ * `list|get` is the agent profile library's read surface (R11, D24) — the
+ * machine-discoverable selection surface a planning agent staffs assignments
+ * from. Both are server-backed through the project-scoped library API rather
+ * than reading storage, so the CLI sees exactly what the service sees,
+ * including tier provenance and quarantine diagnostics. They resolve PROJECT
+ * context only: the project route tree reaches all three tiers, and a project
+ * conversation must be able to read the library.
  */
 
 const POLL_INTERVAL_MS = 1000;
@@ -64,6 +88,15 @@ function agentRunsPath(context: SessionContext): string {
   return `/api/projects/${encodePathSegment(context.project)}/sessions/${encodePathSegment(context.session)}/agent-runs`;
 }
 
+/**
+ * The project-scoped library route. The route TREE is the scope, so this one
+ * path reaches every tier a project can see (builtin, global, and its own
+ * project tier) — there is no per-tier endpoint to choose between.
+ */
+function agentProfilesPath(context: ProjectContext): string {
+  return `/api/projects/${encodePathSegment(context.project)}/agent-profiles`;
+}
+
 export async function runAgent(
   rest: string[],
   flags: GlobalFlags,
@@ -79,6 +112,8 @@ export async function runAgent(
       run: (r) => runAgentRun(r, flags, values, env, host),
       status: (r) => runAgentStatus(r, flags, values, env, host),
       cancel: (r) => runAgentCancel(r, flags, values, env, host),
+      list: (r) => runAgentList(r, flags, values, env, host),
+      get: (r) => runAgentGet(r, flags, values, env, host),
     },
   });
 }
@@ -348,6 +383,183 @@ async function runAgentCancel(
   return {
     exitCode: EXIT_OK,
     stdout: render(json, `cancelled agent run ${runId}\n`, { ok: true }),
+    stderr: "",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The agent profile library (R11, D24)
+// ---------------------------------------------------------------------------
+
+/**
+ * The wire spelling of each reference-parse refusal. The domain owns which
+ * refusals exist and what each means; this owns only how the CLI names them, so
+ * a new failure kind fails to compile here rather than shipping as an untyped
+ * refusal.
+ */
+const REF_PARSE_REFUSAL_CODES: Record<AgentProfileRefParseFailureKind, string> =
+  {
+    unqualified: "agent_profile_ref_unqualified",
+    unknown_tier: "agent_profile_ref_unknown_tier",
+    invalid_id: "agent_profile_ref_invalid_id",
+  };
+
+function formatAudienceList(values: string[]): string {
+  return values.length > 0 ? values.join(", ") : "-";
+}
+
+/**
+ * One listing line: the qualified reference first, because that is what `get`
+ * and every text boundary take back. Instruction text is structurally absent —
+ * the listing projection does not carry it (R6.3).
+ */
+function formatProfileItem(item: AgentProfileLibraryItem): string {
+  const head = `${formatAgentProfileRef(item.ref)} (rev ${item.revision})  ${item.name} — ${item.description}`;
+  const meta = `    for: ${formatAudienceList(item.recommendedFor)}  tags: ${formatAudienceList(item.tags)}${item.readOnly ? "  read-only" : ""}`;
+  return `${head}\n${meta}\n`;
+}
+
+function formatDiagnostic(diagnostic: AgentProfileLibraryDiagnostic): string {
+  return `  ${diagnostic.tier}:${diagnostic.id} — ${diagnostic.reason}\n`;
+}
+
+async function runAgentList(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("agent list"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure("agent list takes no positional arguments", json);
+  }
+
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "GET",
+    path: agentProfilesPath(context),
+  });
+  if (result.kind !== "ok")
+    return failureFromRequestNotFoundAsUsage(result, json);
+
+  const parsed = agentProfileLibraryListingSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "unexpected agent profile listing from the CC server",
+      json,
+    });
+  }
+  const { profiles, diagnostics } = parsed.data;
+
+  const humanParts = [
+    `${profiles.length} agent profile${profiles.length === 1 ? "" : "s"}\n`,
+    ...profiles.map(formatProfileItem),
+  ];
+  if (diagnostics.length > 0) {
+    humanParts.push("unreadable records (quarantined):\n");
+    humanParts.push(...diagnostics.map(formatDiagnostic));
+  }
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanParts.join(""), {
+      ok: true,
+      profiles,
+      diagnostics,
+      hint: "read one profile's full text with 'cctl agent get <tier:id>'",
+    }),
+    stderr: "",
+  };
+}
+
+/** The full record, text mode: metadata first, then the block it exists to carry. */
+function formatProfileEntry(entry: AgentProfileLibraryEntry): string {
+  return [
+    `${formatAgentProfileRef({ tier: entry.tier, id: entry.id })} (rev ${entry.revision})  ${entry.name}\n`,
+    `${entry.description}\n`,
+    `for: ${formatAudienceList(entry.recommendedFor)}  tags: ${formatAudienceList(entry.tags)}  ${entry.readOnly ? "read-only" : "editable"}\n`,
+    "\n",
+    `${entry.instructions.endsWith("\n") ? entry.instructions : `${entry.instructions}\n`}`,
+  ].join("");
+}
+
+async function runAgentGet(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("agent get"), json);
+  if (denied) return denied;
+
+  const refText = rest[0];
+  if (refText === undefined) {
+    return usageFailure("agent get requires a <tier:id> argument", json);
+  }
+  if (rest.length > 1) {
+    return usageFailure("agent get takes a single <tier:id> argument", json);
+  }
+
+  // A deterministic local check, so an unqualified reference is refused before
+  // any round-trip: sibling tiers can hold the same id, and guessing one would
+  // read a profile nobody addressed.
+  const ref = parseAgentProfileRef(refText);
+  if (!ref.ok) {
+    const { kind, message, text, offset, length } = ref.failure;
+    return failure({
+      exitCode: EXIT_USAGE,
+      message,
+      code: REF_PARSE_REFUSAL_CODES[kind],
+      details: { kind, text, offset, length },
+      hint: "list the qualified references with 'cctl agent list'",
+      json,
+    });
+  }
+
+  const resolved = await resolveProjectContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "GET",
+    path: `${agentProfilesPath(context)}/${encodePathSegment(ref.ref.tier)}/${encodePathSegment(ref.ref.id)}`,
+  });
+  // A reference that resolves to nothing is a caller mistake, not a server
+  // "no": the 404 carries the service's typed refusal code, which survives into
+  // the envelope.
+  if (result.kind !== "ok")
+    return failureFromRequestNotFoundAsUsage(result, json);
+
+  const parsed = agentProfileLibraryEntrySchema.safeParse(result.body);
+  if (!parsed.success) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: "unexpected agent profile response from the CC server",
+      json,
+    });
+  }
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, formatProfileEntry(parsed.data), {
+      ok: true,
+      profile: parsed.data,
+    }),
     stderr: "",
   };
 }

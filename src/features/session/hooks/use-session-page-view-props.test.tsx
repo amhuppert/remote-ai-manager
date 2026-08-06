@@ -11,13 +11,20 @@ import type { SessionWorkspaceSlices } from "./session-workspace-slices";
 import { useSessionPageStoreBundle } from "./use-session-page-store-bundle";
 import { useSessionPageLocalState } from "./use-session-page-local-state";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import {
+  toPublicConversationState,
+  type ConversationState,
+  type PublicConversationState,
+} from "@/lib/conversations/schemas";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 
 const CONVERSATION_ID = "conv-1";
 
-function makeConversation(): ConversationState {
-  return {
+function makeConversation(): PublicConversationState {
+  // Projected, like every conversation a client actually receives.
+  return toPublicConversationState({
+    profileSnapshot: null,
+    profileLockedAt: null,
     id: CONVERSATION_ID,
     scope: "session",
     nameOrigin: "default",
@@ -48,7 +55,7 @@ function makeConversation(): ConversationState {
     pendingQueue: [],
     lastSeenAlignmentVersion: null,
     pendingAgentNotices: [],
-  };
+  });
 }
 
 function makeSession(conversation: ConversationState): SessionState {

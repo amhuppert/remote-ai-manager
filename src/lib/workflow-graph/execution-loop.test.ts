@@ -19,7 +19,6 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowUserInputResolvedEvent,
 } from "@/lib/workflow-graph/event-schemas";
 import type {
   GraphWorkflowExecution,
@@ -49,7 +48,7 @@ import {
 } from "@/lib/logging";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import { AgentTurnFailedError } from "./errors";
-import { StaleLoopFenceError } from "./loop-fence";
+import { assertLoopFence, StaleLoopFenceError } from "./loop-fence";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import type {
   RecordPendingHaltReasonResult,
@@ -78,9 +77,13 @@ function createSingleContextDefinition(
         description: "Single context",
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
@@ -125,7 +128,7 @@ function createRunningExecution(
     contextStates: {
       "ctx-1": {
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 1,
@@ -180,7 +183,7 @@ function baseContextState(
 ): GraphWorkflowExecution["contextStates"][string] {
   return {
     pendingApproval: null,
-    pendingUserInput: null,
+    pendingUserInputs: {},
     contextId,
     status: "pending",
     totalTaskCount: 1,
@@ -390,9 +393,13 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         description: "First",
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
@@ -404,9 +411,13 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         description: "Second",
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
@@ -1099,7 +1110,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1204,7 +1215,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1316,7 +1327,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1388,7 +1399,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1499,7 +1510,7 @@ describe("execution loop", () => {
         contextStates: {
           "ctx-1": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "ctx-1",
             status: "running",
             totalTaskCount: 1,
@@ -1604,7 +1615,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1671,7 +1682,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1753,7 +1764,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1820,7 +1831,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1890,7 +1901,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1963,7 +1974,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -2050,7 +2061,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -2119,7 +2130,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -2180,7 +2191,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -2279,7 +2290,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -2309,6 +2320,9 @@ describe("execution loop", () => {
         infraReason: "exception",
         message: "Codex API rate limit exceeded",
         summary: null,
+        assignmentId: "general",
+        attempts: 3,
+        roundSeq: 1,
       },
       completedAt: "2026-03-27T12:10:00.000Z",
     };
@@ -2347,7 +2361,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -2471,7 +2485,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -2760,7 +2774,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -2851,7 +2865,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -2951,7 +2965,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -4164,7 +4178,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -4248,7 +4262,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -4340,7 +4354,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -4451,7 +4465,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -4562,7 +4576,7 @@ describe("execution loop", () => {
       contextStates: {
         "ctx-1": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -5962,6 +5976,7 @@ describe("execution loop", () => {
       },
     ];
 
+    /** The implementer lane's parked record, keyed as the context stores it. */
     function parkedUserInput(
       conversationId: string,
       answers: {
@@ -5973,12 +5988,15 @@ describe("execution loop", () => {
       } | null = null,
     ) {
       return {
-        conversationId,
-        lane: "implementer" as const,
-        questionBatchId: `batch-${conversationId}`,
-        questions: structuredClone(pendingQuestions),
-        requestedAt: "2026-03-27T12:01:00.000Z",
-        answers,
+        implementer: {
+          conversationId,
+          lane: "implementer" as const,
+          questionBatchId: `batch-${conversationId}`,
+          questions: structuredClone(pendingQuestions),
+          requestedAt: "2026-03-27T12:01:00.000Z",
+          roundSeq: null,
+          answers,
+        },
       };
     }
 
@@ -5998,11 +6016,23 @@ describe("execution loop", () => {
           event: { type: string },
         ) => boolean;
         broadcast?: (event: unknown) => void;
+        /**
+         * Reject writes whose ambient loop fence no longer matches the
+         * persisted generation, as the real execution repository's
+         * `assertMutableActive` does. Off by default so existing tests keep
+         * their fence-free store; on when a test drives a lifecycle transition
+         * that retires the generation, where a fence-free fake would pass while
+         * production rejected the same write.
+         */
+        enforceLoopFence?: boolean;
       } = {},
     ) {
       return createUserInputGateService({
         getActive: async () => harness.getCurrent(),
-        mutateActive: async (_p, _s, fn) => {
+        mutateActive: async (projectPath, sessionName, fn) => {
+          if (overrides.enforceLoopFence) {
+            assertLoopFence(projectPath, sessionName, harness.getCurrent());
+          }
           const next = await fn(structuredClone(harness.getCurrent()));
           harness.setCurrent(next);
           return next;
@@ -6050,20 +6080,8 @@ describe("execution loop", () => {
       cs.status = "awaiting_user_input";
       cs.iterationCount = 1;
       cs.completedTaskCount = 0;
-      cs.pendingUserInput = parkedUserInput(conversationId);
+      cs.pendingUserInputs = parkedUserInput(conversationId);
       return execution;
-    }
-
-    function findUserInputResolvedEvents(
-      broadcasts: unknown[],
-    ): GraphWorkflowUserInputResolvedEvent[] {
-      return broadcasts.filter(
-        (event): event is GraphWorkflowUserInputResolvedEvent =>
-          typeof event === "object" &&
-          event !== null &&
-          (event as { type?: string }).type ===
-            "graph-workflow-user-input-resolved",
-      );
     }
 
     it("waits without seeding another iteration until answers are recorded, then consumes and resumes the context to running", async () => {
@@ -6085,8 +6103,9 @@ describe("execution loop", () => {
         pollCount += 1;
         if (pollCount >= 3) {
           const next = structuredClone(harness.getCurrent());
-          next.contextStates["ctx-1"]!.pendingUserInput!.answers =
-            structuredClone(answeredAnswers);
+          next.contextStates["ctx-1"]!.pendingUserInputs[
+            "implementer"
+          ]!.answers = structuredClone(answeredAnswers);
           harness.setCurrent(next);
         }
       });
@@ -6141,7 +6160,7 @@ describe("execution loop", () => {
       expect(result.status).toBe("completed");
       const cs = result.contextStates["ctx-1"]!;
       // The record was consumed on resume (cleared + status flipped).
-      expect(cs.pendingUserInput).toBeNull();
+      expect(cs.pendingUserInputs).toEqual({});
       expect(cs.status).toBe("completed");
     });
 
@@ -6167,15 +6186,16 @@ describe("execution loop", () => {
         pollCount += 1;
         if (pollCount >= 1) {
           const next = structuredClone(harness.getCurrent());
-          next.contextStates["ctx-1"]!.pendingUserInput!.answers =
-            structuredClone(answeredAnswers);
+          next.contextStates["ctx-1"]!.pendingUserInputs[
+            "implementer"
+          ]!.answers = structuredClone(answeredAnswers);
           harness.setCurrent(next);
         }
       });
 
       const runIterationInputs: Array<{
         contextId: string;
-        resumeUserInput?: ResumeUserInputContext;
+        resumeUserInputs?: readonly ResumeUserInputContext[];
       }> = [];
       const harness: LoopHarness = buildHarness({
         initialExecution: initial,
@@ -6188,7 +6208,9 @@ describe("execution loop", () => {
           async runIteration(runInput): Promise<GraphWorkflowIterationResult> {
             runIterationInputs.push({
               contextId: runInput.contextId,
-              resumeUserInput: runInput.resumeUserInput,
+              ...(runInput.resumeUserInputs
+                ? { resumeUserInputs: runInput.resumeUserInputs }
+                : {}),
             });
             const next = structuredClone(harness.getCurrent());
             const cs = next.contextStates["ctx-1"]!;
@@ -6220,13 +6242,110 @@ describe("execution loop", () => {
       // The single resumed turn carried the consumed answers: the asking
       // conversation to pin, the batch id, the id-keyed answers, and the lane.
       expect(runIterationInputs).toHaveLength(1);
-      const delivered = runIterationInputs[0]!.resumeUserInput;
-      expect(delivered).toEqual({
-        conversationId: "conv-ask",
-        questionBatchId: "batch-conv-ask",
-        answers: answeredAnswers.byQuestionId,
-        lane: "implementer",
+      const delivered = runIterationInputs[0]!.resumeUserInputs;
+      expect(delivered).toEqual([
+        {
+          laneKey: "implementer",
+          lane: "implementer",
+          conversationId: "conv-ask",
+          questionBatchId: "batch-conv-ask",
+          answers: answeredAnswers.byQuestionId,
+        },
+      ]);
+    });
+
+    it("delivers a validator answer a running context is still owed instead of finishing the context", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition);
+
+      const answeredAnswers = {
+        byQuestionId: {
+          q1: {
+            selected: ["A"],
+            note: null,
+            skipped: false,
+            question: "Which approach?",
+          },
+        },
+        answeredAt: "2026-03-27T12:02:00.000Z",
+      };
+
+      const runIterationInputs: Array<{
+        resumeUserInputs?: readonly ResumeUserInputContext[];
+      }> = [];
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        iterationOrchestrator: {
+          async runIteration(runInput): Promise<GraphWorkflowIterationResult> {
+            runIterationInputs.push({
+              ...(runInput.resumeUserInputs
+                ? { resumeUserInputs: runInput.resumeUserInputs }
+                : {}),
+            });
+            const next = structuredClone(harness.getCurrent());
+            const cs = next.contextStates["ctx-1"]!;
+            cs.iterationCount += 1;
+            if (runIterationInputs.length === 1) {
+              // A validator asked and the human answered before the cohort's
+              // park write, so nothing parked: the context is still running,
+              // its round still open, and the answer still undelivered. The
+              // orchestrator ends the iteration without finalizing.
+              cs.pendingUserInputs = {
+                "context_validator:security": {
+                  conversationId: "conv-validator",
+                  lane: "context_validator" as const,
+                  questionBatchId: "batch-validator",
+                  questions: structuredClone(pendingQuestions),
+                  requestedAt: "2026-03-27T12:01:00.000Z",
+                  roundSeq: 1,
+                  answers: structuredClone(answeredAnswers),
+                },
+              };
+              harness.setCurrent(next);
+              return {
+                conversationId: "conv-validator",
+                execution: next,
+                shouldContinueInContext: false,
+              };
+            }
+            cs.completedTaskCount = 1;
+            cs.status = "completed";
+            next.taskStates["task-1"]!.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-validator",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
       });
+      const gate = buildRealGate(harness);
+      harness.deps.userInputGateService = gate;
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      // The loop did not treat the context as finished: it consumed the owed
+      // answer and handed it to the lane that asked, on the very next turn.
+      expect(runIterationInputs).toHaveLength(2);
+      expect(runIterationInputs[1]!.resumeUserInputs).toEqual([
+        {
+          laneKey: "context_validator:security",
+          lane: "context_validator",
+          conversationId: "conv-validator",
+          questionBatchId: "batch-validator",
+          answers: answeredAnswers.byQuestionId,
+        },
+      ]);
+      expect(result.contextStates["ctx-1"]!.pendingUserInputs).toEqual({});
     });
 
     it("does not consume or resume while answers are absent (the park holds indefinitely)", async () => {
@@ -6303,13 +6422,13 @@ describe("execution loop", () => {
             ...baseContextState("ctx-1"),
             status: "awaiting_user_input",
             iterationCount: 1,
-            pendingUserInput: parkedUserInput("conv-1"),
+            pendingUserInputs: parkedUserInput("conv-1"),
           },
           "ctx-2": {
             ...baseContextState("ctx-2"),
             status: "awaiting_user_input",
             iterationCount: 1,
-            pendingUserInput: parkedUserInput("conv-2"),
+            pendingUserInputs: parkedUserInput("conv-2"),
           },
         },
         taskStates: {
@@ -6339,8 +6458,9 @@ describe("execution loop", () => {
             (perContextPolls[input.contextId] ?? 0) + 1;
           if (input.contextId === "ctx-1") {
             const next = structuredClone(harness.getCurrent());
-            next.contextStates["ctx-1"]!.pendingUserInput!.answers =
-              structuredClone(answered);
+            next.contextStates["ctx-1"]!.pendingUserInputs[
+              "implementer"
+            ]!.answers = structuredClone(answered);
             harness.setCurrent(next);
             return;
           }
@@ -6395,10 +6515,12 @@ describe("execution loop", () => {
       // Only ctx-1 was resumed and consumed; ctx-2 remains parked.
       expect(resumedContexts).toEqual(["ctx-1"]);
       const state = harness.getCurrent();
-      expect(state.contextStates["ctx-1"]!.pendingUserInput).toBeNull();
+      expect(state.contextStates["ctx-1"]!.pendingUserInputs).toEqual({});
       expect(state.contextStates["ctx-1"]!.status).toBe("completed");
       expect(state.contextStates["ctx-2"]!.status).toBe("awaiting_user_input");
-      expect(state.contextStates["ctx-2"]!.pendingUserInput).not.toBeNull();
+      expect(
+        state.contextStates["ctx-2"]!.pendingUserInputs["implementer"],
+      ).toBeDefined();
 
       // Unwind: abort, then release ctx-2's blocked poll so its runner
       // observes the aborted status and exits.
@@ -6479,7 +6601,9 @@ describe("execution loop", () => {
       const initial = createParkedUserInputExecution(definition);
       // Answers were recorded while the execution was paused: the persisted
       // record already carries them when the loop re-enters on resume.
-      initial.contextStates["ctx-1"]!.pendingUserInput!.answers = {
+      initial.contextStates["ctx-1"]!.pendingUserInputs[
+        "implementer"
+      ]!.answers = {
         byQuestionId: { q1: { selected: ["B"], note: null, skipped: false } },
         answeredAt: "2026-03-27T12:02:00.000Z",
       };
@@ -6527,10 +6651,10 @@ describe("execution loop", () => {
       expect(waitForUserInputProgress).not.toHaveBeenCalled();
       expect(iterationCallCount).toBe(1);
       expect(result.status).toBe("completed");
-      expect(result.contextStates["ctx-1"]!.pendingUserInput).toBeNull();
+      expect(result.contextStates["ctx-1"]!.pendingUserInputs).toEqual({});
     });
 
-    it("withdraws all parked questions when the execution aborts while parked", async () => {
+    it("reports the terminal status when an operator abort retires the loop generation", async () => {
       _resetActiveLoopsForTesting();
       const definition = createSingleContextDefinition(5);
       const initial = createParkedUserInputExecution(definition);
@@ -6547,8 +6671,6 @@ describe("execution loop", () => {
         signalPollStarted();
         await pollRelease;
       });
-      const clearedConversations: string[] = [];
-      const broadcasts: unknown[] = [];
 
       const harness: LoopHarness = buildHarness({
         initialExecution: initial,
@@ -6564,13 +6686,7 @@ describe("execution loop", () => {
         },
       });
       harness.deps.userInputGateService = buildRealGate(harness, {
-        sendConversationEvent: (_p, _s, conversationId, event) => {
-          if (event.type === "CLEAR_PENDING_QUESTION") {
-            clearedConversations.push(conversationId);
-          }
-          return true;
-        },
-        broadcast: (event) => broadcasts.push(event),
+        enforceLoopFence: true,
       });
 
       const loop = createGraphWorkflowExecutionLoop(harness.deps);
@@ -6582,26 +6698,26 @@ describe("execution loop", () => {
       });
 
       await pollStarted;
+      // Abort the way the manager's `transitionToNonRunningState` does: the
+      // status change and the generation-retiring epoch bump land together.
+      // Bumping the epoch is the point of the test — it fences this loop out of
+      // the execution it is driving, and a loop that refused that snapshot
+      // would fall back on the pre-abort state it is holding and report a
+      // running execution the operator had already aborted.
       const aborted = structuredClone(harness.getCurrent());
       aborted.status = "aborted";
+      aborted.loopEpoch += 1;
       harness.setCurrent(aborted);
       releasePoll();
 
       const result = await runPromise;
       expect(result.status).toBe("aborted");
-
-      // The abort path withdrew the parked question: record cleared, machine
-      // told to clear its pending question, resolved(withdrawn) published.
-      const finalState = harness.getCurrent();
-      expect(finalState.contextStates["ctx-1"]!.pendingUserInput).toBeNull();
-      expect(clearedConversations).toEqual(["conv-1"]);
-      const withdrawnEvents = findUserInputResolvedEvents(broadcasts);
-      expect(withdrawnEvents).toHaveLength(1);
-      expect(withdrawnEvents[0]).toMatchObject({
-        contextId: "ctx-1",
-        conversationId: "conv-1",
-        resolution: "withdrawn",
-      });
+      // Withdrawing the orphaned park belongs to the manager's abort
+      // transition, so the retired loop leaves the record alone rather than
+      // issuing a write its fence would reject.
+      expect(
+        result.contextStates["ctx-1"]!.pendingUserInputs["implementer"],
+      ).toBeDefined();
     });
   });
 });

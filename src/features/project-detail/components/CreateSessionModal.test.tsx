@@ -141,9 +141,26 @@ describe("CreateSessionModal", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(mutateMock).toHaveBeenCalledWith(
-      { mode: "normal", sessionName: "My Session", tddEnabled: true },
+      {
+        mode: "normal",
+        sessionName: "My Session",
+        tddEnabled: true,
+        // Untouched picker means the Standard Agent explicitly, not an absent
+        // selection the server has to guess at (R7.1).
+        profile: { tier: "builtin", id: "standard-agent" },
+      },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  // R7.1: the session-kickoff path shows the picker on its Standard Agent
+  // default, and the runtime cascade stays a separate concern from identity.
+  it("offers a Standard-Agent-defaulted agent profile picker", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+
+    expect(
+      screen.getByRole("combobox", { name: /agent profile/i }),
+    ).toHaveTextContent("Standard Agent");
   });
 
   it("calls onClose on Escape key press", () => {

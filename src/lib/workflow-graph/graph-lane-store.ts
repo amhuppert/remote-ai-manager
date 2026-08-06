@@ -3,7 +3,7 @@
  *
  * Implements the workflow-primitive `LaneStore` interface directly over the
  * execution repository: lane continuity state lives in
- * `execution.laneStates[contextId][laneKind]` and every read/write goes
+ * `execution.laneStates[contextId][laneKey]` and every read/write goes
  * through the persisted execution row in place. This is what makes lane
  * state (backend continuity handles, rotation flags, usage metrics) survive
  * a process restart — the design fix for the restart-losing in-memory
@@ -11,9 +11,9 @@
  *
  * The store owns the mapping between the neutral primitive `LaneState` and
  * the persisted graph lane shape:
- *  - the primitive `laneId` encodes `(laneKind, contextId)` via
- *    `graphLaneId()`, because a workflow runs one lane per kind per context
- *    and parallel contexts must never collide;
+ *  - the primitive `laneId` encodes `(laneKind, contextId, assignment)` via
+ *    `graphLaneId()`, because parallel contexts must never collide and each
+ *    validator assignment reviewing one context holds its own durable lane;
  *  - the continuity handle maps to the graph's backend-neutral `sessionRef`,
  *    while `workflowConversationId` independently carries the optional CC
  *    dispatch anchor;
@@ -25,6 +25,13 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import {
+  graphLaneId,
+  laneStateKey,
+  parseGraphLaneId,
+  parseLaneStateKey,
+  type LaneIdentity,
+} from "@/lib/workflow-graph/lane-identity";
 import type { LaneStore } from "@/lib/workflows/primitives/lane-store";
 import {
   laneStateSchema,
@@ -42,36 +49,13 @@ import {
 
 const logger = createLogger("workflow-graph.lane-store");
 
-const LANE_ID_SEPARATOR = "\u0000";
+/** The executions repo keys its active-execution map `projectPath<NUL>sessionName`. */
+const ACTIVE_KEY_SEPARATOR = "\u0000";
 
-const LANE_KINDS: readonly GraphWorkflowLaneKind[] = [
-  "implementer",
-  "context_validator",
-];
-
-/**
- * Primitive-layer lane id for a graph lane. The NUL separator cannot occur
- * in a lane kind or a context id, so the encoding is unambiguous.
- */
-export function graphLaneId(
-  lane: GraphWorkflowLaneKind,
-  contextId: string,
-): string {
-  return `${lane}${LANE_ID_SEPARATOR}${contextId}`;
-}
-
-export function parseGraphLaneId(
-  laneId: string,
-): { lane: GraphWorkflowLaneKind; contextId: string } | null {
-  const separatorIndex = laneId.indexOf(LANE_ID_SEPARATOR);
-  if (separatorIndex === -1) return null;
-  const lane = laneId.slice(0, separatorIndex);
-  const contextId = laneId.slice(separatorIndex + 1);
-  if (!contextId) return null;
-  const kind = LANE_KINDS.find((candidate) => candidate === lane);
-  if (!kind) return null;
-  return { lane: kind, contextId };
-}
+// The lane-id encoding itself lives in `lane-identity`, which every addressing
+// surface shares; re-exported here so the store's existing consumers keep one
+// import.
+export { graphLaneId, parseGraphLaneId };
 
 export interface GraphLaneStoreDeps {
   /**
@@ -99,18 +83,26 @@ interface LocatedExecution {
   execution: GraphWorkflowExecution;
 }
 
+/**
+ * Each lane answers to its OWN assignment's continuity policy. Before cohorts
+ * every validator lane in a context shared the first assignment's policy,
+ * because there was only one lane to apply it to; now a cohort can pair a
+ * long-lived reviewer with a fresh-eyes one in the same context.
+ */
 function resolveLanePolicy(
   execution: GraphWorkflowExecution,
-  lane: GraphWorkflowLaneKind,
+  identity: LaneIdentity,
   contextId: string,
 ): LanePolicy {
   const ctx = execution.workingDefinition.executionContexts.find(
     (candidate) => candidate.id === contextId,
   );
   const continuity =
-    lane === "implementer"
+    identity.lane === "implementer"
       ? ctx?.iterationPolicy.continuity
-      : ctx?.contextValidator?.continuity;
+      : ctx?.contextValidator.assignments.find(
+          (assignment) => assignment.id === identity.assignmentId,
+        )?.continuity;
   return {
     continuityEnabled: continuity?.enabled ?? true,
     ...(continuity?.contextLimitTokens !== undefined
@@ -126,13 +118,14 @@ function laneWriteCapability(lane: GraphWorkflowLaneKind): LaneWriteCapability {
 export function toNeutralLaneState(
   execution: GraphWorkflowExecution,
   graphLane: GraphWorkflowAgentSessionState,
-  lane: GraphWorkflowLaneKind,
+  identity: LaneIdentity,
   contextId: string,
 ): LaneState {
+  const { lane } = identity;
   const normalized = graphWorkflowAgentSessionStateSchema.parse(graphLane);
   return laneStateSchema.parse({
     workflowId: execution.id,
-    laneId: graphLaneId(lane, contextId),
+    laneId: graphLaneId(lane, contextId, identity.assignmentId ?? undefined),
     backend: normalized.backend,
     refKind: normalized.refKind,
     ref: normalized.sessionRef?.ref ?? null,
@@ -140,7 +133,7 @@ export function toNeutralLaneState(
       ? { conversationId: normalized.workflowConversationId }
       : {}),
     writeCapability: laneWriteCapability(lane),
-    policy: resolveLanePolicy(execution, lane, contextId),
+    policy: resolveLanePolicy(execution, identity, contextId),
     metrics: normalized.metrics,
     lastUsedAt: normalized.lastUsedAt,
   });
@@ -165,10 +158,11 @@ export function graphLaneContextMetrics(
  */
 export function toGraphLaneState(
   state: LaneState,
-  lane: GraphWorkflowLaneKind,
+  identity: LaneIdentity,
   contextId: string,
   existing: GraphWorkflowAgentSessionState | undefined,
 ): GraphWorkflowAgentSessionState {
+  const { lane } = identity;
   const normalizedExisting = existing
     ? graphWorkflowAgentSessionStateSchema.parse(existing)
     : undefined;
@@ -186,11 +180,20 @@ export function toGraphLaneState(
     : priorConversationFollowedRef
       ? (state.ref ?? undefined)
       : state.conversationId;
+  const assignmentId =
+    identity.assignmentId ?? normalizedExisting?.assignmentId;
   return graphWorkflowAgentSessionStateSchema.parse({
     backend: state.backend,
     refKind: state.refKind ?? normalizedExisting?.refKind ?? "backend",
     lane,
     contextId,
+    ...(assignmentId !== undefined ? { assignmentId } : {}),
+    // The fingerprint is rotation's business, not the neutral lane state's:
+    // preserve whatever the continuity layer stamped rather than dropping it on
+    // every post-turn mirror-back.
+    ...(normalizedExisting?.assignmentFingerprint !== undefined
+      ? { assignmentFingerprint: normalizedExisting.assignmentFingerprint }
+      : {}),
     ...(conversationId !== undefined
       ? { workflowConversationId: conversationId }
       : {}),
@@ -212,7 +215,7 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
     const active = await deps.listActiveExecutions();
     for (const [key, execution] of active) {
       if (execution.id !== workflowId) continue;
-      const separatorIndex = key.indexOf(LANE_ID_SEPARATOR);
+      const separatorIndex = key.indexOf(ACTIVE_KEY_SEPARATOR);
       if (separatorIndex === -1) continue;
       return {
         projectPath: key.slice(0, separatorIndex),
@@ -223,32 +226,39 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
     return null;
   }
 
-  function requireLaneId(laneId: string): {
-    lane: GraphWorkflowLaneKind;
-    contextId: string;
-  } {
+  function requireLaneId(
+    laneId: string,
+  ): LaneIdentity & { contextId: string; key: string } {
     const parsed = parseGraphLaneId(laneId);
     if (!parsed) {
       throw new Error(
-        `graph lane store: laneId "${laneId}" is not a graph lane id — use graphLaneId(lane, contextId)`,
+        `graph lane store: laneId "${laneId}" is not a graph lane id — use graphLaneId(lane, contextId, assignmentId)`,
       );
     }
-    return parsed;
+    return {
+      ...parsed,
+      key: laneStateKey(parsed.lane, parsed.assignmentId ?? undefined),
+    };
   }
 
   return {
     async read(ref: LaneRef): Promise<LaneState | null> {
-      const { lane, contextId } = requireLaneId(ref.laneId);
+      const { contextId, key, ...identity } = requireLaneId(ref.laneId);
       const located = await locateExecution(ref.workflowId);
       if (!located) return null;
-      const graphLane = located.execution.laneStates[contextId]?.[lane];
+      const graphLane = located.execution.laneStates[contextId]?.[key];
       if (!graphLane) return null;
-      return toNeutralLaneState(located.execution, graphLane, lane, contextId);
+      return toNeutralLaneState(
+        located.execution,
+        graphLane,
+        identity,
+        contextId,
+      );
     },
 
     async write(state: LaneState): Promise<void> {
       const parsed = laneStateSchema.parse(state);
-      const { lane, contextId } = requireLaneId(parsed.laneId);
+      const { contextId, key, ...identity } = requireLaneId(parsed.laneId);
       const located = await locateExecution(parsed.workflowId);
       if (!located) {
         throw new Error(
@@ -264,12 +274,18 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
               `graph lane store: active execution changed (expected "${parsed.workflowId}", found "${execution.id}")`,
             );
           }
-          const existing = execution.laneStates[contextId]?.[lane];
-          const nextLane = toGraphLaneState(parsed, lane, contextId, existing);
+          const existing = execution.laneStates[contextId]?.[key];
+          const nextLane = toGraphLaneState(
+            parsed,
+            identity,
+            contextId,
+            existing,
+          );
           logger.debug("graph_lane_store.write", {
             executionId: execution.id,
             contextId,
-            lane,
+            lane: identity.lane,
+            assignmentId: identity.assignmentId,
             backend: parsed.backend,
           });
           return {
@@ -278,7 +294,7 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
               ...execution.laneStates,
               [contextId]: {
                 ...execution.laneStates[contextId],
-                [lane]: nextLane,
+                [key]: nextLane,
               },
             },
           };
@@ -287,7 +303,7 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
     },
 
     async delete(ref: LaneRef): Promise<void> {
-      const { lane, contextId } = requireLaneId(ref.laneId);
+      const { contextId, key, ...identity } = requireLaneId(ref.laneId);
       const located = await locateExecution(ref.workflowId);
       if (!located) return;
       await deps.mutateActiveExecution(
@@ -295,10 +311,10 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
         located.sessionName,
         (execution) => {
           const contextLanes = execution.laneStates[contextId];
-          if (!contextLanes || !(lane in contextLanes)) {
+          if (!contextLanes || !(key in contextLanes)) {
             return execution;
           }
-          const { [lane]: _removed, ...remainingLanes } = contextLanes;
+          const { [key]: _removed, ...remainingLanes } = contextLanes;
           const nextLaneStates = { ...execution.laneStates };
           if (Object.keys(remainingLanes).length === 0) {
             delete nextLaneStates[contextId];
@@ -308,7 +324,8 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
           logger.debug("graph_lane_store.delete", {
             executionId: execution.id,
             contextId,
-            lane,
+            lane: identity.lane,
+            assignmentId: identity.assignmentId,
           });
           return { ...execution, laneStates: nextLaneStates };
         },
@@ -323,10 +340,15 @@ export function createGraphLaneStore(deps: GraphLaneStoreDeps): LaneStore {
         located.execution.laneStates,
       )) {
         for (const [laneKey, graphLane] of Object.entries(contextLanes)) {
-          const kind = LANE_KINDS.find((candidate) => candidate === laneKey);
-          if (!kind) continue;
+          const identity = parseLaneStateKey(laneKey);
+          if (!identity) continue;
           lanes.push(
-            toNeutralLaneState(located.execution, graphLane, kind, contextId),
+            toNeutralLaneState(
+              located.execution,
+              graphLane,
+              identity,
+              contextId,
+            ),
           );
         }
       }

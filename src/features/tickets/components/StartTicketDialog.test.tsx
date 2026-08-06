@@ -171,8 +171,22 @@ describe("StartTicketDialog", () => {
         backend: "codex",
         model: "gpt-5.6-sol",
         reasoningEffort: "ultra",
+        // Identity travels beside the runtime triple, never inside it.
+        profile: { tier: "builtin", id: "standard-agent" },
       }),
     );
+  });
+
+  // R7.1: the ticket kickoff path shows the picker on its Standard Agent
+  // default, alongside — not merged into — the backend/model/effort controls.
+  it("offers a Standard-Agent-defaulted profile picker beside the kickoff runtime controls", () => {
+    renderDialog();
+
+    expect(
+      screen.getByRole("combobox", { name: /agent profile/i }),
+    ).toHaveTextContent("Standard Agent");
+    expect(screen.getByTestId("model-selector-trigger")).toBeInTheDocument();
+    expect(screen.getByTestId("effort-selector-trigger")).toBeInTheDocument();
   });
 
   it("submits the configured default backend profile without requiring edits", async () => {
@@ -200,6 +214,8 @@ describe("StartTicketDialog", () => {
         backend: "codex",
         model: "gpt-5.6-sol",
         reasoningEffort: "ultra",
+        // Identity travels beside the runtime triple, never inside it.
+        profile: { tier: "builtin", id: "standard-agent" },
       }),
     );
   });
@@ -235,6 +251,8 @@ describe("StartTicketDialog", () => {
         backend: "codex",
         model: "custom-codex-model",
         reasoningEffort: "ultra",
+        // Identity travels beside the runtime triple, never inside it.
+        profile: { tier: "builtin", id: "standard-agent" },
       }),
     );
   });

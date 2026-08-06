@@ -19,6 +19,8 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 
 function makeProjectConversation(id: string): ConversationState {
   return {
+    profileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",

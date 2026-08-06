@@ -315,6 +315,97 @@ describe("MessageActions copy-reference action", () => {
   });
 });
 
+// R7.1: a fork at message index 0 derives from no session, so the conversation
+// it creates is a fresh one and gets the same profile selection every other
+// visible creation path offers. Later indices inherit the source snapshot
+// verbatim and must offer nothing to choose.
+describe("MessageActions fork action", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+    fetchSpy.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/projects/p1/agent-profiles") {
+        return jsonResponse({
+          profiles: [
+            {
+              ref: { tier: "builtin", id: "standard-agent" },
+              name: "Standard Agent",
+              description: "No specialization lens.",
+              revision: 1,
+              recommendedFor: ["conversation"],
+              tags: [],
+              readOnly: true,
+            },
+            {
+              ref: { tier: "project", id: "reviewer" },
+              name: "Code Reviewer",
+              description: "Reviews a diff against the repo's contract.",
+              revision: 3,
+              recommendedFor: ["conversation"],
+              tags: [],
+              readOnly: false,
+            },
+          ],
+          diagnostics: [],
+        });
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("forks a session-derived message immediately, with no profile selection", async () => {
+    const onFork = vi.fn();
+    renderActions({
+      messageIndex: 4,
+      compactionTarget: undefined,
+      forkProjectName: "p1",
+      onFork,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Fork conversation from this message",
+      }),
+    );
+
+    expect(onFork).toHaveBeenCalledWith(4, undefined);
+    expect(
+      screen.queryByRole("combobox", { name: /agent profile/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers a Standard-Agent-defaulted profile picker on an index-0 fork", async () => {
+    const onFork = vi.fn();
+    renderActions({
+      messageIndex: 0,
+      compactionTarget: undefined,
+      forkProjectName: "p1",
+      onFork,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Fork conversation from this message",
+      }),
+    );
+    expect(
+      await screen.findByRole("combobox", { name: /agent profile/i }),
+    ).toHaveTextContent("Standard Agent");
+    // Opening the picker is not forking — the selection is made first.
+    expect(onFork).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Fork conversation" }));
+    expect(onFork).toHaveBeenCalledWith(0, {
+      tier: "builtin",
+      id: "standard-agent",
+    });
+  });
+});
+
 describe("MessageActions generate-name action", () => {
   beforeEach(() => {
     fetchSpy.mockReset();

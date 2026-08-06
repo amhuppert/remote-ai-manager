@@ -150,6 +150,9 @@ function taskRunFromEvent(
       : {}),
     ...(event.tooling !== undefined ? { tooling: event.tooling } : {}),
     ...(event.timeoutMs !== undefined ? { timeoutMs: event.timeoutMs } : {}),
+    ...(event.fsWritePolicy !== undefined
+      ? { fsWritePolicy: event.fsWritePolicy }
+      : {}),
     ...(event.structuredOutputTextField !== undefined
       ? { structuredOutputTextField: event.structuredOutputTextField }
       : {}),
@@ -798,6 +801,9 @@ export const conversationMachine = setup({
                   : {}),
                 ...(activeTurn.timeoutMs !== undefined
                   ? { timeoutMs: activeTurn.timeoutMs }
+                  : {}),
+                ...(activeTurn.fsWritePolicy !== undefined
+                  ? { fsWritePolicy: activeTurn.fsWritePolicy }
                   : {}),
                 ...(activeTurn.structuredOutputTextField !== undefined
                   ? {

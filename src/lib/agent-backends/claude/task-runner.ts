@@ -42,6 +42,7 @@ import { createClaudeFailureClassifier } from "./failure-classifier";
 import { createStallWatchdog } from "../stall-watchdog";
 import { resolveClaudeManagedSkillsForLaunch } from "./managed-skills";
 import { mapErrorSubtype } from "./process-message";
+import { buildClaudeFsWriteEnvelope } from "./fs-write-envelope";
 
 const logger = createLogger("claude:task-runner");
 const claudeFailureClassifier = createClaudeFailureClassifier();
@@ -166,7 +167,34 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       executionProfile: input.executionProfile ?? "standard",
       hasOutputSchema: input.outputSchema !== undefined,
       hasCcSessionScope: input.ccSessionScope !== undefined,
+      fsWriteRestricted: input.fsWritePolicy !== undefined,
     });
+
+    // Established before anything else this run does: a lane whose policy
+    // cannot be translated onto the sandbox and the permission rules never
+    // reaches the provider, so it can never run unrestricted. Unlike Codex,
+    // this applies to the isolated one-shot profile too — the sandbox and the
+    // rules only ever tighten what that profile already allows.
+    const writeEnvelope =
+      input.fsWritePolicy !== undefined
+        ? buildClaudeFsWriteEnvelope(input.fsWritePolicy)
+        : null;
+    if (writeEnvelope?.kind === "unestablishable") {
+      const error = `Cannot establish the Claude filesystem write envelope: ${writeEnvelope.reason}`;
+      logger.error("claude-task-runner.write_envelope_unestablishable", {
+        workingDirectory: input.workingDirectory,
+        reason: writeEnvelope.reason,
+      });
+      return {
+        ...resolveTaskContinuation(null, error),
+        text: null,
+        usage: null,
+        error,
+        timedOut: false,
+      };
+    }
+    const restricted =
+      writeEnvelope?.kind === "envelope" ? writeEnvelope : null;
 
     let validatedReasoningEffort: ClaudeEffortLevel | undefined;
     if (input.reasoningEffort !== undefined) {
@@ -347,16 +375,36 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
             preset: "claude_code",
             append: systemPromptAppend,
           },
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          settingSources: isolatedOneShot ? [] : ["user", "project", "local"],
+          // A restricted lane drops the bypass entirely: with the file-mutation
+          // tools scoped by rule, "deny anything not pre-approved" is what makes
+          // an unanticipated mutation path fail instead of prompting into a
+          // headless void.
+          ...(restricted
+            ? { permissionMode: restricted.envelope.permissionMode }
+            : {
+                permissionMode: "bypassPermissions" as const,
+                allowDangerouslySkipPermissions: true,
+              }),
+          // No user, project, or local settings for a restricted lane: a
+          // settings file committed into the candidate must not be able to
+          // widen the permissions of the reviewer reading it.
+          settingSources:
+            isolatedOneShot || restricted ? [] : ["user", "project", "local"],
+          ...(restricted ? { sandbox: restricted.envelope.sandbox } : {}),
           ...(managedSkills.plugins.length > 0
             ? { plugins: managedSkills.plugins }
             : {}),
-          ...(Object.keys(managedSkills.enabledPluginsOverride).length > 0
+          ...(restricted ||
+          Object.keys(managedSkills.enabledPluginsOverride).length > 0
             ? {
                 settings: {
-                  enabledPlugins: managedSkills.enabledPluginsOverride,
+                  ...(Object.keys(managedSkills.enabledPluginsOverride).length >
+                  0
+                    ? { enabledPlugins: managedSkills.enabledPluginsOverride }
+                    : {}),
+                  ...(restricted
+                    ? { permissions: restricted.envelope.permissions }
+                    : {}),
                 },
               }
             : {}),

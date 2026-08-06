@@ -13,7 +13,7 @@ import PanesGrid from "@/features/session/panes/PanesGrid";
 import { DocumentScopeProvider } from "@/components/conversation/document-scope";
 import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 
@@ -46,7 +46,7 @@ const PROMPT_SLOT_CLASS =
 
 export interface SessionContentProps {
   session: SessionState;
-  activeConversation: ConversationState | undefined;
+  activeConversation: PublicConversationState | undefined;
   projectName: string;
   sessionName: string;
   conversationId: string;

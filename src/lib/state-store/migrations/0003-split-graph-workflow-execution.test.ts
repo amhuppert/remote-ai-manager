@@ -11,7 +11,9 @@ vi.mock("@/lib/logging", () => ({
 
 import type Database from "better-sqlite3";
 import { runMigrations } from "../migrator";
+import { migrations } from "./index";
 import { splitGraphWorkflowExecution } from "./0003-split-graph-workflow-execution";
+import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
 import { _createTestDb } from "../state-db";
 import {
   createGraphWorkflowExecutionsRepo,
@@ -39,6 +41,24 @@ function freshDb(): Db {
   openDbs.push(db);
   return db;
 }
+
+/**
+ * The production chain UP TO the agent-assignment cutover.
+ *
+ * These tests are about the bytes 0003 writes into `graph_workflow_executions`
+ * and whether the live repository can load them, so they need that row to still
+ * exist. `0011-workflow-agent-assignments` archives every active execution and
+ * empties the table — correct, and covered by its own test — but it would leave
+ * nothing here to assert against. Running the real prefix keeps the chain
+ * realism these tests exist for (every earlier migration participates) without
+ * asserting through the cutover.
+ */
+const MIGRATIONS_BEFORE_CUTOVER = migrations.slice(
+  0,
+  migrations.findIndex(
+    (migration) => migration.name === workflowAgentAssignments.name,
+  ),
+);
 
 function seedSessionWithExecution(
   db: Db,
@@ -151,7 +171,10 @@ describe("0003-split-graph-workflow-execution (production registry)", () => {
     const db = freshDb();
     seedSessionWithExecution(db, SESSION_NAME, populatedExecution());
 
-    const applied = await runMigrations({ db, configDir: null });
+    const applied = await runMigrations(
+      { db, configDir: null },
+      MIGRATIONS_BEFORE_CUTOVER,
+    );
     expect(applied).toContain("0003-split-graph-workflow-execution");
 
     const row = readExecutionRow(db, SESSION_NAME);
@@ -221,7 +244,7 @@ describe("0003-split-graph-workflow-execution (production registry)", () => {
       preFeatureExecutionBlob(additiveKeys),
     );
 
-    await runMigrations({ db, configDir: null });
+    await runMigrations({ db, configDir: null }, MIGRATIONS_BEFORE_CUTOVER);
 
     // The real read path: a repository instance that has never seen this row.
     // A rejected blob is quarantined and reported as "no active execution", so
@@ -265,8 +288,11 @@ describe("0003-split-graph-workflow-execution (production registry)", () => {
     const db = freshDb();
     seedSessionWithExecution(db, SESSION_NAME, populatedExecution());
 
-    await runMigrations({ db, configDir: null });
-    const secondRun = await runMigrations({ db, configDir: null });
+    await runMigrations({ db, configDir: null }, MIGRATIONS_BEFORE_CUTOVER);
+    const secondRun = await runMigrations(
+      { db, configDir: null },
+      MIGRATIONS_BEFORE_CUTOVER,
+    );
     expect(secondRun).toEqual([]);
 
     // Manual replay of the up body models a crash-after-up, before-ledger replay.

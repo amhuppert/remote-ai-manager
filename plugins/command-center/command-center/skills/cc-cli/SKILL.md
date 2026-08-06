@@ -279,7 +279,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow <validate|create|replace|edit|list|get|status|start|delete|templates>`
   - `cctl workflow <task complete|task add|shared-doc upsert|collab request>  (lane verbs)`
 - `cctl workflow validate` — check a plan.json without saving anything
-  - `cctl workflow validate --file .cc/temp/plan.json [--json]`
+  - `cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]`
 - `cctl workflow create` — save a new definition from a validated plan
   - `cctl workflow create --file .cc/temp/plan.json [--json]`
 - `cctl workflow replace` — overwrite an existing definition from a plan file
@@ -333,14 +333,18 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl decisions propose` — propose a decision batch for review
   - `cctl decisions propose --file .cc/temp/decisions.json`
 
-- `cctl agent` — run, poll, and cancel one-shot sub-agent jobs
-  - `cctl agent <run|status|cancel>`
+- `cctl agent` — run one-shot sub-agent jobs; read the agent profile library
+  - `cctl agent <run|status|cancel|list|get>`
 - `cctl agent run` — start an agent run (optionally waiting for it)
   - `cctl agent run --file .cc/temp/prompt.json [--wait [--timeout <dur>]] [--json]`
 - `cctl agent status` — read a run's state (and recover its result)
   - `cctl agent status <runId> [--json]`
 - `cctl agent cancel` — abort a live agent run
   - `cctl agent cancel <runId>`
+- `cctl agent list` — list the agent profile library across every tier
+  - `cctl agent list [--json]`
+- `cctl agent get` — read one agent profile, including its instructions
+  - `cctl agent get <tier:id> [--json]`
 
 - `cctl conversation` — read conversation transcripts and manage compaction artifacts
   - `cctl conversation <read|compact|compaction get|compaction list>`
@@ -1146,6 +1150,46 @@ cctl agent run --file .cc/temp/prompt.json
 # → started agent run run-4f1d2797
 #   hint: poll with 'cctl agent status run-4f1d2797'; cancel with 'cctl agent cancel run-4f1d2797'
 cctl agent status run-4f1d2797
+```
+
+### The agent profile library
+
+`list` and `get` read a different thing from the run verbs: the **agent profile
+library** — the prompt identities (name, description, instructions, advisory
+`recommendedFor`, tags) a conversation or a workflow assignment can be staffed
+with. A profile is prompt identity only; it carries no backend, model, effort,
+or tool policy.
+
+```
+cctl agent list [--json]
+cctl agent get <tier:id> [--json]
+```
+
+- `list` — every profile reachable from this project across all three tiers:
+  the curated `builtin` set, `global` profiles shared by every project on this
+  install, and this project's own `project` profiles. This is the
+  machine-discoverable selection surface: pick by reading descriptions.
+  `recommendedFor` is **advisory** — filter and warn on it, never refuse on it.
+  A stored record that fails to parse is reported under `diagnostics` instead of
+  failing the listing. **Instruction text is never in a listing.**
+- `get` — one profile by its **qualified** `tier:id`, including its
+  instructions. Tiers are sibling scopes, not a shadowing chain:
+  `global:reviewer` and `project:reviewer` are two different profiles, so a bare
+  id is refused (exit `2`) before any request rather than guessed at. An unknown
+  tier, a malformed id, and a reference that resolves to nothing each exit `2`
+  with a typed refusal code naming the reference.
+
+```
+cctl agent list
+# → 6 agent profiles
+#   builtin:security-reviewer (rev 1)  Security Reviewer — Reviews a change for exploitable defects: …
+#       for: workflow_validator  tags: review, security  read-only
+#   hint: read one profile's full text with 'cctl agent get <tier:id>'
+
+cctl agent get security-reviewer
+# → Agent profile reference "security-reviewer" is unqualified. Write it as tier:id, …
+#   hint: list the qualified references with 'cctl agent list'
+cctl agent get builtin:security-reviewer
 ```
 
 ## cctl ask

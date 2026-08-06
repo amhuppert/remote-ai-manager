@@ -252,6 +252,44 @@ locality); domain terms name the concepts the code is about.
   submission that caused it. Persisted on project conversations only; no other
   creation path needs it, because every other path hands the conversation
   straight back to its caller.
+- **Agent profile** — prompt identity only: name, description, instructions,
+  advisory `recommendedFor`, and tags (`src/lib/agent-profiles/`). It carries no
+  runtime (backend / model / reasoning effort) and no policy (tools, MCP,
+  skills, permissions, output schemas). `agentProfileSchema` is `.strict()`, so
+  those keys fail to parse rather than being ignored — a profile cannot grow
+  into a second, competing runtime or policy cascade.
+
+- **Profile tier / qualified identity** — the three tiers (`builtin`, `global`,
+  `project`) are SIBLING SCOPES, not a shadowing chain. A profile is addressed
+  only as `{tier, id}`, so `global:reviewer` and `project:reviewer` coexist as
+  two different profiles and neither hides the other. The compact `tier:id`
+  spelling exists only at text and CLI boundaries — `parseAgentProfileRef`
+  normalizes it at parse and refuses a bare id with a located failure — and
+  everything persisted is the structured form. Resolution fails closed:
+  `library-service.resolve` raises for an unknown, deleted, or quarantined
+  reference and never falls back to a similarly named profile in another tier.
+
+- **Resolved profile snapshot** — what a consumer persists when it is staffed
+  with a profile: the record's identity, its revision, its instructions, and the
+  composed `renderedInstructionBlock`, copied at resolution time. A conversation
+  holds a snapshot, not a reference, so editing or deleting a library record
+  never changes work already under way, and a restart replays the STORED block
+  byte-for-byte rather than re-rendering it. Two hashes, neither covering any
+  other prompt layer: `sourceContentHash` covers the library record's
+  instructions as stored, `resolvedInstructionHash` covers the block exactly as
+  delivered. Only `redactedProfileSnapshot` crosses the public conversation
+  schema.
+
+- **Assignment** — naming which profile a consumer runs under. Conversation
+  creation is the assignment surface in place: a creation path may name a
+  profile, resolution defaults to `builtin:standard-agent`, the snapshot is
+  persisted before the provider runtime exists, a session-derived fork inherits
+  the source snapshot verbatim rather than re-resolving it, and the choice locks
+  after the first turn (a pre-lock swap goes through the profile-change route).
+  Workflow assignments — implementer staffing and specialist validator cohorts —
+  belong to the workflow-validator-cohorts spec; no workflow path resolves a
+  profile yet.
+
 - **Adoption** — moving a turn's state from its provisional key onto the
   conversation the server named for it, and releasing the provisional key. The
   name arrives from either the turn's own prompt request stream or the project

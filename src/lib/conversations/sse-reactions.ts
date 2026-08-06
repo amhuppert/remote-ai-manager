@@ -16,6 +16,7 @@ import {
   conversationBackgroundActivityEventSchema,
   conversationCreatedEventSchema,
   conversationOpenEventSchema,
+  conversationProfileChangedEventSchema,
   conversationRenamedEventSchema,
   conversationStatusEventSchema,
   conversationUnreadEventSchema,
@@ -27,6 +28,7 @@ import {
 import type {
   ConversationBackgroundActivity,
   ConversationState,
+  PublicConversationState,
 } from "@/lib/conversations/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { renamedInActive } from "@/lib/conversations/mutations";
@@ -149,11 +151,13 @@ function replaceMessageInQuery(
   });
 }
 
+// The cached list is the PUBLIC projection, so the patch is typed against that
+// shape — `redactedProfileSnapshot` exists only there.
 function updateProjectConversationListEntry(
   queryClient: QueryClient,
   projectName: string,
   conversationId: string,
-  patch: Partial<ConversationState>,
+  patch: Partial<PublicConversationState>,
 ): void {
   queryClient.setQueryData(
     projectConversationKeys.list(projectName),
@@ -161,7 +165,7 @@ function updateProjectConversationListEntry(
       if (!Array.isArray(prev)) return prev;
       return prev.map((c) =>
         c && typeof c === "object" && "id" in c && c.id === conversationId
-          ? { ...(c as ConversationState), ...patch }
+          ? { ...(c as PublicConversationState), ...patch }
           : c,
       );
     },
@@ -372,6 +376,37 @@ export function registerConversationSseReactions(
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });
+    },
+  );
+
+  // The profile chip reads the conversation's redacted snapshot, so a
+  // pre-first-turn profile change lands the same way a rename does: patch the
+  // cached row in place rather than refetch the list.
+  addSseListener(
+    es,
+    "conversation-profile-changed",
+    conversationProfileChangedEventSchema,
+    (d) => {
+      if (d.scope === "project") {
+        updateProjectConversationListEntry(
+          queryClient,
+          d.projectName,
+          d.conversationId,
+          { redactedProfileSnapshot: d.redactedProfileSnapshot },
+        );
+        return;
+      }
+      queryClient.setQueryData(
+        conversationKeys.list(d.projectName, d.sessionName),
+        (prev: unknown) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map((c) =>
+            c && typeof c === "object" && "id" in c && c.id === d.conversationId
+              ? { ...c, redactedProfileSnapshot: d.redactedProfileSnapshot }
+              : c,
+          );
+        },
+      );
     },
   );
 

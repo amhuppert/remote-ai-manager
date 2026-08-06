@@ -8,6 +8,8 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  GraphWorkflowValidationRound,
+  GraphWorkflowValidationSpecialist,
 } from "@/lib/workflow-graph/schemas";
 import type {
   ResolvedWorkflowSemanticDefinition,
@@ -18,6 +20,8 @@ import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
+  makeProfileSnapshot,
+  makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
 import {
   _resetRegistryForTesting,
@@ -769,7 +773,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -788,7 +792,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -807,7 +811,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -899,6 +903,158 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("rejects pausing an execution that already completed without changing it", async () => {
+    const completed = createWorkflowExecution({
+      status: "completed",
+      completedAt: "2026-03-27T15:04:00.000Z",
+      loopEpoch: 4,
+    });
+    const repository = createRepository(completed);
+    const abortConversation = vi.fn();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      abortConversation,
+    });
+
+    await expect(
+      manager.send("/repo", "session-1", { type: "pause" }),
+    ).rejects.toThrow("Only running graph workflow executions can be paused");
+
+    expect(repository.read()).toEqual(completed);
+    expect(abortConversation).not.toHaveBeenCalled();
+  });
+
+  it("retires the active loop generation when pause commits", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({ status: "running", loopEpoch: 7 }),
+    );
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const paused = await manager.send("/repo", "session-1", {
+      type: "pause",
+    });
+
+    expect(paused.status).toBe("paused");
+    expect(paused.loopEpoch).toBe(8);
+  });
+
+  it("fences completion from the loop generation that pause retired", async () => {
+    const running = createWorkflowExecution({
+      status: "running",
+      loopEpoch: 3,
+    });
+    const repository = createRepository(running);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+    const fence = {
+      projectPath: "/repo",
+      sessionName: "session-1",
+      executionId: running.id,
+      loopEpoch: running.loopEpoch,
+    };
+
+    await manager.send("/repo", "session-1", { type: "pause" });
+
+    await expect(
+      runWithLoopFence(fence, () =>
+        manager.send("/repo", "session-1", { type: "complete" }),
+      ),
+    ).rejects.toBeInstanceOf(StaleLoopFenceError);
+    expect(repository.read()?.status).toBe("paused");
+  });
+
+  it("retires the loop generation when completion commits", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({ status: "running", loopEpoch: 5 }),
+    );
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const completed = await manager.send("/repo", "session-1", {
+      type: "complete",
+    });
+
+    expect(completed.status).toBe("completed");
+    expect(completed.loopEpoch).toBe(6);
+  });
+
+  it("rejects aborting an execution that already completed", async () => {
+    const completed = createWorkflowExecution({
+      status: "completed",
+      completedAt: "2026-03-27T15:04:00.000Z",
+    });
+    const repository = createRepository(completed);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    await expect(
+      manager.send("/repo", "session-1", { type: "abort" }),
+    ).rejects.toThrow(
+      "Completed or aborted graph workflow executions cannot be aborted",
+    );
+    expect(repository.read()).toEqual(completed);
+  });
+
+  it("rejects halting an execution that already completed", async () => {
+    const completed = createWorkflowExecution({
+      status: "completed",
+      completedAt: "2026-03-27T15:04:00.000Z",
+    });
+    const repository = createRepository(completed);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    await expect(
+      manager.send("/repo", "session-1", {
+        type: "halt",
+        reason: { type: "recovery_error", message: "late halt" },
+      }),
+    ).rejects.toThrow("Only running graph workflow executions can be halted");
+    expect(repository.read()).toEqual(completed);
+  });
+
+  it("rejects completing a paused execution outside a live loop", async () => {
+    const paused = createWorkflowExecution({ status: "paused" });
+    const repository = createRepository(paused);
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    await expect(
+      manager.send("/repo", "session-1", { type: "complete" }),
+    ).rejects.toThrow(
+      "Only running graph workflow executions can be completed",
+    );
+    expect(repository.read()).toEqual(paused);
+  });
+
   it("aborts the in-flight conversation for every running task when paused, halted, or aborted", async () => {
     const buildExecutionWithRunningTasks = () =>
       createWorkflowExecution({
@@ -907,7 +1063,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-a": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-a",
             status: "running",
             totalTaskCount: 2,
@@ -926,7 +1082,7 @@ describe("graph workflow manager", () => {
           },
           "context-b": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-b",
             status: "running",
             totalTaskCount: 1,
@@ -945,7 +1101,7 @@ describe("graph workflow manager", () => {
           },
           "context-c": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-c",
             status: "pending",
             totalTaskCount: 1,
@@ -1115,16 +1271,36 @@ describe("graph workflow manager", () => {
               limitEvaluation: "supported",
               lastUsedAt: "2026-03-27T15:00:00.000Z",
             },
-            context_validator: {
+            // A cohort of two: lane state is keyed per assignment, so an abort
+            // that only swept the bare `context_validator` key would leave one
+            // specialist's turn burning to completion (R8.1).
+            "context_validator:reviewer-a": {
               lane: "context_validator",
               contextId: "context-plan",
+              assignmentId: "reviewer-a",
               backend: "codex",
               refKind: "backend",
               // Production shape: the validator runner persists the synthetic
-              // dispatch id (__validator__:{executionId}:{contextId}:{lane}:{backend})
+              // dispatch id
+              // (__validator__:{executionId}:{contextId}:{lane}:{assignmentId}:{backend})
               // onto the lane state before dispatching the turn.
               workflowConversationId:
-                "__validator__:execution-1:context-plan:context_validator:codex",
+                "__validator__:execution-1:context-plan:context_validator:reviewer-a:codex",
+              metrics: {
+                lastTurnUsage: null,
+                rotateBeforeNextTurn: false,
+              },
+              limitEvaluation: "unsupported",
+              lastUsedAt: "2026-03-27T15:01:00.000Z",
+            },
+            "context_validator:reviewer-b": {
+              lane: "context_validator",
+              contextId: "context-plan",
+              assignmentId: "reviewer-b",
+              backend: "codex",
+              refKind: "backend",
+              workflowConversationId:
+                "__validator__:execution-1:context-plan:context_validator:reviewer-b:codex",
               metrics: {
                 lastTurnUsage: null,
                 rotateBeforeNextTurn: false,
@@ -1153,7 +1329,8 @@ describe("graph workflow manager", () => {
       .sort((a, b) => a.localeCompare(b));
     // conv-impl appears in both taskStates and the implementer lane — deduped.
     expect(conversationIds).toEqual([
-      "__validator__:execution-1:context-plan:context_validator:codex",
+      "__validator__:execution-1:context-plan:context_validator:reviewer-a:codex",
+      "__validator__:execution-1:context-plan:context_validator:reviewer-b:codex",
       "conv-impl",
     ]);
   });
@@ -1205,7 +1382,7 @@ describe("graph workflow manager", () => {
   it("does not abort the conversation holding a parked user question on pause or halt", async () => {
     // A parked lane has no in-flight turn — its machine sits in
     // waitingForInput, which accepts ABORT_TURN and would persist a cleared
-    // question. The execution keeps pendingUserInput, so answers would 410
+    // question. The execution keeps the parked record, so answers would 410
     // forever and the context could never be re-dispatched.
     const buildParkedExecution = () => {
       const execution = createWorkflowExecution({
@@ -1243,13 +1420,16 @@ describe("graph workflow manager", () => {
       const parkedContext = execution.contextStates["context-plan"];
       if (!parkedContext) throw new Error("fixture missing context-plan");
       parkedContext.status = "awaiting_user_input";
-      parkedContext.pendingUserInput = {
-        conversationId: "conv-parked",
-        lane: "implementer",
-        questionBatchId: "batch-1",
-        questions: [],
-        requestedAt: "2026-03-27T15:00:00.000Z",
-        answers: null,
+      parkedContext.pendingUserInputs = {
+        implementer: {
+          conversationId: "conv-parked",
+          lane: "implementer",
+          questionBatchId: "batch-1",
+          questions: [],
+          requestedAt: "2026-03-27T15:00:00.000Z",
+          roundSeq: null,
+          answers: null,
+        },
       };
       return execution;
     };
@@ -1285,8 +1465,56 @@ describe("graph workflow manager", () => {
         "conv-live",
       ]);
       expect(
-        repository.read()?.contextStates["context-plan"]?.pendingUserInput,
-      ).not.toBeNull();
+        repository.read()?.contextStates["context-plan"]?.pendingUserInputs[
+          "implementer"
+        ],
+      ).toBeDefined();
+    }
+  });
+
+  it("withdraws every parked question when an execution is aborted", async () => {
+    // Req 7.4: an abort ends the execution, so a park it orphans must stop
+    // being answerable. Pause and halt keep theirs (asserted above) because the
+    // wait re-engages on resume. Aborting from `paused` — no loop is running —
+    // is the case that proves the withdrawal rides the transition rather than
+    // depending on a live loop to notice.
+    for (const startingStatus of ["running", "paused"] as const) {
+      const execution = createWorkflowExecution({ status: startingStatus });
+      const parkedContext = execution.contextStates["context-plan"];
+      if (!parkedContext) throw new Error("fixture missing context-plan");
+      parkedContext.status = "awaiting_user_input";
+      parkedContext.pendingUserInputs = {
+        implementer: {
+          conversationId: "conv-parked",
+          lane: "implementer",
+          questionBatchId: "batch-1",
+          questions: [],
+          requestedAt: "2026-03-27T15:00:00.000Z",
+          roundSeq: null,
+          answers: null,
+        },
+      };
+      const repository = createRepository(execution);
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+      });
+
+      const aborted = await manager.send("/repo", "session-1", {
+        type: "abort",
+      });
+
+      expect(aborted.status, `from=${startingStatus}`).toBe("aborted");
+      expect(
+        aborted.contextStates["context-plan"]?.pendingUserInputs,
+        `from=${startingStatus}`,
+      ).toEqual({});
+      expect(
+        repository.read()?.contextStates["context-plan"]?.pendingUserInputs,
+        `from=${startingStatus}`,
+      ).toEqual({});
     }
   });
 
@@ -1312,13 +1540,16 @@ describe("graph workflow manager", () => {
     const parkedContext = execution.contextStates["context-plan"];
     if (!parkedContext) throw new Error("fixture missing context-plan");
     parkedContext.status = "awaiting_user_input";
-    parkedContext.pendingUserInput = {
-      conversationId: "conv-parked",
-      lane: "implementer",
-      questionBatchId: "batch-1",
-      questions: [],
-      requestedAt: "2026-03-27T15:00:00.000Z",
-      answers: null,
+    parkedContext.pendingUserInputs = {
+      implementer: {
+        conversationId: "conv-parked",
+        lane: "implementer",
+        questionBatchId: "batch-1",
+        questions: [],
+        requestedAt: "2026-03-27T15:00:00.000Z",
+        roundSeq: null,
+        answers: null,
+      },
     };
 
     const repository = createRepository(execution);
@@ -1336,8 +1567,10 @@ describe("graph workflow manager", () => {
     expect(resumed.status).toBe("running");
     expect(abortConversation).not.toHaveBeenCalled();
     expect(
-      repository.read()?.contextStates["context-plan"]?.pendingUserInput,
-    ).not.toBeNull();
+      repository.read()?.contextStates["context-plan"]?.pendingUserInputs[
+        "implementer"
+      ],
+    ).toBeDefined();
   });
 
   describe("lane dev-server cleanup on terminal transitions", () => {
@@ -1447,7 +1680,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1466,7 +1699,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -1485,7 +1718,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -1666,7 +1899,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1685,7 +1918,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -1704,7 +1937,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -1795,7 +2028,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1814,7 +2047,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -1833,7 +2066,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -1931,7 +2164,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -2006,7 +2239,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "ready",
             totalTaskCount: 1,
@@ -2082,7 +2315,7 @@ describe("graph workflow manager", () => {
           decidedAt: "2026-03-27T15:02:00.000Z",
         },
       },
-      pendingUserInput: null,
+      pendingUserInputs: {},
       contextId: "context-plan",
       status: "awaiting_approval" as const,
       totalTaskCount: 1,
@@ -2166,7 +2399,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -2716,7 +2949,7 @@ describe("graph workflow manager", () => {
 
     await manager.send("/repo", "session-1", { type: "pause" });
     const resumedAgain = await manager.resume("/repo", "session-1");
-    expect(resumedAgain.loopEpoch).toBe(2);
+    expect(resumedAgain.loopEpoch).toBe(3);
   });
 
   it("resume clears a stale pendingHaltReason so the new generation does not immediately drain-halt", async () => {
@@ -2794,6 +3027,326 @@ describe("graph workflow manager", () => {
       status: "ready",
       consecutiveFailureCount: 0,
     });
+  });
+
+  /**
+   * An open cohort round mid-flight: `general` has rendered a verdict,
+   * `perf-reviewer` has not. Its infrastructure history is the caller's, because
+   * that is the only thing the two resume paths below disagree about.
+   */
+  function openCohortRound(
+    perfReviewer: Partial<GraphWorkflowValidationSpecialist>,
+  ): GraphWorkflowValidationRound {
+    return {
+      seq: 2,
+      candidate: {
+        headSha: "head-1",
+        candidateTreeHash: "tree-a",
+        taskStateHash: "hash-1",
+      },
+      roster: [
+        {
+          assignmentId: "general",
+          profileRef: { tier: "builtin", id: "general-reviewer" },
+          revision: 1,
+          resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+          strategy: "conversation",
+        },
+        {
+          assignmentId: "perf-reviewer",
+          profileRef: { tier: "builtin", id: "general-reviewer" },
+          revision: 1,
+          resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+          strategy: "conversation",
+        },
+      ],
+      specialists: {
+        general: {
+          state: "verdict_pass",
+          attempts: 1,
+          summary: "general is satisfied.",
+          issues: [],
+          questionToken: null,
+          sessionRef: null,
+          reviewArtifact: null,
+          lastInfraFailure: null,
+        },
+        "perf-reviewer": {
+          state: "infra_failed",
+          attempts: 3,
+          summary: null,
+          issues: [],
+          questionToken: null,
+          sessionRef: null,
+          reviewArtifact: null,
+          lastInfraFailure: {
+            reason: "exception",
+            message: "provider unavailable",
+            engine: "claude",
+          },
+          ...perfReviewer,
+        },
+      },
+      phase: "specialists",
+      outcome: null,
+      startedAt: "2026-03-27T15:00:00.000Z",
+    };
+  }
+
+  it("resume gives an open validation round's specialists their attempt budget back", async () => {
+    // An infrastructure halt is resumable precisely because the operator can do
+    // something about the provider. If the round's spent-attempt counters
+    // survived the resume, every resumed lane would arrive already exhausted and
+    // the halt would be permanent in everything but name (R6.1, D5).
+    const baseExecution = createWorkflowExecution();
+    const contextState = baseExecution.contextStates["context-plan"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: {
+          type: "validator_infra_error",
+          contextId: "context-plan",
+          engine: "claude",
+          infraReason: "exception",
+          message: "provider unavailable",
+          summary: null,
+          assignmentId: "perf-reviewer",
+          attempts: 3,
+          roundSeq: 2,
+        },
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...contextState,
+            status: "ready",
+            validationRound: openCohortRound({}),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    const round = execution.contextStates["context-plan"]?.validationRound;
+    expect(round?.seq).toBe(2);
+    expect(round?.specialists["perf-reviewer"]).toMatchObject({
+      state: "pending",
+      attempts: 0,
+      lastInfraFailure: null,
+    });
+    // A verdict the round already collected is not an attempt to give back: it
+    // stands, and the resume must not send its reviewer back to work.
+    expect(round?.specialists["general"]).toMatchObject({
+      state: "verdict_pass",
+      summary: "general is satisfied.",
+    });
+  });
+
+  it("a restart-driven resume leaves the round's spent attempts where the round left them", async () => {
+    // The production restart path is normalizeAfterRestart -> paused ->
+    // operator resume, and it carries NO halt reason: nobody looked at the
+    // provider, the server simply bounced. Handing that resume the same budget
+    // reset as an infrastructure halt would let a crash loop buy three fresh
+    // dispatches on every restart, so the fixed three-per-specialist-per-round
+    // bound would bound nothing (R6.1, D5).
+    const baseExecution = createWorkflowExecution();
+    const contextState = baseExecution.contextStates["context-plan"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "running",
+        activeContextIds: ["context-plan"],
+        haltReason: null,
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...contextState,
+            status: "running",
+            validationRound: openCohortRound({
+              state: "running",
+              attempts: 2,
+            }),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const normalized = await manager.normalizeAfterRestart(
+      "/repo",
+      "session-1",
+    );
+    expect(normalized?.status).toBe("paused");
+    expect(normalized?.haltReason).toBeNull();
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    // Two of three already spent before the crash; the restart owes the lane its
+    // one remaining attempt, not a new set of three.
+    expect(
+      execution.contextStates["context-plan"]?.validationRound,
+    ).toMatchObject({
+      seq: 2,
+      specialists: {
+        "perf-reviewer": {
+          attempts: 2,
+          lastInfraFailure: {
+            reason: "exception",
+            message: "provider unavailable",
+          },
+        },
+      },
+    });
+  });
+
+  it("resume resets attempts only for the context its infrastructure halt names", async () => {
+    // Halt reasons are per-context. A sibling context holding its own open round
+    // was not what the operator looked at, so its budget is not theirs to give
+    // back (R6.1).
+    const baseExecution = createWorkflowExecution();
+    const planState = baseExecution.contextStates["context-plan"]!;
+    const siblingState = baseExecution.contextStates["context-implement"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: {
+          type: "validator_infra_error",
+          contextId: "context-plan",
+          engine: "claude",
+          infraReason: "exception",
+          message: "provider unavailable",
+          summary: null,
+          assignmentId: "perf-reviewer",
+          attempts: 3,
+          roundSeq: 2,
+        },
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...planState,
+            status: "ready",
+            validationRound: openCohortRound({}),
+          },
+          "context-implement": {
+            ...siblingState,
+            status: "ready",
+            validationRound: openCohortRound({
+              state: "running",
+              attempts: 2,
+            }),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(
+      execution.contextStates["context-plan"]?.validationRound?.specialists[
+        "perf-reviewer"
+      ],
+    ).toMatchObject({ attempts: 0, lastInfraFailure: null });
+    expect(
+      execution.contextStates["context-implement"]?.validationRound
+        ?.specialists["perf-reviewer"],
+    ).toMatchObject({ attempts: 2 });
+  });
+
+  it("resume honours an infrastructure halt recorded as a secondary reason", async () => {
+    // Parallel contexts halt independently, so the infrastructure halt is often
+    // not the one that got to be primary. Reading only `haltReason` would leave
+    // the exhausted lane at the bound and re-halt on the first pass (R6.1, D5).
+    const baseExecution = createWorkflowExecution();
+    const planState = baseExecution.contextStates["context-plan"]!;
+    const siblingState = baseExecution.contextStates["context-implement"]!;
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        haltReason: {
+          type: "circuit_breaker",
+          contextId: "context-implement",
+          condition: "retry_exhaustion",
+          summary: "tests failed",
+          failureCount: 3,
+        },
+        secondaryHaltReasons: [
+          {
+            type: "validator_infra_error",
+            contextId: "context-plan",
+            engine: "claude",
+            infraReason: "exception",
+            message: "provider unavailable",
+            summary: null,
+            assignmentId: "perf-reviewer",
+            attempts: 3,
+            roundSeq: 2,
+          },
+        ],
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...planState,
+            status: "ready",
+            validationRound: openCohortRound({}),
+          },
+          "context-implement": {
+            ...siblingState,
+            status: "ready",
+            validationRound: openCohortRound({
+              state: "running",
+              attempts: 2,
+            }),
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(
+      execution.contextStates["context-plan"]?.validationRound?.specialists[
+        "perf-reviewer"
+      ],
+    ).toMatchObject({ attempts: 0, lastInfraFailure: null });
+    // The breaker halt says nothing about infrastructure, so the context it
+    // names keeps the attempts its round spent.
+    expect(
+      execution.contextStates["context-implement"]?.validationRound
+        ?.specialists["perf-reviewer"],
+    ).toMatchObject({ attempts: 2 });
   });
 
   it("resume preserves merged-failed contexts and populates pendingMergeRetry", async () => {
@@ -3116,11 +3669,11 @@ describe("graph workflow manager", () => {
         status: "aborted",
         activeContextIds: ["context-plan"],
         completedAt: "2026-03-27T15:30:00.000Z",
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "ready",
             totalTaskCount: 1,
@@ -3239,7 +3792,7 @@ describe("graph workflow manager", () => {
       contextStates: {
         "context-plan": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-plan",
           status: "completed",
           totalTaskCount: 1,
@@ -3258,7 +3811,7 @@ describe("graph workflow manager", () => {
         },
         "context-implement": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -3277,7 +3830,7 @@ describe("graph workflow manager", () => {
         },
         "context-verify": {
           pendingApproval: null,
-          pendingUserInput: null,
+          pendingUserInputs: {},
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -3318,7 +3871,7 @@ describe("graph workflow manager", () => {
         contextStates: {
           "context-plan": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-plan",
             status: "completed",
             totalTaskCount: 1,
@@ -3337,7 +3890,7 @@ describe("graph workflow manager", () => {
           },
           "context-implement": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-implement",
             status: "ready",
             totalTaskCount: 1,
@@ -3356,7 +3909,7 @@ describe("graph workflow manager", () => {
           },
           "context-verify": {
             pendingApproval: null,
-            pendingUserInput: null,
+            pendingUserInputs: {},
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -3516,7 +4069,7 @@ describe("graph workflow manager", () => {
         cleanupStatus: "not-applicable",
         lastMergeError: null,
         pendingApproval: null,
-        pendingUserInput: null,
+        pendingUserInputs: {},
       });
       expect(execution.taskStates["task-implement-1"]).toEqual({
         taskId: "task-implement-1",
@@ -3658,6 +4211,99 @@ describe("graph workflow manager", () => {
       ).rejects.toThrow(
         "Session does not have an active graph workflow execution",
       );
+    });
+  });
+
+  describe("resetContextAssignment", () => {
+    function createHaltedExecutionWithCohort(): GraphWorkflowExecution {
+      const execution = createWorkflowExecution({
+        ...createWorkflowExecution({ status: "halted" }),
+      });
+      const context = execution.workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-implement",
+      )!;
+      context.contextValidator = {
+        enabled: true,
+        assignments: [
+          makeSeededValidatorAssignment({ id: "alpha" }),
+          makeSeededValidatorAssignment({ id: "beta" }),
+        ],
+      };
+      const lane = (conversationId: string, assignmentId: string) => ({
+        backend: "claude" as const,
+        refKind: "conversation" as const,
+        lane: "context_validator" as const,
+        contextId: "context-implement",
+        assignmentId,
+        workflowConversationId: conversationId,
+        sessionRef: { backend: "claude" as const, ref: conversationId },
+        metrics: { rotateBeforeNextTurn: false },
+        limitEvaluation: "disabled" as const,
+        lastUsedAt: "2026-03-27T15:11:00.000Z",
+      });
+      execution.laneStates = {
+        "context-implement": {
+          "context_validator:alpha": lane("conv-alpha", "alpha"),
+          "context_validator:beta": lane("conv-beta", "beta"),
+        },
+      };
+      return execution;
+    }
+
+    it("retires only the reset assignment's lane conversation and leaves siblings alone", async () => {
+      const repository = createRepository(createHaltedExecutionWithCohort());
+      const retireLaneConversation = vi.fn();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        retireLaneConversation,
+      });
+
+      const execution = await manager.resetContextAssignment(
+        "/repo",
+        "session-1",
+        "context-implement",
+        "alpha",
+      );
+
+      expect(retireLaneConversation).toHaveBeenCalledTimes(1);
+      expect(retireLaneConversation).toHaveBeenCalledWith({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        conversationId: "conv-alpha",
+      });
+      const lanes = execution.laneStates["context-implement"]!;
+      expect(lanes["context_validator:alpha"]).toBeUndefined();
+      expect(lanes["context_validator:beta"]?.workflowConversationId).toBe(
+        "conv-beta",
+      );
+      // The execution stays halted — a per-assignment reset is not a resume.
+      expect(execution.status).toBe("halted");
+    });
+
+    it("rejects a reset while the execution is running", async () => {
+      const running = createHaltedExecutionWithCohort();
+      running.status = "running";
+      const repository = createRepository(running);
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+      });
+
+      await expect(
+        manager.resetContextAssignment(
+          "/repo",
+          "session-1",
+          "context-implement",
+          "alpha",
+        ),
+      ).rejects.toThrow(/paused or halted/i);
     });
   });
 
@@ -3935,7 +4581,7 @@ describe("graph workflow manager", () => {
           contextStates: {
             "context-plan": {
               pendingApproval: null,
-              pendingUserInput: null,
+              pendingUserInputs: {},
               contextId: "context-plan",
               status: "completed",
               totalTaskCount: 1,
@@ -3954,7 +4600,7 @@ describe("graph workflow manager", () => {
             },
             "context-implement": {
               pendingApproval: null,
-              pendingUserInput: null,
+              pendingUserInputs: {},
               contextId: "context-implement",
               status: "completed",
               totalTaskCount: 1,
@@ -3973,7 +4619,7 @@ describe("graph workflow manager", () => {
             },
             "context-verify": {
               pendingApproval: null,
-              pendingUserInput: null,
+              pendingUserInputs: {},
               contextId: "context-verify",
               status: "completed",
               totalTaskCount: 1,
@@ -5060,11 +5706,16 @@ describe("graph workflow manager", () => {
             title: "Plan",
             acceptanceCriteria: "Plan complete",
             implementer: {
-              backend: "claude",
-              model: "opus",
-              reasoningEffort: "medium",
+              id: "implementer",
+              profile: { tier: "builtin", id: "general-implementer" },
+              profileSnapshot: makeProfileSnapshot(),
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "medium",
+              },
             },
-            contextValidator: null,
+            contextValidator: { enabled: false, assignments: [] },
             scriptValidator: { enabled: false },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
@@ -5081,11 +5732,16 @@ describe("graph workflow manager", () => {
             title: "Bad",
             acceptanceCriteria: "n/a",
             implementer: {
-              backend: "claude",
-              model: "opus",
-              reasoningEffort: "medium",
+              id: "implementer",
+              profile: { tier: "builtin", id: "general-implementer" },
+              profileSnapshot: makeProfileSnapshot(),
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "medium",
+              },
             },
-            contextValidator: null,
+            contextValidator: { enabled: false, assignments: [] },
             scriptValidator: { enabled: false },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
@@ -5102,11 +5758,16 @@ describe("graph workflow manager", () => {
             title: "Other",
             acceptanceCriteria: "n/a",
             implementer: {
-              backend: "claude",
-              model: "opus",
-              reasoningEffort: "medium",
+              id: "implementer",
+              profile: { tier: "builtin", id: "general-implementer" },
+              profileSnapshot: makeProfileSnapshot(),
+              agent: {
+                backend: "claude",
+                model: "opus",
+                reasoningEffort: "medium",
+              },
             },
-            contextValidator: null,
+            contextValidator: { enabled: false, assignments: [] },
             scriptValidator: { enabled: false },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
@@ -5166,7 +5827,7 @@ describe("graph workflow manager", () => {
           contextStates: {
             "context-plan": {
               pendingApproval: null,
-              pendingUserInput: null,
+              pendingUserInputs: {},
               contextId: "context-plan",
               status: "completed",
               totalTaskCount: 1,
@@ -5185,7 +5846,7 @@ describe("graph workflow manager", () => {
             },
             "..escape": {
               pendingApproval: null,
-              pendingUserInput: null,
+              pendingUserInputs: {},
               contextId: "..escape",
               status: "pending",
               totalTaskCount: 1,
@@ -5204,7 +5865,7 @@ describe("graph workflow manager", () => {
             },
             "context-other": {
               pendingApproval: null,
-              pendingUserInput: null,
+              pendingUserInputs: {},
               contextId: "context-other",
               status: "pending",
               totalTaskCount: 1,
@@ -6864,7 +7525,7 @@ describe("graph workflow manager", () => {
         manager.recordPendingHaltReason({
           projectPath: "/repo",
           sessionName: "session-1",
-          reason: { type: "aborted" },
+          reason: { type: "aborted", cause: null, summary: null },
         }),
       ).rejects.toThrow(
         "Session does not have an active graph workflow execution",
@@ -7544,9 +8205,13 @@ describe("graph workflow manager", () => {
                 title: "One",
                 acceptanceCriteria: "ok",
                 implementer: {
-                  backend: "claude",
-                  model: "opus",
-                  reasoningEffort: "medium",
+                  id: "implementer",
+                  profile: { tier: "builtin", id: "general-implementer" },
+                  agent: {
+                    backend: "claude",
+                    model: "opus",
+                    reasoningEffort: "medium",
+                  },
                 },
                 mutability: { allowAgentTaskAdd: false },
                 circuitBreaker: {},
@@ -7560,18 +8225,29 @@ describe("graph workflow manager", () => {
                 title: "Two",
                 acceptanceCriteria: "ok",
                 implementer: {
-                  backend: "claude",
-                  model: "opus",
-                  reasoningEffort: "medium",
+                  id: "implementer",
+                  profile: { tier: "builtin", id: "general-implementer" },
+                  agent: {
+                    backend: "claude",
+                    model: "opus",
+                    reasoningEffort: "medium",
+                  },
                 },
                 contextValidator: {
-                  kind: "use",
-                  value: {
-                    type: "codex",
-                    enabled: true,
-                    continuity: { enabled: true },
-                    codex: {},
-                  },
+                  enabled: true,
+                  assignments: [
+                    {
+                      id: "general",
+                      profile: { tier: "builtin", id: "general-reviewer" },
+                      strategy: "task",
+                      agent: {
+                        backend: "codex",
+                        model: "gpt-5.4",
+                        reasoningEffort: "medium",
+                      },
+                      continuity: { enabled: true },
+                    },
+                  ],
                 },
                 mutability: { allowAgentTaskAdd: false },
                 circuitBreaker: {},

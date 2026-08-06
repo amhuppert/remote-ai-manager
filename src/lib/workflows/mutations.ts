@@ -273,10 +273,15 @@ export function usePauseGraphWorkflowMutation(
         "pause-graph-workflow",
         { method: "POST" },
       ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
-      });
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: sessionKeys.detail(projectName, sessionName),
+        }),
+      ]);
     },
   });
 }
@@ -369,6 +374,43 @@ export function useResetExecutionContextMutation(
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/reset-context`,
         "reset-execution-context",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(variables),
+        },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+/**
+ * Reset ONE validator assignment's lane (R8.3).
+ *
+ * Deliberately a separate mutation from the whole-context reset rather than a
+ * widened variant of it: the two differ in blast radius, and an assignment id
+ * that went missing from a shared payload would silently discard the
+ * implementer's work and every sibling verdict.
+ */
+export function useResetExecutionContextAssignmentMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (variables: {
+      executionId: string;
+      contextId: string;
+      assignmentId: string;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/reset-assignment`,
+        "reset-execution-context-assignment",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

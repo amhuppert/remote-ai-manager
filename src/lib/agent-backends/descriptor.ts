@@ -176,10 +176,29 @@ export interface AgentBackendConversationFacet {
   transcript: BackendConversationTranscriptProjection;
 }
 
+/**
+ * Whether the backend can mechanically confine a task run's filesystem writes
+ * to the request's `fsWritePolicy` allowlist.
+ *
+ * "enforced" is a claim about the ADAPTER, not the provider: it means this
+ * backend's task runner translates the policy onto a native mechanism the agent
+ * cannot talk its way out of. A backend that can only be asked nicely declares
+ * "unsupported" and is refused as a validator at definition validate — a
+ * convention is not an envelope.
+ */
+export const fsWriteRestrictionSupportSchema = z.enum([
+  "enforced",
+  "unsupported",
+]);
+export type FsWriteRestrictionSupport = z.infer<
+  typeof fsWriteRestrictionSupportSchema
+>;
+
 export interface AgentBackendTaskFacet {
   runner: AgentTaskRunner;
   structuredOutput: StructuredOutputSupport;
   transcript: BackendTaskTranscriptProjection;
+  fsWriteRestriction: FsWriteRestrictionSupport;
 }
 
 export interface AgentBackendDescriptor {

@@ -23,6 +23,8 @@ import { readTranscriptEntriesWithSeq } from "@/lib/prompt/transcript";
 import { getFirstPromptSnippet as defaultGetFirstPromptSnippet } from "./first-prompt-snippet";
 import { createLogger } from "@/lib/logging";
 import { isProjectSentinel } from "./project-conversation-scope";
+import { redactedConversationProfile } from "./conversation-profile";
+import type { RedactedAgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { TranscriptEntriesResult } from "@/lib/prompt/transcript";
 import type { ConversationListItem, ConversationState } from "./schemas";
@@ -45,7 +47,15 @@ type ConversationListItemSource = Pick<
   | "status"
   | "lastActivityAt"
   | "archived"
->;
+> & {
+  /**
+   * Already redacted at the source (R6.3). The store's list-item projection
+   * extracts it in SQL; the project-conversation walk, which holds a full row,
+   * redacts at the call site. Either way the builder never sees a snapshot it
+   * could forward whole.
+   */
+  redactedProfileSnapshot: RedactedAgentProfileSnapshot | null;
+};
 
 const log = createLogger("conversations:cross-project-list");
 
@@ -97,6 +107,21 @@ type ListItemScope =
   | { scope: "project" };
 
 /**
+ * Adapt a whole conversation row to the list-item source. The store's list
+ * projection already arrives redacted; the paths that hold a full row (the
+ * project-conversation walk, the by-id lookups) redact here, so the builder
+ * below is never handed a snapshot it could forward.
+ */
+function listItemSourceOf(
+  conversation: ConversationState,
+): ConversationListItemSource {
+  return {
+    ...conversation,
+    redactedProfileSnapshot: redactedConversationProfile(conversation),
+  };
+}
+
+/**
  * Lift a STORE session key into the public list scope (the A5 adapter boundary):
  * a sentinel-keyed row is a project conversation and is listed as one. Used where
  * the session name arrives from a store row rather than from iterating real
@@ -130,6 +155,7 @@ function buildConversationListItem(
     status: convo.status,
     lastActivityAt: convo.lastActivityAt,
     archived: convo.archived,
+    redactedProfileSnapshot: convo.redactedProfileSnapshot,
   };
 }
 
@@ -211,7 +237,12 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
         continue;
       if (!options.includeArchived && conversation.archived) continue;
       projectConversationCount += 1;
-      pushItem(projectPath, { scope: "project" }, projectPath, conversation);
+      pushItem(
+        projectPath,
+        { scope: "project" },
+        projectPath,
+        listItemSourceOf(conversation),
+      );
     }
 
     log.info("listing conversations", {
@@ -398,7 +429,7 @@ export function createFindConversationById(deps: FindConversationByIdDeps) {
           project.projectPath,
           { scope: "project" },
           project.projectPath,
-          project.conversation,
+          listItemSourceOf(project.conversation),
         ),
         conversationId,
       );
@@ -410,7 +441,7 @@ export function createFindConversationById(deps: FindConversationByIdDeps) {
         found.projectPath,
         listItemScopeFromStoreSessionName(found.sessionName),
         found.worktreePath,
-        found.conversation,
+        listItemSourceOf(found.conversation),
       ),
       conversationId,
     );

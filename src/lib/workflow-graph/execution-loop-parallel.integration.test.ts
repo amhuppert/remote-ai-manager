@@ -280,9 +280,13 @@ function createParallelDefinition(
       description: `${id} description`,
       acceptanceCriteria: "TBD",
       implementer: {
-        backend: "claude",
-        model: "sonnet",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        agent: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
       },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: {},
@@ -309,7 +313,7 @@ function createInitialExecution(
   for (const id of contextIds) {
     contextStates[id] = {
       pendingApproval: null,
-      pendingUserInput: null,
+      pendingUserInputs: {},
       contextId: id,
       status: "pending",
       totalTaskCount: 1,
@@ -1760,9 +1764,13 @@ describe("execution loop — parallel integration", () => {
         description: `${id} description`,
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
@@ -1935,9 +1943,13 @@ describe("execution loop — parallel integration", () => {
         description: `${id} description`,
         acceptanceCriteria: "TBD",
         implementer: {
-          backend: "claude",
-          model: "sonnet",
-          reasoningEffort: "medium",
+          id: "implementer",
+          profile: { tier: "builtin", id: "general-implementer" },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
         },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
@@ -2958,6 +2970,7 @@ describe("execution loop — parallel integration", () => {
       questionBatchId: "batch-1",
       questions: [],
       requestedAt: "2026-03-27T12:01:00.000Z",
+      roundSeq: null,
       answers: null,
     };
 
@@ -2986,7 +2999,9 @@ describe("execution loop — parallel integration", () => {
           if (cs) {
             cs.iterationCount = 1;
             cs.status = "awaiting_user_input";
-            cs.pendingUserInput = structuredClone(pendingUserInputRecord);
+            cs.pendingUserInputs = {
+              implementer: structuredClone(pendingUserInputRecord),
+            };
           }
           updated.activeContextIds = updated.activeContextIds.filter(
             (id) => id !== input.contextId,
@@ -3053,9 +3068,9 @@ describe("execution loop — parallel integration", () => {
     });
     expect(result.pendingHaltReason).toBeNull();
     expect(result.contextStates["ctx-a"]?.status).toBe("awaiting_user_input");
-    expect(result.contextStates["ctx-a"]?.pendingUserInput).toEqual(
-      pendingUserInputRecord,
-    );
+    expect(
+      result.contextStates["ctx-a"]?.pendingUserInputs["implementer"],
+    ).toEqual(pendingUserInputRecord);
     expect(runIterationCalls.filter((id) => id === "ctx-a")).toHaveLength(1);
   });
 

@@ -20,7 +20,7 @@ import { _useCockpitViewStore } from "./use-cockpit-view-state";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import type { ProjectConversationCreation } from "@/lib/project-conversations-client/mutations";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PublicConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
@@ -44,9 +44,11 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
 
 function makeConversation(
   id: string,
-  o: Partial<ConversationState> = {},
-): ConversationState {
+  o: Partial<PublicConversationState> = {},
+): PublicConversationState {
   return {
+    redactedProfileSnapshot: null,
+    profileLockedAt: null,
     id,
     scope: "project",
     nameOrigin: "default",
@@ -256,7 +258,7 @@ function PageHarness({
   // create-and-send id source pass the creations explicitly.
   conversationCreations,
 }: {
-  openConversations: ConversationState[];
+  openConversations: PublicConversationState[];
   conversationCreations?: ProjectConversationCreation[];
 }) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);

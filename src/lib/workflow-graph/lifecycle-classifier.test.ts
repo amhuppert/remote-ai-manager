@@ -23,6 +23,7 @@ import {
   classifyExecutionEditability,
   isResumableHalt,
 } from "./lifecycle-classifier";
+import { makeProfileSnapshot } from "./test-fixtures";
 
 const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
   schemaVersion: 1,
@@ -32,11 +33,16 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       title: "Ctx 1",
       acceptanceCriteria: "AC1",
       implementer: {
-        backend: "claude",
-        model: "opus",
-        reasoningEffort: "medium",
+        id: "implementer",
+        profile: { tier: "builtin", id: "general-implementer" },
+        profileSnapshot: makeProfileSnapshot(),
+        agent: {
+          backend: "claude",
+          model: "opus",
+          reasoningEffort: "medium",
+        },
       },
-      contextValidator: null,
+      contextValidator: { enabled: false, assignments: [] },
       scriptValidator: { enabled: false },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
@@ -265,7 +271,7 @@ describe("classifyExecutionEditability", () => {
       name: "halted with an aborted reason is not editable",
       execution: makeExecution({
         status: "halted",
-        haltReason: { type: "aborted" },
+        haltReason: { type: "aborted", cause: null, summary: null },
       }),
       expected: { kind: "not-editable", reason: "halt-not-resumable" },
     },
@@ -343,6 +349,12 @@ describe("isResumableHalt", () => {
       contextId: "ctx-1",
       message: "no preMergeCommand",
     },
+    validation_candidate_unavailable: {
+      type: "validation_candidate_unavailable",
+      contextId: "ctx-1",
+      attempts: 2,
+      message: "could not read the candidate tree",
+    },
     validator_infra_error: {
       type: "validator_infra_error",
       contextId: "ctx-1",
@@ -350,6 +362,12 @@ describe("isResumableHalt", () => {
       infraReason: "exception",
       message: "infra failure",
       summary: null,
+      // The cohort's additive fields: one specialist exhausted its attempts in
+      // a specific round. Classification must be unchanged by them — the halt is
+      // resumable precisely so resuming can reset those counters and rerun it.
+      assignmentId: "security-reviewer",
+      attempts: 3,
+      roundSeq: 2,
     },
     agent_turn_failed: {
       type: "agent_turn_failed",
@@ -380,7 +398,7 @@ describe("isResumableHalt", () => {
       conversationId: "conv-1",
       summary: "unresolved",
     },
-    aborted: { type: "aborted" },
+    aborted: { type: "aborted", cause: null, summary: null },
     recovery_error: { type: "recovery_error", message: "cannot recover" },
   };
 

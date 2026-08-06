@@ -10,7 +10,10 @@ import {
   type ValidationDiffScope,
   type ValidationDiffScopeDeps,
 } from "./validation-diff-scope";
-import { _resetDiffCacheForTesting } from "@/lib/git/diff";
+import {
+  computeCandidateTreeHash,
+  _resetDiffCacheForTesting,
+} from "@/lib/git/diff";
 import { buildChildEnv } from "@/lib/shared/child-env";
 import type { FileDiff, SessionDiff } from "@/lib/git/schemas";
 
@@ -53,14 +56,17 @@ function sessionDiff(files: FileDiff[]): SessionDiff {
 }
 
 describe("computeValidationDiffScope", () => {
-  it("returns available with totals when the tree is dirty and the diff is non-empty", async () => {
+  it("returns available with totals and the tree the patch was read from", async () => {
     const diff = sessionDiff([
       fileDiff("src/a.ts", ["const a = 1;"]),
       fileDiff("src/b.ts", ["const b = 2;"], ["const old = 0;"]),
     ]);
     const deps: ValidationDiffScopeDeps = {
       hasUncommittedChanges: vi.fn(async () => true),
-      computeDiff: vi.fn(async () => diff),
+      computeCandidateSnapshot: vi.fn(async () => ({
+        treeHash: "tree-1",
+        diff,
+      })),
     };
 
     const scope = await computeValidationDiffScope("/wt", deps);
@@ -71,25 +77,34 @@ describe("computeValidationDiffScope", () => {
     expect(scope.totalAdditions).toBe(2);
     expect(scope.totalDeletions).toBe(1);
     expect(scope.diff).toBe(diff);
+    // The identity of what was rendered travels with the rendering, so a round
+    // can prove its reviewers read the tree it froze.
+    expect(scope.treeHash).toBe("tree-1");
   });
 
-  it("returns empty without computing a diff when the tree is clean", async () => {
-    const computeDiff = vi.fn(async () => sessionDiff([]));
+  it("returns empty carrying the clean tree's identity", async () => {
     const deps: ValidationDiffScopeDeps = {
       hasUncommittedChanges: vi.fn(async () => false),
-      computeDiff,
+      computeCandidateSnapshot: vi.fn(async () => ({
+        treeHash: "tree-clean",
+        diff: sessionDiff([]),
+      })),
     };
 
     const scope = await computeValidationDiffScope("/wt", deps);
 
     expect(scope.kind).toBe("empty");
-    expect(computeDiff).not.toHaveBeenCalled();
+    if (scope.kind !== "empty") throw new Error("expected empty");
+    expect(scope.treeHash).toBe("tree-clean");
   });
 
   it("returns unavailable when the tree is dirty but the diff comes back empty (degraded)", async () => {
     const deps: ValidationDiffScopeDeps = {
       hasUncommittedChanges: vi.fn(async () => true),
-      computeDiff: vi.fn(async () => sessionDiff([])),
+      computeCandidateSnapshot: vi.fn(async () => ({
+        treeHash: "tree-1",
+        diff: sessionDiff([]),
+      })),
     };
 
     const scope = await computeValidationDiffScope("/wt", deps);
@@ -104,7 +119,7 @@ describe("computeValidationDiffScope", () => {
       hasUncommittedChanges: vi.fn(async () => {
         throw new Error("not a git repository");
       }),
-      computeDiff: vi.fn(async () => sessionDiff([])),
+      computeCandidateSnapshot: vi.fn(async () => null),
     };
 
     const scope = await computeValidationDiffScope("/wt", deps);
@@ -114,10 +129,23 @@ describe("computeValidationDiffScope", () => {
     expect(scope.reason).toContain("not a git repository");
   });
 
-  it("returns unavailable when computeDiff throws", async () => {
+  it("returns unavailable when the candidate snapshot cannot be read", async () => {
     const deps: ValidationDiffScopeDeps = {
       hasUncommittedChanges: vi.fn(async () => true),
-      computeDiff: vi.fn(async () => {
+      computeCandidateSnapshot: vi.fn(async () => null),
+    };
+
+    const scope = await computeValidationDiffScope("/wt", deps);
+
+    expect(scope.kind).toBe("unavailable");
+    if (scope.kind !== "unavailable") throw new Error("expected unavailable");
+    expect(scope.reason.length).toBeGreaterThan(0);
+  });
+
+  it("returns unavailable when reading the candidate throws", async () => {
+    const deps: ValidationDiffScopeDeps = {
+      hasUncommittedChanges: vi.fn(async () => true),
+      computeCandidateSnapshot: vi.fn(async () => {
         throw new Error("diff boom");
       }),
     };
@@ -134,6 +162,7 @@ describe("renderDiffScopeSection", () => {
   it("renders the diffstat, instructions, and a fenced patch for an available scope", () => {
     const scope: ValidationDiffScope = {
       kind: "available",
+      treeHash: "tree-1",
       diff: sessionDiff([
         fileDiff("src/a.ts", ["const a = 1;"], ["const a = 0;"]),
       ]),
@@ -164,6 +193,7 @@ describe("renderDiffScopeSection", () => {
     );
     const scope: ValidationDiffScope = {
       kind: "available",
+      treeHash: "tree-1",
       diff: sessionDiff([
         fileDiff("src/first.ts", big),
         fileDiff("src/second.ts", big),
@@ -191,7 +221,10 @@ describe("renderDiffScopeSection", () => {
   });
 
   it("renders a no-changes message for an empty scope", () => {
-    const rendered = renderDiffScopeSection({ kind: "empty" });
+    const rendered = renderDiffScopeSection({
+      kind: "empty",
+      treeHash: "tree-clean",
+    });
 
     expect(rendered.truncated).toBe(false);
     expect(rendered.includedFileCount).toBe(0);
@@ -272,5 +305,47 @@ describe("computeValidationDiffScope (real git repo)", () => {
     // The rendered section surfaces the new untracked file's content.
     const rendered = renderDiffScopeSection(scope);
     expect(rendered.section).toContain("+export const c = 3;");
+  });
+
+  it("reports the tree hash a round freezes on, for the very patch it renders", async () => {
+    await writeFile(
+      join(repoPath, "tracked.ts"),
+      "export const a = 1;\nexport const b = 2;\n",
+    );
+
+    const scope = await computeValidationDiffScope(repoPath);
+
+    expect(scope.kind).toBe("available");
+    if (scope.kind !== "available") throw new Error("expected available");
+    expect(scope.treeHash).toBe(await computeCandidateTreeHash(repoPath));
+  });
+
+  it("never renders a patch older than the tree it reports", async () => {
+    // A content-only edit to an already-modified file leaves `git status
+    // --porcelain` at " M tracked.ts", so the shared diff cache keeps serving
+    // the first patch. A validation round certifies a tree hash on the strength
+    // of what its reviewers read, so the scope must not read through that cache.
+    await writeFile(
+      join(repoPath, "tracked.ts"),
+      "export const a = 1;\nexport const FIRST = 2;\n",
+    );
+    const first = await computeValidationDiffScope(repoPath);
+    expect(renderDiffScopeSection(first).section).toContain(
+      "+export const FIRST = 2;",
+    );
+
+    await writeFile(
+      join(repoPath, "tracked.ts"),
+      "export const a = 1;\nexport const SECOND = 2;\n",
+    );
+
+    const second = await computeValidationDiffScope(repoPath);
+
+    expect(second.kind).toBe("available");
+    if (second.kind !== "available") throw new Error("expected available");
+    expect(second.treeHash).toBe(await computeCandidateTreeHash(repoPath));
+    const rendered = renderDiffScopeSection(second).section;
+    expect(rendered).toContain("+export const SECOND = 2;");
+    expect(rendered).not.toContain("+export const FIRST = 2;");
   });
 });
