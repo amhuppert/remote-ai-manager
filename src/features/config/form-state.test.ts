@@ -117,6 +117,28 @@ describe("ALL_FIELD_PATHS", () => {
     }
   });
 
+  it("tracks the validation blocks so selector edits are dirty-tracked and saved", () => {
+    // Without these block paths, edits in the Script validator, Agent
+    // validation, and Lane-merge validation sub-sections would never be
+    // detected as dirty nor written by buildSavePayload.
+    for (const path of [
+      "workflowDefaults.scriptValidator",
+      "workflowDefaults.agentValidation",
+      "workflowDefaults.laneMergeValidation",
+    ]) {
+      expect(ALL_FIELD_PATHS).toContain(path);
+    }
+  });
+
+  it("tracks the global validation budget and timeout fields", () => {
+    for (const path of [
+      "validation.concurrencyLimit",
+      "validation.defaultTimeoutMs",
+    ]) {
+      expect(ALL_FIELD_PATHS).toContain(path);
+    }
+  });
+
   it("tracks the editable conversation naming fields so they are dirty-tracked and saved", () => {
     // Without these paths, changes in NamingSection would never be detected
     // as dirty nor written by buildSavePayload.

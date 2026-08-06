@@ -28,6 +28,7 @@ import type {
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { WorkflowDefinitionApprovalRequiredError } from "@/lib/workflow-graph/workflow-manager";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowDefinition,
@@ -101,6 +102,10 @@ const templateStorage: TemplateLibraryStorage = {
 function notUsed(): never {
   throw new Error("route not exercised in this contract test");
 }
+
+const VALIDATION_GLOBAL_CONFIG = {
+  validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
+} as GlobalConfig;
 
 /** A supported-subset declaration: an object root with two named properties. */
 const OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -178,7 +183,8 @@ function routeHost(
   const { startError, assignmentReferences } = overrides;
   const definitionHandlers = createWorkflowDefinitionRouteHandlers({
     resolveProjectPath: async () => PROJECT_PATH,
-    readConfig: notUsed,
+    readConfig: async () => VALIDATION_GLOBAL_CONFIG,
+    readRepoConfig: async () => null,
     listDefinitions: async () => [summary()],
     // A real record backs `get`/`edit`: revision 3, the fixture graph.
     getDefinition: async (_projectPath, workflowId) =>
@@ -205,6 +211,8 @@ function routeHost(
     },
     resolveProjectPath: async () => PROJECT_PATH,
     getSession: async () => ({ sessionName: "sess" }),
+    readRepoConfig: async () => null,
+    readConfig: async () => VALIDATION_GLOBAL_CONFIG,
     ...(assignmentReferences ? { assignmentReferences } : {}),
   });
   const templateHandlers = createTemplateLibraryRouteHandlers({

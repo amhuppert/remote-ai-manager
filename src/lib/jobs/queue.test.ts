@@ -63,6 +63,7 @@ import type {
   FixValidationInput,
   FixValidationOutput,
 } from "../workflows/validation-fix/actors";
+import { validationFixLoopError } from "../workflows/validation-fix/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
 import type { JobRecord, JobStatusEvent } from "@/lib/jobs/schemas";
 import type { PublishFn } from "@/lib/events/publication";
@@ -307,6 +308,23 @@ const BASE_REBASE_PARAMS = {
 function lastBroadcast(): JobStatusEvent {
   const calls = mockBroadcast.mock.calls;
   return calls[calls.length - 1]![0] as JobStatusEvent;
+}
+
+/**
+ * A validation failure the fix loop is allowed to remediate. Only failures
+ * carrying the `validation_failed` class dispatch the fix agent; plain errors
+ * are treated as infrastructure faults and fail the job outright.
+ */
+function remediableValidationFailure(reason: string): Error {
+  return validationFixLoopError(
+    {
+      status: "fail",
+      kind: "script_validation",
+      reason,
+      details: { failureClass: "validation_failed", timedOut: false },
+    },
+    "",
+  );
 }
 
 /** Extract broadcast at a given index */
@@ -978,7 +996,7 @@ describe("background-jobs", () => {
     it("validation fails → fix → re-validate → completed", async () => {
       mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
       mockRunValidation
-        .mockRejectedValueOnce(new Error("lint errors"))
+        .mockRejectedValueOnce(remediableValidationFailure("lint errors"))
         .mockResolvedValueOnce(undefined);
       mockFixValidation.mockResolvedValue({
         status: "fixed" as const,
@@ -1005,7 +1023,9 @@ describe("background-jobs", () => {
 
     it("validation fails → max retries → failed", async () => {
       mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
-      mockRunValidation.mockRejectedValue(new Error("lint errors"));
+      mockRunValidation.mockRejectedValue(
+        remediableValidationFailure("lint errors"),
+      );
       mockFixValidation.mockResolvedValue({
         status: "fixed" as const,
       });
@@ -1022,7 +1042,9 @@ describe("background-jobs", () => {
 
     it("commitHash present even when validation fails permanently", async () => {
       mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
-      mockRunValidation.mockRejectedValue(new Error("lint errors"));
+      mockRunValidation.mockRejectedValue(
+        remediableValidationFailure("lint errors"),
+      );
       mockFixValidation.mockResolvedValue({
         status: "failed" as const,
       });
@@ -1503,6 +1525,11 @@ describe("background-jobs", () => {
           branchName: BASE_MERGE_PARAMS.branchName,
           message: BASE_MERGE_PARAMS.message,
           autoResolve: true,
+          validationMode: {
+            mode: "run",
+            source: "graph_lane_merge",
+            selection: { mode: "only", commands: ["typecheck"] },
+          },
           targetBranch: "main",
           targetWorktreePath: "/projects/foo",
           finalizeSessionOnPublish: false,

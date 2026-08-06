@@ -42,6 +42,7 @@ const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
   join_failure: true,
   merge_precondition_failed: true,
   script_validator_missing_command: true,
+  script_validator_unknown_command: true,
   validator_infra_error: true,
   validation_candidate_unavailable: true,
   agent_turn_failed: true,

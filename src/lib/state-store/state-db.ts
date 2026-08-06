@@ -58,8 +58,20 @@ const DB_FILE_NAME = "command-center.db";
  * The bump is what makes the "no inbound compatibility parser" rule hold: an
  * older build would happily write the pre-cutover singleton shapes back into a
  * migrated database, and nothing would ever convert them again.
+ *
+ * Version 4 is the validation_runs status widening: migration
+ * `0012-validation-cost-exceeds-limit-status` rebuilds the table's CHECK to
+ * admit `cost_exceeds_limit`. Rows persisted with the new status are
+ * unreadable to an older build's narrower status enum, so the gate refuses
+ * such a build once the migration has stamped the upgraded DB. It also fences
+ * the scriptValidator cutover that ships alongside it: `0013` rewrites stored
+ * `scriptValidator.enabled` onto `commands`, and a build predating that change
+ * would write the retired flag back into definitions the strict schema rejects.
+ * Version 3 and version 4 were authored concurrently on two branches and both
+ * originally claimed 3; they are sequenced here because one number cannot fence
+ * two independent cutovers, and 3 is already stamped in live databases.
  */
-export const KNOWN_SCHEMA_VERSION = 3;
+export const KNOWN_SCHEMA_VERSION = 4;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -1002,6 +1014,63 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
 `;
 void SPEC_SCHEMA_DDL_DUPLICATE;
 
+/**
+ * Validation run ledger (design: validation-concurrency §4/§12): operational
+ * ownership state for crash recovery first; terminal rows are RETAINED as the
+ * per-run timing record, so there is deliberately no delete-on-terminal path.
+ * Deliberately no FK to projects/sessions — the ledger is an append-mostly
+ * operational log whose lifecycle is independent of project/session rows.
+ *
+ * Exported so migration 0011 applies the identical DDL to pre-floor databases
+ * without a second hand-synced copy.
+ */
+export const VALIDATION_RUNS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS validation_runs (
+    run_id                TEXT PRIMARY KEY,
+    source                TEXT NOT NULL CHECK (source IN (
+      'agent_cli', 'graph_script_validator', 'graph_lane_merge',
+      'smart_merge', 'smart_commit'
+    )),
+    command_name          TEXT NOT NULL,
+    cost                  INTEGER NOT NULL CHECK (cost > 0),
+    queue_order           INTEGER NOT NULL CHECK (queue_order >= 0),
+    status                TEXT NOT NULL CHECK (status IN (
+      'queued', 'running', 'passed', 'failed', 'timed_out',
+      'cancelled', 'interrupted', 'cost_exceeds_limit'
+    )),
+    nonce                 TEXT NOT NULL,
+    lease_token           TEXT,
+    lease_expires_at      TEXT,
+    process_group_pid     INTEGER,
+    project_path          TEXT NOT NULL,
+    worktree_path         TEXT NOT NULL,
+    session_name          TEXT,
+    conversation_id       TEXT,
+    workflow_execution_id TEXT,
+    workflow_context_id   TEXT,
+    workflow_role         TEXT CHECK (workflow_role IN (
+      'implementer', 'context_validator'
+    )),
+    submitted_at          TEXT NOT NULL,
+    started_at            TEXT,
+    finished_at           TEXT,
+    queue_ms              INTEGER,
+    exec_ms               INTEGER,
+    scoped                INTEGER NOT NULL DEFAULT 0,
+    scoped_path_count     INTEGER NOT NULL DEFAULT 0,
+    exit_code             INTEGER,
+    timed_out             INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- Admission and crash recovery scan by status; queue_order keeps strict
+  -- FIFO ordering a single index range.
+  CREATE INDEX IF NOT EXISTS idx_validation_runs_status_queue
+    ON validation_runs (status, queue_order);
+  -- Timing accounting reads per project x command distributions (design 12).
+  CREATE INDEX IF NOT EXISTS idx_validation_runs_project_command
+    ON validation_runs (project_path, command_name);
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -1520,6 +1589,8 @@ const SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_ticket_sessions_project_session
     ON ticket_sessions (project_path, session_name);
 
+  ${VALIDATION_RUNS_SCHEMA_DDL}
+
   ${SPEC_SCHEMA_DDL}
 `;
 
@@ -1641,6 +1712,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "workflow_definition_revision",
     type: "INTEGER CHECK (workflow_definition_revision > 0)",
   },
+  { table: "validation_runs", column: "session_name", type: "TEXT" },
   {
     table: "conversations",
     column: "name_origin",

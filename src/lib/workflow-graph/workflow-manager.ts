@@ -376,6 +376,7 @@ export interface GraphWorkflowManagerDeps {
     sessionName: string;
     conversationId: string;
   }): void;
+  abortExecutionLoop?(projectPath: string, sessionName: string): void;
   /**
    * Stop dev servers running in an execution's lane worktrees. Invoked on
    * abort/halt/drain/reset so a workflow that ends (or has a context reset)
@@ -1146,6 +1147,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           return transitionToNonRunningState(execution, "paused", null, null);
         },
       );
+      deps.abortExecutionLoop?.(projectPath, sessionName);
       abortRunningTaskConversations(
         projectPath,
         sessionName,
@@ -1189,6 +1191,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           });
         },
       );
+      deps.abortExecutionLoop?.(projectPath, sessionName);
       abortRunningTaskConversations(
         projectPath,
         sessionName,
@@ -1271,6 +1274,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         );
       },
     );
+    deps.abortExecutionLoop?.(projectPath, sessionName);
     abortRunningTaskConversations(
       projectPath,
       sessionName,

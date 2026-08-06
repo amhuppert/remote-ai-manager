@@ -28,6 +28,7 @@ import { createTicketsRepo } from "./lib/state-store/tickets-repo";
 import { getSharedWriteQueue } from "./lib/state-store/write-queue";
 import { recoverInterruptedConversationSnapshots as recoverInterruptedConversationSnapshotsForStartup } from "./lib/tickets/snapshot-refresh";
 import { registerProductionSpecWorkflowComposition } from "./lib/specs/production-workflow-composition";
+import { initializeValidationServiceAtStartup } from "./lib/validation/singleton";
 
 const logger = createLogger("startup");
 
@@ -50,6 +51,12 @@ export interface StartupDeps {
   sweepInterruptedCompactions(): number;
   /** Marks orphaned running agent-run rows failed; returns the swept count. */
   recoverStaleAgentRuns(): number;
+  /**
+   * Constructs the ValidationService singleton and runs its crash recovery:
+   * admission stays closed until orphaned validation process groups are
+   * terminated (nonce-verified) and their ledger rows marked interrupted.
+   */
+  initializeValidationService(): Promise<void>;
   /** Marks orphaned pending conversation snapshots failed. */
   recoverInterruptedConversationSnapshots(): Promise<number>;
   verifyServerBaseUrl(): void;
@@ -81,6 +88,7 @@ const defaultStartupDeps: StartupDeps = {
     ),
   recoverStaleAgentRuns: () =>
     createAgentRunsRepo(getStateDb()).recoverStaleAgentRuns(),
+  initializeValidationService: initializeValidationServiceAtStartup,
   recoverInterruptedConversationSnapshots: () =>
     recoverInterruptedConversationSnapshotsForStartup({
       repo: createTicketsRepo(getStateDb(), getSharedWriteQueue()),
@@ -163,6 +171,22 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.agent_run_sweep_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // Validation crash recovery: detached validation process groups survive
+    // an abrupt server death, and admitting a fresh full budget on top of
+    // them would recreate the overload the scheduler exists to prevent. The
+    // service keeps admission closed until recovery completes; a failure
+    // here leaves validation refusing submissions rather than over-admitting.
+    try {
+      await runAsTrace(
+        "startup:validation-recovery",
+        deps.initializeValidationService,
+      );
+    } catch (err) {
+      logger.error("startup.validation_recovery_failed", {
         error: getErrorMessage(err),
       });
     }

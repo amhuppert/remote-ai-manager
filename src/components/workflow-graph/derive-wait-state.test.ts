@@ -81,6 +81,7 @@ function makeJoin(
     targetLaneId: "lane-target",
     sourceLaneIds: ["lane-source"],
     mergedSourceLaneIds: [],
+    validationDebtSourceLaneIds: [],
     status: "pending",
     errorMessage: null,
     conflicts: null,

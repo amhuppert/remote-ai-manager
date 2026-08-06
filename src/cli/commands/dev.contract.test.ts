@@ -1,15 +1,30 @@
 import os from "node:os";
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
+import { materializeGlobalConfig } from "@/lib/config/loader";
 import {
   createDevServerRouteHandlers,
   type DevServerRouteDeps,
 } from "@/lib/dev-server/route-handlers";
 import {
   NoDevServersConfiguredError,
+  createDevServerService,
   type DevServerService,
+  type DevServerServiceDeps,
   type DevServerStatusItem,
 } from "@/lib/dev-server/service";
+import {
+  createDevServerRegistry,
+  type DevServerRegistryDeps,
+} from "@/lib/dev-server/registry";
+import { createDevServerTargetResolver } from "@/lib/dev-server/target-resolver";
 import type { DevServerStatus } from "@/lib/dev-server/schemas";
+import type { PortOwnershipInput } from "@/lib/dev-server/port-ownership";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import { runCli } from "../core";
 import type { CliEnv, CliHost } from "../shared";
 
@@ -51,6 +66,19 @@ function makeDeps(service: DevServerService): DevServerRouteDeps {
     },
     async getSession() {
       return { worktreePath: WORKTREE };
+    },
+    targetResolver: {
+      async resolve() {
+        return {
+          kind: "session",
+          worktreePath: WORKTREE,
+          branchName: "session-branch",
+          isolation: "session",
+          executionId: null,
+          contextId: null,
+          laneId: null,
+        };
+      },
     },
     service,
     async stopAllForSession() {},
@@ -236,5 +264,244 @@ describe("cctl dev against the real dev-server route handlers", () => {
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("stopped web");
+  });
+});
+
+describe("cctl dev workflow-lane isolation", () => {
+  it("lists, starts, prepares fixtures, and stops only the invoking workflow context across sibling worktrees", async () => {
+    const projectPath = mkdtempSync(
+      path.join(tmpdir(), "cc-dev-target-contract-"),
+    );
+    const sessionWorktree = path.join(projectPath, "session-worktree");
+    const laneWorktree = path.join(projectPath, "lane-worktree");
+    mkdirSync(sessionWorktree);
+    mkdirSync(laneWorktree);
+
+    const registryDeps: DevServerRegistryDeps = {
+      broadcast: () => ({ delivered: true }),
+      tailscale: {
+        register: vi.fn(async () => null),
+        unregister: vi.fn(async () => {}),
+      },
+      readConfig: vi.fn(async () =>
+        materializeGlobalConfig({
+          tailscaleEnabled: false,
+          baseDir: projectPath,
+          ignorePatterns: [],
+        }),
+      ),
+      livenessStart: vi.fn(),
+      getLanUrl: (port) => `http://127.0.0.1:${port}`,
+      checkPortListening: vi.fn(async () => true),
+      classifyPortOwnership: vi.fn(async (input: PortOwnershipInput) => ({
+        status: "owned" as const,
+        pid: 4242,
+        cwd: input.worktreePath,
+      })),
+      sendSignal: vi.fn(() => true),
+      isProcessAlive: vi.fn(() => false),
+      killGraceMs: 1,
+    };
+    const registry = createDevServerRegistry(registryDeps);
+
+    try {
+      const command = "pwd; sleep 60";
+      await registry.startServer({
+        projectPath,
+        sessionName: "sess",
+        serverName: "web",
+        command,
+        worktreePath: sessionWorktree,
+        startMode: {
+          port: 59960,
+          readinessTimeoutMs: 1_000,
+        },
+      });
+      await vi.waitFor(() => {
+        expect(
+          registry.getServer({
+            projectPath,
+            sessionName: "sess",
+            worktreePath: sessionWorktree,
+            serverName: "web",
+          })?.status,
+        ).toBe("running");
+      });
+
+      const configReads: string[] = [];
+      const serviceDeps: DevServerServiceDeps = {
+        getSession: async () => ({ worktreePath: sessionWorktree }),
+        readRepoConfig: async (worktreePath) => {
+          configReads.push(worktreePath);
+          return {
+            devServers: [
+              {
+                name: "web",
+                command,
+                port: { base: 59961, range: 1 },
+              },
+            ],
+          };
+        },
+        reconcileSessionDevServers: async () => {},
+        getSessionServers: registry.getSessionServers,
+        getServer: registry.getServer,
+        startServer: registry.startServer,
+        stopServer: registry.stopServer,
+        killListeningProcessForPort: registry.killListeningProcessForPort,
+        selectPort: async ({ basePort }) => ({
+          status: "selected",
+          port: basePort,
+        }),
+        sleep: async () => {},
+        now: () => Date.now(),
+      };
+      const service = createDevServerService(serviceDeps);
+      const workflowExecution = graphWorkflowExecutionSchema.parse(
+        buildMaximalGraphWorkflowExecution(),
+      );
+      workflowExecution.id = "execution-1";
+      workflowExecution.contextStates["ctx-1"]!.status = "running";
+      workflowExecution.contextStates["ctx-1"]!.cleanupStatus =
+        "not-applicable";
+      workflowExecution.contextStates["ctx-1"]!.laneId = "lane-1";
+      workflowExecution.executionLanes["lane-1"]!.worktreePath = laneWorktree;
+      workflowExecution.executionLanes["lane-1"]!.branchName = "lane-branch";
+      const targetResolver = createDevServerTargetResolver({
+        getSession: async () =>
+          sessionStateSchema.parse({
+            sessionName: "sess",
+            worktreePath: sessionWorktree,
+            branchName: "session-branch",
+            targetBranch: "main",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            lastActivityAt: "2026-01-01T00:00:00.000Z",
+          }),
+        getActiveGraphWorkflowExecution: async () => workflowExecution,
+        directoryExists: async (candidate) => candidate === laneWorktree,
+      });
+      const deps: DevServerRouteDeps = {
+        resolveProjectPath: async () => projectPath,
+        getSession: async () => ({ worktreePath: sessionWorktree }),
+        targetResolver,
+        service,
+        stopAllForSession: async () => {},
+        getServer: registry.getServer,
+        stopServer: registry.stopServer,
+      };
+      const laneEnv: CliEnv = {
+        ...env,
+        CC_WORKFLOW_EXECUTION_ID: "execution-1",
+        CC_WORKFLOW_CONTEXT_ID: "ctx-1",
+      };
+      const managingHost = routeHost(deps);
+      const fixtureWrites: string[] = [];
+      const host: CliHost = {
+        ...managingHost,
+        async fetch(url, init) {
+          const parsed = new URL(url);
+          if (
+            (parsed.port === "59960" || parsed.port === "59961") &&
+            init.method === "POST"
+          ) {
+            fixtureWrites.push(url);
+            return new Response(
+              JSON.stringify({
+                sessionName: "fx-lane",
+                conversations: [{ id: "conversation-lane" }],
+              }),
+              {
+                status: 201,
+                headers: { "content-type": "application/json" },
+              },
+            );
+          }
+          return managingHost.fetch(url, init);
+        },
+      };
+
+      const before = await runCli(["dev", "list", "--json"], laneEnv, host);
+      expect(before.exitCode).toBe(0);
+      const beforeEnvelope = JSON.parse(before.stdout);
+      expect(beforeEnvelope.servers).toHaveLength(1);
+      expect(beforeEnvelope.servers[0]).toMatchObject({
+        status: "stopped",
+        worktreePath: null,
+        localUrl: null,
+      });
+
+      const ensured = await runCli(
+        ["dev", "ensure", "web", "--json"],
+        laneEnv,
+        host,
+      );
+      expect(ensured.exitCode).toBe(0);
+      const ensuredEnvelope = JSON.parse(ensured.stdout);
+      expect(ensuredEnvelope.server).toMatchObject({
+        worktreePath: laneWorktree,
+        localUrl: "http://localhost:59961",
+      });
+      expect(ensuredEnvelope.server.localUrl).not.toBe(
+        "http://localhost:59960",
+      );
+      await vi.waitFor(() => {
+        expect(
+          registry.getServer({
+            projectPath,
+            sessionName: "sess",
+            worktreePath: laneWorktree,
+            serverName: "web",
+          })?.recentOutput,
+        ).toContain(realpathSync(laneWorktree));
+      });
+
+      const fixture = await runCli(
+        ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
+        laneEnv,
+        host,
+      );
+      expect(fixture.exitCode).toBe(0);
+      expect(JSON.parse(fixture.stdout)).toMatchObject({
+        target: "http://localhost:59961",
+        worktreePath: laneWorktree,
+        dbPath: path.join(laneWorktree, ".config", "command-center.db"),
+        transcriptPath: path.join(
+          laneWorktree,
+          ".config",
+          "transcripts",
+          "conversation-lane.jsonl",
+        ),
+      });
+      expect(configReads.length).toBeGreaterThan(0);
+      expect(configReads.every((candidate) => candidate === laneWorktree)).toBe(
+        true,
+      );
+      expect(configReads).not.toContain(sessionWorktree);
+      expect(fixtureWrites).toEqual([
+        "http://localhost:59961/api/projects/scratch/sessions",
+      ]);
+
+      const stopped = await runCli(["dev", "stop", "web"], laneEnv, host);
+      expect(stopped.exitCode).toBe(0);
+      expect(
+        registry.getServer({
+          projectPath,
+          sessionName: "sess",
+          worktreePath: laneWorktree,
+          serverName: "web",
+        })?.status,
+      ).toBe("stopped");
+      expect(
+        registry.getServer({
+          projectPath,
+          sessionName: "sess",
+          worktreePath: sessionWorktree,
+          serverName: "web",
+        })?.status,
+      ).toBe("running");
+    } finally {
+      registry._resetForTesting();
+      rmSync(projectPath, { recursive: true, force: true });
+    }
   });
 });

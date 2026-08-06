@@ -22,6 +22,85 @@ const projectEnv: CliEnv = {
   CC_CONVERSATION_ID: "conv-1",
 };
 
+const validationListResponse = {
+  commands: [
+    {
+      name: "test",
+      cost: 4,
+      description: "Focused tests",
+      scopeArgs: "paths",
+      timeoutMs: null,
+      enabled: true,
+    },
+  ],
+  capacity: { limit: 8, inUse: 0, queueDepth: 0 },
+  runs: [],
+};
+
+function validationResponse(request: RecordedRequest): Response {
+  const path = pathOf(request.url);
+  if (path.endsWith("/cancel")) {
+    return new Response(JSON.stringify({ cancelled: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (/\/validation\/[^/]+$/.test(path)) {
+    return new Response(
+      JSON.stringify({
+        runId: "vrun-1",
+        status: "running",
+        position: null,
+        result: null,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+  if ((request.init.method ?? "GET").toUpperCase() === "POST") {
+    return new Response(
+      JSON.stringify({
+        kind: "not_started",
+        result: {
+          kind: "skipped_by_policy",
+          message: "Skipped by workflow policy. Do not bypass it.",
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+  return new Response(JSON.stringify(validationListResponse), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+const validationVerbCases = [
+  {
+    verb: "list",
+    argv: ["validate", "list"],
+    suffix: "/validation",
+    method: "GET",
+  },
+  {
+    verb: "run",
+    argv: ["validate", "run", "test"],
+    suffix: "/validation",
+    method: "POST",
+  },
+  {
+    verb: "status",
+    argv: ["validate", "status", "vrun-1"],
+    suffix: "/validation/vrun-1",
+    method: "GET",
+  },
+  {
+    verb: "cancel",
+    argv: ["validate", "cancel", "vrun-1"],
+    suffix: "/validation/vrun-1/cancel",
+    method: "POST",
+  },
+] as const;
+
 interface RecordedRequest {
   url: string;
   init: FetchInit;
@@ -41,7 +120,8 @@ function makeHost(
       requests.push({ url, init });
       return respond({ url, init });
     },
-    async readTextFile() {
+    async readTextFile(filePath) {
+      if (filePath.includes("validation-lease-")) return "lease-1\n";
       // Commands that read a payload file do so BEFORE resolving scope, so the
       // file must parse for the scope refusal to be the failure under test.
       return JSON.stringify({ summary: "s", objective: "o", decisions: [] });
@@ -76,6 +156,22 @@ function pathOf(url: string): string {
 }
 
 describe("cctl at project conversation scope — project-supported commands", () => {
+  for (const testCase of validationVerbCases) {
+    it(`validate ${testCase.verb} selects the project conversation route`, async () => {
+      const host = makeHost(validationResponse);
+      const result = await runCli([...testCase.argv], projectEnv, host);
+
+      expect(result.stderr).not.toContain("CC_SESSION");
+      const request = onlyRequest(host);
+      expect(pathOf(request.url)).toBe(
+        `/api/projects/cc/conversations/conv-1${testCase.suffix}`,
+      );
+      expect(request.init.method).toBe(testCase.method);
+      expect(request.url).not.toContain("/sessions/");
+      expect(request.url).not.toContain("__project__");
+    });
+  }
+
   it("notify posts to the project conversation notifications route", async () => {
     const host = makeHost();
     const result = await runCli(["notify", "done"], projectEnv, host);
@@ -303,6 +399,7 @@ describe("cctl at project conversation scope — session-only commands", () => {
       notify: ["notify", "done"],
       spec: ["spec", "abandon", "feat", "--reason", "x"],
       ticket: ["ticket", "list"],
+      validate: ["validate", "list"],
       "workflow create": ["workflow", "create", "--file", "/tmp/plan.json"],
       "workflow replace": [
         "workflow",
@@ -346,6 +443,29 @@ describe("cctl at project conversation scope — session-only commands", () => {
       expect(result.exitCode).toBe(2);
       expect(result.stderr).toContain("CC_SESSION");
       expect(host.requests).toHaveLength(0);
+    });
+  }
+});
+
+describe("cctl validate at session conversation scope", () => {
+  const sessionEnv: CliEnv = {
+    ...projectEnv,
+    CC_CONVERSATION_SCOPE: "session",
+    CC_SESSION: "feature",
+  };
+
+  for (const testCase of validationVerbCases) {
+    it(`validate ${testCase.verb} selects the session conversation route`, async () => {
+      const host = makeHost(validationResponse);
+      await runCli([...testCase.argv], sessionEnv, host);
+
+      const request = onlyRequest(host);
+      expect(pathOf(request.url)).toBe(
+        `/api/projects/cc/sessions/feature/conversations/conv-1${testCase.suffix}`,
+      );
+      expect(request.init.method).toBe(testCase.method);
+      expect(request.url).not.toContain("__project__");
+      expect(request.url).not.toContain("/sessions//");
     });
   }
 });

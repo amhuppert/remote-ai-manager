@@ -3,24 +3,24 @@ name: project-setup
 description: >-
   This skill should be used when the user wants to configure a project for
   Command Center: create or update `CommandCenter.json`, write a worktree
-  init script, write a pre-merge validation script, or optimize a test
+  init script, register granular validation commands, or optimize a test
   runner config for AI agents. Triggered by "set up CC",
   "configure for command center", "create CommandCenter.json",
-  "add CC config", "set up worktree init", "set up pre-merge validation",
-  "initialize project for CC", "CC project setup", or "set up command
-  center config". For configuring dev servers, use the
-  `dev-server-setup` skill instead.
+  "add CC config", "set up worktree init", "register validation commands",
+  "set up pre-merge validation", "initialize project for CC", "CC project
+  setup", or "set up command center config". For configuring dev servers,
+  use the `dev-server-setup` skill instead.
 ---
 
 # CC Project Setup
 
-Analyze the target project's tech stack and generate the non-dev-server portion of a Command Center configuration: `CommandCenter.json` (sans `devServers`), worktree init script, pre-merge validation script, and any test runner config tweaks needed for AI-friendly output.
+Analyze the target project's tech stack and generate the non-dev-server portion of its Command Center setup: `CommandCenter.json` (sans `devServers`), a worktree init script, one registered wrapper per validation command, and any test-runner configuration needed for bounded, AI-readable validation.
 
 **Workflow: Analyze → Load tech-specific references → Propose → Approve → Write**
 
 Do NOT write any files until the user explicitly approves.
 
-For dev server configuration (the `devServers` field in `CommandCenter.json`), use the separate `dev-server-setup` skill — it loads dev-server-specific guidance independently so this skill stays focused.
+For dev-server configuration (the `devServers` field in `CommandCenter.json`), use the separate `dev-server-setup` skill.
 
 ## Step 1: Analyze the Project
 
@@ -28,7 +28,7 @@ Run all detection steps silently. Do not ask questions during analysis.
 
 ### 1.1 Package Manager
 
-Check for lock files at the project root (in order of precedence):
+Check for lock files at the project root in this order:
 
 | Lock File | Package Manager | Install Command |
 |---|---|---|
@@ -38,160 +38,197 @@ Check for lock files at the project root (in order of precedence):
 | `package-lock.json` | npm | `npm ci` |
 | `package.json` only | npm (fallback) | `npm install` |
 
-If no `package.json` exists, this is not a JS/TS project — skip to Step 2 with a minimal config.
+If no `package.json` exists, this is not a JS/TS project. Continue with a minimal config and register only validation tools actually present in that project's stack.
 
 ### 1.2 Read package.json
 
-Read `package.json` and extract `dependencies` and `devDependencies`.
+Read `package.json` and extract `dependencies`, `devDependencies`, and the package scripts that invoke validation tools.
 
 ### 1.3 Detection Table
 
-For each detected dependency, note which reference file you will need to load in Step 2.
+For each detected dependency, note which reference file to load in Step 2.
 
-| Detected | Concern | Reference to load (Step 2) |
+| Detected | Concern | Reference to load |
 |---|---|---|
-| `eslint` | Pre-merge linter | `references/eslint.md` |
-| `prettier` | Pre-merge formatter | `references/prettier.md` |
-| `typescript` (or `tsconfig.json` present) | Pre-merge type checker | `references/typescript.md` |
-| `vitest` | Pre-merge test runner | `references/vitest.md` |
-| `jest` (only if vitest absent) | Pre-merge test runner | `references/jest.md` |
-| `@prisma/client` or `prisma` | Init script (code gen) | `references/init-script.md` |
+| `eslint` | Granular lint command | `references/eslint.md` |
+| `prettier` | Granular format command | `references/prettier.md` |
+| `typescript` (or `tsconfig.json` present) | Granular typecheck command | `references/typescript.md` |
+| `vitest` | Granular test command | `references/vitest.md` |
+| `jest` (only if Vitest is absent) | Granular test command | `references/jest.md` |
+| `@prisma/client` or `prisma` | Init-script code generation | `references/init-script.md` |
 
-**Do NOT load reference files for tools that are not detected.** The whole point of progressive disclosure is to keep the context clean. If the project has no Jest, do not load `references/jest.md`.
-
-When both Vitest and Jest are present (unusual but possible), prefer Vitest for the test runner config slot and skip Jest's reference. Note both in the analysis summary so the user can override.
+Do not load references for absent tools. When both Vitest and Jest are present, prefer Vitest for the test-runner configuration and note both so the user can override.
 
 ### 1.4 Existing Configuration
 
 Check for:
-- `CommandCenter.json` — if it exists, read it (offer to update, never silently overwrite)
-- `scripts/worktree-init.sh` — existing init script
-- `scripts/pre-merge-validate.sh` — existing pre-merge script
+
+- `CommandCenter.json`; read it and offer a merge, never a silent overwrite;
+- `scripts/worktree-init.sh`;
+- existing files under `scripts/validate/`;
+- any monolithic validation script that must be split into registered commands.
 
 ### 1.5 Existing Test Runner Config
 
-Check for `vitest.config.ts`, `vitest.config.js`, `jest.config.ts`, `jest.config.js`:
-- If found, read it
-- Note whether it already contains `CLAUDECODE` detection
-- Note whether it already caps parallelism (`maxForks`/`maxWorkers`/`execArgv`)
+Check for `vitest.config.ts`, `vitest.config.js`, `jest.config.ts`, and `jest.config.js`. If found, read it and note:
 
-You'll merge against existing config rather than replacing it.
+- whether AI-readable output is already configured;
+- its worker count and heap cap;
+- whether command-line flags can override those limits.
+
+Merge against an existing config rather than replacing it.
 
 ### 1.6 Monorepo Detection
 
-Check for:
-- `workspaces` field in `package.json` (npm/yarn workspaces)
-- `pnpm-workspace.yaml` (pnpm workspaces)
-- `turbo.json` (Turborepo)
-- `nx.json` (Nx)
-
-If monorepo detected, note it in the analysis. (Dev-server `cwd` selection is handled by the separate `dev-server-setup` skill.)
+Check for a `workspaces` field, `pnpm-workspace.yaml`, `turbo.json`, and `nx.json`. For a monorepo, identify the narrowest sound affected-package mode for each tool. Dev-server `cwd` selection belongs to the `dev-server-setup` skill.
 
 ## Step 2: Load Tech-Specific References
 
-Based on the detection table in §1.3, load only the reference files for tools that are present. Always load:
+Always load `references/commandcenter-json.md`. When any validation tool is detected, also load `references/pre-merge-script.md` for the shared validation-wrapper contract. Load `references/init-script.md` only when `package.json` exists, then load only the tool references selected in §1.3.
 
-- `references/commandcenter-json.md` — schema and field types
-- `references/pre-merge-script.md` — script contract, scoping pattern, shared shell prelude (only if any of eslint/prettier/typescript/vitest/jest was detected)
-- `references/init-script.md` — per-package-manager templates (only if `package.json` exists)
+## Register Validation Commands
 
-Conditionally load:
+Register one command per tool or resource profile in `CommandCenter.json`, with one executable wrapper per command under `scripts/validate/`. Typical names are `format`, `lint`, `typecheck`, `test`, and `build`, but names are arbitrary stable kebab-case identifiers. A low-cost and high-cost test profile must be separate registered commands rather than one wrapper whose worker count changes at runtime.
 
-- `references/eslint.md` — only if ESLint detected
-- `references/prettier.md` — only if Prettier detected
-- `references/typescript.md` — only if TypeScript detected
-- `references/vitest.md` — only if Vitest detected
-- `references/jest.md` — only if Jest detected AND Vitest absent
+Every wrapper must:
+
+- begin with a shebang and be executable because Command Center invokes its configured path with `execFile`, not a shell string;
+- run correctly with the target worktree as its working directory;
+- for every test command, pin the worker count in the wrapper and overwrite `NODE_OPTIONS` there with a fixed `--max-old-space-size` value so the test parent and spawned workers inherit the heap cap; when candidate configuration can supply worker `execArgv` that takes precedence over `NODE_OPTIONS`, use a wrapper-owned launcher to apply the fixed worker `execArgv` after candidate configuration resolves; runner configuration may mirror values but must not own enforcement;
+- emit no color, remain silent on success, and preserve complete output on failure; use quiet flags or capture and replay output on failure instead of discarding diagnostics;
+- exit zero only when its command passes.
+
+### Scope by default
+
+Wrappers should validate only the branch's affected work wherever that is sound:
+
+1. Read `TARGET_BRANCH`, defaulting only for a standalone diagnostic.
+2. Resolve the comparison point with `git merge-base "$TARGET_BRANCH" HEAD`.
+3. Include committed changes since the merge base plus staged, unstaged, and untracked files as appropriate. If no merge base resolves, run the full safe check rather than silently skipping validation.
+
+Apply that comparison point as follows:
+
+- format only changed files the formatter supports;
+- lint only changed files or affected packages where the dependency model makes that safe;
+- run Vitest with `--changed <merge-base>`, Jest with `--changedSince=<merge-base>`, or the runner's equivalent related/affected mode;
+- keep a full typecheck or build when file-level or package-level scoping cannot soundly detect breakage in unchanged dependents.
+
+The test command should declare `scopeArgs: "paths"` so `cctl validate run test -- path/to/test.ts` supports the TDD inner loop. Its wrapper may treat those positional paths as a narrower explicit selection; it must not accept option-like forwarded arguments or use them to change workers, heap, pool, or config. Commands that do not need caller-provided paths keep the default `scopeArgs: "forbid"`.
+
+### Declare honest costs
+
+`cost` is a reservation weight, not measured usage. Use about one unit per configured worker for worker-pool tools and one unit for an ordinary single-process tool, adjusting upward for an honestly heavier fixed profile. For example, a wrapper pinned to four Vitest workers should normally declare cost `4`. Apply the same convention across all projects on a machine so the global budget compares like resource profiles.
+
+Do not derive worker counts from CPU count or available memory at execution time: the declared cost must continue to describe the maximum configured fan-out. The canonical wrapper must own both limits. Declare fixed worker and heap constants in each test wrapper, pass the worker constant through non-forwarded runner flags or wrapper-owned environment variables, and overwrite `NODE_OPTIONS` with the heap constant before invoking the runner. If a runner gives configured worker `execArgv` precedence over inherited `NODE_OPTIONS`, generate a canonical launcher that applies the same heap constant as the final worker `execArgv` after loading candidate configuration. Show both constants next to the proposed cost.
+
+Runner configuration loads from the candidate worktree, so it cannot be the authority for either limit. It may repeat values as defense in depth only when the canonical invocation has higher precedence. Changing, removing, or raising a candidate mirror must not let a test process exceed the wrapper-owned profile.
+
+### Select merge gates
+
+Populate `validation.preMerge` as the ordered command list for Smart Merge and Smart Commit. Populate `validation.laneMerge` when graph lane merges should use a cheaper ordered subset; otherwise omit it and lane merges inherit `preMerge`. Preserve tool dependencies in the order, typically format → lint → typecheck → test/build.
+
+The lists select commands independently of registration: every selected name must exist in `validation.commands`, while registered commands may remain available for agent diagnostics without joining either merge gate.
+
+### Trust boundary
+
+Command Center resolves wrapper paths from the canonical project root and runs them with the session or lane worktree as `cwd`. An unmerged session therefore cannot exercise edits to its own registry or wrappers through `cctl validate`; developing a wrapper is the narrow diagnostic case where running that wrapper directly is legitimate. State that reason first and use the smallest scope.
 
 ## Step 3: Propose Configuration
 
-Present the analysis results and proposed files to the user.
+Present the analysis results and the complete proposed content of every created or modified file.
 
 ### 3.1 Analysis Summary
 
-Show a table of detected aspects (package manager, frameworks, linter, formatter, type checker, test runner, ORM, monorepo, existing CC config). If frameworks were detected, mention that dev-server configuration is handled separately via the `dev-server-setup` skill.
+Show a table covering package manager, frameworks, linter, formatter, type checker, test runner, ORM, monorepo status, existing CC config, existing wrappers, and current worker/heap limits. Mention that dev-server configuration is handled separately.
 
 ### 3.2 Proposed Files
 
-Show each file that will be created, with full content in fenced code blocks. The files to generate:
+Propose:
 
-**Always:**
-- `CommandCenter.json` — with fields set based on what was detected (see `references/commandcenter-json.md`). Do NOT include a `devServers` array here — that is added by the `dev-server-setup` skill.
+- `CommandCenter.json`, preserving any existing `devServers` field untouched;
+- `scripts/worktree-init.sh` when `package.json` exists;
+- one wrapper under `scripts/validate/` for every detected validation command;
+- a wrapper-owned launcher for Vitest when needed to apply fixed worker `execArgv` after candidate configuration resolution;
+- a merged Vitest or Jest config update when needed to make output quiet and mirror the wrapper-owned resource profile.
 
-**If package.json exists:**
-- `scripts/worktree-init.sh` — install command for the detected package manager, plus any code generation steps from `references/init-script.md`
+For `CommandCenter.json`, use this shape and include only detected commands:
 
-**If any of eslint, prettier, typescript, vitest, or jest detected:**
-- `scripts/pre-merge-validate.sh` — built from the shared shell prelude in `references/pre-merge-script.md` plus each detected tool's invocation block from its reference. Order: Prettier → ESLint → TypeScript → Vitest/Jest. Include only blocks for tools that were detected.
-
-**If vitest detected:**
-- Proposed `vitest.config.ts` modification (or new file) from `references/vitest.md`. Includes AI-optimal output AND `pool: "forks"` + `maxForks` cap + `execArgv` heap cap. Merge against any existing config.
-
-**If jest detected (and vitest absent):**
-- Proposed `jest.config.ts` modification (or new file) from `references/jest.md`. Includes AI-optimal output AND `maxWorkers: "50%"` + `workerIdleMemoryLimit`. Merge against any existing config.
-
-### 3.3 Generation Rules
-
-**CommandCenter.json:**
 ```json
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh"
+  "validation": {
+    "commands": {
+      "format": {
+        "command": "scripts/validate/format.sh",
+        "cost": 1,
+        "description": "Format changed files"
+      },
+      "lint": {
+        "command": "scripts/validate/lint.sh",
+        "cost": 1
+      },
+      "typecheck": {
+        "command": "scripts/validate/typecheck.sh",
+        "cost": 1
+      },
+      "test": {
+        "command": "scripts/validate/test.sh",
+        "cost": 4,
+        "timeoutMs": 900000,
+        "scopeArgs": "paths"
+      }
+    },
+    "preMerge": ["format", "lint", "typecheck", "test"],
+    "laneMerge": ["typecheck", "test"]
+  }
 }
 ```
-- Set `initScriptPath` to `"scripts/worktree-init.sh"` if package.json exists, otherwise `null`.
-- Set `preMergeCommand` to `"scripts/pre-merge-validate.sh"` if any validator was detected, otherwise omit.
-- Do NOT include a `devServers` field. If the user wants dev servers, invoke `dev-server-setup` after this skill completes.
 
-**Init script:** Use the template from `references/init-script.md` matching the detected package manager. Add `prisma generate` if Prisma detected. Add `.env.example` copy if the file exists.
+Set `initScriptPath` to `null` when no init script is needed. `timeoutMs` and `description` are optional; `cost` is required. Do not add `devServers`; preserve an existing array and use `dev-server-setup` for additions.
 
-**Pre-merge script:** Start with the shared shell prelude from `references/pre-merge-script.md`. Then append, in order, the invocation block from each detected tool's reference file. The result must contain only the blocks for tools that were actually detected — no placeholders for absent tools.
-
-**Test runner config:** Use the pattern from `references/vitest.md` or `references/jest.md`. For existing config files, show the modification as a merge against the existing config, not a replacement.
+Use the matching tool reference to build each wrapper. The wrapper is authoritative: it must set the fixed worker count and inherited heap cap before invoking the runner, and its launcher must reapply a final worker `execArgv` when the runner gives that field precedence over the inherited cap. Test-runner config may mirror values only below that final override; do not present a cost that assumes fewer workers than the wrapper permits.
 
 ## Step 4: Get Approval
 
-Ask the user to approve the proposed configuration (inside CC, via `cctl ask`). Offer:
-- **Approve all** — write everything as proposed
-- **Approve with changes** — user specifies modifications before writing
+Ask the user to approve the proposed configuration inside CC via `cctl ask`. Offer:
 
-If the user wants changes, incorporate them and show the updated proposal before writing.
+- **Approve all** — write everything as proposed.
+- **Approve with changes** — incorporate requested modifications and show the updated proposal before writing.
 
 ## Step 5: Write Files
 
 After approval:
 
-1. Create directories: `mkdir -p scripts`.
+1. Create `scripts/validate/` and `scripts/` as needed.
 2. Write each approved file.
-3. Set executable permissions on shell scripts: `chmod +x scripts/*.sh`.
-4. For test runner config modifications: edit the existing config file to merge in the AI detection + parallelism cap blocks.
+3. Set executable permissions on `scripts/worktree-init.sh` and every `scripts/validate/*` wrapper.
+4. Merge approved test-runner changes without replacing unrelated configuration.
 
 ## Step 6: Verify
 
 After writing:
-1. Read back each created file to confirm content is correct.
-2. List the files with permissions to verify they are executable.
-3. Present a summary of what was created.
+
+1. Read back every created or modified file.
+2. Verify wrapper shebangs and executable permissions.
+3. Verify every `preMerge` and `laneMerge` name is registered.
+4. Verify each declared cost matches the wrapper's fixed worker/resource profile.
+5. Verify every test wrapper pins workers and overwrites `NODE_OPTIONS` with its inherited per-process heap cap; for Vitest, verify the canonical launcher supplies the final `poolOptions.forks.execArgv` after candidate configuration resolution.
+6. Verify each wrapper is silent on success, complete on failure, and colorless.
 
 ## Step 7: Summary
 
-Present:
-- List of all created/modified files.
-- Reminder to commit the new files to the repository.
-- Reminder to verify the init script by creating a test session in CC.
-- If a test runner config was modified, remind the user to run tests locally to confirm the new pool/worker caps don't conflict with project-specific test needs.
-- If frameworks (Next.js, Storybook, etc.) were detected, suggest running the `dev-server-setup` skill next to add `devServers` entries.
+List all created and modified files, explain the selected cost and scoping for each command, and remind the user to verify the init script in a test session. If a test-runner config changed, ask them to confirm the fixed worker and heap profile fits the project. Suggest `dev-server-setup` when frameworks were detected.
 
 ## Edge Cases
 
-**No package.json:** Generate a minimal `CommandCenter.json` with `initScriptPath: null` and no other fields. Inform the user that no JS/TS tooling was detected.
+**No package.json:** Generate a minimal `CommandCenter.json` with `initScriptPath: null` and register only validation commands supported by the detected stack.
 
-**Existing CommandCenter.json:** Read it, diff against proposed config, show what would change. Offer to merge (add or update `initScriptPath` / `preMergeCommand`) rather than overwrite. Never silently replace. Preserve any existing `devServers` field untouched — it is owned by the `dev-server-setup` skill.
+**Existing CommandCenter.json:** Merge the `validation` registry and preserve unrelated fields, especially `devServers`. Never silently overwrite.
 
-**Existing scripts:** If `scripts/worktree-init.sh` or `scripts/pre-merge-validate.sh` already exist, show the diff between existing and proposed. Ask whether to replace or skip. Pay particular attention to whether the existing pre-merge script already scopes to changed files — if not, the proposal should highlight that as the main change.
+**Existing monolithic validation script:** Propose splitting its tool phases into one wrapper per command under `scripts/validate/`, then preserve ordering through `preMerge` and `laneMerge` lists.
 
-**Existing test runner config without parallelism cap:** This is the common upgrade case. The proposal should explicitly call out that the change adds `maxForks`/`maxWorkers` and a per-worker memory cap, citing the rationale from the relevant reference file.
+**Existing test config with dynamic parallelism:** Make the canonical wrapper enforce a fixed command profile whose maximum worker count and inherited heap match its declared cost. When candidate worker `execArgv` can override the inherited heap, the wrapper-owned launcher must supply the final fixed `execArgv`. Runner config may mirror only beneath that override and cannot own the profile. A separate resource profile becomes a separate registered command.
 
-**Both Vitest and Jest:** Unusual but possible. Prefer Vitest for the test runner config slot; skip Jest's config modification. Pre-merge script can call both if the user wants — surface the choice.
+**Both Vitest and Jest:** Prefer Vitest for the configured `test` command and surface the choice. Register a separate Jest command only when the project genuinely needs both.
 
-**No validation tools detected:** Skip `preMergeCommand` entirely. Do not write `scripts/pre-merge-validate.sh`. The user can add it later when they add linting/testing.
+**No validation tools detected:** Omit the `validation` block rather than registering placeholders.

@@ -386,6 +386,13 @@ function haltReasonsEqual(
         previous.contextId === next.contextId &&
         previous.message === next.message
       );
+    case "script_validator_unknown_command":
+      return (
+        next.type === "script_validator_unknown_command" &&
+        previous.contextId === next.contextId &&
+        previous.commandName === next.commandName &&
+        previous.message === next.message
+      );
     case "validation_candidate_unavailable":
       return (
         next.type === "validation_candidate_unavailable" &&

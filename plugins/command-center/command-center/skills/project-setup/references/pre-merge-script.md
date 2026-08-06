@@ -1,6 +1,8 @@
-# Pre-Merge Validation Script Reference
+# Validation Command Wrapper Reference
 
-This file documents the script's execution contract, the changed-files scoping pattern, and how per-tool invocations slot in. For each detected tool, also load the matching tool-specific reference:
+This reference defines the shared contract for the granular scripts registered in `validation.commands`. Generate one executable wrapper per tool or fixed resource profile under `scripts/validate/`; do not combine all tools into one script.
+
+For each detected tool, also load its reference:
 
 - ESLint → `references/eslint.md`
 - Prettier → `references/prettier.md`
@@ -8,127 +10,126 @@ This file documents the script's execution contract, the changed-files scoping p
 - Vitest → `references/vitest.md`
 - Jest → `references/jest.md`
 
-## When it runs
-
-The smart merge workflow is a multi-phase process:
-
-1. **Phase 1 — Forward merge:** CC merges the target branch into the session branch to catch conflicts.
-2. **Phase 2 — Validation:** **The pre-merge script executes** (worktree now has target merged in).
-3. **Phase 3 — Auto-fix (if validation failed):** If enabled, CC sends validation output to an agent to fix the issues, then re-runs validation.
-4. **Phase 4 — Squash merge:** If validation passes, the session branch is squash-merged into the target.
-
-The script may run **multiple times** if auto-fix retries are enabled.
-
-## Execution contract
+## Execution Contract
 
 | Property | Value |
 |---|---|
-| Working directory | The session worktree path |
-| Timeout | 5 minutes (configurable via CC's global `preMergeTimeoutMs` setting) |
-| Execution method | Direct execution via `execFileGroup` — **must have a shebang line**. CC runs the script as the leader of its own process group so a timeout signals the whole tree (vitest workers included), not just the script. |
-| Permissions | Must be executable (`chmod +x`) |
-| Exit 0 | Validation passed — merge proceeds |
-| Non-zero exit | Validation failed — merge aborted or auto-fix attempted |
+| Working directory | Target session or lane worktree |
+| Timeout | Command `timeoutMs`, then the global validation default |
+| Execution method | Direct executable invocation with `execFile` semantics; a shebang and executable permission are required |
+| Arguments | No forwarded values unless the registration uses `scopeArgs: "paths"`; forwarded values may only narrow work |
+| Exit 0 | The command passed |
+| Non-zero exit | The command failed; complete captured diagnostics must be available |
 
-## Environment variables
+## Environment Variables
 
 | Variable | Value | Description |
 |---|---|---|
-| `PROJECT_ROOT` | `.worktrees/my-session` | **The worktree path** (not the original repo) |
-| `CLAUDE_PROJECT_DIR` | `/home/user/repos/my-project` | Absolute path to the original project root |
-| `WORKTREE_PATH` | `.worktrees/my-session` | Same as `PROJECT_ROOT` |
-| `SESSION_NAME` | `my-session` | Session identifier |
-| `BRANCH_NAME` | `csm/my-session` | Git branch for this session |
-| `TARGET_BRANCH` | `main` (default), or the session's configured target | Branch this work merges into — used to compute the changed-files diff |
+| `PROJECT_ROOT` | Target worktree path | Compatibility name for the tree being validated |
+| `CLAUDE_PROJECT_DIR` | Canonical project root | Root from which the registered wrapper path was resolved |
+| `WORKTREE_PATH` | Target worktree path | Tree being validated |
+| `SESSION_NAME` | Session identifier | Owning session |
+| `BRANCH_NAME` | Session or lane branch | Branch being validated |
+| `TARGET_BRANCH` | Merge target, when known | Input to `git merge-base` scoping |
+| `CONTEXT_ID` | Graph context id, when applicable | Owning execution context |
+| `CC_VALIDATION_RUN_ID` | Validation run id | Correlation identifier and recursion guard |
+| `CC_VALIDATION_COMMAND` | Registered command name | Active resource profile |
+| `CC_VALIDATION_COST` | Declared cost | Reserved global-budget weight |
 
-`PROJECT_ROOT` points to the **worktree** (not the original repo root) because the script validates code as it exists in the worktree — which has the target branch merged in. Use `CLAUDE_PROJECT_DIR` if you need the original project root.
+## Shared Wrapper Prelude
 
-## Scoping principle
-
-Run linters, formatters, and tests against **only the files this branch touches** relative to its merge target. A full-codebase run on every merge re-validates code the branch can't break, fans out test-worker memory pressure, and burns wall-clock time.
-
-The exception is **TypeScript** — see `references/typescript.md` for why `tsc` must remain full-project.
-
-## Auto-fix behavior
-
-The script **may modify files** (e.g., Prettier `--write`, ESLint `--fix`). After the script completes:
-- CC checks for uncommitted changes.
-- If changes exist, CC commits them with message `auto-fix: pre-merge validation` using `--no-verify`.
-- These auto-fix changes are included in the squash merge.
-
-## Tool ordering
-
-Run tools in this order:
-
-1. **Formatters** (Prettier) — modify files, auto-committed by CC
-2. **Linters** (ESLint `--fix`) — modify files, auto-committed by CC
-3. **Static checkers** (TypeScript) — fail fast on type errors, full-project
-4. **Tests** (Vitest/Jest) — slowest, run last
-
-## Shared shell prelude
-
-Every generated pre-merge script starts with the same setup: enable AI-optimal output, resolve the merge base against `TARGET_BRANCH`, and populate two arrays — `changed_files` (everything tracked + untracked) and `lint_files` (subset matching JS/TS extensions).
+Each wrapper starts with the same safety and output setup. Use the diff setup in wrappers that support affected-work scoping and omit the unused arrays from wrappers such as a full-project typecheck.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Enable AI-optimal output for tools that detect CLAUDECODE.
 export CLAUDECODE=1
+export FORCE_COLOR=0
+export NO_COLOR=1
 
-# Resolve where this branch diverged from its merge target so we only
-# lint/format/test what it actually introduces or changes. TARGET_BRANCH is
-# supplied by CC's merge workflow; default to main for standalone runs.
+run_quiet() {
+  local output_file status
+  output_file="$(mktemp)"
+  if "$@" >"$output_file" 2>&1; then
+    rm -f "$output_file"
+    return 0
+  else
+    status=$?
+  fi
+  sed -n '1,$p' "$output_file" >&2
+  rm -f "$output_file"
+  return "$status"
+}
+
 TARGET_BRANCH="${TARGET_BRANCH:-main}"
 merge_base=""
 if git rev-parse --verify --quiet "${TARGET_BRANCH}^{commit}" >/dev/null 2>&1; then
-  merge_base="$(git merge-base "${TARGET_BRANCH}" HEAD 2>/dev/null || true)"
+  merge_base="$(git merge-base "$TARGET_BRANCH" HEAD 2>/dev/null || true)"
 fi
 
-# Files changed vs the merge base: committed + staged + unstaged tracked
-# changes (ACMR drops deletions; renames resolve to the new path) plus
-# untracked files. Existence-filtered so tools never receive a path that
-# no longer exists.
 changed_files=()
 lint_files=()
 if [ -n "$merge_base" ]; then
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    [ -f "$f" ] || continue
-    changed_files+=("$f")
-    case "$f" in
-      *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs) lint_files+=("$f") ;;
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    [ -f "$file" ] || continue
+    changed_files+=("$file")
+    case "$file" in
+      *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs) lint_files+=("$file") ;;
     esac
   done < <(
     {
       git diff --name-only --diff-filter=ACMR "$merge_base" --
+      git diff --name-only --diff-filter=ACMR --cached --
+      git diff --name-only --diff-filter=ACMR --
       git ls-files --others --exclude-standard
     } | sort -u
   )
 else
-  # Detached HEAD, missing target, or shallow clone: each tool falls back
-  # to validating the whole tree rather than silently skipping checks.
-  echo "pre-merge: no merge base against '${TARGET_BRANCH}'; validating entire tree" >&2
+  echo "validation: no merge base against '${TARGET_BRANCH}'; validating the full safe scope" >&2
 fi
-
-# --- per-tool invocations follow; see references/<tool>.md for each ---
 ```
 
-## Generation rule
+`run_quiet` suppresses successful output but replays the entire combined output on failure. Do not replace it with an unconditional redirect that discards failure diagnostics. Tool invocations must also disable color.
 
-For each detected tool, append the invocation block from its reference file in the order above. Tools that weren't detected are simply omitted — there are no placeholder blocks. The script always ends with the per-tool sections it actually needs.
+## Scoping Rules
 
-Each tool's reference contains:
-- Its invocation block (using `$merge_base`, `$changed_files`, or `$lint_files` from the prelude)
-- The fallback branch when `$merge_base` is empty
-- Tool-specific flags and rationale
+- Formatters receive `changed_files` and skip when that array is empty.
+- Linters receive the changed supported-file subset or a sound affected-package selection.
+- Test runners use the merge base through `--changed`, `--changedSince`, or an equivalent related-tests mode.
+- Typechecks and builds stay full when dependency analysis cannot make scoping sound.
+- Failure to resolve a merge base triggers a full safe check, never a silent pass.
 
-When the project has none of the detected tools, do not generate a pre-merge script — omit `preMergeCommand` from `CommandCenter.json` entirely.
+The registered test wrapper may additionally accept relative paths from a `scopeArgs: "paths"` registration. When paths are present, treat them as a narrower explicit test selection and do not add worker, heap, pool, or config options from forwarded arguments.
 
-## Key rules
+## Fixed Resource Profiles and Cost
 
-- `set -euo pipefail` — fail at the first error. CC needs the non-zero exit code to detect failure.
-- Stdout and stderr are captured and shown in the error notification when validation fails.
-- The output should be clear and actionable — when auto-fix is enabled, the auto-fix agent reads it to understand what to fix.
-- `export CLAUDECODE=1` — enables AI-optimal output mode for tools that detect it in their config. (The variable name comes from Claude Code, which sets it in its own sessions; the script exports it explicitly so the detection fires no matter which agent or workflow runs the validation.)
-- Never scope `tsc` to changed files. The other tools must scope.
+Every test wrapper owns its worker and heap limits. Declare fixed constants in the canonical wrapper, use wrapper-owned flags or environment variables to cap workers, and overwrite `NODE_OPTIONS` with `--max-old-space-size=<heap>` before invoking the test runner. Overwriting instead of appending prevents caller-supplied Node options from loosening the inherited profile; runners that supply worker `execArgv` need the additional final override below.
+
+```bash
+readonly TEST_WORKERS=4
+readonly TEST_HEAP_MB=2048
+export NODE_OPTIONS="--max-old-space-size=${TEST_HEAP_MB}"
+```
+
+Runner configuration may mirror these limits but must not own enforcement. It loads from the candidate worktree, while the registered wrapper resolves from the canonical project root. The wrapper's maximum must not depend on CPU count, available memory, candidate configuration, caller environment, or forwarded flags.
+
+`NODE_OPTIONS` is an inherited default, not a final override: a Node command-line heap flag in worker `execArgv` takes precedence. When a runner lets candidate configuration set worker `execArgv`, pair the wrapper with a canonical launcher that loads candidate configuration and then applies the wrapper's fixed heap flag as the final worker `execArgv`. The Vitest reference uses its programmatic API for this post-configuration override.
+
+Declare about one cost unit per configured worker; an ordinary single-process wrapper normally costs one. Use the same convention for every project sharing the machine.
+
+If a project needs both a two-worker inner-loop test and an eight-worker full test, register two wrappers and two command names with costs `2` and `8`. Do not make one command dynamically change profiles.
+
+## Merge-Gate Ordering
+
+`validation.preMerge` and `validation.laneMerge` are ordered lists of registered names. Use order to preserve dependencies, normally format → lint → typecheck → test/build. `laneMerge` may be a cheaper subset; when omitted, it inherits `preMerge`.
+
+## Key Rules
+
+- One wrapper per command or fixed resource profile under `scripts/validate/`.
+- Shebang plus executable permission for every wrapper.
+- `set -euo pipefail` and a non-zero exit on failure.
+- Silent on success, complete on failure, and no color.
+- Scope by default wherever sound; full typecheck/build where it is not.
+- Keep workers and inherited per-process heap wrapper-owned and fixed so the declared cost remains honest.

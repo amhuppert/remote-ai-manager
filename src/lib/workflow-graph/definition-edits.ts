@@ -202,6 +202,8 @@ function definitionEditTouchedPaths(
         "collaboration",
         "humanApprovalGate",
         "askUserQuestions",
+        "agentValidation",
+        "laneMergeValidation",
       ]);
     case "add-context":
       return [["executionContexts", operation.id]];
@@ -224,6 +226,7 @@ function definitionEditTouchedPaths(
           "collaboration",
           "humanApprovalGate",
           "askUserQuestions",
+          "agentValidation",
         ],
       );
     case "remove-context": {
@@ -378,6 +381,12 @@ function applyOperation(
         "askUserQuestions",
         operation.askUserQuestions,
       );
+      applyOptionalBlock(config, "agentValidation", operation.agentValidation);
+      applyOptionalBlock(
+        config,
+        "laneMergeValidation",
+        operation.laneMergeValidation,
+      );
       return null;
     }
 
@@ -429,6 +438,9 @@ function applyOperation(
         ...(operation.askUserQuestions !== undefined
           ? { askUserQuestions: operation.askUserQuestions }
           : {}),
+        ...(operation.agentValidation !== undefined
+          ? { agentValidation: operation.agentValidation }
+          : {}),
       };
       definition.executionContexts.push(context);
       return null;
@@ -471,6 +483,7 @@ function applyOperation(
         "askUserQuestions",
         operation.askUserQuestions,
       );
+      applyOptionalBlock(context, "agentValidation", operation.agentValidation);
       return null;
     }
 

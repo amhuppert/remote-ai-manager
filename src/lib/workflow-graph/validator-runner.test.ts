@@ -1,12 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
-  buildContextValidationPrompt,
+  buildContextValidationPrompt as buildContextValidationPromptWithValidation,
   createValidatorRunner,
   parseValidatorResponse,
   resolveValidatorAskUserQuestionsEnabled,
+  type BuildContextValidationPromptInput,
   VALIDATOR_OUTPUT_SCHEMA,
 } from "./validator-runner";
 import {
@@ -60,6 +61,31 @@ import {
   createTestFakeBackend,
   TESTFAKE_BACKEND_ID,
 } from "@/lib/agent-backends/testing/testfake-backend";
+import type { ValidationPromptSelections } from "./validation-prompt-section";
+
+const EMPTY_VALIDATION_SELECTIONS = {
+  registry: "none",
+  enabled: { kind: "commands", commands: [] },
+  disabled: [],
+  scriptGate: { kind: "off" },
+} satisfies ValidationPromptSelections;
+
+type TestBuildContextValidationPromptInput = Omit<
+  BuildContextValidationPromptInput,
+  "validationSelections"
+> & {
+  validationSelections?: ValidationPromptSelections;
+};
+
+function buildContextValidationPrompt(
+  input: TestBuildContextValidationPromptInput,
+): string {
+  return buildContextValidationPromptWithValidation({
+    ...input,
+    validationSelections:
+      input.validationSelections ?? EMPTY_VALIDATION_SELECTIONS,
+  });
+}
 
 const emptyUsage = {
   costUsd: null,
@@ -163,7 +189,7 @@ const context: GraphWorkflowResolvedContext = {
     enabled: true,
     assignments: [seedAssignment(validatorConfig)],
   },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
@@ -457,6 +483,12 @@ describe("parseValidatorResponse fenced-block parsing", () => {
 });
 
 describe("buildContextValidationPrompt", () => {
+  it("requires resolved validation selections", () => {
+    expectTypeOf<
+      BuildContextValidationPromptInput["validationSelections"]
+    >().toEqualTypeOf<ValidationPromptSelections>();
+  });
+
   it("includes the exact acceptance criteria and ordered task summaries", () => {
     const prompt = buildContextValidationPrompt({
       context,
@@ -520,6 +552,80 @@ describe("buildContextValidationPrompt", () => {
     expect(lowered).toContain("tests");
     expect(lowered).toMatch(/type (errors|checks|checking)/);
     expect(lowered).toMatch(/lint|build|compile/);
+  });
+
+  it("names the actual script-gate selection when selections are provided", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      validationSelections: {
+        registry: "loaded",
+        enabled: { kind: "commands", commands: [{ name: "test", cost: 4 }] },
+        disabled: ["typecheck", "format"],
+        scriptGate: { kind: "commands", commands: ["typecheck", "test"] },
+      },
+    });
+
+    expect(prompt).toContain(
+      "The script gate for this context runs `typecheck`, `test` separately",
+    );
+    expect(prompt).not.toContain("pre-merge validation script");
+    // The generated section lists the validator's own effective commands.
+    expect(prompt).toContain("## Validation Commands");
+    expect(prompt).toContain("Enabled for you in this context: test (cost 4).");
+    expect(prompt).toContain(
+      "Disabled for you in this context: typecheck, format.",
+    );
+    expect(prompt).toContain(
+      "If a run is refused for capacity, continue other work and retry later, or re-run with `--wait` to queue for a slot.",
+    );
+  });
+
+  it("attributes an absent script gate to workflow policy", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      validationSelections: {
+        registry: "none",
+        enabled: { kind: "commands", commands: [] },
+        disabled: [],
+        scriptGate: { kind: "off" },
+      },
+    });
+
+    expect(prompt).toContain("## Validation Commands");
+    expect(prompt).toContain(
+      "No validation commands are enabled for you in this context.",
+    );
+    expect(prompt).toContain(
+      "No validation commands are disabled by policy in this context.",
+    );
+    expect(prompt).toContain("No script gate is selected for this context.");
+    expect(prompt).toContain("workflow policy disables it");
+    expect(prompt).not.toContain("pre-merge validation script");
+  });
+
+  it("uses selection-aware guidance for an explicit empty policy", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      validationSelections: {
+        registry: "none",
+        enabled: { kind: "commands", commands: [] },
+        disabled: [],
+        scriptGate: { kind: "off" },
+      },
+    });
+
+    expect(prompt).toContain("## Validation Commands");
+    expect(prompt).toContain("workflow policy disables it");
+    expect(prompt).not.toContain("pre-merge validation script");
   });
 
   it("instructs the validator to respect context scope boundaries with downstream contexts", () => {

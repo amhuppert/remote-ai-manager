@@ -6,7 +6,10 @@ import { withTracing, _resetTracingForTesting } from "./tracing";
 import { getTraceContext } from "./context";
 import { _resetLoggerForTesting } from "./logger";
 
-const tmpDir = path.join(os.tmpdir(), "cc-tracing-test");
+// Per-process directory: this file runs under two vitest projects at once,
+// and a fixed path would put both processes on one log file — one's cleanup
+// and writes race the other's reads, so assertions find a foreign entry.
+const tmpDir = path.join(os.tmpdir(), `cc-tracing-test-${process.pid}`);
 const testLogFile = path.join(tmpDir, "test.log");
 
 function readLogLines(): Record<string, unknown>[] {

@@ -28,6 +28,10 @@ function makeExecution(
     definitionApproval: null,
     workingDefinition: {
       schemaVersion: 1,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
       executionContexts: [
         {
           id: "ctx-plan",
@@ -48,7 +52,7 @@ function makeExecution(
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
           contextValidator: { enabled: false, assignments: [] },
-          scriptValidator: { enabled: false },
+          scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
         },
@@ -87,7 +91,7 @@ function makeExecution(
               },
             ],
           },
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["pre-merge"] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
         },

@@ -40,6 +40,7 @@ import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -356,8 +357,10 @@ function createInitialExecution(
     boundInputs: {},
     launchedTier: "project",
     definitionApproval: null,
-    workingDefinition:
-      definition as unknown as ResolvedWorkflowSemanticDefinition,
+    workingDefinition: {
+      ...definition,
+      laneMergeValidation: DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
+    } as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),
     status: "running",
     activeContextIds: [],
@@ -3299,6 +3302,7 @@ describe("execution loop — parallel integration", () => {
       targetLaneId: SESSION_LANE_ID,
       sourceLaneIds: ["ctx-a", "ctx-b"],
       mergedSourceLaneIds: [],
+      validationDebtSourceLaneIds: [],
       status: "pending",
       errorMessage: null,
       conflicts: null,

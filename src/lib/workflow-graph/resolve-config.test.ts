@@ -24,6 +24,7 @@ import type {
 import {
   SEEDED_WORKFLOW_DEFAULTS,
   computeUsedBackends,
+  expandCommandSelector,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
   resolveWorkflowConfig,
@@ -64,7 +65,7 @@ const GLOBAL_MUTABILITY: GraphWorkflowMutabilityPolicy = {
 };
 
 const GLOBAL_SCRIPT_VALIDATOR: GraphWorkflowScriptValidatorConfig = {
-  enabled: false,
+  commands: [],
 };
 
 const GLOBAL_ASK_USER_QUESTIONS: GraphWorkflowAskUserQuestionsConfig = {
@@ -86,6 +87,14 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
   planRepair: GLOBAL_PLAN_REPAIR,
+  agentValidation: {
+    implementer: { mode: "all", except: [] },
+    contextValidator: { mode: "only", commands: [] },
+  },
+  laneMergeValidation: {
+    strategy: "final-only",
+    commands: { mode: "project" },
+  },
   collaboration: {
     enabled: false,
     secondAgent: {
@@ -269,32 +278,35 @@ describe("resolveContext", () => {
 
   it("inherits scriptValidator from global when neither workflow nor context override", () => {
     const resolved = resolveContext(
-      { ...GLOBAL_DEFAULTS, scriptValidator: { enabled: true } },
+      { ...GLOBAL_DEFAULTS, scriptValidator: { commands: ["pre-merge"] } },
       {},
       makeContext(),
     );
 
-    expect(resolved.scriptValidator).toEqual({ enabled: true });
+    expect(resolved.scriptValidator).toEqual({ commands: ["pre-merge"] });
+    expect(resolved).toHaveProperty("scriptValidatorSource", "global");
   });
 
   it("inherits scriptValidator from workflow when context omits it", () => {
     const resolved = resolveContext(
       GLOBAL_DEFAULTS,
-      { scriptValidator: { enabled: true } },
+      { scriptValidator: { commands: ["pre-merge"] } },
       makeContext(),
     );
 
-    expect(resolved.scriptValidator).toEqual({ enabled: true });
+    expect(resolved.scriptValidator).toEqual({ commands: ["pre-merge"] });
+    expect(resolved).toHaveProperty("scriptValidatorSource", "workflow");
   });
 
   it("uses context scriptValidator verbatim when overridden", () => {
     const resolved = resolveContext(
-      { ...GLOBAL_DEFAULTS, scriptValidator: { enabled: true } },
-      { scriptValidator: { enabled: true } },
-      makeContext({ scriptValidator: { enabled: false } }),
+      { ...GLOBAL_DEFAULTS, scriptValidator: { commands: ["pre-merge"] } },
+      { scriptValidator: { commands: ["pre-merge"] } },
+      makeContext({ scriptValidator: { commands: [] } }),
     );
 
-    expect(resolved.scriptValidator).toEqual({ enabled: false });
+    expect(resolved.scriptValidator).toEqual({ commands: [] });
+    expect(resolved).toHaveProperty("scriptValidatorSource", "per-node");
   });
 
   it("resolves askUserQuestions to disabled when no layer overrides (1.3)", () => {
@@ -509,6 +521,10 @@ describe("resolveWorkflowConfig", () => {
       mutability: undefined as unknown as GraphWorkflowMutabilityPolicy,
       planRepair: undefined as unknown as GraphWorkflowPlanRepairPolicy,
       collaboration: undefined as unknown as WorkflowDefaults["collaboration"],
+      agentValidation:
+        undefined as unknown as WorkflowDefaults["agentValidation"],
+      laneMergeValidation:
+        undefined as unknown as WorkflowDefaults["laneMergeValidation"],
     };
     const global = makeGlobalConfig({ workflowDefaults: partialGlobal });
 
@@ -518,7 +534,7 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.contextValidator.assignments).toEqual(
       SEEDED_WORKFLOW_DEFAULTS.contextValidator.assignments,
     );
-    expect(resolved.scriptValidator.enabled).toBe(false);
+    expect(resolved.scriptValidator.commands).toEqual([]);
     expect(resolved.humanApprovalGate.enabled).toBe(false);
     expect(resolved.askUserQuestions.enabled).toBe(false);
     expect(resolved.iterationPolicy.maxIterations).toBeGreaterThan(0);
@@ -527,6 +543,14 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.planRepair).toEqual({
       enabled: true,
       maxAttemptsPerContext: 2,
+    });
+    expect(resolved.agentValidation).toEqual({
+      implementer: { mode: "all", except: [] },
+      contextValidator: { mode: "only", commands: [] },
+    });
+    expect(resolved.laneMergeValidation).toEqual({
+      strategy: "final-only",
+      commands: { mode: "project" },
     });
   });
 });
@@ -811,6 +835,217 @@ describe("resolveWorkflowDefinition", () => {
     expect(resolved.executionContexts[0]?.acceptanceCriteria).toBe(
       "context-level AC",
     );
+  });
+});
+
+describe("agentValidation cascade", () => {
+  it("resolves both role selectors from global when no tier overrides", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect(resolved.agentValidation).toEqual({
+      implementer: {
+        value: { mode: "all", except: [] },
+        source: "global",
+      },
+      contextValidator: {
+        value: { mode: "only", commands: [] },
+        source: "global",
+      },
+    });
+  });
+
+  it("a context implementer override does not erase a workflow contextValidator override", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {
+        agentValidation: {
+          contextValidator: { mode: "only", commands: ["test"] },
+        },
+      },
+      makeContext({
+        agentValidation: {
+          implementer: { mode: "all", except: ["format"] },
+        },
+      }),
+    );
+
+    expect(resolved.agentValidation).toEqual({
+      implementer: {
+        value: { mode: "all", except: ["format"] },
+        source: "per-node",
+      },
+      contextValidator: {
+        value: { mode: "only", commands: ["test"] },
+        source: "workflow",
+      },
+    });
+  });
+
+  it("replaces a provided selector list as a unit, never unioned", () => {
+    const defaults: WorkflowDefaults = {
+      ...GLOBAL_DEFAULTS,
+      agentValidation: {
+        implementer: { mode: "all", except: ["format", "lint"] },
+        contextValidator: { mode: "only", commands: ["typecheck"] },
+      },
+    };
+
+    const resolved = resolveContext(
+      defaults,
+      {
+        agentValidation: {
+          implementer: { mode: "all", except: ["test"] },
+          contextValidator: { mode: "only", commands: ["lint"] },
+        },
+      },
+      makeContext(),
+    );
+
+    expect(resolved.agentValidation?.implementer.value).toEqual({
+      mode: "all",
+      except: ["test"],
+    });
+    expect(resolved.agentValidation?.contextValidator.value).toEqual({
+      mode: "only",
+      commands: ["lint"],
+    });
+  });
+
+  it("resolveWorkflowConfig resolves agentValidation per leaf at the workflow tier", () => {
+    const resolved = resolveWorkflowConfig(
+      makeGlobalConfig(),
+      makeDefinition({
+        workflowConfig: {
+          agentValidation: {
+            implementer: { mode: "only", commands: ["test"] },
+          },
+        },
+      }),
+    );
+
+    expect(resolved.agentValidation).toEqual({
+      implementer: { mode: "only", commands: ["test"] },
+      contextValidator: { mode: "only", commands: [] },
+    });
+  });
+});
+
+describe("laneMergeValidation cascade (two-tier)", () => {
+  it("defaults to final-only with project command selection", () => {
+    const resolved = resolveWorkflowConfig(
+      makeGlobalConfig(),
+      makeDefinition(),
+    );
+
+    expect(resolved.laneMergeValidation).toEqual({
+      strategy: "final-only",
+      commands: { mode: "project" },
+    });
+  });
+
+  it("a workflow strategy override inherits the global command selection", () => {
+    const resolved = resolveWorkflowConfig(
+      makeGlobalConfig(),
+      makeDefinition({
+        workflowConfig: {
+          laneMergeValidation: { strategy: "every-merge" },
+        },
+      }),
+    );
+
+    expect(resolved.laneMergeValidation).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "project" },
+    });
+  });
+
+  it("a workflow command override inherits the global strategy", () => {
+    const resolved = resolveWorkflowConfig(
+      makeGlobalConfig(),
+      makeDefinition({
+        workflowConfig: {
+          laneMergeValidation: {
+            commands: { mode: "only", commands: ["typecheck"] },
+          },
+        },
+      }),
+    );
+
+    expect(resolved.laneMergeValidation).toEqual({
+      strategy: "final-only",
+      commands: { mode: "only", commands: ["typecheck"] },
+    });
+  });
+
+  it("snapshots the resolved workflow-level policy on the execution definition", () => {
+    const resolved = resolveWorkflowDefinition(
+      makeGlobalConfig(),
+      makeDefinition({
+        workflowConfig: {
+          laneMergeValidation: {
+            strategy: "every-merge",
+            commands: { mode: "only", commands: ["typecheck"] },
+          },
+        },
+      }),
+    );
+
+    expect(resolved.laneMergeValidation).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "only", commands: ["typecheck"] },
+    });
+  });
+
+  it("resolved execution contexts carry no laneMergeValidation tier", () => {
+    // Deliberate two-tier deviation: the gate guards the shared fan-in
+    // target, so no per-context override exists to resolve.
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect("laneMergeValidation" in resolved).toBe(false);
+  });
+});
+
+describe("expandCommandSelector", () => {
+  const registry = ["format", "lint", "typecheck", "test"];
+
+  it("expands all-minus-except in registry order", () => {
+    expect(
+      expandCommandSelector({ mode: "all", except: ["format"] }, registry),
+    ).toEqual({
+      commands: ["lint", "typecheck", "test"],
+      unknownCommands: [],
+    });
+  });
+
+  it("reports unknown except names without dropping them silently", () => {
+    expect(
+      expandCommandSelector(
+        { mode: "all", except: ["format", "fmt"] },
+        registry,
+      ),
+    ).toEqual({
+      commands: ["lint", "typecheck", "test"],
+      unknownCommands: ["fmt"],
+    });
+  });
+
+  it("keeps an only-selection as-is and reports unknown names", () => {
+    expect(
+      expandCommandSelector(
+        { mode: "only", commands: ["test", "tset"] },
+        registry,
+      ),
+    ).toEqual({
+      commands: ["test", "tset"],
+      unknownCommands: ["tset"],
+    });
+  });
+
+  it("expands all against an empty registry to nothing", () => {
+    expect(expandCommandSelector({ mode: "all", except: [] }, [])).toEqual({
+      commands: [],
+      unknownCommands: [],
+    });
   });
 });
 

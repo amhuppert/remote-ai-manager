@@ -214,7 +214,8 @@ Every timed event records its primary duration under a canonical **`durationMs`*
 | `exec` | `exec.complete` / `exec.error` | `command`, `argsPreview`, `cwd`, `durationMs`, `stdoutBytes`, `stderrBytes`, `exitCode` |
 | `exec` | `spawn.start` / `spawn.exit` / `spawn.spawn_error` | `command`, `argsPreview`, `cwd`, `pid`, `durationMs`, `exitCode`, `signal` |
 | `git-client` (via exec, `eventPrefix: "git"`) | `git.complete` / `git.error` | All git ops via `GitClient`; `command="git"`, `argsPreview`, `durationMs` |
-| `repo-config` (via exec, `eventPrefix: "pre-merge.script"`) | `pre-merge.script.complete` / `.error` | Pre-merge validation script invocations |
+| `validation` | `validation.run_requested` / `.queued` / `.started` / `.completed` / `.rejected` / `.spawn_failed` | Server-owned validation admission, queueing, execution, and terminal accounting |
+| `validation` | `validation.runner.spawned` / `.start_confirmed` / `.timeout` / `.cancel_requested` / `.group_kill_escalated` / `.group_dead` / `.spawn_error` | Validation process-group lifecycle |
 | `tailscale` (via exec, `eventPrefix: "tailscale"`) | `tailscale.complete` / `.error` | All `tailscale` CLI calls |
 | `dev-server` (via exec, `eventPrefix: "dev-server"`) | `dev-server.start` / `dev-server.exit` | Per-session dev server process lifecycle |
 | `init-script` (via exec, `eventPrefix: "init-script"`) | `init-script.complete` / `.error` | Worktree init scripts |

@@ -43,6 +43,14 @@ import { isQuerySlotAdmissionTimeout } from "@/lib/shared/query-semaphore";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
 import { formatQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { buildAskUserQuestionsReminderSection } from "./iteration-prompt";
+import {
+  buildValidationCommandsSection,
+  buildValidatorDeterministicChecksGuidance,
+  loadValidationPromptRegistry,
+  resolveValidationPromptSelections,
+  type ValidationPromptSelections,
+} from "./validation-prompt-section";
+import { readRepoConfig } from "@/lib/projects/repo-config";
 import type {
   AskQuestionAnswer,
   AskQuestionItem,
@@ -139,6 +147,12 @@ export interface BuildContextValidationPromptInput {
    * 8.1-8.4).
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * This context's effective command selections (validation-concurrency §7/§8):
+   * drives the `## Validation Commands` section and makes the deterministic-
+   * checks guidance name the actual script-gate selection.
+   */
+  validationSelections: ValidationPromptSelections;
 }
 
 /**
@@ -213,6 +227,11 @@ export function buildContextValidationPrompt(
     ? [buildAskUserQuestionsReminderSection(), ""]
     : [];
 
+  const validationSectionLines = [
+    buildValidationCommandsSection(input.validationSelections),
+    "",
+  ];
+
   // Active checking, not preamble: rendered only when the charter declares
   // invariants so the guidance never references a section that isn't there.
   const invariantGuidanceLines =
@@ -238,8 +257,11 @@ export function buildContextValidationPrompt(
     "- **Require a production call path for wiring criteria.** When a criterion requires a capability to exist or be wired — an event publication, route, notification, adapter, or control — it is satisfied only by a production call path that reaches it. An exported, unit-tested function with no production caller does not satisfy it. The only exemption is explicit deferral: an acceptance-criteria clause naming the downstream context that owns the wiring. With a named owner, record the deferral in your `summary` instead of failing; with no named owner, raise an issue.",
     ...invariantGuidanceLines,
     "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
-    "- **Do not enforce deterministic checks.** You must not fail the context for failing tests, type errors, lint violations, build failures, or compile errors. Those concerns are handled separately by the project's pre-merge validation script and are not your responsibility. Focus on judgments that only a reviewing agent can make.",
+    buildValidatorDeterministicChecksGuidance(
+      input.validationSelections.scriptGate,
+    ),
     "",
+    ...validationSectionLines,
     "## Acceptance Criteria",
     "",
     input.context.acceptanceCriteria,
@@ -518,6 +540,13 @@ export interface ValidatorRunnerDeps {
     sessionName: string,
   ): Promise<string>;
   resolveTimeoutMs(backend: AgentBackendId): Promise<number>;
+  /**
+   * Reads `CommandCenter.json` so the validator prompt can list the context's
+   * effective command selections with costs (validation-concurrency §8).
+   * Degraded-not-fatal: a read failure renders the section with an explicit
+   * unavailable-registry notice.
+   */
+  readRepoConfig?: typeof readRepoConfig;
   continuityService?: ValidatorContinuityService;
   executionRepository?: ValidatorContinuityRepository;
   /**
@@ -1649,11 +1678,26 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         })
       ).section;
 
+    // The frozen seed-time snapshot decides the enabled set; the registry
+    // read feeds only cost annotation and the disabled list, and a failed
+    // read renders an explicit "registry unavailable" notice instead of
+    // silently dropping the section.
+    const validationSelections = resolveValidationPromptSelections({
+      role: "contextValidator",
+      context: input.context,
+      registry: await loadValidationPromptRegistry(async () => {
+        const repoConfig = await (deps.readRepoConfig ?? readRepoConfig)(
+          input.projectPath,
+        );
+        return repoConfig?.validation;
+      }),
+    });
     const prompt = buildContextValidationPrompt({
       context: input.context,
       tasks: contextTasks,
       taskStates: input.execution.taskStates,
       validator: input.validator,
+      validationSelections,
       ...(input.context.charter ? { charter: input.context.charter } : {}),
       charterAmendments: input.execution.charterAmendments,
       diffScopeSection,

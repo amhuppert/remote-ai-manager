@@ -14,6 +14,7 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { OUTPUT_SCHEMA_TEMPLATE } from "@/components/workflow-config/OutputSchemaField";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
+import { installFetchFixture } from "@/test/fetch-fixture";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
@@ -159,13 +160,13 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly ten InspectorConfigBlocks and no AC, tasks, or delete", () => {
+  it("renders exactly twelve InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(10);
+    expect(blocks).toHaveLength(12);
     const labels = Array.from(
       container.querySelectorAll("[data-section-label]"),
     ).map((el) => el.textContent);
@@ -174,6 +175,8 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
       "Collaboration",
       "Context validator",
       "Script validator",
+      "Agent validation",
+      "Lane-merge validation",
       "Human approval gate",
       "Ask user questions",
       "Iteration policy",
@@ -283,13 +286,6 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
 
     const gates = [
       {
-        name: /workflow script validator/i,
-        label: "Script validator",
-        read: () =>
-          _useGraphWorkflowBuilderStore.getState().draftDefinition
-            ?.workflowConfig.scriptValidator,
-      },
-      {
         name: /workflow human approval gate/i,
         label: "Human approval gate",
         read: () =>
@@ -317,6 +313,15 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
       );
       expect(gate.read()).toBeUndefined();
     }
+  });
+
+  it("uses command selection instead of a workflow Script validator switch", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Script validator")!;
+    expect(within(block).queryByRole("switch")).not.toBeInTheDocument();
   });
 });
 
@@ -399,7 +404,7 @@ describe("WorkflowInspectorPanel — launch parameters editor", () => {
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC read view, ten blocks, tasks editor, and delete button", () => {
+  it("renders AC read view, eleven blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
@@ -408,7 +413,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       screen.getByRole("button", { name: "Edit acceptance criteria" }),
     ).toBeInTheDocument();
     const blocks = container.querySelectorAll("[data-source]");
-    expect(blocks).toHaveLength(10);
+    expect(blocks).toHaveLength(11);
 
     expect(container.querySelector('[data-section="tasks"]')).not.toBeNull();
     expect(
@@ -571,13 +576,12 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     expect(ctx2?.planRepair).toBeUndefined();
   });
 
-  it("creates each context gate override", () => {
+  it("creates each boolean context gate override", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     render(<WorkflowInspectorPanel {...defaultProps} />);
 
     for (const name of [
-      /context script validator/i,
       /context human approval gate/i,
       /context ask user questions/i,
     ]) {
@@ -589,9 +593,17 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     const ctx = _useGraphWorkflowBuilderStore
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
-    expect(ctx?.scriptValidator).toEqual({ enabled: true });
     expect(ctx?.humanApprovalGate).toEqual({ enabled: true });
     expect(ctx?.askUserQuestions).toEqual({ enabled: true });
+  });
+
+  it("uses command selection instead of a context Script validator switch", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Script validator")!;
+    expect(within(block).queryByRole("switch")).not.toBeInTheDocument();
   });
 
   it("creates a context collaboration override from the header switch", () => {
@@ -722,6 +734,226 @@ describe("WorkflowInspectorPanel — validator cohort override footer", () => {
     );
 
     expect(planContext()?.contextValidator).toBeUndefined();
+  });
+});
+
+describe("WorkflowInspectorPanel — validation command selectors", () => {
+  // The selected-name lists live inside a role section; scope queries to it so
+  // the two roles' identical mode radios cannot collide.
+  function roleSection(
+    block: HTMLElement,
+    role: "implementer" | "contextValidator",
+  ): HTMLElement {
+    const section = block.querySelector(`[data-role="${role}"]`);
+    if (!(section instanceof HTMLElement)) {
+      throw new Error(`No ${role} role section rendered`);
+    }
+    return section;
+  }
+
+  it("renders the workflow lane-merge block with strategy plus command selection", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    // The fixture definition carries a workflow-tier laneMergeValidation
+    // override, so the block reads as overridden and opens by default.
+    const block = findBlockByLabel(container, "Lane-merge validation")!;
+    expect(block.getAttribute("data-source")).toBe("context-override");
+    expect(
+      within(block).getByRole("radio", { name: "final-only" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      within(block).getByRole("radio", { name: "Project default" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(within(block).getByRole("radio", { name: "every-merge" }));
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .laneMergeValidation,
+    ).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "project" },
+    });
+  });
+
+  it("switches lane-merge commands to a custom list while preserving the strategy leaf", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Lane-merge validation")!;
+    fireEvent.click(within(block).getByRole("radio", { name: "Custom list" }));
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .laneMergeValidation,
+    ).toEqual({
+      strategy: "final-only",
+      commands: { mode: "only", commands: [] },
+    });
+    // {mode:"only", commands: []} means lane-merge validation is disabled.
+    expect(block.textContent).toContain(
+      "Empty list — lane-merge validation is disabled.",
+    );
+  });
+
+  it("keeps lane-merge validation out of the context override UI", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(container.querySelector('[data-scope="context"]')).not.toBeNull();
+    expect(findBlockByLabel(container, "Lane-merge validation")).toBeNull();
+  });
+
+  it("adds a command to the workflow script validator's ordered list", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Script validator")!;
+    fireEvent.change(
+      within(block).getByLabelText("Add script validator command"),
+      { target: { value: "typecheck" } },
+    );
+    fireEvent.click(within(block).getByRole("button", { name: "Add" }));
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .scriptValidator,
+    ).toEqual({ commands: ["typecheck"] });
+
+    // Removing the last command keeps `commands: []` (explicitly-off): the
+    // empty selection must round-trip, never collapse to legacy-on.
+    fireEvent.click(
+      within(block).getByRole("button", { name: "Remove typecheck" }),
+    );
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .scriptValidator,
+    ).toEqual({ commands: [] });
+  });
+
+  it("feeds the registry into a command multi-select when the endpoint responds", async () => {
+    const api = installFetchFixture();
+    try {
+      api.json("GET", "/api/validation-commands", {
+        projects: [
+          {
+            projectName: "alpha",
+            commands: [
+              { name: "typecheck", cost: 2 },
+              { name: "test", cost: 4 },
+            ],
+          },
+        ],
+      });
+      resetStore();
+      setupStore({ selectedContextId: null });
+      const { container } = render(
+        <WorkflowInspectorPanel {...defaultProps} projectName="alpha" />,
+      );
+
+      const block = findBlockByLabel(container, "Script validator")!;
+      // Registry loaded → checkboxes replace the free-form add input.
+      const checkbox = await within(block).findByRole("checkbox", {
+        name: "typecheck",
+      });
+      expect(
+        within(block).queryByLabelText("Add script validator command"),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(checkbox);
+      expect(
+        _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+          .scriptValidator,
+      ).toEqual({ commands: ["typecheck"] });
+    } finally {
+      api.restore();
+    }
+  });
+
+  it("editing a context role selector writes only that role into the override", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = expandBlock(findBlockByLabel(container, "Agent validation")!);
+    expect(block.getAttribute("data-source")).toBe("global");
+
+    fireEvent.click(
+      within(roleSection(block, "implementer")).getByRole("radio", {
+        name: "Only",
+      }),
+    );
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    // Per-leaf: contextValidator stays absent so it keeps inheriting.
+    expect(ctx?.agentValidation).toEqual({
+      implementer: { mode: "only", commands: [] },
+    });
+  });
+
+  it("shows per-role provenance for global, workflow, and context sources", () => {
+    resetStore();
+    const def = createWorkflowDefinition();
+    const layered = {
+      ...def,
+      workflowConfig: {
+        ...def.workflowConfig,
+        agentValidation: {
+          contextValidator: { mode: "only" as const, commands: [] },
+        },
+      },
+      executionContexts: def.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? {
+              ...ctx,
+              agentValidation: {
+                implementer: { mode: "only" as const, commands: [] },
+              },
+            }
+          : ctx,
+      ),
+    };
+    setupStore({ selectedContextId: "context-plan", definition: layered });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    // The context override marks the block overridden, so it opens by default.
+    const block = findBlockByLabel(container, "Agent validation")!;
+    expect(block.getAttribute("data-source")).toBe("context-override");
+    expect(
+      within(block).getByTestId("agent-validation-source-implementer"),
+    ).toHaveTextContent("Context");
+    expect(
+      within(block).getByTestId("agent-validation-source-context-validator"),
+    ).toHaveTextContent("Workflow");
+
+    // A context with neither tier configured resolves both roles to global.
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        selectedContextId: "context-verify",
+        draftDefinition: {
+          ...layered,
+          workflowConfig: { ...def.workflowConfig },
+        },
+      });
+    });
+    const globalBlock = expandBlock(
+      findBlockByLabel(container, "Agent validation")!,
+    );
+    expect(
+      within(globalBlock).getByTestId("agent-validation-source-implementer"),
+    ).toHaveTextContent("Global");
+    expect(
+      within(globalBlock).getByTestId(
+        "agent-validation-source-context-validator",
+      ),
+    ).toHaveTextContent("Global");
   });
 });
 

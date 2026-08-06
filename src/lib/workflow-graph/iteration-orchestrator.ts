@@ -89,6 +89,11 @@ import {
   type UserInputGateService,
 } from "@/lib/workflow-graph/user-input-gate";
 import { getConversation as defaultGetConversation } from "@/lib/state-store";
+import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
+import {
+  loadValidationPromptRegistry,
+  resolveValidationPromptSelections,
+} from "./validation-prompt-section";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
@@ -214,6 +219,7 @@ export interface IterationOrchestratorScriptValidatorInput {
    * runs against this target's worktree/branch instead of the session's.
    */
   executionTarget?: ExecutionTarget;
+  signal?: AbortSignal;
 }
 
 interface IterationOrchestratorScriptValidatorService {
@@ -340,6 +346,12 @@ export interface GraphWorkflowIterationOrchestratorDeps {
     pendingQuestionId: string | null;
     pendingQuestions: AskQuestionItem[];
   } | null>;
+  /**
+   * Reads `CommandCenter.json` so the seed prompt can list the context's
+   * effective command selections with costs (validation-concurrency §8).
+   * Degraded-not-fatal: a read failure renders explicit empty selections.
+   */
+  readRepoConfig?: typeof defaultReadRepoConfig;
   createTaskId?(): string;
   now?(): string;
   eventPublisher?: ReturnType<
@@ -400,6 +412,7 @@ export interface GraphWorkflowIterationInput {
    * together; each lane sees only its own answers.
    */
   resumeUserInputs?: readonly ResumeUserInputContext[];
+  signal?: AbortSignal;
 }
 
 /** The implementer's answers, if this resume carries any. One lane per context. */
@@ -428,11 +441,11 @@ export class IterationHaltedError extends Error {
   readonly haltReason: GraphWorkflowHaltReason;
   readonly syntheticToolResults?: readonly ToolResultBlock[];
   /**
-   * Set by a thrower that ALREADY wrote this failure into
-   * `consecutiveFailureCount`. Both iteration loops swallow this error and
-   * finalize, and finalize otherwise counts a swallowed halt as a fresh
-   * failure — which would leave the persisted streak one above the count the
-   * halt reason reports for the very same run.
+   * Set when the thrower has completed failure accounting for this halt.
+   * This includes failures already written to `consecutiveFailureCount` and
+   * infrastructure/configuration halts that must not count as failures. Both
+   * iteration loops swallow this error and finalize; the finalizer otherwise
+   * counts a swallowed halt as a fresh failure.
    */
   readonly failureAlreadyCounted: boolean;
 
@@ -1094,13 +1107,13 @@ export function createGraphWorkflowIterationOrchestrator(
     summary: string,
   ): string {
     return [
-      "Pre-merge validation failed. The script validator runs the project's `preMergeCommand` to catch deterministic problems (tests, type errors, lint, build, etc.).",
+      "Pre-merge validation failed. The script validator runs the context's selected registered commands to catch deterministic problems (tests, type errors, lint, build, etc.).",
       "",
       `Summary: ${summary}`,
       "",
       `Read the full output at \`${logRelativePath}\` (relative to the worktree root) and address the issues.`,
       "",
-      "When you believe the issues are resolved, mark this task complete. The pre-merge script will run again to confirm.",
+      "When you believe the issues are resolved, mark this task complete. The selected validation commands will run again to confirm.",
     ].join("\n");
   }
 
@@ -1193,13 +1206,14 @@ export function createGraphWorkflowIterationOrchestrator(
   }): Promise<"pass" | "skip" | "fail"> {
     const { input, execLogger, execution, onHalt, journal } = params;
     const contextDef = getContextDefinition(execution, input.contextId);
-    if (!contextDef.scriptValidator.enabled) {
+    const configuredCommands = contextDef.scriptValidator.commands;
+    if (configuredCommands.length === 0) {
       return "skip";
     }
 
     if (!deps.scriptValidatorService) {
       throw new Error(
-        "Script validator is enabled for this context but no scriptValidatorService is configured",
+        "Script validator commands are selected for this context but no scriptValidatorService is configured",
       );
     }
 
@@ -1215,6 +1229,7 @@ export function createGraphWorkflowIterationOrchestrator(
       execution,
       contextId: input.contextId,
       executionTarget: input.executionTarget,
+      signal: input.signal,
     });
 
     if (outcome.kind === "pass") {
@@ -1235,29 +1250,29 @@ export function createGraphWorkflowIterationOrchestrator(
     const failureClass = gate.details?.failureClass;
 
     if (outcome.kind === "infra_error") {
-      if (outcome.reason === "missing_pre_merge_command") {
+      if (outcome.reason === "unknown_command") {
         execLogger?.validation(
           input.contextId,
-          "script_validation.missing_pre_merge_command",
-          { message: gate.reason },
+          "script_validation.unknown_command",
+          { command: outcome.commandName, message: gate.reason },
         );
-        logger.warn(
-          "graph-workflow.script_validation.missing_pre_merge_command",
-          {
-            executionId: execution.id,
-            contextId: input.contextId,
-            failureClass,
-          },
-        );
-        const haltReason: GraphWorkflowHaltReason = {
-          type: "script_validator_missing_command",
+        logger.warn("graph-workflow.script_validation.unknown_command", {
+          executionId: execution.id,
           contextId: input.contextId,
+          command: outcome.commandName,
+          failureClass,
+        });
+        const haltReason: GraphWorkflowHaltReason = {
+          type: "script_validator_unknown_command",
+          contextId: input.contextId,
+          commandName: outcome.commandName,
           message: gate.reason,
         };
         await onHalt(haltReason);
-        throw new IterationHaltedError(haltReason);
+        throw new IterationHaltedError(haltReason, undefined, {
+          failureAlreadyCounted: true,
+        });
       }
-
       execLogger?.validation(input.contextId, "script_validation.exception", {
         message: gate.reason,
       });
@@ -1272,7 +1287,9 @@ export function createGraphWorkflowIterationOrchestrator(
         message: `Script validator error: ${gate.reason}`,
       };
       await onHalt(recoveryReason);
-      throw new IterationHaltedError(recoveryReason);
+      throw new IterationHaltedError(recoveryReason, undefined, {
+        failureAlreadyCounted: true,
+      });
     }
 
     // Neither a pass nor an infrastructure error: the script deterministically
@@ -1321,7 +1338,9 @@ export function createGraphWorkflowIterationOrchestrator(
         summary: null,
       };
       await onHalt(haltReason);
-      throw new IterationHaltedError(haltReason);
+      throw new IterationHaltedError(haltReason, undefined, {
+        failureAlreadyCounted: true,
+      });
     }
 
     return "fail";
@@ -2100,7 +2119,8 @@ export function createGraphWorkflowIterationOrchestrator(
     // validator and an empty cohort there is nothing to review with, so the
     // context takes the unchanged "validation is not enabled" path.
     const roundApplies =
-      contextDefinition.scriptValidator.enabled || cohortAssignments.length > 0;
+      contextDefinition.scriptValidator.commands.length > 0 ||
+      cohortAssignments.length > 0;
 
     if (!roundApplies) {
       return runContextValidationStages({
@@ -4031,6 +4051,21 @@ export function createGraphWorkflowIterationOrchestrator(
             answers: implementerResume.answers,
           }
         : undefined;
+      // The frozen seed-time snapshot decides the enabled set; the registry
+      // read feeds only cost annotation and the disabled list, and a failed
+      // read renders an explicit "registry unavailable" notice instead of
+      // silently dropping the section.
+      const validationSelections = resolveValidationPromptSelections({
+        role: "implementer",
+        context,
+        registry: await loadValidationPromptRegistry(async () => {
+          const repoConfig = await (
+            deps.readRepoConfig ?? defaultReadRepoConfig
+          )(input.projectPath);
+          return repoConfig?.validation;
+        }),
+      });
+
       const initialPrompt =
         promptMode === "follow_up"
           ? buildFollowUpPrompt({
@@ -4064,6 +4099,7 @@ export function createGraphWorkflowIterationOrchestrator(
               collaborationContinuations,
               resumeUserInput: resumeUserInputPrompt,
               previousConversationHandoff,
+              validationSelections,
               // What this context receives (D2 Req 5) — the same resolver the
               // inspector UI and, later, D4 conditional edges read.
               upstreamInputs: resolveUpstreamInputs(

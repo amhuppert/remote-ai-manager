@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { createLogger } from "@/lib/logging";
 import { notFound, resolveProjectOr404 } from "@/lib/shared/route-resolution";
 import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
+import { readRepoConfig } from "@/lib/projects/repo-config";
 import type { ApiError } from "@/lib/api/errors";
-import type { GlobalConfig } from "@/lib/config/schemas";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import {
   createWorkflowStorageService,
@@ -11,9 +13,12 @@ import {
   type WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
+import { createValidationCommandPreflight } from "@/lib/validation/preflight";
 import { validateWorkflowPlan } from "./plan-validation";
 import { runDefinitionEditRequest } from "./definition-edit-handler";
 import { assignmentReferenceRefusal } from "./assignment-reference-refusal";
+
+const logger = createLogger("workflow-graph");
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -22,6 +27,12 @@ type RouteContext = {
 export interface WorkflowDefinitionRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
   readConfig(): Promise<GlobalConfig>;
+  /**
+   * Reads `CommandCenter.json` so create/replace can preflight command
+   * selections against the project's validation registry and global capacity
+   * at these project-bound boundaries (validation-concurrency §§3, 6).
+   */
+  readRepoConfig(projectPath: string): Promise<PerRepoConfig | null>;
   listDefinitions(projectPath: string): Promise<WorkflowDefinitionSummary[]>;
   getDefinition(
     projectPath: string,
@@ -44,6 +55,7 @@ const defaultStorage = createWorkflowStorageService();
 const defaultDeps: WorkflowDefinitionRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   readConfig,
+  readRepoConfig,
   listDefinitions: (projectPath) =>
     defaultStorage.list({ kind: "project", projectPath }),
   getDefinition: (projectPath, workflowId) =>
@@ -93,10 +105,28 @@ export function createWorkflowDefinitionRouteHandlers(
       );
     }
 
-    const validation = validateWorkflowPlan(rawBody);
+    const [repoConfig, globalConfig] = await Promise.all([
+      deps.readRepoConfig(projectPath),
+      deps.readConfig(),
+    ]);
+    const validation = validateWorkflowPlan(rawBody, {
+      validationCommandPreflight: createValidationCommandPreflight(
+        repoConfig?.validation,
+        globalConfig.validation,
+      ),
+    });
     if (!validation.ok) {
+      logger.warn("workflow-graph.definition-create.rejected", {
+        projectPath,
+        issueCount: validation.issues.length,
+        code: validation.code ?? "invalid_plan",
+      });
       return NextResponse.json(
-        { error: "Workflow plan is invalid", issues: validation.issues },
+        {
+          error: "Workflow plan is invalid",
+          ...(validation.code ? { code: validation.code } : {}),
+          issues: validation.issues,
+        },
         { status: 400 },
       );
     }
@@ -156,10 +186,29 @@ export function createWorkflowDefinitionRouteHandlers(
       );
     }
 
-    const validation = validateWorkflowPlan(rawBody);
+    const [repoConfig, globalConfig] = await Promise.all([
+      deps.readRepoConfig(projectPath),
+      deps.readConfig(),
+    ]);
+    const validation = validateWorkflowPlan(rawBody, {
+      validationCommandPreflight: createValidationCommandPreflight(
+        repoConfig?.validation,
+        globalConfig.validation,
+      ),
+    });
     if (!validation.ok) {
+      logger.warn("workflow-graph.definition-replace.rejected", {
+        projectPath,
+        workflowId,
+        issueCount: validation.issues.length,
+        code: validation.code ?? "invalid_plan",
+      });
       return NextResponse.json(
-        { error: "Workflow plan is invalid", issues: validation.issues },
+        {
+          error: "Workflow plan is invalid",
+          ...(validation.code ? { code: validation.code } : {}),
+          issues: validation.issues,
+        },
         { status: 400 },
       );
     }
@@ -197,6 +246,16 @@ export function createWorkflowDefinitionRouteHandlers(
       rawBody,
       notFoundError: "Workflow not found",
       loadRecord: () => deps.getDefinition(projectPath, workflowId),
+      loadValidationCommandPreflight: async () => {
+        const [repoConfig, globalConfig] = await Promise.all([
+          deps.readRepoConfig(projectPath),
+          deps.readConfig(),
+        ]);
+        return createValidationCommandPreflight(
+          repoConfig?.validation,
+          globalConfig.validation,
+        );
+      },
       persist: (draft) => deps.updateDefinition(projectPath, workflowId, draft),
     });
   }

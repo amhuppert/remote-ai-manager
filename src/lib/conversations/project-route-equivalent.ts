@@ -57,6 +57,7 @@ export const PROJECT_CONVERSATION_ROUTE_OPERATIONS: ReadonlySet<string> =
     "read",
     "rename",
     "spawn",
+    "validation",
   ]);
 
 /**

@@ -7,8 +7,8 @@ description: >-
   monorepo subdirectory, or wiring a custom server into CC. Triggered by
   "add dev server", "set up dev server for CC", "configure dev servers",
   "wire Next.js into CC", "wire Storybook into CC", "add CC dev server
-  entry", or "make Command Center manage <framework>". For broader
-  project setup (init script, pre-merge, test runner config), use the
+  entry", or "make Command Center manage a framework". For broader
+  project setup (init script, validation registration, test runner config), use the
   `project-setup` skill instead.
 ---
 
@@ -54,8 +54,8 @@ If monorepo detected, list the candidate app directories (e.g., `apps/web`, `app
 ### 1.4 Existing Configuration
 
 Check for an existing `CommandCenter.json`:
-- If absent, the proposal will create one with only a `devServers` field. Recommend running `project-setup` separately if the project also needs an init script or pre-merge command.
-- If present, read it. Preserve `initScriptPath`, `preMergeCommand`, and any other fields untouched. Only add or merge into the `devServers` array.
+- If absent, the proposal will create one with only a `devServers` field. Recommend running `project-setup` separately if the project also needs an init script or registered validation commands.
+- If present, read it. Preserve `initScriptPath`, `validation`, and every other field untouched. Only add or merge into the `devServers` array.
 
 ## Step 2: Load Reference
 

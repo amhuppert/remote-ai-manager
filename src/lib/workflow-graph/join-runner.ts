@@ -1,20 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { createLogger } from "@/lib/logging";
+import { createLogger, type Logger } from "@/lib/logging";
 import { abortInProgressMerge as defaultAbortInProgressMerge } from "@/lib/git/worktree";
+import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
 import type { ConflictEntry } from "@/lib/jobs/schemas";
 import type { DeliveryGateHaltReason } from "@/lib/jobs/schemas";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
 import type { SessionGitLock } from "@/lib/shared/lock-retry";
+import type { MergeValidationMode } from "@/lib/workflows/validation-fix/types";
 import { applyJoinProgress } from "./context-transitions";
 import { remainingSourceLanes, resolveLaneConversationId } from "./lane-join";
 import { buildJoinResolutionContext } from "./join-resolution-context";
+import {
+  resolveLaneMergeRunValidationMode,
+  type ReadLaneMergeRepoConfig,
+} from "./lane-merge-validation";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
 } from "@/lib/workflow-graph/schemas";
-const logger = createLogger("graph-workflow-join-runner");
+const defaultLogger = createLogger("graph-workflow-join-runner");
 
 export type JoinRunnerMutateActive = (
   mutator: (execution: GraphWorkflowExecution) => GraphWorkflowExecution,
@@ -49,6 +55,8 @@ export interface JoinRunnerDeps {
   /** Aborts an unconcluded `git merge` (MERGE_HEAD present); returns whether
    *  an abort happened. Defaults to the real git helper. */
   abortInProgressMerge?(worktreePath: string): Promise<boolean>;
+  readRepoConfig?: ReadLaneMergeRepoConfig;
+  logger?: Logger;
   createJobId?(): string;
   now?(): string;
 }
@@ -58,6 +66,8 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
   const now = deps.now ?? (() => new Date().toISOString());
   const abortInProgressMerge =
     deps.abortInProgressMerge ?? defaultAbortInProgressMerge;
+  const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
+  const logger = deps.logger ?? defaultLogger;
 
   return {
     async run(input): Promise<JoinRunResult> {
@@ -163,11 +173,9 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         let mergeConflictFiles: string[] = [];
         let mergeConflictAnalysis: ConflictEntry[] | null = null;
         let mergeHaltReason: DeliveryGateHaltReason | null = null;
+        let completedMergeValidationMode: MergeValidationMode | null = null;
 
         const sourceWorktreePath = sourceLane.worktreePath;
-        const resolutionContext =
-          buildJoinResolutionContext(execution, currentJoin, sourceLaneId) ??
-          undefined;
         const conversationId =
           resolveLaneConversationId(execution, sourceLaneId) ?? undefined;
         if (conversationId === undefined) {
@@ -177,36 +185,27 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             executionId: execution.id,
           });
         }
-        const runMerge = () =>
-          deps.mergeRunner.run({
-            jobId: createJobId(),
-            projectPath,
-            projectName,
-            sessionName,
-            contextId: currentJoin.contextId ?? currentJoin.joinId,
-            branchName: sourceLane.branchName,
-            featureWorktreePath: sourceWorktreePath,
-            targetBranch,
-            targetWorktreePath,
-            message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
-            conversationId,
-            decisions: currentJoin.conflictGuidance ?? undefined,
-            resolutionContext,
-            // Final-publish joins land lanes on the session branch — still
-            // inside the execution's own workspace. The join carries the
-            // execution's provenance so the delivery gate enforces the proof
-            // floor here, but delivery itself (finalPublish → Delivered)
-            // belongs solely to the gated merge that lands on the project's
-            // delivery target.
-            ...(currentJoin.kind === "final_publish"
-              ? {
-                  executionId: execution.id,
-                  finalPublish: false,
-                }
-              : {}),
-          });
-
         try {
+          const laneMergeValidation =
+            execution.workingDefinition.laneMergeValidation;
+          const shouldDeferValidation =
+            laneMergeValidation.strategy === "final-only" &&
+            currentJoin.kind !== "final_publish" &&
+            remaining.length > 1;
+          const coveredLaneIds = [
+            ...new Set([
+              ...(currentJoin.validationDebtSourceLaneIds ?? []),
+              sourceLaneId,
+            ]),
+          ];
+          const resolutionContext =
+            buildJoinResolutionContext(
+              execution,
+              currentJoin,
+              sourceLaneId,
+              coveredLaneIds,
+            ) ?? undefined;
+
           const output = await deps.mergeMutex.withMergeMutex(
             { projectPath, sessionName },
             () =>
@@ -226,6 +225,57 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                       sourceWorktreePath,
                     });
                   }
+
+                  const selectedValidationMode = shouldDeferValidation
+                    ? ({ mode: "skip" } as const)
+                    : await resolveLaneMergeRunValidationMode({
+                        projectPath,
+                        config: laneMergeValidation,
+                        readRepoConfig,
+                      });
+                  const validationMode: MergeValidationMode =
+                    selectedValidationMode.mode === "run"
+                      ? { ...selectedValidationMode, coveredLaneIds }
+                      : selectedValidationMode;
+                  completedMergeValidationMode = validationMode;
+                  if (validationMode.mode === "skip") {
+                    logger.info("graph-workflow.join.validation_deferred", {
+                      joinId,
+                      sourceLaneId,
+                      remaining: remaining.length,
+                    });
+                  }
+
+                  const runMerge = () =>
+                    deps.mergeRunner.run({
+                      jobId: createJobId(),
+                      projectPath,
+                      projectName,
+                      sessionName,
+                      contextId: currentJoin.contextId ?? currentJoin.joinId,
+                      branchName: sourceLane.branchName,
+                      featureWorktreePath: sourceWorktreePath,
+                      targetBranch,
+                      targetWorktreePath,
+                      message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
+                      conversationId,
+                      decisions: currentJoin.conflictGuidance ?? undefined,
+                      resolutionContext,
+                      validationMode,
+                      workflowExecutionId: execution.id,
+                      // Final-publish joins land lanes on the session branch — still
+                      // inside the execution's own workspace. The join carries the
+                      // execution's provenance so the delivery gate enforces the proof
+                      // floor here, but delivery itself (finalPublish → Delivered)
+                      // belongs solely to the gated merge that lands on the project's
+                      // delivery target.
+                      ...(currentJoin.kind === "final_publish"
+                        ? {
+                            executionId: execution.id,
+                            finalPublish: false,
+                          }
+                        : {}),
+                    });
 
                   const first = await runMerge();
                   if (first.status !== "conflicts") return first;
@@ -262,6 +312,9 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             applyJoinProgress(e, joinId, now(), {
               status: "running",
               addMergedSourceLaneId: sourceLaneId,
+              ...(completedMergeValidationMode?.mode === "run"
+                ? { clearValidationDebt: true }
+                : { addValidationDebtSourceLaneId: sourceLaneId }),
             }),
           );
           const refreshed = execution.joins[joinId];

@@ -809,7 +809,7 @@ describe("workflowLiveEditOperationSchema", () => {
           },
         },
         contextValidator: { enabled: false, assignments: [] },
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: false },
         iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },
@@ -1148,7 +1148,7 @@ function createWorkflowDefaults() {
         },
       ],
     },
-    scriptValidator: { enabled: false },
+    scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
     iterationPolicy: {
@@ -1167,6 +1167,14 @@ function createWorkflowDefaults() {
       negotiationRounds: 3,
       autonomousResolutionThreshold: "minor",
     },
+    agentValidation: {
+      implementer: { mode: "all", except: [] },
+      contextValidator: { mode: "only", commands: [] },
+    },
+    laneMergeValidation: {
+      strategy: "final-only",
+      commands: { mode: "project" },
+    },
   };
 }
 
@@ -1176,7 +1184,7 @@ describe("workflowDefaultsSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.contextValidator.assignments).toHaveLength(1);
-      expect(result.data.scriptValidator.enabled).toBe(false);
+      expect(result.data.scriptValidator.commands).toEqual([]);
       expect(result.data.askUserQuestions.enabled).toBe(false);
       expect(result.data.collaboration.negotiationRounds).toBe(3);
     }
@@ -1210,34 +1218,34 @@ describe("workflowDefaultsSchema", () => {
 });
 
 describe("graphWorkflowScriptValidatorConfigSchema", () => {
-  it("accepts { enabled: true }", () => {
+  it("accepts an ordered command selection", () => {
     const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
-      enabled: true,
+      commands: ["typecheck", "test"],
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.enabled).toBe(true);
+      expect(result.data.commands).toEqual(["typecheck", "test"]);
     }
   });
 
-  it("accepts { enabled: false }", () => {
+  it("accepts an empty command selection as disabled", () => {
     const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
-      enabled: false,
+      commands: [],
     });
     expect(result.success).toBe(true);
   });
 
-  it("defaults enabled to false when the block is passed empty", () => {
+  it("defaults commands to an empty selection when the block is empty", () => {
     const result = graphWorkflowScriptValidatorConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.enabled).toBe(false);
+      expect(result.data.commands).toEqual([]);
     }
   });
 
-  it("rejects non-boolean enabled values", () => {
+  it("rejects the removed enabled flag", () => {
     const result = graphWorkflowScriptValidatorConfigSchema.safeParse({
-      enabled: "yes",
+      enabled: true,
     });
     expect(result.success).toBe(false);
   });
@@ -1246,11 +1254,11 @@ describe("graphWorkflowScriptValidatorConfigSchema", () => {
 describe("workflowConfigOverrideSchema scriptValidator", () => {
   it("accepts an override that sets scriptValidator", () => {
     const result = workflowConfigOverrideSchema.safeParse({
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["pre-merge"] },
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.scriptValidator?.enabled).toBe(true);
+      expect(result.data.scriptValidator?.commands).toEqual(["pre-merge"]);
     }
   });
 
@@ -1273,7 +1281,7 @@ describe("graphWorkflowExecutionContextDefinitionSchema scriptValidator", () => 
   it("accepts a context that sets scriptValidator", () => {
     const result = graphWorkflowExecutionContextDefinitionSchema.safeParse({
       ...base,
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["pre-merge"] },
     });
     expect(result.success).toBe(true);
   });
@@ -1309,22 +1317,22 @@ describe("graphWorkflowResolvedContextSchema scriptValidator", () => {
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   };
 
-  it("defaults scriptValidator to { enabled: false } when missing (legacy state)", () => {
+  it("defaults scriptValidator to an empty command selection when missing", () => {
     const result = graphWorkflowResolvedContextSchema.safeParse(base);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.scriptValidator).toEqual({ enabled: false });
+      expect(result.data.scriptValidator).toEqual({ commands: [] });
     }
   });
 
-  it("parses a resolved context with scriptValidator.enabled=true", () => {
+  it("parses a resolved context with selected script-validator commands", () => {
     const result = graphWorkflowResolvedContextSchema.safeParse({
       ...base,
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["pre-merge"] },
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.scriptValidator.enabled).toBe(true);
+      expect(result.data.scriptValidator.commands).toEqual(["pre-merge"]);
     }
   });
 });
@@ -2163,7 +2171,7 @@ describe("graphWorkflowHaltReasonSchema", () => {
     const result = graphWorkflowHaltReasonSchema.safeParse({
       type: "script_validator_missing_command",
       contextId: "ctx-1",
-      message: "Script validator enabled but preMergeCommand is not configured",
+      message: "Stored script-validator configuration was incomplete",
     });
     expect(result.success).toBe(true);
     if (
@@ -2171,7 +2179,7 @@ describe("graphWorkflowHaltReasonSchema", () => {
       result.data.type === "script_validator_missing_command"
     ) {
       expect(result.data.contextId).toBe("ctx-1");
-      expect(result.data.message).toContain("preMergeCommand");
+      expect(result.data.message).toContain("incomplete");
     }
   });
 

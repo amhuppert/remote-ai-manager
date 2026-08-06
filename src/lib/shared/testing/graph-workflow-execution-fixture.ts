@@ -75,6 +75,12 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           reason: "Task instructions come from the source workflow",
         },
       ],
+      // Workflow-scope lane-merge selection snapshot — non-default on every
+      // leaf so the round-trip harness proves both fields persist.
+      laneMergeValidation: {
+        strategy: "every-merge",
+        commands: { mode: "only", commands: ["typecheck"] },
+      },
       executionContexts: [
         {
           id: "ctx-1",
@@ -138,7 +144,8 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               },
             ],
           },
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["typecheck", "test"] },
+          scriptValidatorSource: "workflow",
           humanApprovalGate: { enabled: true },
           askUserQuestions: { enabled: true },
           mutability: { allowAgentTaskAdd: true },
@@ -207,6 +214,20 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             },
             negotiationRounds: { value: 5, source: "workflow" },
             autonomousResolutionThreshold: { value: "major", source: "global" },
+          },
+          agentValidation: {
+            implementer: {
+              value: { mode: "all", except: ["format"] },
+              source: "workflow",
+              // The seed-time expansion frozen against the registry as it
+              // stood at seed (design §6).
+              commands: ["typecheck", "test"],
+            },
+            contextValidator: {
+              value: { mode: "only", commands: ["test"] },
+              source: "per-node",
+              commands: ["test"],
+            },
           },
           charter: makeTestCharter(),
         },
@@ -516,6 +537,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         targetLaneId: "lane-1",
         sourceLaneIds: ["lane-2"],
         mergedSourceLaneIds: ["lane-2"],
+        validationDebtSourceLaneIds: ["lane-2"],
         status: "running",
         errorMessage: "retrying merge",
         conflicts: {

@@ -567,7 +567,7 @@ export const ValidatorsScriptOnly: Story = {
   args: {
     data: {
       context: makeContext({
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
       }),
       tasks: makeTasks(3),
       mode: "builder",
@@ -633,7 +633,7 @@ export const ValidatorsScriptPlusClaude: Story = {
   args: {
     data: {
       context: makeContext({
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
         contextValidator: {
           enabled: true,
           assignments: [
@@ -692,7 +692,7 @@ export const ValidatorsInheritedClaude: Story = {
             },
           ],
         },
-        scriptValidator: { enabled: false },
+        scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
@@ -741,7 +741,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
             },
           ],
         },
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
@@ -771,7 +771,7 @@ export const ApprovalGateWithScript: Story = {
   args: {
     data: {
       context: makeContext({
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: true },
       }),
       tasks: makeTasks(3),
@@ -815,7 +815,7 @@ export const ApprovalGateWithValidators: Story = {
             },
           ],
         },
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },

@@ -34,6 +34,10 @@ const defaultConfig: GlobalConfig = {
   },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,
+  validation: {
+    concurrencyLimit: 8,
+    defaultTimeoutMs: 600_000,
+  },
   ignorePatterns,
   tailscaleEnabled: true,
 };
@@ -81,6 +85,10 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   maxConcurrentQueries: 5,
   preMergeTimeoutMs: 600_000,
   idleQuerySessionTtlMs: 1_800_000,
+  validation: {
+    concurrencyLimit: 6,
+    defaultTimeoutMs: 900_000,
+  },
   tailscaleEnabled: false,
   pushNotification: notificationConfig,
   workflowDefaults: {
@@ -124,6 +132,10 @@ const fullyConfiguredConfig: GlobalConfig = {
   maxConcurrentQueries: 5,
   preMergeTimeoutMs: 600_000,
   idleQuerySessionTtlMs: 1_800_000,
+  validation: {
+    concurrencyLimit: 6,
+    defaultTimeoutMs: 900_000,
+  },
   tailscaleEnabled: false,
   pushNotification: notificationConfig,
   workflowDefaults: {
@@ -152,7 +164,7 @@ const fullyConfiguredConfig: GlobalConfig = {
         },
       ],
     },
-    scriptValidator: { enabled: false },
+    scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
     iterationPolicy: {
@@ -171,6 +183,14 @@ const fullyConfiguredConfig: GlobalConfig = {
       },
       negotiationRounds: 3,
       autonomousResolutionThreshold: "minor",
+    },
+    agentValidation: {
+      implementer: { mode: "all", except: [] },
+      contextValidator: { mode: "only", commands: [] },
+    },
+    laneMergeValidation: {
+      strategy: "final-only",
+      commands: { mode: "project" },
     },
   },
   compaction: {
@@ -275,6 +295,17 @@ async function openAgentBackends(
   await canvas.findByText("Claude model");
 }
 
+async function openLimits(
+  canvas: Parameters<NonNullable<Story["play"]>>[0]["canvas"],
+) {
+  await userEvent.click(
+    await canvas.findByRole("tab", { name: "Limits & timeouts" }),
+  );
+  await canvas.findByRole("textbox", {
+    name: "Validation capacity",
+  });
+}
+
 export const Default = {
   decorators: [
     (Story) => (
@@ -327,6 +358,40 @@ export const AgentBackendsMobile = {
     },
   },
   play: async ({ canvas }) => openAgentBackends(canvas),
+} satisfies Story;
+
+export const LimitsAndTimeouts = {
+  decorators: [
+    (Story) => (
+      <WithMockData config={fullyConfiguredConfig} raw={fullyConfiguredRaw}>
+        <Story />
+      </WithMockData>
+    ),
+  ],
+  play: async ({ canvas }) => openLimits(canvas),
+} satisfies Story;
+
+export const LimitsAndTimeoutsMobile = {
+  decorators: [
+    (Story) => (
+      <WithMockData config={fullyConfiguredConfig} raw={fullyConfiguredRaw}>
+        <Story />
+      </WithMockData>
+    ),
+  ],
+  parameters: {
+    viewport: {
+      defaultViewport: "configMobile",
+      viewports: {
+        configMobile: {
+          name: "390 × 844",
+          styles: { width: "390px", height: "844px" },
+          type: "mobile",
+        },
+      },
+    },
+  },
+  play: async ({ canvas }) => openLimits(canvas),
 } satisfies Story;
 
 export const ClaudeHaikuNoEffort = {

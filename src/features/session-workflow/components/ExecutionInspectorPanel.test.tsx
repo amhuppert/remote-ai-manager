@@ -1797,6 +1797,27 @@ describe("ExecutionInspectorPanel — brief markdown + focus modal", () => {
     );
   }
 
+  function renderScriptSetup(scriptValidator: { commands: string[] }): Element {
+    const definition = createResolvedWorkflowDefinition();
+    definition.executionContexts = definition.executionContexts.map(
+      (context) =>
+        context.id === "context-plan"
+          ? { ...context, scriptValidator }
+          : context,
+    );
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution({ workingDefinition: definition })}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+    const strip = container.querySelector('[data-section="resolved-setup"]');
+    expect(strip).not.toBeNull();
+    return strip!;
+  }
+
   it("renders description and acceptance criteria as formatted markdown", async () => {
     renderDetail();
 
@@ -1841,6 +1862,20 @@ describe("ExecutionInspectorPanel — brief markdown + focus modal", () => {
     // Disabled gates render no chip.
     expect(strip!.textContent).not.toContain("Script");
     expect(strip!.textContent).not.toContain("Questions");
+  });
+
+  it("shows the Script chip when the command selection is non-empty", () => {
+    const strip = renderScriptSetup({
+      commands: ["typecheck"],
+    });
+
+    expect(strip.textContent).toContain("Script");
+  });
+
+  it("hides the Script chip when the command selection is empty", () => {
+    const strip = renderScriptSetup({ commands: [] });
+
+    expect(strip.textContent).not.toContain("Script");
   });
 });
 

@@ -22,15 +22,16 @@ import {
   type FetchInit,
   type GlobalFlags,
 } from "../shared";
+import { devServerRequestPath, inferDevCommandTarget } from "./dev-target";
 
 /**
  * `cctl fixture session create|delete / prompt / status` — test-state
  * scaffolding for live feature verification. Every verb targets the
- * session's WORKTREE DEV SERVER (resolved through the managing server's
- * dev-servers route), never the managing CC instance itself: fixtures
- * create and delete real sessions, and doing that against the production
- * DB is destructive. An explicit `--target` equal to the managing server
- * is refused for the same reason.
+ * invoking session or workflow context's WORKTREE DEV SERVER (resolved through
+ * the managing server's dev-servers route), never the managing CC instance
+ * itself: fixtures create and delete real sessions, and doing that against the
+ * production DB is destructive. An explicit `--target` equal to the managing
+ * server is refused for the same reason.
  *
  * Local dev servers do not enforce API auth, so requests to the target
  * carry no token; a 401 surfaces through the shared request mapping.
@@ -116,6 +117,14 @@ async function resolveFixtureTarget(
     };
   }
 
+  const inferred = inferDevCommandTarget(flags, env);
+  if (!inferred.ok) {
+    return {
+      ok: false,
+      result: usageFailure(inferred.message, json),
+    };
+  }
+
   const resolved = await resolveSessionContext(flags, env, host);
   if (!resolved.ok) return resolved;
   const context = resolved.context;
@@ -125,7 +134,7 @@ async function resolveFixtureTarget(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "GET",
-    path: `/api/projects/${encodePathSegment(context.project)}/sessions/${encodePathSegment(context.session)}/dev-servers`,
+    path: devServerRequestPath(context, inferred.target),
   });
   if (result.kind !== "ok") {
     return { ok: false, result: failureFromRequest(result, json) };
@@ -339,6 +348,7 @@ async function runSessionCreate(
       sessionName: name,
       conversationId,
       target: target.url,
+      worktreePath: target.worktreePath,
       urls,
       ...paths,
       hint,

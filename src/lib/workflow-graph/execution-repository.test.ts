@@ -1,6 +1,6 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { GlobalConfig } from "@/lib/config/schemas";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { computeCharterHash } from "./charter/render";
@@ -39,7 +39,10 @@ interface CapturedWrite {
   contents: string;
 }
 
-function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
+function createInMemoryRepo(
+  config: GlobalConfig = {} as GlobalConfig,
+  repoConfig: PerRepoConfig | null = null,
+) {
   const sessions = new Map<string, SessionState>();
   const broadcasts: GraphWorkflowSSEEvent[] = [];
   const writes: CapturedWrite[] = [];
@@ -109,6 +112,7 @@ function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
     eventPublisher,
     charterService,
     readConfig: async () => config,
+    readRepoConfig: async () => repoConfig,
   });
 
   return { repo, sessions, broadcasts, writes, appendedEvents, mutateCalls };
@@ -179,6 +183,50 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         launchedTier: "project",
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
+  });
+
+  it("rejects a start whose selectors name commands the project registry lacks", async () => {
+    const { repo, sessions } = createInMemoryRepo({} as GlobalConfig, {
+      validation: {
+        commands: {
+          typecheck: {
+            command: "scripts/validate/typecheck.sh",
+            cost: 2,
+            scopeArgs: "forbid",
+          },
+        },
+        preMerge: ["typecheck"],
+      },
+    });
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        scriptValidator: { commands: ["typecheck", "ghost"] },
+      },
+    });
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition,
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
+      }),
+    ).rejects.toMatchObject({
+      name: "GraphWorkflowValidationError",
+      errors: [
+        expect.objectContaining({
+          code: "unknown-validation-command",
+          field: "workflowConfig.scriptValidator.commands.1",
+        }),
+      ],
+    });
+    // Fails before any execution state is written.
+    expect(
+      sessions.get("/repo:session-1")?.graphWorkflowExecution ?? null,
+    ).toBeNull();
   });
 
   it("creates an execution successfully for a valid definition", async () => {
@@ -438,6 +486,292 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     expect(byId["context-implement"]?.contextValidator).toEqual({
       enabled: false,
       assignments: [],
+    });
+  });
+
+  it("expands and freezes agent selectors to explicit names at seed time", async () => {
+    const { repo } = createInMemoryRepo({} as GlobalConfig, {
+      validation: {
+        commands: {
+          typecheck: {
+            command: "scripts/validate/typecheck.sh",
+            cost: 2,
+            scopeArgs: "forbid",
+          },
+          test: {
+            command: "scripts/validate/test.sh",
+            cost: 8,
+            scopeArgs: "paths",
+          },
+          format: {
+            command: "scripts/validate/format.sh",
+            cost: 1,
+            scopeArgs: "forbid",
+          },
+        },
+        preMerge: ["typecheck", "test"],
+      },
+    });
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        agentValidation: {
+          implementer: { mode: "all", except: ["format"] },
+        },
+      },
+    });
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
+    });
+
+    const byId = Object.fromEntries(
+      execution.workingDefinition.executionContexts.map((context) => [
+        context.id,
+        context,
+      ]),
+    );
+    // `mode:"all"` expands against the registry AT SEED so later registry
+    // additions never broaden a running execution (design §6). context-plan
+    // inherits the workflow tier's `all except format`; context-implement's
+    // own `all except []` override expands to the full registry.
+    expect(byId["context-plan"]?.agentValidation?.implementer.commands).toEqual(
+      ["typecheck", "test"],
+    );
+    expect(
+      byId["context-implement"]?.agentValidation?.implementer.commands,
+    ).toEqual(["typecheck", "test", "format"]);
+    for (const context of execution.workingDefinition.executionContexts) {
+      // The seeded context-validator default is `{mode:"only", commands:[]}`.
+      expect(context.agentValidation?.contextValidator.commands).toEqual([]);
+    }
+  });
+
+  it("rejects a start whose INHERITED global selector names an unknown command", async () => {
+    const { repo, sessions } = createInMemoryRepo(
+      {
+        workflowDefaults: {
+          agentValidation: {
+            implementer: { mode: "all", except: ["ghost"] },
+            contextValidator: { mode: "only", commands: [] },
+          },
+        },
+      } as unknown as GlobalConfig,
+      {
+        validation: {
+          commands: {
+            typecheck: {
+              command: "scripts/validate/typecheck.sh",
+              cost: 2,
+              scopeArgs: "forbid",
+            },
+          },
+          preMerge: ["typecheck"],
+        },
+      },
+    );
+
+    // The definition itself writes no selector: the unknown name arrives
+    // purely through the global-defaults tier, so only the resolved-tier
+    // preflight can catch it. `workflowConfig: {}` clears the fixture's own
+    // workflow-tier blocks so the global tier is what resolves.
+    const baseline = createWorkflowDefinition({ workflowConfig: {} });
+    const definition = {
+      ...baseline,
+      executionContexts: baseline.executionContexts.map((context) => {
+        const { agentValidation: _agentValidation, ...rest } = context;
+        return rest;
+      }),
+    };
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition,
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
+      }),
+    ).rejects.toMatchObject({
+      name: "GraphWorkflowValidationError",
+      errors: expect.arrayContaining([
+        expect.objectContaining({
+          code: "unknown-validation-command",
+          field: expect.stringContaining("agentValidation.implementer"),
+        }),
+      ]),
+    });
+    expect(
+      sessions.get("/repo:session-1")?.graphWorkflowExecution ?? null,
+    ).toBeNull();
+  });
+
+  it("rejects an inherited oversized selection at start before writing execution state", async () => {
+    const { repo, sessions } = createInMemoryRepo(
+      {
+        validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+        workflowDefaults: {
+          agentValidation: {
+            implementer: { mode: "only", commands: ["test"] },
+            contextValidator: { mode: "only", commands: [] },
+          },
+        },
+      } as unknown as GlobalConfig,
+      {
+        validation: {
+          commands: {
+            test: {
+              command: "scripts/validate/test.sh",
+              cost: 5,
+              scopeArgs: "paths",
+            },
+          },
+          preMerge: ["test"],
+        },
+      },
+    );
+    const baseline = createWorkflowDefinition({ workflowConfig: {} });
+    const definition = {
+      ...baseline,
+      executionContexts: baseline.executionContexts.map((context) => {
+        const { agentValidation: _agentValidation, ...rest } = context;
+        return rest;
+      }),
+    };
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition,
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
+      }),
+    ).rejects.toMatchObject({
+      name: "GraphWorkflowValidationError",
+      errors: expect.arrayContaining([
+        expect.objectContaining({
+          code: "validation_cost_exceeds_limit",
+          field: expect.stringContaining(
+            "agentValidation.implementer.value.commands.0",
+          ),
+          message: expect.stringMatching(/cost 5.*limit 4.*lower-worker/),
+        }),
+      ]),
+    });
+    expect(
+      sessions.get("/repo:session-1")?.graphWorkflowExecution ?? null,
+    ).toBeNull();
+  });
+
+  it("snapshots the resolved laneMergeValidation onto the working definition", async () => {
+    const { repo } = createInMemoryRepo({} as GlobalConfig, {
+      validation: {
+        commands: {
+          typecheck: {
+            command: "scripts/validate/typecheck.sh",
+            cost: 2,
+            scopeArgs: "forbid",
+          },
+        },
+        preMerge: ["typecheck"],
+      },
+    });
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        laneMergeValidation: {
+          strategy: "every-merge",
+          commands: { mode: "only", commands: ["typecheck"] },
+        },
+      },
+    });
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
+    });
+
+    expect(execution.workingDefinition.laneMergeValidation).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "only", commands: ["typecheck"] },
+    });
+  });
+
+  it("snapshots the seeded laneMergeValidation defaults when no tier overrides", async () => {
+    const { repo } = createInMemoryRepo();
+    const execution = await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
+    });
+
+    expect(execution.workingDefinition.laneMergeValidation).toEqual({
+      strategy: "final-only",
+      commands: { mode: "project" },
+    });
+  });
+
+  it("rejects a start whose inherited laneMergeValidation names an unknown command", async () => {
+    const { repo } = createInMemoryRepo(
+      {
+        workflowDefaults: {
+          laneMergeValidation: {
+            strategy: "final-only",
+            commands: { mode: "only", commands: ["ghost"] },
+          },
+        },
+      } as unknown as GlobalConfig,
+      {
+        validation: {
+          commands: {
+            typecheck: {
+              command: "scripts/validate/typecheck.sh",
+              cost: 2,
+              scopeArgs: "forbid",
+            },
+          },
+          preMerge: ["typecheck"],
+        },
+      },
+    );
+
+    // `workflowConfig: {}` clears the fixture's workflow-tier lane-merge
+    // block so the global default (naming "ghost") is what resolves.
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition({ workflowConfig: {} }),
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
+      }),
+    ).rejects.toMatchObject({
+      name: "GraphWorkflowValidationError",
+      errors: expect.arrayContaining([
+        expect.objectContaining({
+          code: "unknown-validation-command",
+          field: "laneMergeValidation.commands.commands.0",
+        }),
+      ]),
     });
   });
 

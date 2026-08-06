@@ -11,6 +11,7 @@ import { runFixture } from "./commands/fixture";
 import { runNotify } from "./commands/notify";
 import { runSpec } from "./commands/spec";
 import { runTicket } from "./commands/ticket";
+import { runValidate } from "./commands/validate";
 import { runWorkflow } from "./commands/workflow";
 import { fetchHelpContext } from "./help-context";
 import {
@@ -224,6 +225,15 @@ export async function runCli(
     // The parse failed, so flags.json is unavailable — honor a literal --json.
     return usageFailure(parsed.message, argv.includes("--json"));
   }
+  const acceptsPassthrough =
+    parsed.positionals[0] === "validate" && parsed.positionals[1] === "run";
+  if (parsed.passthrough.length > 0 && !acceptsPassthrough) {
+    const commandPath = parsed.positionals.join(" ") || "cctl";
+    return usageFailure(
+      `${commandPath} does not accept arguments after '--'`,
+      parsed.flags.json,
+    );
+  }
   const result = await dispatchCli(parsed, env, host);
 
   // Soft location nudge for `--file` payloads, applied centrally so every
@@ -245,7 +255,7 @@ async function dispatchCli(
   env: CliEnv,
   host: CliHost,
 ): Promise<CliResult> {
-  const { positionals, flags, values, lists } = parsed;
+  const { positionals, flags, values, lists, passthrough } = parsed;
   const command = positionals[0];
 
   // Help is intercepted before dispatch so every command gets it without
@@ -298,6 +308,17 @@ async function dispatchCli(
 
   if (command === "agent") {
     return runAgent(positionals.slice(1), flags, values, env, host);
+  }
+
+  if (command === "validate") {
+    return runValidate(
+      positionals.slice(1),
+      passthrough,
+      flags,
+      values,
+      env,
+      host,
+    );
   }
 
   if (command === "conversation") {

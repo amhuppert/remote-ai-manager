@@ -2,6 +2,8 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowAgentConfig,
+  GraphWorkflowCommandSelector,
+  GraphWorkflowLaneMergeValidationConfig,
   SeededAgentAssignment,
   SeededValidatorCohort,
   ValidatorAssignment,
@@ -109,6 +111,16 @@ export interface LiveOutlineCollaborationSummary {
   autonomousResolutionThreshold: string;
 }
 
+export interface LiveOutlineScriptValidatorSummary {
+  commands: string[];
+}
+
+/** The concrete per-role command selections from the seed-time snapshot. */
+export interface LiveOutlineAgentValidationSummary {
+  implementer: GraphWorkflowCommandSelector;
+  contextValidator: GraphWorkflowCommandSelector;
+}
+
 export interface LiveOutlineContextConfig {
   contextId: string;
   implementer: LiveOutlineImplementerSummary;
@@ -124,11 +136,13 @@ export interface LiveOutlineContextConfig {
    * actually holds — omitting them would make re-enabling one a blind edit.
    */
   validators: LiveOutlineValidatorSummary[];
-  scriptValidator: boolean;
+  scriptValidator: LiveOutlineScriptValidatorSummary;
   humanApprovalGate: boolean;
   askUserQuestions: boolean;
   /** `null` when no resolved collaboration snapshot exists (legacy executions). */
   collaboration: LiveOutlineCollaborationSummary | null;
+  /** `null` when no selector snapshot exists (pre-snapshot executions). */
+  agentValidation: LiveOutlineAgentValidationSummary | null;
 }
 
 /**
@@ -152,6 +166,7 @@ export type LiveOutlineResolvedConfig = Pick<
   | "circuitBreaker"
   | "mutability"
   | "planRepair"
+  | "agentValidation"
   // Context identity rather than a cascade result, but it belongs to the same
   // read-back: an agent about to edit a context needs its declared output
   // contract, and the edit tiers address it here. Optional — absent on contexts
@@ -250,6 +265,13 @@ export interface LiveOutline {
   contexts: LiveOutlineContext[];
   tasks: LiveOutlineTask[];
   config: LiveOutlineContextConfig[];
+  /**
+   * The workflow-scope lane-merge validation selection, straight from the
+   * seed-time `workingDefinition` snapshot (workflow tier only — the gate
+   * guards the shared fan-in target, so no per-context copy exists). `null`
+   * for executions seeded before the snapshot existed.
+   */
+  laneMergeValidation: GraphWorkflowLaneMergeValidationConfig | null;
 }
 
 export type LiveOutlineSelector =
@@ -402,10 +424,18 @@ function summarizeConfig(
     },
     validatorCohortEnabled: context.contextValidator.enabled,
     validators: summarizeValidators(context.contextValidator),
-    scriptValidator: context.scriptValidator.enabled,
+    scriptValidator: {
+      commands: context.scriptValidator.commands,
+    },
     humanApprovalGate: context.humanApprovalGate.enabled,
     askUserQuestions: context.askUserQuestions.enabled,
     collaboration: summarizeCollaboration(context.collaboration),
+    agentValidation: context.agentValidation
+      ? {
+          implementer: context.agentValidation.implementer.value,
+          contextValidator: context.agentValidation.contextValidator.value,
+        }
+      : null,
   };
 }
 
@@ -433,6 +463,9 @@ function resolveFullConfig(
     // than an explicit `undefined` in the JSON the CLI/inspector reads back.
     ...(context.outputSchema !== undefined
       ? { outputSchema: context.outputSchema }
+      : {}),
+    ...(context.agentValidation !== undefined
+      ? { agentValidation: context.agentValidation }
       : {}),
     collaboration: context.collaboration ?? null,
   };
@@ -666,6 +699,8 @@ export function projectLiveOutline(
         sizedTaskRow(execution, task),
       ),
       config: contexts.map((context) => summarizeConfig(context)),
+      laneMergeValidation:
+        execution.workingDefinition.laneMergeValidation ?? null,
     },
   };
 }

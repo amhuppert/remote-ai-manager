@@ -182,7 +182,15 @@ export function createWorkflowDefinition(
 ): WorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
-    workflowConfig: {},
+    // Carries the workflow-only lane-merge block (its single legal tier) with
+    // values equal to the seeded defaults, so cascade outcomes are unchanged
+    // while every surface that round-trips the definition exercises the field.
+    workflowConfig: {
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
+    },
     charter: makeTestCharter(),
     parameters: [],
     prerequisites: [],
@@ -216,6 +224,15 @@ export function createWorkflowDefinition(
           model: "sonnet",
           reasoningEffort: "medium",
         }),
+        // Name-free selector override (equal to the seeded default value) so
+        // fixture consumers never need a validation registry to be valid.
+        agentValidation: {
+          implementer: { mode: "all", except: [] },
+        },
+        // Explicit empty selection — the post-cutover disabled state. Carries
+        // the `commands` key (name-free) so every surface that round-trips
+        // the definition must preserve `[]` as distinct from an absent list.
+        scriptValidator: { commands: [] },
         mutability: {
           allowAgentTaskAdd: false,
         },
@@ -325,6 +342,12 @@ export function createResolvedWorkflowDefinition(
   const source = createWorkflowDefinition();
   return {
     schemaVersion: source.schemaVersion,
+    // What production resolution snapshots at seed time from the fixture's
+    // workflow-tier block (values equal to the seeded defaults).
+    laneMergeValidation: {
+      strategy: "final-only",
+      commands: { mode: "project" },
+    },
     executionContexts: source.executionContexts.map((ctx) => ({
       id: ctx.id,
       title: ctx.title,
@@ -344,7 +367,8 @@ export function createResolvedWorkflowDefinition(
         enabled: false,
         assignments: [],
       }),
-      scriptValidator: ctx.scriptValidator ?? { enabled: false },
+      scriptValidator: ctx.scriptValidator ?? { commands: [] },
+      scriptValidatorSource: ctx.scriptValidator ? "per-node" : "global",
       humanApprovalGate: ctx.humanApprovalGate ?? { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: ctx.mutability ?? { allowAgentTaskAdd: false },
@@ -356,6 +380,21 @@ export function createResolvedWorkflowDefinition(
       planRepair: ctx.planRepair ?? {
         enabled: true,
         maxAttemptsPerContext: 2,
+      },
+      // Matches what production resolution now snapshots on every context:
+      // the seeded role-selector defaults plus the seed-time expansion frozen
+      // against an empty registry (name-free, registry-independent).
+      agentValidation: {
+        implementer: {
+          value: { mode: "all", except: [] },
+          source: "global",
+          commands: [],
+        },
+        contextValidator: {
+          value: { mode: "only", commands: [] },
+          source: "global",
+          commands: [],
+        },
       },
     })),
     tasks: source.tasks,

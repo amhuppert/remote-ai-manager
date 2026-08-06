@@ -1,13 +1,19 @@
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { validationCommandNameSchema } from "@/lib/validation/schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import {
+  DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
   DEFAULT_PLAN_REPAIR_POLICY,
   agentAssignmentSchema,
+  graphWorkflowAgentValidationOverrideSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
+  graphWorkflowCommandSelectorSchema,
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
+  graphWorkflowLaneMergeValidationConfigSchema,
+  graphWorkflowLaneMergeValidationOverrideSchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
@@ -16,6 +22,7 @@ import {
   validatorCohortSchema,
 } from "./config-schemas";
 import {
+  collaborationConfigSourceSchema,
   resolvedCollaborationConfigSchema,
   workflowCollaborationConfigOverrideSchema,
 } from "./collaboration-schemas";
@@ -31,6 +38,12 @@ export const workflowConfigOverrideSchema = z.object({
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
+  agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
+  // Workflow tier only — deliberately absent from the execution-context
+  // definition: the lane-merge gate guards the shared fan-in target, so a
+  // per-context override would be ambiguous (validation-concurrency §6).
+  laneMergeValidation:
+    graphWorkflowLaneMergeValidationOverrideSchema.optional(),
 });
 export type WorkflowConfigOverride = z.infer<
   typeof workflowConfigOverrideSchema
@@ -90,6 +103,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
+  agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
   origin: workflowOriginSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
@@ -294,6 +308,29 @@ export type WorkflowSemanticDefinition = z.infer<
   typeof workflowSemanticDefinitionSchema
 >;
 
+// Resolved per-role validation allowlists with the same per-field provenance
+// contract as resolved collaboration: each role selector resolves
+// independently (per-node → workflow → global), so one resolved block can
+// carry two distinct sources.
+const resolvedAgentValidationSelectorSchema = z.object({
+  value: graphWorkflowCommandSelectorSchema,
+  source: collaborationConfigSourceSchema,
+  // The selector expanded to explicit command names against the project
+  // registry when the execution was seeded (or when a live edit rewrote this
+  // role) — enforcement and prompts read THIS, so later registry edits never
+  // broaden a running execution (design §6). Absent on rows frozen before the
+  // snapshot existed; policy treats absence as legacy.
+  commands: z.array(validationCommandNameSchema).optional(),
+});
+
+export const resolvedAgentValidationConfigSchema = z.object({
+  implementer: resolvedAgentValidationSelectorSchema,
+  contextValidator: resolvedAgentValidationSelectorSchema,
+});
+export type ResolvedAgentValidationConfig = z.infer<
+  typeof resolvedAgentValidationConfigSchema
+>;
+
 export const graphWorkflowResolvedContextSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -315,8 +352,11 @@ export const graphWorkflowResolvedContextSchema = z.object({
   // re-enabled without having lost who was configured to review (R2).
   contextValidator: seededValidatorCohortSchema,
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.default({
-    enabled: false,
+    commands: [],
   }),
+  // Provenance for the script command selection frozen into this resolved
+  // context. Optional for executions seeded before selector provenance existed.
+  scriptValidatorSource: collaborationConfigSourceSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.default({
     enabled: false,
   }),
@@ -338,6 +378,11 @@ export const graphWorkflowResolvedContextSchema = z.object({
   // field existed have no snapshot; the lane tool context falls back to a
   // saved-definition reload only for those legacy rows.
   collaboration: resolvedCollaborationConfigSchema.optional(),
+  // Resolved per-role validation allowlists (with provenance), snapshotted at
+  // seed time like collaboration. `.optional()` because executions seeded
+  // before the field existed have no snapshot; policy enforcement treats
+  // absence as the seeded defaults.
+  agentValidation: resolvedAgentValidationConfigSchema.optional(),
   charter: workflowCharterSchema.optional(),
 });
 export type GraphWorkflowResolvedContext = z.infer<
@@ -349,6 +394,15 @@ export const resolvedWorkflowSemanticDefinitionSchema = z.object({
   approvalRequired: z.boolean().optional(),
   origin: workflowOriginSchema.optional(),
   lockedRegions: z.array(workflowLockedRegionSchema).optional(),
+  // The workflow-scope lane-merge validation selection, resolved (global →
+  // workflow) and snapshotted at seed time so merge submissions read the
+  // execution's own record, never the saved definition. Workflow tier only —
+  // the gate guards the shared fan-in target, so no per-context copy exists
+  // (validation-concurrency §6). The default materializes the approved seeded
+  // policy for persisted executions created before this snapshot existed.
+  laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.default(
+    DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
+  ),
   executionContexts: z.array(graphWorkflowResolvedContextSchema).default([]),
   tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
   edges: z.array(graphWorkflowContextEdgeSchema).default([]),

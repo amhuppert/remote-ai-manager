@@ -12,6 +12,10 @@ import type {
   FixValidationInput,
   FixValidationOutput,
 } from "../validation-fix/actors";
+import {
+  nonRemediableValidationError,
+  validationFixLoopError,
+} from "../validation-fix/actors";
 
 // ============================================================
 // Typed Actor Helpers
@@ -49,6 +53,18 @@ function mockFixValidation(
   );
 }
 
+function validationFailure(message: string): Error {
+  return validationFixLoopError(
+    {
+      status: "fail",
+      kind: "script_validation",
+      reason: message,
+      details: { failureClass: "validation_failed", timedOut: false },
+    },
+    "",
+  );
+}
+
 // ============================================================
 // Default Test Machine
 // ============================================================
@@ -61,6 +77,11 @@ const defaultInput: CommitInput = {
   worktreePath: "/projects/app/.worktrees/test-session",
   branchName: "csm/test-session",
   message: "feat: add feature",
+  validationMode: {
+    mode: "run",
+    source: "smart_commit",
+    selection: { mode: "project-pre-merge" },
+  },
 };
 
 type ActorOverrides = {
@@ -149,6 +170,30 @@ describe("commitMachine", () => {
   });
 
   describe("validation failure with auto-fix", () => {
+    it("fails without dispatching the fix actor for an infrastructure outcome", async () => {
+      let fixCallCount = 0;
+      const states: string[] = [];
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw nonRemediableValidationError("validation service unavailable");
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount += 1;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.subscribe((snapshot) => states.push(String(snapshot.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("validation service unavailable");
+      expect(fixCallCount).toBe(0);
+      expect(states).not.toContain("fixingValidation");
+    });
+
     it("validation fails → fix → re-validate → completed", async () => {
       let validationCallCount = 0;
       const states: string[] = [];
@@ -160,7 +205,7 @@ describe("commitMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount === 1) {
-            throw new Error("typecheck failed: TS2345");
+            throw validationFailure("typecheck failed: TS2345");
           }
           return null;
         }),
@@ -187,7 +232,7 @@ describe("commitMachine", () => {
     it("fix fails (returns status: failed) → failed", async () => {
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("lint errors");
+          throw validationFailure("lint errors");
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "failed",
@@ -205,7 +250,7 @@ describe("commitMachine", () => {
     it("fix throws error → failed", async () => {
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("lint errors");
+          throw validationFailure("lint errors");
         }),
         fixValidation: mockFixValidation(async () => {
           throw new Error("SDK unavailable");
@@ -232,7 +277,7 @@ describe("commitMachine", () => {
           validationCallCount++;
           // First two calls fail (initial validation + first revalidation)
           if (validationCallCount <= 2) {
-            throw new Error(`Validation error #${validationCallCount}`);
+            throw validationFailure(`Validation error #${validationCallCount}`);
           }
           // Third call (second revalidation) succeeds
           return null;
@@ -266,7 +311,7 @@ describe("commitMachine", () => {
 
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("persistent error");
+          throw validationFailure("persistent error");
         }),
         fixValidation: mockFixValidation(async () => {
           fixCallCount++;
@@ -323,7 +368,7 @@ describe("commitMachine", () => {
           validationCallCount++;
           // First validation fails normally (fixable), revalidation times out.
           if (validationCallCount === 1) {
-            throw new Error("typecheck failed: TS2345");
+            throw validationFailure("typecheck failed: TS2345");
           }
           throw Object.assign(
             new Error("Pre-merge validation timed out after 300s"),
@@ -364,7 +409,7 @@ describe("commitMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount === 1) {
-            throw new Error("lint errors");
+            throw validationFailure("lint errors");
           }
           return null;
         }),
@@ -395,7 +440,7 @@ describe("commitMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount <= 2) {
-            throw new Error(`error ${validationCallCount}`);
+            throw validationFailure(`error ${validationCallCount}`);
           }
           return null;
         }),
@@ -421,7 +466,7 @@ describe("commitMachine", () => {
 
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("error");
+          throw validationFailure("error");
         }),
         fixValidation: mockFixValidation(async () => {
           fixCallCount++;
@@ -465,7 +510,7 @@ describe("commitMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount === 1) {
-            throw new Error("errors");
+            throw validationFailure("errors");
           }
           return null;
         }),
@@ -543,6 +588,7 @@ describe("commitMachine", () => {
       await toPromise(actor);
 
       expect(received?.targetBranch).toBe("csm/parent");
+      expect(received?.source).toBe("smart_commit");
     });
   });
 
@@ -553,7 +599,7 @@ describe("commitMachine", () => {
           hash: "user-commit-abc",
         })),
         runValidation: mockRunValidation(async () => {
-          throw new Error("validation failed");
+          throw validationFailure("validation failed");
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "failed",

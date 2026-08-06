@@ -69,12 +69,23 @@ export interface CliHost {
   readFileBytes(filePath: string): Promise<Uint8Array<ArrayBuffer> | null>;
   /** Write a UTF-8 output file for commands with an explicit output target. */
   writeTextFile?(filePath: string, content: string): Promise<void>;
+  /** Persist a secret-bearing UTF-8 file with owner-only permissions. */
+  writePrivateTextFile?(filePath: string, content: string): Promise<void>;
+  /** Remove one exact file path; implementations ignore an absent file. */
+  removeFile?(filePath: string): Promise<void>;
   /**
    * Pause for `ms` milliseconds. Injected so polling commands (e.g. `dev
    * ensure`, which blocks until liveness) stay pure — tests supply an instant
    * fake so the loop advances without real time.
    */
   sleep(ms: number): Promise<void>;
+  /** Stream human progress before the command's final result is available. */
+  writeStdout?(text: string): void;
+  /**
+   * Observe termination signals for commands that own a server-side lease.
+   * The returned cleanup removes both listeners.
+   */
+  onSignal?(listener: (signal: "SIGINT" | "SIGTERM") => void): () => void;
   platform: string;
   homedir: string;
 }
@@ -117,6 +128,8 @@ export type ParsedArgv =
       values: Record<string, string>;
       /** Every occurrence of each value flag, in argv order, for repeatable flags (e.g. `ask --option a --option b`). */
       lists: Record<string, string[]>;
+      /** Values after the literal `--`; only commands with typed passthrough consume them. */
+      passthrough: string[];
     }
   | { kind: "error"; message: string };
 
@@ -160,10 +173,15 @@ export function parseArgv(
   const values: Record<string, string> = {};
   const lists: Record<string, string[]> = {};
   const positionals: string[] = [];
+  let passthrough: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === undefined) continue;
+    if (arg === "--") {
+      passthrough = argv.slice(i + 1);
+      break;
+    }
     if (arg === "--version") {
       positionals.push("version");
       continue;
@@ -208,7 +226,7 @@ export function parseArgv(
     if (isValueFlag(name)) flags[name] = value;
   }
 
-  return { kind: "ok", positionals, flags, values, lists };
+  return { kind: "ok", positionals, flags, values, lists, passthrough };
 }
 
 /**

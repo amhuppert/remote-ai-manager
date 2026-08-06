@@ -72,6 +72,10 @@ function cascade(
 ): CascadeWorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
+    laneMergeValidation: {
+      strategy: "final-only",
+      commands: { mode: "project" },
+    },
     executionContexts: [
       {
         id: "ctx-1",
@@ -86,7 +90,7 @@ function cascade(
           agent: CLAUDE_AGENT,
         },
         contextValidator,
-        scriptValidator: { enabled: false },
+        scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },

@@ -24,7 +24,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import { materializeGlobalConfig } from "@/lib/config/loader";
 import {
   rawGlobalConfigSchema,
-  workflowDefaultsSchema,
+  type WorkflowDefaults,
 } from "@/lib/config/schemas";
 import { assertDefinitionRecordSupported } from "@/lib/workflow-graph/schema-cutover-guard";
 import { isResumableHalt } from "@/lib/workflow-graph/lifecycle-classifier";
@@ -43,6 +43,7 @@ import { PersistenceError } from "../../shared/errors";
 import { createSessionsRepo } from "../sessions-repo";
 import { _createTestDbAtPath } from "../state-db";
 import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
+import { scriptValidatorCommands } from "./0013-script-validator-commands";
 
 type Db = InstanceType<typeof BetterSqlite3>;
 
@@ -369,6 +370,39 @@ function runCutover(world: LegacyWorld): Promise<string[]> {
   ]);
 }
 
+/**
+ * The assignment cutover and the script-validator command cutover were authored
+ * on two branches and both rewrite `workflowDefaults`. Startup runs them in
+ * registry order, and only the pair leaves `config.json` in a shape the loader
+ * accepts: this migration carries `scriptValidator` across untouched, and `0013`
+ * maps its retired `enabled` flag onto the command selection. Tests that assert
+ * loadability run the pair; tests whose subject is THIS migration's own
+ * behaviour still run it alone.
+ */
+function runConfigCutoverChain(world: LegacyWorld): Promise<string[]> {
+  return runMigrations({ db: world.db, configDir: world.configDir }, [
+    workflowAgentAssignments,
+    scriptValidatorCommands,
+  ]);
+}
+
+/**
+ * `config.json` holds the RAW shape — blocks the loader materializes are absent
+ * from disk — so loadability is proven through the loader that production uses,
+ * not by demanding the migration write blocks it never owned.
+ */
+function loadMigratedWorkflowDefaults(configDir: string): WorkflowDefaults {
+  const defaults = materializeGlobalConfig(
+    rawGlobalConfigSchema.parse(readConfig(configDir)),
+  ).workflowDefaults;
+  // Every caller seeds a config that carries the block; losing it would be the
+  // migration dropping operator configuration, not an optional-field case.
+  if (defaults === undefined) {
+    throw new Error("migrated config.json carries no workflowDefaults block");
+  }
+  return defaults;
+}
+
 function readConfig(configDir: string): Record<string, unknown> {
   return JSON.parse(
     readFileSync(path.join(configDir, "config.json"), "utf-8"),
@@ -410,15 +444,10 @@ describe("0011-workflow-agent-assignments", () => {
   it("rewrites config.json workflowDefaults onto assignments, materializing omitted Codex optionals", async () => {
     const world = seedLegacyWorld();
 
-    await runCutover(world);
+    await runConfigCutoverChain(world);
 
-    const defaults = (
-      readConfig(world.configDir) as {
-        workflowDefaults: unknown;
-      }
-    ).workflowDefaults;
-    // Loadable through the LIVE schema: the cutover produced current bytes.
-    expect(workflowDefaultsSchema.parse(defaults)).toMatchObject({
+    // Loadable through the LIVE loader: the cutover produced current bytes.
+    expect(loadMigratedWorkflowDefaults(world.configDir)).toMatchObject({
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -461,14 +490,13 @@ describe("0011-workflow-agent-assignments", () => {
     };
     const world = seedLegacyWorld(config);
 
-    await expect(runCutover(world)).resolves.toContain(MIGRATION_NAME);
+    await expect(runConfigCutoverChain(world)).resolves.toContain(
+      MIGRATION_NAME,
+    );
 
-    const defaults = (
-      readConfig(world.configDir) as { workflowDefaults: unknown }
-    ).workflowDefaults;
     expect(
-      workflowDefaultsSchema.parse(defaults).contextValidator?.assignments[0]
-        ?.agent,
+      loadMigratedWorkflowDefaults(world.configDir).contextValidator
+        ?.assignments[0]?.agent,
     ).toEqual({
       backend: "codex",
       model: "gpt-5.4",
@@ -767,14 +795,13 @@ describe("0011-workflow-agent-assignments", () => {
     };
     const world = seedLegacyWorld(config);
 
-    await expect(runCutover(world)).resolves.toContain(MIGRATION_NAME);
+    await expect(runConfigCutoverChain(world)).resolves.toContain(
+      MIGRATION_NAME,
+    );
 
-    const migrated = (
-      readConfig(world.configDir) as { workflowDefaults: unknown }
-    ).workflowDefaults;
     expect(
-      workflowDefaultsSchema.parse(migrated).contextValidator?.assignments[0]
-        ?.agent,
+      loadMigratedWorkflowDefaults(world.configDir).contextValidator
+        ?.assignments[0]?.agent,
     ).toEqual({
       backend: "codex",
       model: "gpt-5.5",

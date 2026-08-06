@@ -1,6 +1,17 @@
 "use client";
 
+import { useState } from "react";
+import { Button } from "@/components/ui/Button";
+import { CheckboxField } from "@/components/ui/Checkbox";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
 import { cn } from "@/lib/ui/cn";
+import {
+  validationCommandNameSchema,
+  type ValidationCommandSummary,
+} from "@/lib/validation/schemas";
 import type {
   CollaborationAutonomousResolutionThreshold,
   WorkflowCollaborationConfig,
@@ -8,8 +19,12 @@ import type {
 import {
   PLAN_REPAIR_DEFAULT_AGENT,
   type AgentAssignment,
+  type GraphWorkflowAgentValidationConfig,
   type GraphWorkflowCircuitBreakerPolicy,
+  type GraphWorkflowCommandSelector,
   type GraphWorkflowIterationPolicy,
+  type GraphWorkflowLaneMergeCommandSelector,
+  type GraphWorkflowLaneMergeValidationConfig,
   type GraphWorkflowPlanRepairPolicy,
   type ValidatorAssignment,
 } from "@/lib/workflow-graph/config-schemas";
@@ -379,6 +394,424 @@ export function CollaborationEditor({
           }
           disabled={readOnly}
           ariaLabel="Auto-resolve threshold"
+        />
+      </FieldRow>
+    </div>
+  );
+}
+
+// ============================================================
+// Validation command selection (design: validation-concurrency §6)
+// ============================================================
+
+const COMMAND_HINT_CLASS =
+  "font-mono text-[0.7rem] leading-[1.5] text-text-tertiary";
+
+/**
+ * Ordered validation-registry command-name list.
+ *
+ * With `options` (the registry summaries for the editing scope) this is a
+ * command multi-select: a checkbox per registered command (annotated with its
+ * admission cost) toggles membership, appending on check so the chip row keeps
+ * showing run order. Selected names missing from the registry render as
+ * removable chips marked "unregistered" — they will fail closed server-side.
+ *
+ * Without `options` the registry is unavailable (fetch pending/failed), so the
+ * editor falls back to free-form entry: names are checked for shape only
+ * (kebab-case) and unknown names are rejected server-side at the project-bound
+ * boundaries (create/replace/start/live-edit).
+ */
+export function CommandNameListEditor({
+  value,
+  onChange,
+  disabled,
+  addLabel,
+  options,
+}: {
+  value: readonly string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+  /** Accessible name for the add input (e.g. "Add script validator command"). */
+  addLabel: string;
+  /** Registry summaries for this scope; undefined = registry unavailable. */
+  options?: readonly ValidationCommandSummary[];
+}): React.JSX.Element {
+  const [text, setText] = useState("");
+  const name = text.trim();
+  const canAdd =
+    !disabled &&
+    name.length > 0 &&
+    validationCommandNameSchema.safeParse(name).success &&
+    !value.includes(name);
+
+  const add = () => {
+    if (!canAdd) return;
+    onChange([...value, name]);
+    setText("");
+  };
+
+  const registered =
+    options !== undefined
+      ? new Set(options.map((option) => option.name))
+      : null;
+
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      {value.length > 0 ? (
+        <ul className="m-0 flex list-none flex-wrap gap-xs p-0">
+          {value.map((command) => (
+            <li
+              key={command}
+              className="inline-flex items-center gap-[5px] rounded-full border border-solid border-border-subtle bg-bg-raised py-[2px] pr-[4px] pl-[9px] font-mono text-[0.72rem] text-text-primary"
+            >
+              {command}
+              {registered !== null && !registered.has(command) ? (
+                <span
+                  className="font-mono text-[0.6rem] font-semibold tracking-[0.06em] text-amber uppercase"
+                  data-testid="command-chip-unregistered"
+                >
+                  unregistered
+                </span>
+              ) : null}
+              <button
+                type="button"
+                aria-label={`Remove ${command}`}
+                className="inline-flex size-[16px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent p-0 font-mono text-[0.72rem] leading-none text-text-tertiary transition-colors duration-150 focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 enabled:hover:bg-bg-hover enabled:hover:text-red disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={disabled}
+                onClick={() =>
+                  onChange(value.filter((entry) => entry !== command))
+                }
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {options !== undefined ? (
+        options.length > 0 ? (
+          <ul className="m-0 flex list-none flex-col gap-xs p-0">
+            {options.map((option) => {
+              const checked = value.includes(option.name);
+              return (
+                <li key={option.name}>
+                  <CheckboxField
+                    label={option.name}
+                    description={`cost ${option.cost}${
+                      option.description ? ` — ${option.description}` : ""
+                    }`}
+                    checked={checked}
+                    disabled={disabled}
+                    onCheckedChange={(next) => {
+                      if (next === true && !checked) {
+                        onChange([...value, option.name]);
+                      } else if (next !== true && checked) {
+                        onChange(
+                          value.filter((entry) => entry !== option.name),
+                        );
+                      }
+                    }}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <div className={COMMAND_HINT_CLASS}>
+            No validation commands are registered for this scope.
+          </div>
+        )
+      ) : (
+        <div className="flex items-center gap-xs">
+          <input
+            type="text"
+            className="w-[170px] rounded-sm border border-solid border-border-default bg-bg-surface px-[10px] py-[5px] font-mono text-[0.72rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
+            value={text}
+            placeholder="command-name"
+            aria-label={addLabel}
+            disabled={disabled}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                add();
+              }
+            }}
+          />
+          <Button variant="ghost" size="sm" disabled={!canAdd} onClick={add}>
+            Add
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function commandSelectorNames(
+  selector: GraphWorkflowCommandSelector,
+): readonly string[] {
+  return selector.mode === "all" ? selector.except : selector.commands;
+}
+
+function commandSelectorHint(selector: GraphWorkflowCommandSelector): string {
+  if (selector.mode === "all") {
+    return selector.except.length === 0
+      ? "Every registered validation command is allowed — including future registrations."
+      : "Every registered validation command is allowed except the listed names.";
+  }
+  return selector.commands.length === 0
+    ? "No validation commands are allowed."
+    : "Only the listed commands are allowed.";
+}
+
+/**
+ * Discriminated command selector: `all except […]` opts into future registry
+ * additions; `only […]` is stable and fail-closed. Switching modes resets the
+ * name list — the two lists mean opposite things.
+ */
+export function CommandSelectorEditor({
+  value,
+  onChange,
+  readOnly,
+  roleLabel,
+  options,
+}: {
+  value: GraphWorkflowCommandSelector;
+  onChange: (next: GraphWorkflowCommandSelector) => void;
+  readOnly?: boolean;
+  /** Names the control group for assistive tech (e.g. "Implementer"). */
+  roleLabel: string;
+  /** Registry summaries for this scope; undefined = registry unavailable. */
+  options?: readonly ValidationCommandSummary[];
+}): React.JSX.Element {
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      <SegmentedControl
+        aria-label={`${roleLabel} command mode`}
+        value={value.mode}
+        disabled={readOnly}
+        onValueChange={(mode) => {
+          if (readOnly || mode === value.mode) return;
+          onChange(
+            mode === "all"
+              ? { mode: "all", except: [] }
+              : { mode: "only", commands: [] },
+          );
+        }}
+      >
+        <SegmentedControlItem value="all">All except</SegmentedControlItem>
+        <SegmentedControlItem value="only">Only</SegmentedControlItem>
+      </SegmentedControl>
+      <CommandNameListEditor
+        value={commandSelectorNames(value)}
+        disabled={readOnly}
+        options={options}
+        addLabel={
+          value.mode === "all"
+            ? `Add ${roleLabel} exception`
+            : `Add ${roleLabel} command`
+        }
+        onChange={(names) =>
+          onChange(
+            value.mode === "all"
+              ? { mode: "all", except: names }
+              : { mode: "only", commands: names },
+          )
+        }
+      />
+      <div className={COMMAND_HINT_CLASS}>{commandSelectorHint(value)}</div>
+    </div>
+  );
+}
+
+export type AgentValidationRole = "implementer" | "contextValidator";
+
+const AGENT_VALIDATION_ROLES: readonly AgentValidationRole[] = [
+  "implementer",
+  "contextValidator",
+];
+
+const AGENT_VALIDATION_ROLE_LABEL: Record<AgentValidationRole, string> = {
+  implementer: "Implementer",
+  contextValidator: "Context validator",
+};
+
+const AGENT_VALIDATION_SOURCE_TESTID: Record<AgentValidationRole, string> = {
+  implementer: "agent-validation-source-implementer",
+  contextValidator: "agent-validation-source-context-validator",
+};
+
+/**
+ * Per-role validation allowlists. Edits are PER LEAF: changing one role emits
+ * only that role's selector, so override tiers can keep the other role absent
+ * (= inherit) instead of silently snapshotting it — the whole-block-replacement
+ * trap the cascade exists to prevent.
+ */
+export function AgentValidationEditor({
+  value,
+  onChangeRole,
+  readOnly,
+  roleSourceLabels,
+  options,
+}: {
+  value: GraphWorkflowAgentValidationConfig;
+  onChangeRole: (
+    role: AgentValidationRole,
+    selector: GraphWorkflowCommandSelector,
+  ) => void;
+  readOnly?: boolean;
+  /** Optional per-role provenance labels (Global / Workflow / Context). */
+  roleSourceLabels?: Partial<Record<AgentValidationRole, string>>;
+  /** Registry summaries for this scope; undefined = registry unavailable. */
+  options?: readonly ValidationCommandSummary[];
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-md">
+      {AGENT_VALIDATION_ROLES.map((role) => (
+        <div key={role} className="flex flex-col gap-xs" data-role={role}>
+          <div className="flex items-center gap-sm">
+            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
+              {AGENT_VALIDATION_ROLE_LABEL[role]}
+            </span>
+            {roleSourceLabels?.[role] ? (
+              <span
+                className="ml-auto font-mono text-[0.7rem] font-semibold tracking-[0.07em] whitespace-nowrap text-text-tertiary uppercase"
+                data-testid={AGENT_VALIDATION_SOURCE_TESTID[role]}
+              >
+                {roleSourceLabels[role]}
+              </span>
+            ) : null}
+          </div>
+          <CommandSelectorEditor
+            value={value[role]}
+            onChange={(selector) => onChangeRole(role, selector)}
+            readOnly={readOnly}
+            roleLabel={AGENT_VALIDATION_ROLE_LABEL[role]}
+            options={options}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function laneMergeCommandsHint(
+  selector: GraphWorkflowLaneMergeCommandSelector,
+): string {
+  if (selector.mode === "project") {
+    return "Uses the project's lane-merge command list when configured, else its pre-merge list — resolved at merge submission.";
+  }
+  return selector.commands.length === 0
+    ? "Empty list — lane-merge validation is disabled."
+    : "Runs only the listed commands, in order.";
+}
+
+export function LaneMergeCommandSelectorEditor({
+  value,
+  onChange,
+  readOnly,
+  options,
+}: {
+  value: GraphWorkflowLaneMergeCommandSelector;
+  onChange: (next: GraphWorkflowLaneMergeCommandSelector) => void;
+  readOnly?: boolean;
+  /** Registry summaries for this scope; undefined = registry unavailable. */
+  options?: readonly ValidationCommandSummary[];
+}): React.JSX.Element {
+  return (
+    <div className="flex min-w-0 flex-col gap-xs">
+      <SegmentedControl
+        aria-label="Lane-merge command source"
+        value={value.mode}
+        disabled={readOnly}
+        onValueChange={(mode) => {
+          if (readOnly || mode === value.mode) return;
+          onChange(
+            mode === "project"
+              ? { mode: "project" }
+              : { mode: "only", commands: [] },
+          );
+        }}
+      >
+        <SegmentedControlItem value="project">
+          Project default
+        </SegmentedControlItem>
+        <SegmentedControlItem value="only">Custom list</SegmentedControlItem>
+      </SegmentedControl>
+      {value.mode === "only" ? (
+        <CommandNameListEditor
+          value={value.commands}
+          disabled={readOnly}
+          options={options}
+          addLabel="Add lane-merge command"
+          onChange={(commands) => onChange({ mode: "only", commands })}
+        />
+      ) : null}
+      <div className={COMMAND_HINT_CLASS}>{laneMergeCommandsHint(value)}</div>
+    </div>
+  );
+}
+
+const LANE_MERGE_STRATEGY_HINT: Record<
+  GraphWorkflowLaneMergeValidationConfig["strategy"],
+  string
+> = {
+  "final-only": "Validates only the last merge of a join series.",
+  "every-merge": "Validates every lane merge in a join series.",
+};
+
+/**
+ * Workflow-scope lane-merge validation. Edits are per leaf (strategy vs
+ * command selection) so a workflow override can pin one leaf while the other
+ * keeps inheriting the global default.
+ */
+export function LaneMergeValidationEditor({
+  value,
+  onChangeStrategy,
+  onChangeCommands,
+  readOnly,
+  options,
+}: {
+  value: GraphWorkflowLaneMergeValidationConfig;
+  onChangeStrategy: (
+    next: GraphWorkflowLaneMergeValidationConfig["strategy"],
+  ) => void;
+  onChangeCommands: (next: GraphWorkflowLaneMergeCommandSelector) => void;
+  readOnly?: boolean;
+  /** Registry summaries for this scope; undefined = registry unavailable. */
+  options?: readonly ValidationCommandSummary[];
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-sm">
+      <FieldRow
+        label="Strategy"
+        hint={LANE_MERGE_STRATEGY_HINT[value.strategy]}
+      >
+        <SegmentedControl
+          aria-label="Lane-merge validation strategy"
+          value={value.strategy}
+          disabled={readOnly}
+          onValueChange={(next) => {
+            if (readOnly || next === value.strategy) return;
+            if (next === "final-only" || next === "every-merge") {
+              onChangeStrategy(next);
+            }
+          }}
+        >
+          <SegmentedControlItem value="final-only">
+            final-only
+          </SegmentedControlItem>
+          <SegmentedControlItem value="every-merge">
+            every-merge
+          </SegmentedControlItem>
+        </SegmentedControl>
+      </FieldRow>
+      <FieldRow label="Commands">
+        <LaneMergeCommandSelectorEditor
+          value={value.commands}
+          onChange={onChangeCommands}
+          readOnly={readOnly}
+          options={options}
         />
       </FieldRow>
     </div>

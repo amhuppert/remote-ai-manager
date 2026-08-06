@@ -81,6 +81,7 @@ import {
 import { createWorkflowStorageService } from "./storage";
 import { scopeForTier } from "./template-library-service";
 import {
+  abortExecutionLoop,
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
 } from "@/lib/workflow-graph/execution-loop";
@@ -238,6 +239,7 @@ const workflowManager = createGraphWorkflowManager({
       });
     }
   },
+  abortExecutionLoop,
 });
 
 /**
@@ -387,6 +389,14 @@ export function createGraphWorkflowRouteScriptValidatorService(
       const scopingTargetBranch = input.executionTarget
         ? session.branchName
         : session.targetBranch;
+      const context = input.execution.workingDefinition.executionContexts.find(
+        (candidate) => candidate.id === input.contextId,
+      );
+      if (!context) {
+        throw new Error(
+          `Execution context "${input.contextId}" was not found for script validation`,
+        );
+      }
 
       return deps.runScriptValidator({
         projectPath: input.projectPath,
@@ -397,7 +407,9 @@ export function createGraphWorkflowRouteScriptValidatorService(
         contextId: input.contextId,
         targetBranch: scopingTargetBranch,
         timeoutMs,
+        commands: context.scriptValidator.commands,
         executionTarget: input.executionTarget,
+        signal: input.signal,
       });
     },
   };

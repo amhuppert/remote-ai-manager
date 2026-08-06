@@ -250,7 +250,7 @@ describe("InspectorConfigBlock", () => {
       label: "Script validator",
       source: "global" as const,
       collapsible: false,
-      description: "Runs the project's preMergeCommand.",
+      description: "Runs selected registered commands.",
     };
 
     it("hosts a design-system switch in the header and fires onCheckedChange", () => {
@@ -284,7 +284,7 @@ describe("InspectorConfigBlock", () => {
       );
       expect(container.querySelector("button[aria-expanded]")).toBeNull();
       expect(
-        screen.getByText("Runs the project's preMergeCommand."),
+        screen.getByText("Runs selected registered commands."),
       ).toBeInTheDocument();
     });
 

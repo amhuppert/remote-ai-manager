@@ -8,10 +8,10 @@ Unlike linting, formatting, and tests, `tsc` MUST run over the whole project. A 
 
 This is the single deliberate exception in the validation pipeline. Linters and formatters scope to changed files; tests scope to the changed-file module graph; `tsc` runs against the full project.
 
-## Pre-merge invocation
+## Validation wrapper invocation
 
 ```bash
-npx tsc --noEmit --pretty false
+run_quiet npx tsc --noEmit --pretty false
 ```
 
 No conditional, no scoping, no flags depending on `$merge_base`. Always full-project.
@@ -24,6 +24,7 @@ No conditional, no scoping, no flags depending on `$merge_base`. Always full-pro
 ## Parallelism
 
 `tsc` is single-process by design. No worker pool to cap.
+Register this wrapper with cost `1` unless the project's fixed build profile is materially heavier.
 
 ## Monorepo note
 

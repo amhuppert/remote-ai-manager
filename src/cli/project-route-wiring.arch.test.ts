@@ -107,7 +107,8 @@ function makeHost(body: unknown): CliHost & { requests: RecordedRequest[] } {
         headers: { "content-type": "application/json" },
       });
     },
-    async readTextFile() {
+    async readTextFile(filePath) {
+      if (filePath.includes("validation-lease-")) return "lease-1\n";
       return JSON.stringify({ summary: "s", objective: "o", decisions: [] });
     },
     async readFileBytes() {
@@ -229,6 +230,41 @@ const PROJECT_SCOPE_INVOCATIONS: {
     name: "workflow templates",
     argv: ["workflow", "templates"],
     body: { templates: [] },
+  },
+  {
+    name: "validate list",
+    argv: ["validate", "list"],
+    body: {
+      commands: [],
+      capacity: { limit: 8, inUse: 0, queueDepth: 0 },
+      runs: [],
+    },
+  },
+  {
+    name: "validate run",
+    argv: ["validate", "run", "test"],
+    body: {
+      kind: "not_started",
+      result: {
+        kind: "skipped_by_policy",
+        message: "Skipped by policy. Do not bypass it.",
+      },
+    },
+  },
+  {
+    name: "validate status",
+    argv: ["validate", "status", "vrun-1"],
+    body: {
+      runId: "vrun-1",
+      status: "running",
+      position: null,
+      result: null,
+    },
+  },
+  {
+    name: "validate cancel",
+    argv: ["validate", "cancel", "vrun-1"],
+    body: { cancelled: true },
   },
 ];
 

@@ -24,6 +24,7 @@ import {
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   validateJsonSchemaSubset,
@@ -287,6 +288,12 @@ function buildMaximalExecution(): unknown {
           reason: "Task instructions must be amended at the source spec",
         },
       ],
+      // Workflow-scope lane-merge selection snapshot — non-default on every
+      // leaf so archival proves both fields persist.
+      laneMergeValidation: {
+        strategy: "every-merge",
+        commands: { mode: "only", commands: ["typecheck"] },
+      },
       executionContexts: [
         {
           id: "ctx-1",
@@ -346,7 +353,8 @@ function buildMaximalExecution(): unknown {
               },
             ],
           },
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["typecheck", "test"] },
+          scriptValidatorSource: "workflow",
           humanApprovalGate: { enabled: true },
           askUserQuestions: { enabled: true },
           mutability: { allowAgentTaskAdd: true },
@@ -409,6 +417,19 @@ function buildMaximalExecution(): unknown {
             },
             negotiationRounds: { value: 5, source: "workflow" },
             autonomousResolutionThreshold: { value: "major", source: "global" },
+          },
+          agentValidation: {
+            implementer: {
+              value: { mode: "all", except: ["format"] },
+              source: "workflow",
+              // The seed-time expansion frozen against the registry (design §6).
+              commands: ["typecheck", "test"],
+            },
+            contextValidator: {
+              value: { mode: "only", commands: ["test"] },
+              source: "per-node",
+              commands: ["test"],
+            },
           },
           charter: makeTestCharter(),
         },
@@ -716,6 +737,7 @@ function buildMaximalExecution(): unknown {
         targetLaneId: "lane-1",
         sourceLaneIds: ["lane-2"],
         mergedSourceLaneIds: ["lane-2"],
+        validationDebtSourceLaneIds: ["lane-2"],
         status: "running",
         errorMessage: "retrying merge",
         conflicts: {
@@ -883,18 +905,34 @@ function buildMaximalExecution(): unknown {
 
 describe("graph-workflow-archived-executions-repo durability contract", () => {
   it("round-trips every persisted execution key path through the real repo", async () => {
-    await assertRoundTripDurability({
-      label: "graph-workflow-archived-executions",
-      schema: graphWorkflowExecutionSchema,
-      buildMaximalFixture: () =>
-        graphWorkflowExecutionSchema.parse(buildMaximalExecution()),
-      persist: (fixture) => {
-        repo.insert(makeRow({ executionId: fixture.id, execution: fixture }));
-        return fixture;
-      },
-      reload: (expected) =>
-        repo.findByExecution(PROJECT_PATH, SESSION_NAME, expected.id),
-    });
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+
+      await assertRoundTripDurability({
+        label: "graph-workflow-archived-executions",
+        schema: graphWorkflowExecutionSchema,
+        buildMaximalFixture: () =>
+          graphWorkflowExecutionSchema.parse(buildMaximalExecution()),
+        persist: (execution) => {
+          fixture.graphWorkflowArchivedExecutions.insert(
+            makeRow({ executionId: execution.id, execution }),
+          );
+          return execution;
+        },
+        // A repo instance that never saw the write proves the execution was
+        // reloaded from SQLite rather than retained by the writer instance.
+        reload: (expected) =>
+          createGraphWorkflowArchivedExecutionsRepo(fixture.db).findByExecution(
+            PROJECT_PATH,
+            SESSION_NAME,
+            expected.id,
+          ),
+      });
+    } finally {
+      fixture.close();
+    }
   });
 
   it("carries assignment-scoped validator lanes and fingerprints in the maximal SQLite fixture", () => {

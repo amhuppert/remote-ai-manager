@@ -51,6 +51,8 @@ const terminals = createTerminalStates(["completed", "failed"] as const);
  */
 const validationFixStates = createValidationFixStates<CommitContext>({
   validateInput: (context) => ({
+    source: context.validationMode.source,
+    selection: context.validationMode.selection,
     projectPath: context.projectPath,
     worktreePath: context.worktreePath,
     sessionName: context.sessionName,
@@ -111,6 +113,7 @@ export const commitMachine = setup({
     error: null,
     commitHash: null,
     validationTimeoutMs: input.validationTimeoutMs ?? 300_000,
+    validationMode: input.validationMode,
     fixAttempt: 0,
     maxFixAttempts: input.maxFixAttempts ?? 2,
     finalStatus: null,

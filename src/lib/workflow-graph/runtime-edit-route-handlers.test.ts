@@ -35,7 +35,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       },
     },
     contextValidator: { enabled: false, assignments: [] },
-    scriptValidator: { enabled: false },
+    scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: false },
@@ -55,9 +55,19 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       negotiationRounds: { value: 3, source: "global" },
       autonomousResolutionThreshold: { value: "minor", source: "global" },
     },
+    agentValidation: {
+      implementer: { value: { mode: "all", except: [] }, source: "global" },
+      contextValidator: {
+        value: { mode: "only", commands: [] },
+        source: "global",
+      },
+    },
+  }),
+  validationCommandPreflight: () => ({
+    commandCosts: {},
+    concurrencyLimit: 8,
   }),
   snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
-  hasPreMergeCommand: () => true,
   now: () => "2026-07-29T10:00:00.000Z",
 };
 
@@ -493,6 +503,53 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     const body = await response.json();
     expect(body.code).toBe("invalid_edit");
     expect(Array.isArray(body.issues)).toBe(true);
+  });
+
+  it("rejects an oversized selection without persisting or publishing the live edit", async () => {
+    await seedExecution(createWorkflowExecution({ status: "paused" }));
+    buildLiveEditDeps.mockResolvedValue({
+      ...TEST_LIVE_EDIT_DEPS,
+      validationCommandPreflight: () => ({
+        commandCosts: { test: 5 },
+        concurrencyLimit: 4,
+      }),
+    });
+
+    const response = await handlers.POST(
+      makeRequest(
+        "POST",
+        updateContext({
+          operations: [
+            {
+              type: "update-context",
+              contextId: "context-implement",
+              scriptValidator: { commands: ["test"] },
+            },
+          ],
+        }),
+      ),
+      routeParams,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      code: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(body.code).toBe("validation_cost_exceeds_limit");
+    expect(body.issues).toContainEqual(
+      expect.objectContaining({
+        path: "executionContexts.context-implement.scriptValidator.commands.0",
+        message: expect.stringMatching(
+          /validation_cost_exceeds_limit.*cost 5.*limit 4.*lower-worker/,
+        ),
+      }),
+    );
+    expect((await reload())?.liveRevision).toBe(1);
+    expect(liveEditEventRows()).toHaveLength(0);
+    expect(broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "graph-workflow-live-edit-applied" }),
+    );
   });
 
   it("dry-run never persists, bumps, or emits events", async () => {

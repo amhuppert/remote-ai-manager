@@ -92,6 +92,8 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "agentBackends.codex.timeoutMs",
   "maxTurns",
   "maxConcurrentQueries",
+  "validation.concurrencyLimit",
+  "validation.defaultTimeoutMs",
   "preMergeTimeoutMs",
   "idleQuerySessionTtlMs",
   "tailscaleEnabled",
@@ -127,4 +129,6 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "workflowDefaults.circuitBreaker",
   "workflowDefaults.mutability",
   "workflowDefaults.planRepair",
+  "workflowDefaults.agentValidation",
+  "workflowDefaults.laneMergeValidation",
 ];

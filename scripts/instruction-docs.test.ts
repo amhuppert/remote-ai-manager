@@ -1,6 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveConfig as resolveVitestConfig } from "vitest/node";
 
 const root = process.cwd();
 
@@ -91,6 +99,238 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(logging).not.toContain("/api/hooks");
     expect(logging).toContain(".kiro/steering/logs.md");
     expect(aiOutput).toContain("AI_OUTPUT=1");
+    expect(aiOutput).toContain("validation.commands");
+    expect(aiOutput).toContain("validation.preMerge");
+    expect(aiOutput).toContain("scripts/validate/");
+    expect(aiOutput).not.toContain("preMergeCommand");
+    expect(aiOutput).not.toContain("scripts/pre-merge-validate.sh");
+  });
+
+  it("keeps dev-server setup focused on current project configuration", () => {
+    const devServerSetup = read(
+      "plugins/command-center/command-center/skills/dev-server-setup/SKILL.md",
+    );
+    const commandCenterReference = read(
+      "plugins/command-center/command-center/skills/dev-server-setup/references/commandcenter-json.md",
+    );
+    const guidance = `${devServerSetup}\n${commandCenterReference}`;
+
+    expect(devServerSetup).toContain("validation");
+    expect(commandCenterReference).toContain("validation.commands");
+    expect(commandCenterReference).toContain("validation.preMerge");
+    expect(guidance).not.toContain("preMergeCommand");
+    expect(guidance).not.toContain("scripts/pre-merge-validate.sh");
+  });
+
+  it("keeps project setup validation commands scoped and honestly budgeted", () => {
+    const projectSetup = read(
+      "plugins/command-center/command-center/skills/project-setup/SKILL.md",
+    );
+    const wrapperReference = read(
+      "plugins/command-center/command-center/skills/project-setup/references/pre-merge-script.md",
+    );
+    const vitestReference = read(
+      "plugins/command-center/command-center/skills/project-setup/references/vitest.md",
+    );
+    const jestReference = read(
+      "plugins/command-center/command-center/skills/project-setup/references/jest.md",
+    );
+    const projectSetupReferences = [
+      "commandcenter-json.md",
+      "pre-merge-script.md",
+      "eslint.md",
+      "prettier.md",
+      "typescript.md",
+      "vitest.md",
+      "jest.md",
+    ]
+      .map((name) =>
+        read(
+          `plugins/command-center/command-center/skills/project-setup/references/${name}`,
+        ),
+      )
+      .join("\n");
+
+    expect(projectSetup).toContain("## Register Validation Commands");
+    expect(projectSetup).toContain("scripts/validate/");
+    expect(projectSetup).toContain("TARGET_BRANCH");
+    expect(projectSetup).toContain("git merge-base");
+    expect(projectSetup).toContain("--changed");
+    expect(projectSetup).toContain('`scopeArgs: "paths"`');
+    expect(projectSetup).toContain("one unit per configured worker");
+    expect(projectSetup).toContain("silent on success");
+    expect(projectSetup).toContain("complete on failure");
+    expect(projectSetup).toContain("no color");
+    expect(projectSetup).toContain("`preMerge`");
+    expect(projectSetup).toContain("`laneMerge`");
+    expect(projectSetup).not.toContain("preMergeCommand");
+    expect(projectSetupReferences).toContain("validation.commands");
+    expect(projectSetupReferences).not.toContain("preMergeCommand");
+    expect(projectSetupReferences).not.toContain(
+      "scripts/pre-merge-validate.sh",
+    );
+    expect(projectSetup).toContain("overwrite `NODE_OPTIONS`");
+    expect(projectSetup).not.toContain(
+      "inside the wrapper or its fixed tool configuration",
+    );
+    expect(projectSetup).not.toContain(
+      "wrapper or immutable runner configuration",
+    );
+    expect(wrapperReference).toContain(
+      "Runner configuration may mirror these limits but must not own enforcement",
+    );
+
+    for (const testRunnerReference of [vitestReference, jestReference]) {
+      expect(testRunnerReference).toContain("TEST_WORKERS=4");
+      expect(testRunnerReference).toContain("TEST_HEAP_MB=2048");
+      expect(testRunnerReference).toContain(
+        'export NODE_OPTIONS="--max-old-space-size=${TEST_HEAP_MB}"',
+      );
+    }
+    expect(jestReference).toContain('--maxWorkers="$TEST_WORKERS"');
+    expect(vitestReference).toContain(
+      'export VITEST_MAX_FORKS="$TEST_WORKERS"',
+    );
+    expect(vitestReference).toContain('pool: "forks"');
+    expect(vitestReference).toContain("maxWorkers: testWorkers");
+    expect(vitestReference).toContain(
+      'import { startVitest } from "vitest/node"',
+    );
+    expect(vitestReference).toContain("await startVitest(");
+    expect(vitestReference).toContain(
+      "execArgv: [`--max-old-space-size=${testHeapMb}`]",
+    );
+    expect(vitestReference).toContain(
+      "programmatic options after the candidate configuration",
+    );
+    expect(vitestReference).not.toContain(
+      "may repeat the cap through `execArgv`",
+    );
+  });
+
+  it("keeps wrapper-owned Vitest limits above candidate configuration", async () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "cc-vitest-config-"));
+    const configPath = join(fixtureRoot, "vitest.config.mjs");
+    writeFileSync(
+      configPath,
+      `export default {
+        test: {
+          pool: "forks",
+          maxWorkers: 32,
+          poolOptions: {
+            forks: {
+              maxForks: 32,
+              execArgv: ["--max-old-space-size=8192"],
+            },
+          },
+        },
+      };`,
+    );
+
+    try {
+      const { vitestConfig } = await resolveVitestConfig({
+        root: fixtureRoot,
+        config: configPath,
+        pool: "forks",
+        maxWorkers: 4,
+        poolOptions: {
+          forks: {
+            maxForks: 4,
+            minForks: 1,
+            execArgv: ["--max-old-space-size=2048"],
+          },
+        },
+      });
+
+      expect(vitestConfig.maxWorkers).toBe(4);
+      expect(vitestConfig.poolOptions?.forks?.maxForks).toBe(4);
+      expect(vitestConfig.poolOptions?.forks?.execArgv).toEqual([
+        "--max-old-space-size=2048",
+      ]);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps agent validation guidance on the server-owned policy path", () => {
+    const agents = read("AGENTS.md");
+    const agentContext = read(
+      "plugins/command-center/command-center/skills/agent-context/SKILL.md",
+    );
+    const graphPlanning = read(
+      "plugins/command-center/command-center/skills/graph-workflow-planning/SKILL.md",
+    );
+    const localAgentGraphPlanning = read(
+      ".agents/skills/graph-workflow-planning/SKILL.md",
+    );
+    const localClaudeGraphPlanning = read(
+      ".claude/skills/graph-workflow-planning/SKILL.md",
+    );
+    const cliSkill = read(
+      "plugins/command-center/command-center/skills/cc-cli/SKILL.md",
+    );
+
+    expect(agents).toContain("cctl validate run test --wait");
+    expect(agents).toContain("bun run test <specific test file paths>");
+    expect(agents).toContain("bun run lint");
+    expect(agents).toContain("bun run typecheck");
+    expect(agents).toContain("Never bypass the wrapper");
+    expect(agents).toContain("state the reason first");
+
+    expect(agentContext).toContain("global cost budget");
+    expect(agentContext).toContain("systemic capacity");
+
+    expect(graphPlanning).toContain("scriptValidator.commands");
+    expect(graphPlanning).toContain("agentValidation.implementer");
+    expect(graphPlanning).toContain("agentValidation.contextValidator");
+    expect(graphPlanning).toContain("laneMergeValidation");
+    expect(graphPlanning).toContain("Implementer test access stays enabled");
+    expect(graphPlanning).not.toContain("preMergeCommand");
+    expect(localAgentGraphPlanning).toBe(graphPlanning);
+    expect(localClaudeGraphPlanning).toBe(graphPlanning);
+
+    expect(cliSkill).toContain("## cctl validate");
+    expect(cliSkill.indexOf("## cctl validate")).toBeGreaterThan(
+      cliSkill.indexOf("<!-- END GENERATED COMMAND REFERENCE -->"),
+    );
+  });
+
+  it("keeps graph prompt validation guidance selection-aware", () => {
+    const iterationPrompt = read("src/lib/workflow-graph/iteration-prompt.ts");
+    const iterationOrchestrator = read(
+      "src/lib/workflow-graph/iteration-orchestrator.ts",
+    );
+    const validatorRunner = read("src/lib/workflow-graph/validator-runner.ts");
+    const section = read("src/lib/workflow-graph/validation-prompt-section.ts");
+
+    // Both lane prompts compose the generated per-context section
+    // (validation-concurrency §8) rather than hand-writing command guidance.
+    expect(iterationPrompt).toContain("buildValidationCommandsSection");
+    expect(validatorRunner).toContain("buildValidationCommandsSection");
+    expect(validatorRunner).toContain(
+      "buildValidatorDeterministicChecksGuidance",
+    );
+    // Both runners source the registry through the fail-visible loader: the
+    // enabled set is the frozen seed snapshot, and a failed registry read
+    // renders an explicit notice instead of dropping the section (§6/§8).
+    expect(iterationOrchestrator).toContain("loadValidationPromptRegistry");
+    expect(validatorRunner).toContain("loadValidationPromptRegistry");
+    expect(section).toContain("could not be read");
+    // The section carries the wrapper rule and the wait/queue guidance.
+    expect(section).toContain("cctl validate run <name>");
+    expect(section).toContain("re-run with `--wait`");
+    expect(section).toContain(
+      "No validation commands are disabled by policy in this context.",
+    );
+    expect(section).toContain("No script gate is selected for this context.");
+    // §7 and the clean legacy cutover: the absent-gate wording attributes the
+    // gap to workflow policy without reviving the removed pre-merge path.
+    expect(section).toContain("workflow policy disables it");
+    expect(section).not.toContain("pre-merge validation script");
+    expect(section).not.toContain("legacy configuration");
+    expect(iterationPrompt).not.toContain("validationSelections?:");
+    expect(validatorRunner).not.toContain("validationSelections?:");
+    expect(validatorRunner).not.toContain("pre-merge validation script");
   });
 
   /**

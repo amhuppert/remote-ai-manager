@@ -17,6 +17,7 @@ import {
   buildIterationPrompt,
 } from "@/lib/workflow-graph/iteration-prompt";
 import { buildContextValidationPrompt } from "@/lib/workflow-graph/validator-runner";
+import type { ValidationPromptSelections } from "@/lib/workflow-graph/validation-prompt-section";
 
 /**
  * Cross-builder integration test for charter prompt injection (task 5.2).
@@ -55,7 +56,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
       },
     ],
   },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
@@ -72,7 +73,22 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
   },
+  agentValidation: {
+    implementer: { mode: "all", except: [] },
+    contextValidator: { mode: "only", commands: [] },
+  },
+  laneMergeValidation: {
+    strategy: "final-only",
+    commands: { mode: "project" },
+  },
 };
+
+const EMPTY_VALIDATION_SELECTIONS = {
+  registry: "none",
+  enabled: { kind: "commands", commands: [] },
+  disabled: [],
+  scriptGate: { kind: "off" },
+} satisfies ValidationPromptSelections;
 
 const GLOBAL_CONFIG: GlobalConfig = {
   baseDir: "/projects",
@@ -230,6 +246,7 @@ describe("charter prompt injection (cross-builder integration)", () => {
       taskStates: TASK_STATES,
       allowAgentTaskAdd: false,
       contextValidationAcceptanceCriteria: context.acceptanceCriteria,
+      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 
     // Digest opens the prompt (4.1, 4.3).
@@ -253,6 +270,7 @@ describe("charter prompt injection (cross-builder integration)", () => {
       tasks: TASKS,
       taskStates: TASK_STATES,
       validator: VALIDATOR,
+      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 
     expect(prompt.startsWith("# Workflow Charter")).toBe(true);
@@ -290,6 +308,7 @@ describe("charter prompt injection (cross-builder integration)", () => {
       tasks: TASKS,
       taskStates: TASK_STATES,
       allowAgentTaskAdd: false,
+      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
     const validatorPrompt = buildContextValidationPrompt({
       context,
@@ -297,6 +316,7 @@ describe("charter prompt injection (cross-builder integration)", () => {
       tasks: TASKS,
       taskStates: TASK_STATES,
       validator: VALIDATOR,
+      validationSelections: EMPTY_VALIDATION_SELECTIONS,
     });
 
     // The shared digest both roles embed, computed from the SAME snapshot.

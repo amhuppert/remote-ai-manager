@@ -22,21 +22,77 @@ This skill is the source of truth for planning graph workflows. Use it before au
 Create workflows with default implementer and validator settings unless the user explicitly asks for different settings or a context has a specific, justified need.
 
 - Omit top-level `workflowConfig` unless non-default workflow-wide settings are requested.
-- Omit per-context `implementer`, `contextValidator`, `scriptValidator`, `iterationPolicy`, `circuitBreaker`, and `mutability` unless a non-default value is intentionally required.
+- Omit per-context `implementer`, `contextValidator`, `scriptValidator`, `agentValidation`, `iterationPolicy`, `circuitBreaker`, and `mutability` unless a non-default value is intentionally required.
 - `acceptanceCriteria` is required on every execution context and must live on the context, not on the validator.
 - Minimal payloads are preferred because global and workflow defaults cascade into each context at execution seed time.
-- To opt out of inherited agent validation for a context, set `contextValidator: { kind: "disabled" }`.
-- To override the inherited agent validator, set `contextValidator: { kind: "use", value: ... }` with a valid validator config.
-- To override deterministic validation for a context, set `scriptValidator: { enabled: true }` or `scriptValidator: { enabled: false }`.
+- To opt out of inherited agent validation for a context, set `contextValidator: { "enabled": false, "assignments": [] }`.
+- To staff a context's reviewers explicitly, set `contextValidator` to an enabled cohort of assignments — see [Staffing Assignments](#staffing-assignments-from-the-agent-profile-library).
+- To override deterministic validation for a context, set `scriptValidator: { commands: ["typecheck", "test"] }`; an empty `commands` list disables that gate.
+- Override agent command access separately with `agentValidation.implementer` and `agentValidation.contextValidator`; never infer agent permissions from the script-gate selection.
+- `laneMergeValidation` is global/workflow configuration for the shared fan-in target, not a per-context override.
 - If a running execution already exists, changing a saved workflow definition may not mutate that active execution. Tell the user when a fresh execution or reset is needed.
-- Exception to the "use defaults unless explicitly directed otherwise" rule: Enable `scriptValidator` for the **final** execution context, unless there is a specific reason to disable it.
+- Exception to the "use defaults unless explicitly directed otherwise" rule: select the appropriate registered commands in `scriptValidator.commands` for the **final** execution context unless there is a specific reason to leave the gate empty.
+
+## Validation Policy
+
+Graph workflows have three distinct validation configuration blocks. Keep their decisions independent.
+
+### Script gate: `scriptValidator.commands`
+
+`scriptValidator.commands` is the ordered registered-command selection run after an implementer finishes the context's tasks. It cascades global defaults → workflow → execution context; each provided list replaces the inherited list, and `[]` disables the script gate. The seeded default is `[]`.
+
+```json
+{
+  "scriptValidator": {
+    "commands": ["typecheck", "test"]
+  }
+}
+```
+
+Every name must exist in the project's `validation.commands` registry. Select commands only for a context expected to leave that check green; do not create an intentionally invalid intermediate state and then gate it with checks that can pass only after downstream work.
+
+### Agent access: `agentValidation`
+
+Agent permissions cascade separately, per role and per leaf, through global defaults → workflow → execution context:
+
+```json
+{
+  "agentValidation": {
+    "implementer": {
+      "commands": { "mode": "all", "except": ["format"] }
+    },
+    "contextValidator": {
+      "commands": { "mode": "only", "commands": [] }
+    }
+  }
+}
+```
+
+`{ "mode": "all", "except": [...] }` opts into all registered commands except explicit exclusions. `{ "mode": "only", "commands": [...] }` is a stable allowlist. The seeded implementer default is all commands with no exclusions; the seeded context-validator default is no commands.
+
+Implementer test access stays enabled even when the script gate also runs tests. The implementer needs focused test runs for red-green TDD, while `scriptValidator.commands` independently defines the deterministic end-of-context gate. Never remove implementer access merely to avoid duplicate-looking selections.
+
+### Lane merges: `laneMergeValidation`
+
+`laneMergeValidation` cascades global defaults → workflow only because it protects the shared fan-in target rather than one execution context:
+
+```json
+{
+  "laneMergeValidation": {
+    "strategy": "final-only",
+    "commands": { "mode": "project" }
+  }
+}
+```
+
+`strategy` is `final-only` by default, which defers validation until the last merge in a serial join; `every-merge` validates each source-lane merge. `{ "mode": "project" }` uses the project's `validation.laneMerge` selection or falls back to `validation.preMerge`. `{ "mode": "only", "commands": [...] }` supplies a workflow-specific selection, and an empty `commands` list disables lane-merge validation.
 
 ## Planning Procedure
 
 1. Read the governing context.
    - Load the full objective, relevant specification files, relevant steering files, and any existing workflow definition being replaced.
    - Do not plan from only a narrow task excerpt when design semantics matter.
-   - If enabling `scriptValidator`, confirm the project has a configured `preMergeCommand`.
+   - When selecting `scriptValidator.commands`, confirm every name is registered in the project's `validation.commands` block.
 
 2. Build a context inventory.
    - List major implementation surfaces: schemas, persistence, runtime lifecycle, adapters, API, UI, tests, migration, diagnostics.
@@ -97,20 +153,76 @@ Do not write acceptance criteria that:
 - Use vague phrases like "retryable diagnostics", "fully wired", or "complete lifecycle" without spelling out the exact states and paths.
 - Use existence verbs — "exists", "is exported", "types are defined", "adapters surface" — for capabilities that must be runtime-reachable. Existence is satisfiable by dead code with green unit tests; require the production caller, or name the downstream context that owns the wiring.
 
+## Staffing Assignments from the Agent Profile Library
+
+Who runs a context is an **assignment**: a stable use-site id, a reference to a profile in the shared agent profile library, an optional focus, and the concrete runtime. A context has exactly one implementer assignment and an ordered **cohort** of validator assignments.
+
+A profile is prompt identity only — a name, a description, and instructions. It carries no backend, model, effort, or tool policy; those live on the assignment, so the same profile can be staffed at different runtimes at different use sites.
+
+### Discover profiles before staffing
+
+The library is machine-discoverable — never invent a reference:
+
+1. `cctl agent list` — every profile reachable from this project across all three tiers, each with its qualified `tier:id`, name, description, revision, advisory `recommendedFor`, and tags. Pick by reading descriptions.
+2. `cctl agent get <tier:id>` — one profile's full instructions, when the description is not enough to judge fit. The qualified spelling is mandatory; a bare id is refused.
+
+Tiers are sibling scopes, not a shadowing chain: `builtin:reviewer`, `global:reviewer`, and `project:reviewer` are three different profiles. `recommendedFor` is advisory — prefer a profile recommended for the role, but never refuse one on that basis alone.
+
+### The assignment shape
+
+```jsonc
+{
+  "implementer": {
+    "id": "implementer",                                   // stable, kebab-case, unique at its use site
+    "profile": { "tier": "builtin", "id": "general-implementer" },
+    "focus": "state-store persistence",                    // optional use-site steer
+    "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" }
+  },
+  "contextValidator": {
+    "enabled": true,
+    "assignments": [
+      {
+        "id": "security",                                  // unique WITHIN the cohort
+        "profile": { "tier": "global", "id": "security-reviewer" },
+        "strategy": "conversation",
+        "agent": { "backend": "codex", "model": "gpt-5.6", "reasoningEffort": "high" }
+      }
+    ]
+  }
+}
+```
+
+- The assignment `id` is the durable use-site identity findings are grouped under. Keep it stable across revisions; renaming it is a new use site, not a rename.
+- `focus` narrows a general profile at one use site ("auth boundaries", "hot paths"). Durable behaviour belongs in the profile itself — if every use site repeats the same focus, the profile is wrong.
+- `strategy` is validator-only and independent of backend: `conversation` or `task`.
+- Two assignments may name the SAME profile under different ids and focuses. That is the normal way to get two specialist passes from one general reviewer.
+
+### Cohort rules
+
+- An enabled cohort needs at least one assignment — validation over an empty cohort would pass vacuously, so it is refused.
+- Assignment ids must be unique within a cohort.
+- A disabled cohort **retains** its assignments. Turning validation off and back on is lossless, so do not strip assignments to disable a context's review. Retained assignments still show up on the staffing surfaces, marked `(cohort disabled)`, and their references are still checked at save — a dangling one is refused even though nothing dispatches it.
+- Assignments replace as **whole units** at every cascade boundary (global → workflow → context). A context that sets `contextValidator` replaces the inherited cohort entirely; there is no field merging. Restate every assignment you want.
+- Keep the default single general reviewer unless a context genuinely needs a second specialist lens. Every extra assignment is another full review of the same candidate.
+
+### Reference scope
+
+A **global-scope** document (a cross-project template, or the global `workflowDefaults`) may reference only `builtin` and `global` profiles. A `project`-tier reference is unresolvable in every other project and is refused — validate with `--tier global` to catch that before saving rather than at save time.
+
 ## Validators
 
 Graph workflows have two independent validators:
 
-- `contextValidator`: an LLM validator that judges the intent of the context acceptance criteria. It respects context scope boundaries and should not fail a context for work intentionally assigned downstream.
-- `scriptValidator`: a deterministic validator that runs the project's `preMergeCommand` after all tasks in the context complete. If it fails, the output is saved under `.cc/workflow/<executionId>/pre-merge-<timestamp>.log` and a remediation task is added.
+- `contextValidator`: an ordered cohort of LLM validator assignments that judge the intent of the context acceptance criteria. Every enabled assignment reviews the same frozen candidate and all must pass; findings stay grouped by assignment id. Validators respect context scope boundaries and should not fail a context for work intentionally assigned downstream.
+- `scriptValidator`: a deterministic gate that runs its ordered registered-command selection after all tasks in the context complete. Each command enters ValidationService separately under the global budget; the gate stops at the first failure and records the run evidence before adding a remediation task.
 
-Script validation runs before agent validation. If script validation fails, agent validation is skipped for that iteration. Both failures consume iteration budget and feed the circuit breaker.
+Script validation runs before agent validation. If a command fails, agent validation is skipped for that iteration. After remediation the complete ordered list reruns. A capacity wait is orchestration state and does not consume an iteration or trip the circuit breaker.
 
-Enabling `scriptValidator` without a configured `preMergeCommand` halts the workflow with `script_validator_missing_command`.
+Unknown command names and costs above the global limit fail preflight rather than becoming runtime no-ops.
 
 ### Script Validator Decision Rule
 
-Enable `scriptValidator` only when the codebase is expected to be fully valid after completing all tasks in that execution context.
+Select commands in `scriptValidator.commands` only when the codebase is expected to satisfy them after completing all tasks in that execution context.
 
 Do not enable `scriptValidator` for a context intentionally planned to end in an invalid intermediate state, such as:
 
@@ -119,7 +231,7 @@ Do not enable `scriptValidator` for a context intentionally planned to end in an
 - A partial implementation that is intentionally completed by a later context.
 - A branch where tests, typecheck, lint, or build are expected to fail until a downstream integration context runs.
 
-If script validation is enabled for an intentionally invalid intermediate state, the workflow will either halt or pressure the implementer to expand scope into later contexts. Put deterministic validation on a later integration or final verification context instead.
+If script commands are selected for an intentionally invalid intermediate state, the workflow will either halt or pressure the implementer to expand scope into later contexts. Put those deterministic commands on a later integration or final verification context instead.
 
 ## Validator Alignment Checklist
 
@@ -136,7 +248,7 @@ If the validator would need the whole design to judge a narrow context, either a
 
 ## Parallelization Guidance
 
-Parallel contexts run in isolated git worktrees, one branch per context, so they cannot interfere with each other mid-flight. Branches are merged automatically at join points and at final publish, and merge conflicts are **resolved automatically** by an LLM resolver (the same machinery as Smart Merge), with the project's pre-merge validation running after every join merge. Do not plan as if all merge conflicts must be avoided.
+Parallel contexts run in isolated git worktrees, one branch per context, so they cannot interfere with each other mid-flight. Branches are merged automatically at join points and at final publish, and merge conflicts are **resolved automatically** by an LLM resolver (the same machinery as Smart Merge). Lane-merge validation follows `laneMergeValidation`: the default `final-only` strategy validates the integrated tree on the last merge in a serial join, while `every-merge` validates each source-lane merge. Do not plan as if all merge conflicts must be avoided.
 
 Plan for aligned intent, not file disjointness:
 
@@ -169,7 +281,7 @@ Guard against these before starting execution:
 - Missing context: implementer gets only a task slice while validator expects whole-design behavior.
 - Overbroad contexts: one context owns mutation routing, lifecycle hooks, backend adapters, diagnostics, and retry semantics.
 - Parallelism without foundation: independent-looking contexts secretly need the same unresolved contract.
-- Script validator deadlock: deterministic validation is enabled for a context that intentionally ends in an invalid intermediate state.
+- Script validator deadlock: deterministic commands are selected for a context that intentionally ends in an invalid intermediate state.
 - Unowned wiring: a capability's consumer is fully specified while no context's criteria require the production caller — every context passes locally and the composed runtime path is dead until (at best) final verification.
 - Invariants by rediscovery: cross-cutting rules live only in deep spec documents, so each implementer independently misses them and validators re-teach the same lesson context after context. Declare them once in `charter.invariants`.
 
@@ -182,7 +294,7 @@ The final context should:
 - Read the full design and requirements, not only prior summaries.
 - Verify that each implemented surface is connected to the runtime path the user will exercise.
 - Check that gated or unavailable behavior is honestly represented.
-- Use `scriptValidator` only if the whole workflow should be in a valid state at that point.
+- Select `scriptValidator.commands` only if the whole workflow should satisfy those checks at that point.
 
 The final verification context is **defense in depth** for reachability, not the primary proof — each capability context proves its own production wiring or names its downstream owner (Planning Procedure step 4). Bound the review's acceptance criteria: enumerate the surfaces to check rather than writing "every implemented surface", and route large gaps into remediation tasks with their own bounded criteria. An unbounded audit-and-remediate predicate is a scope ratchet — each fix adds new surface to which the same standard applies — and a fixed circuit-breaker threshold will eventually halt a converging loop.
 
@@ -230,14 +342,14 @@ A plan is a JSON object the validate, create, and replace endpoints all accept:
 
 Run these from the session (the CLI reads its project/session identity from the environment):
 
-1. `cctl workflow validate --file .cc/temp/plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Fix the file and re-run until it prints the create hint.
+1. `cctl workflow validate --file .cc/temp/plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) plus resolution of every agent profile reference the plan names, and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Assignment issues read the same way whichever check produced them: the path locates the offending field (`definition.executionContexts.2.contextValidator.assignments.1.profile`) and the message names the qualified `tier:id` and the exact use site. Fix the file and re-run until it prints the create hint. Add `--tier global` when the plan is destined for the cross-project template library, so the global-document reference rule is applied here rather than at save.
 2. `cctl workflow create --file .cc/temp/plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
 3. `cctl workflow start <id>` — starts execution.
 
 To revise a saved definition after user feedback, prefer **targeted edits** — cost proportional to the change, not the whole plan:
 
-1. `cctl workflow get <id>` — read the compact **outline** (context/task ids, deps, prose sizes, and the current `revision`). Pull only the piece you will change with `--task <id>` / `--context <id>` / `--charter` / `--config` / `--params`.
-2. Author `.cc/temp/ops.json` — `{ "baseRevision": <the revision the outline showed>, "operations": [ … ] }` — using the domain ops (`update-task`, `add-context`, `add-task` with a relative `position`, `add-edge`, `update-workflow-config`, a config field set to `null` clears an override, …). The batch is ordered, atomic, and lands behind the **same** accept-time validation as `create`.
+1. `cctl workflow get <id>` — read the compact **outline** (context/task ids, deps, prose sizes, the current `revision`, and a `staffing (references)` block listing every authored assignment by scope, role, id, qualified profile ref, strategy, and runtime). Pull only the piece you will change with `--task <id>` / `--context <id>` / `--charter` / `--config` / `--params`.
+2. Author `.cc/temp/ops.json` — `{ "baseRevision": <the revision the outline showed>, "operations": [ … ] }` — using the domain ops (`update-task`, `add-context`, `add-task` with a relative `position`, `add-edge`, `update-workflow-config`, a config field set to `null` clears an override, …). The batch is ordered, atomic, and lands behind the **same** accept-time validation as `create` — including profile-reference resolution, so a batch that stages a dangling assignment is refused whole, with the same located `tier:id` and use site `validate` would have printed.
 3. `cctl workflow edit <id> --file .cc/temp/ops.json` (add `--dry-run` to pre-flight a risky batch). A stale `baseRevision` exits with `revision_conflict` — re-read and retry.
 
 Use `cctl workflow replace <id> --file .cc/temp/plan.json` only for a **wholesale recomposition** — get it first with `cctl workflow get <id> --full`, submit the complete graph, re-validate first. Editing (or replacing) a saved definition does NOT mutate a running execution — it uses its own working copy; tell the user when a fresh execution or reset is needed.
@@ -250,7 +362,10 @@ Use `cctl workflow replace <id> --file .cc/temp/plan.json` only for a **wholesal
 - Every runtime capability the plan introduces has a producer context whose acceptance criteria require the production call site, or a criterion naming the downstream context that owns the wiring.
 - Cross-cutting rules are declared once in `charter.invariants` rather than repeated inconsistently (or omitted) across contexts.
 - Optional implementer and validator settings are omitted unless the user requested them or a specific context requires them.
-- Any enabled `scriptValidator` runs only after contexts expected to leave the codebase valid.
+- Every agent profile reference was read from `cctl agent list`, not invented, and a context that overrides a cohort restates every assignment it wants (assignments replace whole, never merge).
+- Any selected `scriptValidator.commands` run only after contexts expected to leave those checks valid.
+- Agent command access is intentional per role; implementers retain the test command access needed for TDD even when the script gate selects tests.
+- `laneMergeValidation` is set only at the workflow tier when the project-level lane-merge policy is not appropriate.
 - Essential context is included in task instructions or produced as an upstream shared artifact.
 - Parallel branches are truly independent or have an explicit foundation edge.
 - `cctl workflow validate` passes on the final `.cc/temp/plan.json`.

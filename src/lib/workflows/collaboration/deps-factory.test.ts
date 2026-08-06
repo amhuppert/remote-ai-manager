@@ -155,7 +155,15 @@ describe("createCollaborationDeps", () => {
         projectName: "example",
       });
 
-      await deps.appendTranscriptEntry!("conv-A", {
+      // A conversation id unique to this PROCESS, because the transcript file
+      // it appends to is not scoped by the `CC_CONFIG_DIR` set above: the
+      // config directory is resolved once at module load (`config/loader.ts`),
+      // so the env assignment cannot move the path afterwards. This file runs
+      // under two vitest projects against one shared transcripts directory, and
+      // `seq` is that file's line index — a fixed id makes the second project's
+      // run the SECOND append, so it reads 1 where the assertion wants 0.
+      const conversationId = `conv-deps-factory-transcript-meta-${process.pid}`;
+      await deps.appendTranscriptEntry!(conversationId, {
         timestamp: "2026-04-28T10:00:00.000Z",
         type: "user",
         role: "user",
@@ -168,7 +176,7 @@ describe("createCollaborationDeps", () => {
       if (event.type === "message-appended" && event.scope === "session") {
         expect(event.projectName).toBe("example");
         expect(event.sessionName).toBe("collab-session");
-        expect(event.conversationId).toBe("conv-A");
+        expect(event.conversationId).toBe(conversationId);
         expect(event.seq).toBe(0);
       }
     } finally {

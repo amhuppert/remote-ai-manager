@@ -1,7 +1,39 @@
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh",
-  "preMergeTimeoutMs": 3600000,
+  "validation": {
+    "commands": {
+      "pre-merge": {
+        "command": "scripts/pre-merge-validate.sh",
+        "cost": 8,
+        "timeoutMs": 3600000
+      },
+      "format": {
+        "command": "scripts/validate/format.sh",
+        "cost": 1,
+        "description": "Format changed files"
+      },
+      "lint": {
+        "command": "scripts/validate/lint.sh",
+        "cost": 2,
+        "description": "Lint changed files"
+      },
+      "typecheck": {
+        "command": "scripts/validate/typecheck.sh",
+        "cost": 2,
+        "timeoutMs": 3600000,
+        "description": "Run full-project static and build checks"
+      },
+      "test": {
+        "command": "scripts/validate/test.sh",
+        "cost": 8,
+        "timeoutMs": 3600000,
+        "description": "Run affected unit tests with eight workers",
+        "scopeArgs": "paths"
+      }
+    },
+    "preMerge": ["format", "lint", "typecheck", "test"],
+    "laneMerge": ["typecheck", "test"]
+  },
   "devServers": [
     {
       "name": "nextjs",

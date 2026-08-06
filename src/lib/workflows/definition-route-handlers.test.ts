@@ -8,7 +8,7 @@ import {
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { createWorkflowDefinitionRouteHandlers } from "./definition-route-handlers";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-import type { GlobalConfig } from "@/lib/config/schemas";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 function makeRequest(url: string, method: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
     method,
@@ -41,9 +41,24 @@ const MOCK_CONFIG: GlobalConfig = {
   defaultAgentBackend: "claude",
 };
 
+const OVERSIZED_REPO_CONFIG: PerRepoConfig = {
+  validation: {
+    commands: {
+      test: {
+        command: "scripts/validate/test.sh",
+        cost: 5,
+        scopeArgs: "paths",
+      },
+    },
+    preMerge: ["test"],
+  },
+};
+
 describe("workflow definition route handlers", () => {
   const resolveProjectPath = vi.fn<(_name: string) => Promise<string | null>>();
   const readConfig = vi.fn<() => Promise<GlobalConfig>>();
+  const readRepoConfig =
+    vi.fn<(_projectPath: string) => Promise<PerRepoConfig | null>>();
   const listDefinitions = vi.fn();
   const getDefinition = vi.fn();
   const createDefinition = vi.fn();
@@ -53,6 +68,7 @@ describe("workflow definition route handlers", () => {
   const handlers = createWorkflowDefinitionRouteHandlers({
     resolveProjectPath,
     readConfig,
+    readRepoConfig,
     listDefinitions,
     getDefinition,
     createDefinition,
@@ -63,6 +79,7 @@ describe("workflow definition route handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     readConfig.mockResolvedValue(MOCK_CONFIG);
+    readRepoConfig.mockResolvedValue(null);
   });
 
   it("lists workflow definitions for a project", async () => {
@@ -230,6 +247,90 @@ describe("workflow definition route handlers", () => {
     expect(body.error).toBe("Workflow plan is invalid");
     expect(Array.isArray(body.issues)).toBe(true);
     expect(body.issues.length).toBeGreaterThan(0);
+    expect(updateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("rejects oversized validation selections before create or replace persistence", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    readRepoConfig.mockResolvedValue(OVERSIZED_REPO_CONFIG);
+    readConfig.mockResolvedValue({
+      ...MOCK_CONFIG,
+      validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+    });
+    const definition = createWorkflowDefinition({
+      workflowConfig: { scriptValidator: { commands: ["test"] } },
+    });
+    const body = {
+      name: "Oversized validation",
+      definition,
+      layout: createWorkflowLayout(),
+    };
+
+    const createResponse = await handlers.CREATE(
+      makeRequest("/api/projects/repo/workflows", "POST", body),
+      makeContext({ name: "repo" }),
+    );
+    const updateResponse = await handlers.UPDATE(
+      makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", body),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    for (const response of [createResponse, updateResponse]) {
+      expect(response.status).toBe(400);
+      const responseBody = (await response.json()) as {
+        code?: string;
+        issues: Array<{ path: string; message: string }>;
+      };
+      expect(responseBody.code).toBe("validation_cost_exceeds_limit");
+      expect(responseBody.issues).toContainEqual(
+        expect.objectContaining({
+          path: "definition.workflowConfig.scriptValidator.commands.0",
+          message: expect.stringMatching(/cost 5.*limit 4.*lower-worker/),
+        }),
+      );
+    }
+    expect(createDefinition).not.toHaveBeenCalled();
+    expect(updateDefinition).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized selection introduced by a saved-definition edit", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    readRepoConfig.mockResolvedValue(OVERSIZED_REPO_CONFIG);
+    readConfig.mockResolvedValue({
+      ...MOCK_CONFIG,
+      validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+    });
+    getDefinition.mockResolvedValue(
+      createWorkflowDefinitionRecord({ revision: 3 }),
+    );
+
+    const response = await handlers.EDIT(
+      makeRequest("/api/projects/repo/workflows/workflow-1/edit", "PATCH", {
+        baseRevision: 3,
+        operations: [
+          {
+            type: "update-workflow-config",
+            scriptValidator: { commands: ["test"] },
+          },
+        ],
+      }),
+      makeContext({ name: "repo", workflowId: "workflow-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    const responseBody = (await response.json()) as {
+      code?: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(responseBody.code).toBe("validation_cost_exceeds_limit");
+    expect(responseBody.issues).toContainEqual(
+      expect.objectContaining({
+        path: "workflowConfig.scriptValidator.commands.0",
+        message: expect.stringMatching(
+          /validation_cost_exceeds_limit.*cost 5.*limit 4.*lower-worker/,
+        ),
+      }),
+    );
     expect(updateDefinition).not.toHaveBeenCalled();
   });
 

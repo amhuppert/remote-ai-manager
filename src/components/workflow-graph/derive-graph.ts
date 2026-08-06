@@ -66,8 +66,17 @@ export type DisplayValidators = {
 export function getDisplayValidators(
   context: ExecutionContextNodeData["context"],
 ): DisplayValidators {
-  const script = context.scriptValidator?.enabled === true;
-  return { script, agent: getDisplayAgentValidator(context.contextValidator) };
+  return {
+    script: getDisplayScriptGate(context.scriptValidator),
+    agent: getDisplayAgentValidator(context.contextValidator),
+  };
+}
+
+function getDisplayScriptGate(
+  scriptValidator: ExecutionContextNodeData["context"]["scriptValidator"],
+): boolean {
+  if (!scriptValidator) return false;
+  return scriptValidator.commands.length > 0;
 }
 
 // The node shows ONE agent-validator pill, so a cohort collapses to the backend

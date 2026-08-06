@@ -19,16 +19,22 @@ import {
 import { workflowCollaborationConfigSchema } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   agentAssignmentSchema,
+  graphWorkflowAgentValidationConfigSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
+  graphWorkflowLaneMergeValidationConfigSchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
   validatorCohortSchema,
 } from "@/lib/workflow-graph/config-schemas";
 import { devServerConfigSchema } from "@/lib/dev-server/schemas";
+import {
+  globalValidationConfigSchema,
+  repoValidationConfigSchema,
+} from "@/lib/validation/schemas";
 
 // ============================================================
 // Workflow Defaults
@@ -45,6 +51,8 @@ export const workflowDefaultsSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema,
   planRepair: graphWorkflowPlanRepairPolicySchema,
   collaboration: workflowCollaborationConfigSchema,
+  agentValidation: graphWorkflowAgentValidationConfigSchema,
+  laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema,
 });
 export type WorkflowDefaults = z.infer<typeof workflowDefaultsSchema>;
 
@@ -59,6 +67,8 @@ const rawWorkflowDefaultsSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: workflowCollaborationConfigSchema.optional(),
+  agentValidation: graphWorkflowAgentValidationConfigSchema.optional(),
+  laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.optional(),
 });
 
 // ============================================================
@@ -140,6 +150,7 @@ export const globalConfigSchema = z.object({
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.default("claude"),
   compaction: compactionConfigSchema.optional(),
+  validation: globalValidationConfigSchema.optional(),
   conversationNaming: conversationNamingConfigSchema.optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
@@ -173,6 +184,13 @@ const rawAgentBackendsConfigSchema = z.object({
   codex: rawCodexBackendConfigSchema.optional(),
 });
 
+// Raw (explicit-only) variant: no defaults, so intersectKeys can distinguish
+// what the user wrote from schema-injected seeds.
+const rawValidationConfigSchema = z.object({
+  concurrencyLimit: z.number().int().positive().optional(),
+  defaultTimeoutMs: z.number().int().positive().optional(),
+});
+
 function movedConfigField(replacement: string) {
   return z
     .never({
@@ -200,6 +218,7 @@ export const rawGlobalConfigSchema = z.object({
   branchPrefix: z.string().optional(),
   defaultAgentBackend: agentBackendSchema.optional(),
   compaction: rawCompactionConfigSchema.optional(),
+  validation: rawValidationConfigSchema.optional(),
   conversationNaming: rawConversationNamingConfigSchema.optional(),
 });
 export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
@@ -210,12 +229,13 @@ export type RawGlobalConfig = z.infer<typeof rawGlobalConfigSchema>;
 
 export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable().optional(),
-  preMergeCommand: z.string().nullable().optional(),
+  preMergeCommand: movedConfigField("validation.commands/preMerge"),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   preMergePreparePath: z.enum(["plumbing", "fallback"]).optional(),
   devServers: z.array(devServerConfigSchema).optional(),
   branchPrefix: z.string().optional(),
   compaction: rawCompactionConfigSchema.optional(),
+  validation: repoValidationConfigSchema.optional(),
 });
 export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 

@@ -134,7 +134,7 @@ describe("validatePlanRepairOperations — the plan/controls split (fail closed)
         agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
       },
       contextValidator: { enabled: false, assignments: [] },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: true },

@@ -1482,6 +1482,7 @@ describe("graph workflow execution route handlers", () => {
               targetLaneId: "lane-target",
               sourceLaneIds: ["lane-a", "lane-b"],
               mergedSourceLaneIds: ["lane-a"],
+              validationDebtSourceLaneIds: [],
               status: "running",
               errorMessage: null,
               conflicts: null,
@@ -1551,6 +1552,7 @@ describe("graph workflow execution route handlers", () => {
               targetLaneId: "__session__",
               sourceLaneIds: ["lane-plan"],
               mergedSourceLaneIds: [],
+              validationDebtSourceLaneIds: [],
               status: "running",
               errorMessage: null,
               conflicts: null,
@@ -2856,12 +2858,21 @@ describe("graph workflow route script validator service", () => {
       id: "execution-script-1",
       status: "running",
     });
+    const context = execution.workingDefinition.executionContexts.find(
+      (candidate) => candidate.id === "context-plan",
+    );
+    if (!context) throw new Error("context-plan fixture missing");
+    context.scriptValidator = {
+      commands: ["typecheck", "test"],
+    };
+    const signal = new AbortController().signal;
 
     const result = await service.runScriptValidator({
       projectPath: "/repo",
       sessionName: "session-1",
       execution,
       contextId: "context-plan",
+      signal,
     });
 
     expect(result).toEqual({ kind: "pass" });
@@ -2878,6 +2889,8 @@ describe("graph workflow route script validator service", () => {
       // merge target, since it runs on the session branch itself.
       targetBranch: "main",
       timeoutMs: 123_000,
+      commands: ["typecheck", "test"],
+      signal,
     });
   });
 
@@ -2952,7 +2965,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
           },
         },
         contextValidator: { enabled: false, assignments: [] },
-        scriptValidator: { enabled: false },
+        scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },

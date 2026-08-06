@@ -25,6 +25,7 @@ import {
 import { createLogger } from "@/lib/logging";
 import { readConfig } from "@/lib/config/loader";
 import { readRepoConfig } from "@/lib/projects/repo-config";
+import { createValidationCommandPreflight } from "@/lib/validation/preflight";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
@@ -47,6 +48,7 @@ import type { MutateActiveResult } from "./execution-repository";
 import { classifyExecutionEditability } from "./lifecycle-classifier";
 import {
   coerceGlobalDefaults,
+  resolveAgentValidationWithProvenance,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
 } from "./resolve-config";
@@ -134,9 +136,12 @@ export async function buildDefaultLiveEditDeps(
   projectPath: string,
 ): Promise<LiveEditDeps> {
   const repoConfig = await readRepoConfig(projectPath);
-  const hasPreMergeCommand = Boolean(repoConfig?.preMergeCommand);
 
   const global = await readConfig();
+  const validationCommandPreflight = createValidationCommandPreflight(
+    repoConfig?.validation,
+    global.validation,
+  );
   const defaults = coerceGlobalDefaults(global.workflowDefaults);
   const syntheticContext: GraphWorkflowExecutionContextDefinition = {
     id: "__live_edit_global_defaults__",
@@ -146,6 +151,11 @@ export async function buildDefaultLiveEditDeps(
   const resolved = resolveContext(defaults, {}, syntheticContext);
   const snapshotFor = await buildAssignmentSnapshotLookup(projectPath);
   const collaboration = resolveCollaborationConfigWithProvenance(
+    defaults,
+    {},
+    syntheticContext,
+  );
+  const agentValidation = resolveAgentValidationWithProvenance(
     defaults,
     {},
     syntheticContext,
@@ -163,6 +173,7 @@ export async function buildDefaultLiveEditDeps(
       })),
     },
     scriptValidator: resolved.scriptValidator,
+    scriptValidatorSource: resolved.scriptValidatorSource ?? "global",
     humanApprovalGate: resolved.humanApprovalGate,
     askUserQuestions: resolved.askUserQuestions,
     mutability: resolved.mutability,
@@ -170,11 +181,13 @@ export async function buildDefaultLiveEditDeps(
     iterationPolicy: resolved.iterationPolicy,
     planRepair: resolved.planRepair,
     collaboration,
+    agentValidation,
   };
 
   return {
     createTaskId: () => `task-${randomUUID()}`,
     resolvedGlobalDefaults: () => resolvedGlobalDefaults,
+    validationCommandPreflight: () => validationCommandPreflight,
     // Fail-safe, not a resolver: every assignment an OPERATION carries is
     // pinned by preparation, and `applyLiveEditsToActiveExecution` substitutes
     // that prepared lookup here. Reaching this would mean an assignment got
@@ -185,7 +198,6 @@ export async function buildDefaultLiveEditDeps(
         "live edit assignments must be resolved by prepareAssignmentSnapshots before the mutation",
       );
     },
-    hasPreMergeCommand: () => hasPreMergeCommand,
     now: () => new Date().toISOString(),
     executionContract: createRegisteredGraphExecutionContract(),
   };

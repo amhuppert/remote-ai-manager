@@ -39,6 +39,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => 0,
     });
 
@@ -89,6 +90,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => 0,
     });
 
@@ -146,6 +148,7 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep");
         return 0;
       },
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => {
         calls.push("conversation-snapshot-recovery");
         return 0;
@@ -207,6 +210,7 @@ describe("createStartupRegistrar", () => {
       },
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => 0,
     });
 
@@ -255,6 +259,7 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep-failed");
         throw new Error("simulated agent-run sweep failure");
       },
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => {
         calls.push("conversation-snapshot-recovery-failed");
         throw new Error("simulated conversation snapshot recovery failure");
@@ -325,6 +330,7 @@ describe("createStartupRegistrar", () => {
         calls.push("agent-run-sweep");
         return 0;
       },
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => {
         calls.push("conversation-snapshot-recovery");
         return 0;
@@ -374,6 +380,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => 0,
     });
 
@@ -418,6 +425,7 @@ describe("createStartupRegistrar", () => {
       }),
       sweepInterruptedCompactions: () => 0,
       recoverStaleAgentRuns: () => 0,
+      initializeValidationService: async () => {},
       recoverInterruptedConversationSnapshots: async () => 0,
     });
 

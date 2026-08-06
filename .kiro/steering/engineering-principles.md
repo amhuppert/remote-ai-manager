@@ -82,7 +82,7 @@ Maximally useful AI-assisted dev = offload as much as possible from the agent on
 | Deterministic code | Agent |
 |---|---|
 | Git ops, file I/O, JSONL parsing | Writing/editing source |
-| `preMergeCommand` + exit code | Judging intent match |
+| Registered validation command + exit code | Judging intent match |
 | Iteration accounting, circuit breaker, locks | Producing next plan step |
 | Zod-validating agent output | Interpreting ambiguous prompts |
 | SDK message routing | Design review |

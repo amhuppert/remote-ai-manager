@@ -158,7 +158,7 @@ export function createCohortExecution(
               enabled: true,
               assignments: [...assignments],
             },
-            scriptValidator: { enabled: true },
+            scriptValidator: { commands: ["pre-merge"] },
           }
         : context,
     ),

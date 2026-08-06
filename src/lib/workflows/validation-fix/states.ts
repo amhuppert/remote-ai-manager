@@ -28,6 +28,7 @@ import type {
   FixValidationOutput,
   RunValidationInput,
 } from "./actors";
+import { isRemediableValidationFailure } from "./actors";
 
 const logger = createLogger("validation-fix-states");
 
@@ -41,6 +42,7 @@ export interface ValidationFixHostContext {
    *  omit it and the fix actor falls back to the session's
    *  most-recently-active conversation. */
   conversationId?: string | null;
+  resolutionContext?: string | null;
   error: string | null;
   completedAt: string | null;
   phase: string | null;
@@ -158,8 +160,15 @@ export function createValidationFixStates<
           timeoutTransition,
           {
             ...startFixTransition,
-            guard: ({ context }: { context: TContext }) =>
-              shouldAttemptFix(context),
+            guard: ({
+              context,
+              event,
+            }: {
+              context: TContext;
+              event: { error?: unknown };
+            }) =>
+              shouldAttemptFix(context) &&
+              isRemediableValidationFailure(event.error),
           },
           failedTransition,
         ],
@@ -182,6 +191,7 @@ export function createValidationFixStates<
           projectPath: context.projectPath,
           sessionName: context.sessionName,
           conversationId: context.conversationId ?? undefined,
+          resolutionContext: context.resolutionContext ?? undefined,
           branchName: context.branchName,
           isRetry: context.fixAttempt > 1,
         }),
@@ -252,8 +262,15 @@ export function createValidationFixStates<
           timeoutTransition,
           {
             ...startFixTransition,
-            guard: ({ context }: { context: TContext }) =>
-              context.fixAttempt < context.maxFixAttempts,
+            guard: ({
+              context,
+              event,
+            }: {
+              context: TContext;
+              event: { error?: unknown };
+            }) =>
+              context.fixAttempt < context.maxFixAttempts &&
+              isRemediableValidationFailure(event.error),
           },
           failedTransition,
         ],

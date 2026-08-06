@@ -2,35 +2,23 @@
 
 Load this reference when Vitest is detected (`vitest` in `dependencies` or `devDependencies`).
 
-Vitest config covers two concerns: AI-optimal output and bounded parallelism. The pre-merge script then scopes each run to the files touched by the branch.
+Vitest config covers AI-optimal output and may mirror the fixed worker count. The registered test wrapper and its canonical launcher own worker and heap enforcement, scope each run to the files touched by the branch, and permit narrower path selection for TDD.
 
-AI detection uses the `CLAUDECODE` env var: Claude Code sets it automatically in its sessions, and the pre-merge script exports it explicitly. Other agents (e.g. Codex) do not set it — when running tests from such a session, export `CLAUDECODE=1` first to get the same low-noise output.
+AI detection uses the `CLAUDECODE` env var, which every generated validation wrapper exports explicitly.
 
 ## Why bound parallelism
 
-Vitest's default `forks` pool spawns one worker per CPU core with no heap cap. On a high-core / low-RAM machine that fans out to N heavyweight Node processes at once (each loads the full app module graph + jsdom), exhausts memory + swap during a full-suite run, and can freeze the machine. Bound `maxForks` to a RAM budget and cap each worker's heap so a runaway file OOM-kills its own fork instead of growing unbounded.
+Vitest's default `forks` pool spawns one worker per CPU core with no heap cap. Pin `maxForks` to a fixed count and cap each worker's heap so the registered cost describes the maximum fan-out on every machine. A different worker profile is a different registered command.
 
 ## Vitest config
 
-Add this to `vitest.config.ts` (or `vitest.config.js`). When an existing config is present, merge — don't replace.
+Add this to `vitest.config.ts` (or `vitest.config.js`). When an existing config is present, merge — don't replace. The worker value here is a defense-in-depth mirror; candidate-worktree configuration is not the enforcement boundary. Do not put the heap cap in candidate `poolOptions.forks.execArgv`: Node command-line heap flags override `NODE_OPTIONS`, so the canonical launcher must supply that field last.
 
 ```typescript
 import { defineConfig } from "vitest/config";
-import os from "node:os";
-
 const isAI = process.env.CLAUDECODE === "1";
 const isCI = process.env.CI === "true";
-
-// Budget ~2 GB per worker against ~60% of total RAM, clamped to [2, cores].
-// Prevents the default "one worker per core" fan-out from OOM-ing the box.
-const GB = 1024 ** 3;
-const maxForks = Math.max(
-  2,
-  Math.min(
-    os.availableParallelism(),
-    Math.floor(((os.totalmem() / GB) * 0.6) / 2),
-  ),
-);
+const maxForks = 4;
 
 function getReporters(): string[] {
   if (isCI) return ["dot", "github-actions"];
@@ -47,9 +35,6 @@ export default defineConfig({
       forks: {
         maxForks,
         minForks: 1,
-        // Cap each worker's heap so a runaway file OOM-kills its own fork
-        // instead of growing unbounded across the machine.
-        execArgv: ["--max-old-space-size=2048"],
       },
     },
 
@@ -75,36 +60,107 @@ export default defineConfig({
 
 | Setting | Purpose |
 |---|---|
-| `pool: "forks"` + `maxForks` | Caps concurrent worker processes against a RAM budget. Default is one per core with no cap. |
-| `execArgv: ["--max-old-space-size=2048"]` | Per-worker heap cap. A runaway worker OOMs alone instead of taking the machine with it. |
+| `pool: "forks"` + `maxForks` | Mirrors the canonical wrapper's worker cap for local runs outside Command Center. |
 | `reporters: ["dot"]` (AI) | One char per test, full failure details preserved. ~96% output reduction. |
 | `bail: 3` | Stop after 3 failures — cascading errors waste tokens. |
 | `onConsoleLog() { return false; }` | Suppress `console.log` from test code. |
 | `onStackTrace` filter | Strip `node_modules` frames from stack traces. |
 | `diff.truncateThreshold: 2000` | Truncate large object diffs. |
 
-## Pre-merge invocation
+Register this four-worker wrapper with cost `4`. If the project chooses another fixed count, change the wrapper constants and declared cost together, then update the worker mirror to match.
 
-The pre-merge script (`references/pre-merge-script.md`) computes `$merge_base`. Use `--changed` so Vitest runs only tests whose module graph includes a changed file.
+## Canonical launcher
+
+Generate `scripts/validate/vitest-launcher.mjs` beside the registered wrapper. The launcher reads only environment values that the wrapper overwrites, snapshots them before Vitest loads candidate code, and passes fixed programmatic options to `startVitest`. Vitest merges these programmatic options after the candidate configuration, so a candidate `poolOptions.forks.execArgv` such as `--max-old-space-size=8192` is replaced by the canonical 2048 MB value.
+
+```javascript
+import { startVitest } from "vitest/node";
+
+const [scope, ...scopeArgs] = process.argv.slice(2);
+const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
+const testHeapMb = Number.parseInt(process.env.CC_TEST_HEAP_MB ?? "", 10);
+
+if (!Number.isInteger(testWorkers) || testWorkers < 1) {
+  throw new Error("CC_TEST_WORKERS must be a positive integer");
+}
+if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
+  throw new Error("CC_TEST_HEAP_MB must be a positive integer");
+}
+
+let filters = [];
+let changed;
+if (scope === "paths") {
+  filters = scopeArgs;
+} else if (scope === "changed" && scopeArgs.length === 1) {
+  changed = scopeArgs[0];
+} else if (scope !== "full" || scopeArgs.length > 0) {
+  throw new Error("expected full, changed <merge-base>, or paths <path...>");
+}
+
+await startVitest(
+  "test",
+  filters,
+  {
+    run: true,
+    color: false,
+    reporters: ["dot"],
+    bail: 3,
+    passWithNoTests: scope !== "full",
+    ...(changed ? { changed } : {}),
+    pool: "forks",
+    maxWorkers: testWorkers,
+    minWorkers: 1,
+    poolOptions: {
+      forks: {
+        maxForks: testWorkers,
+        minForks: 1,
+        execArgv: [`--max-old-space-size=${testHeapMb}`],
+      },
+    },
+  },
+);
+```
+
+The `startVitest` options are the final configuration layer. Both `maxForks` and `execArgv` are therefore authoritative even if candidate configuration declares larger values. Keep this launcher in the canonical project root with the wrapper; do not generate it inside each candidate worktree.
+
+## Validation wrapper invocation
+
+The shared wrapper setup in `references/pre-merge-script.md` computes `$merge_base`. Register `scripts/validate/test.sh` with `scopeArgs: "paths"`; forwarded values are already validated as relative non-option paths. The wrapper invokes the canonical launcher instead of the candidate-worktree Vitest CLI entry point.
 
 ```bash
-# Always export this; vitest.config.ts checks CLAUDECODE for AI-optimal output.
+readonly SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+readonly TEST_WORKERS=4
+readonly TEST_HEAP_MB=2048
+
+# NODE_OPTIONS caps the launcher and parent process. The launcher applies the
+# same cap as final worker execArgv after candidate configuration resolves.
+export NODE_OPTIONS="--max-old-space-size=${TEST_HEAP_MB}"
+export CC_TEST_WORKERS="$TEST_WORKERS"
+export CC_TEST_HEAP_MB="$TEST_HEAP_MB"
+export VITEST_MAX_FORKS="$TEST_WORKERS"
+export VITEST_MIN_FORKS=1
 export CLAUDECODE=1
 
-if [ -z "$merge_base" ]; then
+if [ "$#" -gt 0 ]; then
+  run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" paths "$@"
+elif [ -z "$merge_base" ]; then
   # Fallback: validate the whole tree when no merge base resolves
   # (detached HEAD, missing target branch, shallow clone).
-  NODE_ENV=test npx vitest run --no-color
+  run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" full
 else
-  NODE_ENV=test npx vitest run --no-color --changed "$merge_base" --passWithNoTests
+  run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" changed "$merge_base"
 fi
 ```
 
-| Flag | Purpose |
+| Mechanism | Purpose |
 |---|---|
-| `--changed <ref>` | Runs only tests whose module graph includes a file changed since `<ref>`. |
-| `--passWithNoTests` | A branch that touches only untested files won't fail the merge. |
-| `--no-color` | Disable ANSI codes for log capture. |
+| `changed "$merge_base"` | Makes the launcher set Vitest's `changed` option to the merge base. |
+| `paths "$@"` | Passes only server-validated relative paths as narrower test filters. |
+| `passWithNoTests` for scoped modes | Allows a branch that touches only untested files to pass. |
+| `color: false` plus `run_quiet` | Produces no color, discards success output, and replays complete failure output. |
+| Final `poolOptions.forks` | Prevents candidate configuration from increasing fan-out or worker heap. |
+
+The wrapper overwrites `NODE_OPTIONS` rather than preserving a caller value, so the Vitest parent inherits the fixed 2048 MB old-space cap. The launcher separately replaces candidate worker `execArgv` with the same cap because command-line Node flags take precedence over `NODE_OPTIONS`.
 
 `NODE_ENV=test` is set explicitly so React loads its development build (which exports `React.act`) under projects using `@testing-library/react 16` with React 19. Harmless for projects not on that stack.
 

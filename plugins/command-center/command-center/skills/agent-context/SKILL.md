@@ -44,7 +44,13 @@ If the session was created in **Focus mode**, your system prompt includes an `<o
 
 ## Session Tools — the `cctl` CLI
 
-CC provides a command-line tool, **`cctl`**, on your `PATH` for session actions: dev servers, notifications, reference documents, workflow authoring/lifecycle, codex runs, and session alignment. It talks to CC's token-gated HTTP API; your identity (project, session, conversation) is injected via environment variables, so you never pass those explicitly. Run `cctl doctor` to confirm connectivity. For the full command reference, invoke the **`cc-cli`** skill.
+CC provides a command-line tool, **`cctl`**, on your `PATH` for session actions: registered validation, dev servers, notifications, reference documents, workflow authoring/lifecycle, Codex runs, and session alignment. It talks to CC's token-gated HTTP API; your identity (project, session, conversation) is injected via environment variables, so you never pass those explicitly. Run `cctl doctor` to confirm connectivity. For the full command reference, invoke the **`cc-cli`** skill.
+
+### Validation commands and global capacity
+
+Run `cctl validate list` to inspect the project's registered command names, declared costs, scope support, caller policy, and current capacity. Run one with `cctl validate run <name>`; add `--wait` when the turn should join the strict FIFO queue instead of using fail-fast admission. Use values after `--` only to narrow a command whose registration permits path scoping.
+
+Every validation execution shares one server-owned global cost budget across all projects, sessions, conversations, graph workflows, and merge flows. A capacity refusal reports systemic capacity or an older queued request, not a validation-tool error. Decide whether waiting fits the turn; never respond by invoking the registered tool, package alias, or wrapper directly. A declared cost above the machine limit is a configuration error that must be fixed rather than queued.
 
 ### Dev-server commands
 
@@ -82,11 +88,11 @@ Runs after CC creates your worktree. Typically installs dependencies. If the ini
 | `SESSION_NAME` | Session identifier |
 | `BRANCH_NAME` | Git branch (`csm/<name>`) |
 
-### Pre-Merge Validation (`preMergeCommand`)
+### Validation Registry (`validation`)
 
-Runs before CC squash-merges your branch into `main`. This is CC's merge workflow — you don't invoke it directly. The script typically runs formatters, linters, type checks, and tests.
+Projects register named executable wrappers in `validation.commands`, each with a required fixed cost and optional timeout, description, and path-scoping policy. `validation.preMerge` is the ordered selection for Smart Merge and Smart Commit. `validation.laneMerge` can select a cheaper ordered graph lane-merge profile and otherwise inherits `preMerge`.
 
-If validation fails, CC may use auto-fix: it sends the error output to an agent to fix the issues, then re-runs validation. The script may run multiple times.
+All callers, including merge workflows and graph script gates, submit those names through the same ValidationService and global budget. Wrapper paths resolve from the canonical project root and execute with the target worktree as `cwd`, so an unmerged session cannot exercise edits to its own registry or wrappers through `cctl validate`.
 
 ### Dev Servers (`devServers`)
 
@@ -123,10 +129,12 @@ These happen automatically — no action needed from you:
 | Permissions | User-configured | `bypassPermissions` (full access) |
 | Session persistence | Backend-local (e.g. `~/.claude/`, `~/.codex/`) | CC manages its own transcripts |
 | Dev servers | User starts manually | CC manages lifecycle and port allocation; agents run `cctl dev ensure` |
+| Validation | User invokes tools directly | Registered commands run through `cctl validate` and share the server-owned global budget |
 | Merge to main | User runs git commands | CC's merge workflow with validation |
 
 ## Tips
 
 - **Check `CommandCenter.json`** in the repo root to understand what's configured for this project.
+- **Use `cctl validate list` before validating** to discover the registered names, costs, scope support, policy, and live global capacity.
 - **Run `cctl dev ensure` before browser/Playwright/Next.js MCP work** — the printed `localUrl` is the only URL you should hit. A common port responding does not mean it belongs to your worktree.
 - **Your branch is `csm/<session-name>`** — commits go here. CC handles merging to `main` when the user requests it.

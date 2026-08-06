@@ -6,11 +6,17 @@ import type {
   WorkflowCollaborationConfig,
   WorkflowCollaborationConfigOverride,
 } from "@/lib/workflow-graph/collaboration-schemas";
-import { DEFAULT_PLAN_REPAIR_POLICY } from "@/lib/workflow-graph/config-schemas";
+import {
+  DEFAULT_AGENT_VALIDATION_CONFIG,
+  DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
+  DEFAULT_PLAN_REPAIR_POLICY,
+  type GraphWorkflowCommandSelector,
+} from "@/lib/workflow-graph/config-schemas";
 import type {
   CascadeWorkflowSemanticDefinition,
   GraphWorkflowCascadeContext,
   GraphWorkflowExecutionContextDefinition,
+  ResolvedAgentValidationConfig,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
@@ -52,7 +58,7 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
       },
     ],
   },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   iterationPolicy: {
@@ -76,6 +82,8 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
   },
+  agentValidation: DEFAULT_AGENT_VALIDATION_CONFIG,
+  laneMergeValidation: DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
 };
 
 export function coerceGlobalDefaults(
@@ -108,6 +116,12 @@ export function coerceGlobalDefaults(
       globalDefaults.planRepair ?? SEEDED_WORKFLOW_DEFAULTS.planRepair,
     collaboration:
       globalDefaults.collaboration ?? SEEDED_WORKFLOW_DEFAULTS.collaboration,
+    agentValidation:
+      globalDefaults.agentValidation ??
+      SEEDED_WORKFLOW_DEFAULTS.agentValidation,
+    laneMergeValidation:
+      globalDefaults.laneMergeValidation ??
+      SEEDED_WORKFLOW_DEFAULTS.laneMergeValidation,
   };
 }
 
@@ -131,6 +145,29 @@ export function resolveWorkflowConfig(
       override.collaboration,
       defaults.collaboration,
     ),
+    // Per-leaf, mirroring the context-tier cascade: each provided role
+    // selector replaces only its inherited counterpart, never the block.
+    agentValidation: {
+      implementer:
+        override.agentValidation?.implementer ??
+        defaults.agentValidation.implementer,
+      contextValidator:
+        override.agentValidation?.contextValidator ??
+        defaults.agentValidation.contextValidator,
+    },
+    // Global → workflow only — a deliberate two-tier deviation from the
+    // three-tier cascade: the lane-merge gate guards the shared fan-in
+    // target and, under final-only, validates the integration of many
+    // contexts at once, so resolving it from any single context would be
+    // ambiguous.
+    laneMergeValidation: {
+      strategy:
+        override.laneMergeValidation?.strategy ??
+        defaults.laneMergeValidation.strategy,
+      commands:
+        override.laneMergeValidation?.commands ??
+        defaults.laneMergeValidation.commands,
+    },
   };
 }
 
@@ -186,6 +223,12 @@ export function resolveContext(
     context.scriptValidator ??
     workflow.scriptValidator ??
     defaults.scriptValidator;
+  const scriptValidatorSource: CollaborationConfigSource =
+    context.scriptValidator !== undefined
+      ? "per-node"
+      : workflow.scriptValidator !== undefined
+        ? "workflow"
+        : "global";
 
   const humanApprovalGate =
     context.humanApprovalGate ??
@@ -198,6 +241,12 @@ export function resolveContext(
     defaults.askUserQuestions;
 
   const collaboration = resolveCollaborationConfigWithProvenance(
+    defaults,
+    workflow,
+    context,
+  );
+
+  const agentValidation = resolveAgentValidationWithProvenance(
     defaults,
     workflow,
     context,
@@ -219,6 +268,7 @@ export function resolveContext(
     implementer,
     contextValidator,
     scriptValidator,
+    scriptValidatorSource,
     humanApprovalGate,
     askUserQuestions,
     mutability,
@@ -226,6 +276,7 @@ export function resolveContext(
     iterationPolicy,
     planRepair,
     collaboration,
+    agentValidation,
   };
 }
 
@@ -250,6 +301,7 @@ export function resolveWorkflowDefinition(
 ): CascadeWorkflowSemanticDefinition {
   const defaults = coerceGlobalDefaults(global.workflowDefaults);
   const workflowConfig = definition.workflowConfig ?? {};
+  const resolvedWorkflowConfig = resolveWorkflowConfig(global, definition);
 
   return {
     schemaVersion: definition.schemaVersion,
@@ -260,6 +312,9 @@ export function resolveWorkflowDefinition(
     ...(definition.lockedRegions !== undefined
       ? { lockedRegions: definition.lockedRegions }
       : {}),
+    // Canonical global → workflow resolution, snapshotted at its only tier so
+    // merge submissions read the execution's own record.
+    laneMergeValidation: resolvedWorkflowConfig.laneMergeValidation,
     // The charter is workflow-global semantic content, attached identically to
     // every resolved context by passthrough — never routed through the
     // operational config cascade and with no per-context override (1.5, 4.5).
@@ -355,4 +410,70 @@ function pickProvenancedField<T>(
   if (perNode !== undefined) return { value: perNode, source: "per-node" };
   if (workflow !== undefined) return { value: workflow, source: "workflow" };
   return { value: global, source: "global" };
+}
+
+/**
+ * Per-leaf agent-validation cascade (per-node → workflow → global), modeled
+ * on the collaboration resolver: each ROLE selector resolves independently,
+ * so a context override of `implementer` can never erase a workflow-level
+ * `contextValidator` override. A provided selector replaces its inherited
+ * counterpart as a unit — lists are never unioned.
+ */
+export function resolveAgentValidationWithProvenance(
+  globalDefaults: WorkflowDefaults,
+  workflowConfig: WorkflowConfigOverride,
+  contextConfig: GraphWorkflowExecutionContextDefinition,
+): ResolvedAgentValidationConfig {
+  const perNode = contextConfig.agentValidation ?? {};
+  const workflow = workflowConfig.agentValidation ?? {};
+  const global =
+    globalDefaults.agentValidation ?? DEFAULT_AGENT_VALIDATION_CONFIG;
+
+  return {
+    implementer: pickProvenancedField(
+      perNode.implementer,
+      workflow.implementer,
+      global.implementer,
+    ),
+    contextValidator: pickProvenancedField(
+      perNode.contextValidator,
+      workflow.contextValidator,
+      global.contextValidator,
+    ),
+  };
+}
+
+export interface CommandSelectorExpansion {
+  commands: string[];
+  /**
+   * Selector names absent from the registry. Reported, never silently
+   * dropped: unknown names must fail at the earliest project-bound boundary
+   * (create/replace/start/live-edit) as located configuration errors.
+   */
+  unknownCommands: string[];
+}
+
+/**
+ * Seed-time expansion of a command selector into an explicit command-name
+ * snapshot against a registry's names. Both selector modes expand to
+ * explicit names when an execution is seeded, so later registry edits never
+ * broaden a running execution's permissions.
+ */
+export function expandCommandSelector(
+  selector: GraphWorkflowCommandSelector,
+  registryNames: readonly string[],
+): CommandSelectorExpansion {
+  if (selector.mode === "only") {
+    const known = new Set(registryNames);
+    return {
+      commands: [...selector.commands],
+      unknownCommands: selector.commands.filter((name) => !known.has(name)),
+    };
+  }
+  const excluded = new Set(selector.except);
+  const known = new Set(registryNames);
+  return {
+    commands: registryNames.filter((name) => !excluded.has(name)),
+    unknownCommands: selector.except.filter((name) => !known.has(name)),
+  };
 }

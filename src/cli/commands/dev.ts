@@ -12,13 +12,21 @@ import {
   failureFromRequestNotFoundAsUsage,
   render,
   resolveSessionContext,
+  structuredErrorFields,
   usageFailure,
   type CliEnv,
   type CliHost,
   type CliResult,
   type GlobalFlags,
-  type SessionContext,
 } from "../shared";
+import { devServerRequestPath, inferDevCommandTarget } from "./dev-target";
+
+const DEV_TARGET_ERROR_CODES = new Set([
+  "INVALID_DEV_SERVER_TARGET",
+  "WORKFLOW_EXECUTION_NOT_ACTIVE",
+  "WORKFLOW_CONTEXT_NOT_FOUND",
+  "WORKFLOW_WORKTREE_UNAVAILABLE",
+]);
 
 /**
  * `cctl dev list|ensure|stop` — dev-server management over the existing
@@ -38,10 +46,6 @@ function localUrlFor(port: number | null): string | null {
   return port !== null ? `http://localhost:${port}` : null;
 }
 
-function devServersPath(context: SessionContext): string {
-  return `/api/projects/${encodePathSegment(context.project)}/sessions/${encodePathSegment(context.session)}/dev-servers`;
-}
-
 function formatServerBlock(server: DevServerRuntimeState): string {
   return [
     `${server.serverName} — ${server.status}`,
@@ -57,6 +61,25 @@ function noDevServersFailure(json: boolean): CliResult {
       "no dev servers are configured for this project — add a `devServers` entry to CommandCenter.json",
     json,
   });
+}
+
+function devRequestFailure(
+  result: Exclude<Awaited<ReturnType<typeof cliRequest>>, { kind: "ok" }>,
+  json: boolean,
+): CliResult {
+  if (
+    result.kind === "error" &&
+    result.code !== undefined &&
+    DEV_TARGET_ERROR_CODES.has(result.code)
+  ) {
+    return failure({
+      exitCode: EXIT_OPERATION_FAILED,
+      message: result.error,
+      ...structuredErrorFields(result),
+      json,
+    });
+  }
+  return failureFromRequestNotFoundAsUsage(result, json);
 }
 
 export async function runDev(
@@ -92,6 +115,9 @@ async function runDevList(
     return usageFailure("dev list takes no arguments", json);
   }
 
+  const inferred = inferDevCommandTarget(flags, env);
+  if (!inferred.ok) return usageFailure(inferred.message, json);
+
   const resolved = await resolveSessionContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
@@ -101,10 +127,9 @@ async function runDevList(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "GET",
-    path: devServersPath(context),
+    path: devServerRequestPath(context, inferred.target),
   });
-  if (result.kind !== "ok")
-    return failureFromRequestNotFoundAsUsage(result, json);
+  if (result.kind !== "ok") return devRequestFailure(result, json);
 
   const parsed = devServersStatusResponseSchema.safeParse(result.body);
   const servers = parsed.success ? parsed.data.servers : [];
@@ -140,10 +165,13 @@ async function runDevEnsure(
     );
   }
 
+  const inferred = inferDevCommandTarget(flags, env);
+  if (!inferred.ok) return usageFailure(inferred.message, json);
+
   const resolved = await resolveSessionContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
-  const listPath = devServersPath(context);
+  const listPath = devServerRequestPath(context, inferred.target);
 
   // The START route needs a server name in its path. When the caller omits one,
   // list first to pick the single configured server — surfacing no-servers and
@@ -157,8 +185,7 @@ async function runDevEnsure(
       method: "GET",
       path: listPath,
     });
-    if (listResult.kind !== "ok")
-      return failureFromRequestNotFoundAsUsage(listResult, json);
+    if (listResult.kind !== "ok") return devRequestFailure(listResult, json);
     const parsed = devServersStatusResponseSchema.safeParse(listResult.body);
     const servers = parsed.success ? parsed.data.servers : [];
     if (servers.length === 0) return noDevServersFailure(json);
@@ -178,7 +205,11 @@ async function runDevEnsure(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "POST",
-    path: `${listPath}/${encodePathSegment(targetName)}/start`,
+    path: devServerRequestPath(
+      context,
+      inferred.target,
+      `/${encodePathSegment(targetName)}/start`,
+    ),
   });
   if (startResult.kind !== "ok") {
     if (
@@ -187,7 +218,7 @@ async function runDevEnsure(
     ) {
       return noDevServersFailure(json);
     }
-    return failureFromRequestNotFoundAsUsage(startResult, json);
+    return devRequestFailure(startResult, json);
   }
 
   // Block until liveness: poll the list route until the target runs, errors, or times out.
@@ -200,8 +231,7 @@ async function runDevEnsure(
       method: "GET",
       path: listPath,
     });
-    if (listResult.kind !== "ok")
-      return failureFromRequestNotFoundAsUsage(listResult, json);
+    if (listResult.kind !== "ok") return devRequestFailure(listResult, json);
     const parsed = devServersStatusResponseSchema.safeParse(listResult.body);
     const target = parsed.success
       ? parsed.data.servers.find((s) => s.serverName === targetName)
@@ -262,6 +292,9 @@ async function runDevStop(
     return usageFailure("dev stop takes a single <serverName> argument", json);
   }
 
+  const inferred = inferDevCommandTarget(flags, env);
+  if (!inferred.ok) return usageFailure(inferred.message, json);
+
   const resolved = await resolveSessionContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
@@ -271,10 +304,13 @@ async function runDevStop(
     token: context.token,
     tokenSource: context.tokenSource,
     method: "POST",
-    path: `${devServersPath(context)}/${encodePathSegment(name)}/stop`,
+    path: devServerRequestPath(
+      context,
+      inferred.target,
+      `/${encodePathSegment(name)}/stop`,
+    ),
   });
-  if (result.kind !== "ok")
-    return failureFromRequestNotFoundAsUsage(result, json);
+  if (result.kind !== "ok") return devRequestFailure(result, json);
 
   // No hint — stop is terminal.
   return {

@@ -1,13 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQuery } from "@/test/component-mocks";
 import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
@@ -46,7 +40,7 @@ describe("WorkflowBuilderEditor", () => {
 
   it("adds an inherited context, marks the draft dirty, and resets it", () => {
     resetStore();
-    render(
+    renderWithQuery(
       <WorkflowBuilderEditor
         record={createWorkflowDefinitionRecord()}
         {...defaultHeaderProps}
@@ -86,7 +80,7 @@ describe("WorkflowBuilderEditor", () => {
 
   it("displays save error when provided", () => {
     resetStore();
-    render(
+    renderWithQuery(
       <WorkflowBuilderEditor
         record={createWorkflowDefinitionRecord()}
         {...defaultHeaderProps}
@@ -141,7 +135,7 @@ describe("WorkflowBuilderEditor", () => {
       definition: invalidDefinition,
     });
 
-    render(
+    renderWithQuery(
       <WorkflowBuilderEditor
         record={record}
         {...defaultHeaderProps}
@@ -216,7 +210,7 @@ describe("WorkflowBuilderEditor", () => {
       definition: definitionWithUndeclaredRef,
     });
 
-    render(
+    renderWithQuery(
       <WorkflowBuilderEditor
         record={record}
         {...defaultHeaderProps}
@@ -257,7 +251,7 @@ describe("WorkflowBuilderEditor", () => {
     resetStore();
     const onSave = vi.fn();
 
-    render(
+    renderWithQuery(
       <WorkflowBuilderEditor
         record={createWorkflowDefinitionRecord()}
         {...defaultHeaderProps}
@@ -338,18 +332,12 @@ describe("WorkflowBuilderEditor — output schema save gate", () => {
   function renderWithSelectedContext(onSave: ReturnType<typeof vi.fn>) {
     resetStore();
     const { record, contextId } = recordWithSchema();
-    // The inspector's Context tab pulls voice state through React Query.
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const view = render(
-      <QueryClientProvider client={client}>
-        <WorkflowBuilderEditor
-          record={record}
-          {...defaultHeaderProps}
-          onSave={onSave}
-        />
-      </QueryClientProvider>,
+    const view = renderWithQuery(
+      <WorkflowBuilderEditor
+        record={record}
+        {...defaultHeaderProps}
+        onSave={onSave}
+      />,
     );
     act(() => {
       _useGraphWorkflowBuilderStore.setState({ selectedContextId: contextId });

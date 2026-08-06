@@ -50,7 +50,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       },
     },
     contextValidator: { enabled: false, assignments: [] },
-    scriptValidator: { enabled: false },
+    scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: false },
@@ -70,9 +70,19 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
       negotiationRounds: { value: 3, source: "global" },
       autonomousResolutionThreshold: { value: "minor", source: "global" },
     },
+    agentValidation: {
+      implementer: { value: { mode: "all", except: [] }, source: "global" },
+      contextValidator: {
+        value: { mode: "only", commands: [] },
+        source: "global",
+      },
+    },
+  }),
+  validationCommandPreflight: () => ({
+    commandCosts: {},
+    concurrencyLimit: 8,
   }),
   snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
-  hasPreMergeCommand: () => true,
   now: () => "2026-07-29T10:00:00.000Z",
 };
 

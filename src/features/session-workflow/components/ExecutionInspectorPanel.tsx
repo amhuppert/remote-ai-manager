@@ -135,6 +135,7 @@ import type {
   GraphWorkflowLaneKind,
   GraphWorkflowValidationReviewArtifact,
 } from "@/lib/workflow-graph/schemas";
+import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
 import ContextConfigTab from "./ContextConfigTab";
@@ -225,6 +226,7 @@ function ResolvedSetupStrip({
   context: ResolvedContextDefinition;
 }): React.JSX.Element {
   const cohort = context.contextValidator;
+  const hasScriptGate = context.scriptValidator.commands.length > 0;
   return (
     <div
       className="flex flex-shrink-0 flex-wrap items-center gap-[6px] border-b border-solid border-border-dim bg-bg-base px-lg py-[10px]"
@@ -247,7 +249,7 @@ function ResolvedSetupStrip({
             </BackendChip>
           ))
         : null}
-      {context.scriptValidator.enabled ? (
+      {hasScriptGate ? (
         <GateChip tone="neutral" icon={<ScriptGlyphIcon size={13} />}>
           Script
         </GateChip>
@@ -337,6 +339,9 @@ interface ExecutionInspectorPanelProps {
    * inspector honours the second without stealing the tab on every render.
    */
   contextTabRequest?: ContextTabRequest | null;
+  /** Project-scoped registry summaries for the config tab's command
+   * multi-selects; undefined = registry unavailable. */
+  commandOptions?: readonly ValidationCommandSummary[];
 }
 
 export interface ContextTabRequest {
@@ -1183,6 +1188,7 @@ function DetailView({
   configSaveSucceeded,
   onViewConversation,
   contextTabRequest,
+  commandOptions,
 }: {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
@@ -1214,6 +1220,7 @@ function DetailView({
   configSaveSucceeded?: boolean;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
   contextTabRequest?: ContextTabRequest | null;
+  commandOptions?: readonly ValidationCommandSummary[];
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>("tasks");
   // Honour a host's deep link exactly once per request, adjusting state during
@@ -1780,6 +1787,7 @@ function DetailView({
               isResuming={isResumingExecution}
               editConflict={configEditConflict}
               saveSucceeded={configSaveSucceeded}
+              commandOptions={commandOptions}
             />
           </TabsContent>
 
@@ -1928,6 +1936,7 @@ export default function ExecutionInspectorPanel({
   onViewConversation,
   onEditSchema,
   contextTabRequest,
+  commandOptions,
 }: ExecutionInspectorPanelProps) {
   const selectedContext = selectedContextId
     ? execution.workingDefinition.executionContexts.find(
@@ -1976,6 +1985,7 @@ export default function ExecutionInspectorPanel({
       configSaveSucceeded={configSaveSucceeded}
       onViewConversation={onViewConversation}
       contextTabRequest={contextTabRequest}
+      commandOptions={commandOptions}
     />
   );
 }

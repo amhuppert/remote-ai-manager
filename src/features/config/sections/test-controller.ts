@@ -26,6 +26,10 @@ export const baseFormState: GlobalConfig = {
   },
   maxConcurrentQueries: 3,
   preMergeTimeoutMs: 300_000,
+  validation: {
+    concurrencyLimit: 8,
+    defaultTimeoutMs: 600_000,
+  },
   ignorePatterns: ["node_modules", ".next"],
   tailscaleEnabled: false,
   workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),

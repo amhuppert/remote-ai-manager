@@ -47,7 +47,7 @@ function makeDefinition(
         },
       },
       contextValidator: { enabled: false, assignments: [] },
-      scriptValidator: { enabled: false as const },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },

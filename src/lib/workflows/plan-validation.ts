@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { collectValidationCommandIssues } from "@/lib/workflow-graph/command-selector-validation";
+import {
+  VALIDATION_COST_EXCEEDS_LIMIT_CODE,
+  type ValidationCommandPreflight,
+} from "@/lib/validation/preflight";
 import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type {
@@ -38,7 +43,21 @@ export interface WorkflowPlanIssue {
 
 export type WorkflowPlanValidationResult =
   | { ok: true; draft: WorkflowDefinitionDraft }
-  | { ok: false; issues: WorkflowPlanIssue[] };
+  | {
+      ok: false;
+      issues: WorkflowPlanIssue[];
+      code?: typeof VALIDATION_COST_EXCEEDS_LIMIT_CODE;
+    };
+
+export interface WorkflowPlanValidationOptions {
+  /**
+   * The target project's command-cost snapshot and global capacity. Provided
+   * at project-bound boundaries so unknown and oversized selections fail as
+   * located configuration errors. Omitted at project-unbound callers, where no
+   * project registry exists.
+   */
+  validationCommandPreflight?: ValidationCommandPreflight;
+}
 
 /**
  * The field a structural error implicates, appended to the entity's JSON path so
@@ -260,6 +279,7 @@ function withAssignmentUseSite(
  */
 export function validateWorkflowPlan(
   rawBody: unknown,
+  options: WorkflowPlanValidationOptions = {},
 ): WorkflowPlanValidationResult {
   // Before the Zod parse: the strict assignment schema refuses a pre-cutover
   // singleton with "unrecognized keys", which names neither the use site nor
@@ -282,10 +302,23 @@ export function validateWorkflowPlan(
   }
 
   const structural = validateAuthoredDefinition(parsed.data.definition);
-  if (!structural.ok) {
+  const commandSelectionErrors = options.validationCommandPreflight
+    ? collectValidationCommandIssues(
+        parsed.data.definition,
+        options.validationCommandPreflight,
+      )
+    : [];
+  if (!structural.ok || commandSelectionErrors.length > 0) {
+    const errors = [...structural.errors, ...commandSelectionErrors];
+    const hasOversizedCommand = errors.some(
+      (error) => error.code === VALIDATION_COST_EXCEEDS_LIMIT_CODE,
+    );
     return {
       ok: false,
-      issues: structural.errors.map((error) => ({
+      ...(hasOversizedCommand
+        ? { code: VALIDATION_COST_EXCEEDS_LIMIT_CODE }
+        : {}),
+      issues: errors.map((error) => ({
         path: structuralIssuePath(error, parsed.data.definition),
         message: error.message,
       })),

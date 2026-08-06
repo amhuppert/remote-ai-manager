@@ -79,7 +79,10 @@ beforeAll(() => {
   mkdirSync(binDir);
   writeFileSync(logPath, "", "utf8");
 
-  for (const tool of ["bun", "npx"]) writeStub(binDir, tool);
+  // Every binary a phase can reach for. `node` joined the list when the test
+  // phase moved behind `scripts/validate/vitest-launcher.mjs`: unstubbed, it
+  // runs a real vitest against this throwaway repo and fails the run.
+  for (const tool of ["bun", "npx", "node"]) writeStub(binDir, tool);
 
   git(repo, "init", "--initial-branch=main");
   git(repo, "config", "user.email", "test@example.com");

@@ -153,7 +153,7 @@ describe("substituteContent", () => {
             id: "ctx-1",
             title: "Build {{inputs.feature}}",
             acceptanceCriteria: "Works",
-            scriptValidator: { enabled: true },
+            scriptValidator: { commands: ["pre-merge"] },
             humanApprovalGate: { enabled: true },
           },
         ],
@@ -162,7 +162,7 @@ describe("substituteContent", () => {
       const result = substituteContent(def, { feature: "auth" });
       // Config blocks are not part of the scanned surface — copied verbatim.
       expect(result.executionContexts[0]?.scriptValidator).toEqual({
-        enabled: true,
+        commands: ["pre-merge"],
       });
       expect(result.executionContexts[0]?.humanApprovalGate).toEqual({
         enabled: true,

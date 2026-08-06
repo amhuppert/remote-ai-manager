@@ -11,6 +11,10 @@ import type {
   ConflictDecisionInput,
   DeliveryGateHaltReason as PersistedDeliveryGateHaltReason,
 } from "@/lib/jobs/schemas";
+import type {
+  MergeValidationMode,
+  ValidationWorkflowRef,
+} from "@/lib/workflows/validation-fix/types";
 
 export interface CriterionOutcome {
   criterionId: string;
@@ -175,6 +179,9 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Pre-merge validation timeout in ms. */
   validationTimeoutMs: number;
 
+  /** Per-run validation policy supplied by the owning merge surface. */
+  validationMode: MergeValidationMode;
+
   /** Current fix attempt (0 = not started, incremented on each fixingValidation entry). */
   fixAttempt: number;
 
@@ -228,6 +235,9 @@ export interface MergeContext extends BaseWorkflowContext {
   /** Workflow execution linkage used by the injected delivery gate. */
   executionId: string | null;
 
+  /** Workflow attribution stamped on graph-owned validation ledger rows. */
+  validationWorkflow: ValidationWorkflowRef | null;
+
   /** Validation result for the candidate prepared by this merge job. */
   candidateValidation: CandidateValidationFact | null;
 
@@ -251,6 +261,8 @@ export interface MergeInput {
   decisions?: ConflictDecisionInput[];
   /** See {@link MergeContext.resolutionContext}. */
   resolutionContext?: string;
+  /** Explicit per-run validation behavior selected by the owning surface. */
+  validationMode: MergeValidationMode;
   validationTimeoutMs?: number;
   maxFixAttempts?: number;
   targetBranch?: string;
@@ -268,6 +280,8 @@ export interface MergeInput {
   finalizeSessionOnPublish?: boolean;
   /** Workflow execution linkage for delivery-gate evaluation. */
   executionId?: string;
+  /** Workflow attribution for validation accounting; independent of delivery. */
+  validationWorkflow?: ValidationWorkflowRef;
   /** This completed merge closes the workflow's final publish join. */
   finalPublish?: boolean;
   /** Persisted validation fact supplied to the delivery-gate evaluator. */

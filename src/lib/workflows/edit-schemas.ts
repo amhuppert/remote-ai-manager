@@ -2,10 +2,13 @@ import { z } from "zod";
 import { charterInvariantSchema, sourceOfTruthSchema } from "./charter-schemas";
 import {
   agentAssignmentSchema,
+  graphWorkflowAgentValidationOverrideSchema,
   graphWorkflowAskUserQuestionsConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
   graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
+  graphWorkflowLaneMergeValidationConfigSchema,
+  graphWorkflowLaneMergeValidationOverrideSchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowPlanRepairPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
@@ -19,6 +22,7 @@ import {
   contextOutputSchemaSchema,
   parameterDeclarationSchema,
   prerequisiteSchema,
+  resolvedAgentValidationConfigSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 
 // ============================================================
@@ -60,6 +64,7 @@ const definitionEditAddContextConfigShape = {
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
   humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
+  agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
 };
 
 // Per-context config override blocks on `update-context` — `null` CLEARS the
@@ -81,6 +86,9 @@ const definitionEditUpdateContextConfigShape = {
     .nullable()
     .optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema
+    .nullable()
+    .optional(),
+  agentValidation: graphWorkflowAgentValidationOverrideSchema
     .nullable()
     .optional(),
 };
@@ -105,6 +113,14 @@ const definitionEditWorkflowConfigShape = {
     .nullable()
     .optional(),
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema
+    .nullable()
+    .optional(),
+  agentValidation: graphWorkflowAgentValidationOverrideSchema
+    .nullable()
+    .optional(),
+  // Workflow tier only, mirroring the definition schema: the lane-merge gate
+  // guards the shared fan-in target, so it has no per-context counterpart.
+  laneMergeValidation: graphWorkflowLaneMergeValidationOverrideSchema
     .nullable()
     .optional(),
 };
@@ -286,6 +302,11 @@ const liveEditContextConfigShape = {
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   planRepair: graphWorkflowPlanRepairPolicySchema.optional(),
   collaboration: resolvedCollaborationConfigSchema.optional(),
+  // Live edits write the RESOLVED per-role allowlists (with provenance), same
+  // contract as `collaboration`. Selector command names are validated against
+  // the project registry at the edit boundary; a live edit affects future
+  // submissions only — in-flight validation runs keep their snapshot.
+  agentValidation: resolvedAgentValidationConfigSchema.optional(),
 };
 
 export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
@@ -404,6 +425,15 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
     type: z.literal("remove-edge"),
     sourceContextId: z.string().trim().min(1),
     targetContextId: z.string().trim().min(1),
+  }),
+  // Workflow-scope, like `amend-charter`: rewrites the execution's resolved
+  // lane-merge validation snapshot (a CONCRETE value — no cascade at runtime).
+  // Command names are registry-preflighted at the edit boundary; the edit
+  // affects future merge submissions only — an in-flight merge keeps the
+  // selection it was submitted with (validation-concurrency §6).
+  z.object({
+    type: z.literal("update-lane-merge-validation"),
+    laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema,
   }),
 ]);
 export type WorkflowLiveEditOperation = z.infer<

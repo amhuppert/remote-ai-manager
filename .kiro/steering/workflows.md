@@ -206,7 +206,7 @@ for real cascade values (`form-state.test.ts` pins the identity).
   "workflowDefaults": {
     "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "medium" } },
     "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } } ] },
-    "scriptValidator":  { "enabled": false },
+    "scriptValidator":  { "commands": [] },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
     "mutability":       { "allowAgentTaskAdd": false },
@@ -246,7 +246,7 @@ Nine blocks, all individually overridable per tier:
 |---|---|
 | `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the runtime (backend, model, reasoning) that runs it |
 | `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; a disabled cohort keeps its assignments dormant |
-| `scriptValidator` | Deterministic validator that runs project's `preMergeCommand`. `{ enabled: boolean }`. Requires `preMergeCommand` in `CommandCenter.json` |
+| `scriptValidator` | Deterministic validator that runs its ordered registered command selection. `{ commands: string[] }`; an empty list disables it |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
 | `mutability` | E.g. `allowAgentTaskAdd` |
@@ -367,11 +367,11 @@ Conventions:
 `acceptanceCriteria` is required on every execution context and is consumed by
 the implementer and, when enabled, the agent context validator.
 
-`contextValidator` is an LLM validator. `scriptValidator` runs the project's
-`preMergeCommand` before agent validation and writes failures to
-`.cc/workflow/<executionId>/pre-merge-<timestamp>.log`. Enabling
-`scriptValidator` without a configured `preMergeCommand` halts with
-`script_validator_missing_command`.
+`contextValidator` is an LLM validator. `scriptValidator` runs the context's
+ordered `commands` selection through `ValidationService` before agent
+validation and writes failures to
+`.cc/workflow/<executionId>/<command>-<timestamp>-<runId>.log`. An unknown
+registered command halts with `script_validator_unknown_command`.
 
 Per-context validator overrides:
 

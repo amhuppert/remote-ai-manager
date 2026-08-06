@@ -38,6 +38,7 @@ export function buildJoinResolutionContext(
   execution: GraphWorkflowExecution,
   join: GraphWorkflowExecutionJoinState,
   sourceLaneId: string,
+  coveredSourceLaneIds: readonly string[] = [],
 ): string | null {
   const sourceLane = execution.executionLanes[sourceLaneId];
   const targetLane = execution.executionLanes[join.targetLaneId];
@@ -59,11 +60,36 @@ export function buildJoinResolutionContext(
   const theirsSection = describeLaneWork(execution, theirsOnly);
   const theirsFallback = describeBareLane(targetLane);
 
-  if (oursSection === null && theirsSection === null && !theirsFallback) {
+  const coveredSections: string[] = [];
+  for (const coveredLaneId of new Set(coveredSourceLaneIds)) {
+    const coveredLane = execution.executionLanes[coveredLaneId];
+    if (!coveredLane) continue;
+    coveredSections.push(
+      [
+        `- Lane \`${coveredLaneId}\` (branch \`${coveredLane.branchName}\`):`,
+        describeLaneWork(execution, coveredLane.includedContextIds) ??
+          "  - No recorded work descriptions for this lane.",
+      ].join("\n"),
+    );
+  }
+
+  if (
+    oursSection === null &&
+    theirsSection === null &&
+    !theirsFallback &&
+    coveredSections.length === 0
+  ) {
     return null;
   }
 
   const lines: string[] = [
+    ...(coveredSections.length > 0
+      ? [
+          "Validation coverage — failures may originate in any of these lanes:",
+          coveredSections.join("\n"),
+          "",
+        ]
+      : []),
     `Ours (HEAD, branch \`${sourceLane.branchName}\`) — the work being merged:`,
     oursSection ?? "- No recorded work descriptions for this side.",
     "",
@@ -83,6 +109,7 @@ export function buildJoinResolutionContext(
     briefLength: brief.length,
     oursContextCount: oursOnly.length,
     theirsContextCount: theirsOnly.length,
+    coveredLaneCount: coveredSections.length,
   });
   return brief;
 }

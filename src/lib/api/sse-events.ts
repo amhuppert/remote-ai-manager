@@ -61,6 +61,7 @@ import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schem
 import type { ContextArtifactStatusEvent } from "@/lib/context-artifacts/schemas";
 import type { TicketChangedEvent } from "@/lib/tickets/schemas";
 import type { AgentProfileLibraryChangedEvent } from "@/lib/agent-profiles/schemas";
+import type { ValidationRunEvent } from "@/lib/validation/schemas";
 
 // ============================================================
 // Scoped Status SSE Event (StatusBus → SSE bridge)
@@ -245,4 +246,5 @@ export type SSEEvent =
   | ContextArtifactStatusEvent
   | TicketChangedEvent
   | AgentProfileLibraryChangedEvent
-  | SpecSseEvent;
+  | SpecSseEvent
+  | ValidationRunEvent;

@@ -2,19 +2,19 @@
 
 Load this reference when ESLint is detected (`eslint` in `dependencies` or `devDependencies`).
 
-## Pre-merge invocation
+## Validation wrapper invocation
 
 Scope ESLint to the JS/TS files this branch changes. Linting unchanged files burns time on code the branch can't break and surfaces violations the author didn't introduce.
 
-The pre-merge script (`references/pre-merge-script.md`) populates `$lint_files` — the changed JS/TS/JSX/TSX/MJS/CJS files filtered to ones that still exist.
+The shared wrapper setup in `references/pre-merge-script.md` populates `$lint_files` with changed JS/TS/JSX/TSX/MJS/CJS files that still exist.
 
 ```bash
 if [ -z "$merge_base" ]; then
   # Fallback: lint the whole tree when no merge base resolves
   # (detached HEAD, missing target branch, shallow clone).
-  npx eslint . --fix --quiet --no-color --no-warn-ignored
+  run_quiet npx eslint . --fix --quiet --no-color --no-warn-ignored
 elif [ "${#lint_files[@]}" -gt 0 ]; then
-  npx eslint --fix --quiet --no-color --no-warn-ignored "${lint_files[@]}"
+  run_quiet npx eslint --fix --quiet --no-color --no-warn-ignored "${lint_files[@]}"
 fi
 ```
 
@@ -32,3 +32,4 @@ When `lint_files` is empty under a resolved merge base, skip ESLint entirely —
 ## Parallelism
 
 ESLint has no fan-out problem to fix here — it's a single process. The scoping above is the win.
+Register this wrapper with cost `1` unless project plugins make its fixed resource profile materially heavier.

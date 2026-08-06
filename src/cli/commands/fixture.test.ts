@@ -10,6 +10,12 @@ const baseEnv: CliEnv = {
   CC_CONVERSATION_ID: "managing-conv",
 };
 
+const workflowEnv: CliEnv = {
+  ...baseEnv,
+  CC_WORKFLOW_EXECUTION_ID: "execution-1",
+  CC_WORKFLOW_CONTEXT_ID: "context-1",
+};
+
 const DEV_SERVERS_URL =
   "http://127.0.0.1:3000/api/projects/cc/sessions/my-session/dev-servers";
 const TARGET = "http://localhost:3001";
@@ -75,6 +81,7 @@ function createdSession(overrides: Record<string, unknown> = {}) {
  */
 function makeHost(
   routes: (req: RecordedRequest) => Response | null,
+  sessionServer = devServer(),
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
   return {
@@ -83,7 +90,7 @@ function makeHost(
       const req = { url, init };
       requests.push(req);
       if (url === DEV_SERVERS_URL && init.method === "GET") {
-        return jsonResponse({ servers: [devServer()] });
+        return jsonResponse({ servers: [sessionServer] });
       }
       const routed = routes(req);
       if (routed) return routed;
@@ -133,6 +140,7 @@ describe("cctl fixture session create", () => {
     expect(envelope.target).toBe(TARGET);
     expect(envelope.urls.session).toBe(`${TARGET}/projects/scratch/fx-test`);
     expect(envelope.urls.conversation).toBe(`${TARGET}/conversations?c=c1`);
+    expect(envelope.worktreePath).toBe("/wt");
     expect(envelope.dbPath).toBe("/wt/.config/command-center.db");
     expect(envelope.transcriptPath).toBe("/wt/.config/transcripts/c1.jsonl");
 
@@ -216,6 +224,132 @@ describe("cctl fixture session create", () => {
 });
 
 describe("fixture target resolution", () => {
+  it("uses the verified workflow-context dev server and reports only its datastore paths", async () => {
+    const siblingTarget = TARGET;
+    const laneTarget = "http://localhost:3002";
+    const siblingWorktree = "/repo/.worktrees/session";
+    const laneWorktree = "/repo/.worktrees/lane";
+    const host = makeHost(
+      ({ url, init }) => {
+        const parsed = new URL(url);
+        if (
+          parsed.pathname ===
+            "/api/projects/cc/sessions/my-session/dev-servers" &&
+          init.method === "GET"
+        ) {
+          expect(parsed.searchParams.get("executionId")).toBe("execution-1");
+          expect(parsed.searchParams.get("contextId")).toBe("context-1");
+          return jsonResponse({
+            servers: [devServer({ port: 3002, worktreePath: laneWorktree })],
+          });
+        }
+        if (
+          url === `${laneTarget}/api/projects/scratch/sessions` &&
+          init.method === "POST"
+        ) {
+          return jsonResponse(createdSession(), 201);
+        }
+        if (
+          url === `${siblingTarget}/api/projects/scratch/sessions` &&
+          init.method === "POST"
+        ) {
+          return jsonResponse(createdSession(), 201);
+        }
+        return null;
+      },
+      devServer({ worktreePath: siblingWorktree }),
+    );
+
+    const result = await runCli(
+      ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
+      workflowEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.target).toBe(laneTarget);
+    expect(envelope.worktreePath).toBe(laneWorktree);
+    expect(envelope.dbPath).toBe(`${laneWorktree}/.config/command-center.db`);
+    expect(envelope.dbPath).not.toBe(
+      `${siblingWorktree}/.config/command-center.db`,
+    );
+    const fixtureWrites = host.requests.filter(
+      ({ init }) => init.method === "POST",
+    );
+    expect(fixtureWrites.map(({ url }) => url)).toEqual([
+      `${laneTarget}/api/projects/scratch/sessions`,
+    ]);
+  });
+
+  it.each([
+    [
+      "context id",
+      { CC_WORKFLOW_EXECUTION_ID: "execution-1" },
+      "CC_WORKFLOW_CONTEXT_ID",
+    ],
+    [
+      "execution id",
+      { CC_WORKFLOW_CONTEXT_ID: "context-1" },
+      "CC_WORKFLOW_EXECUTION_ID",
+    ],
+  ])(
+    "rejects a missing %s before reading or writing either worktree",
+    async (_label, workflowIdentity, missingName) => {
+      const host = makeHost(() => null);
+
+      const result = await runCli(
+        ["fixture", "session", "create", "scratch"],
+        { ...baseEnv, ...workflowIdentity },
+        host,
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain(missingName);
+      expect(host.requests).toHaveLength(0);
+    },
+  );
+
+  it("fails closed when the server rejects stale workflow identity", async () => {
+    const host = makeHost(({ url, init }) => {
+      const parsed = new URL(url);
+      if (
+        parsed.pathname ===
+          "/api/projects/cc/sessions/my-session/dev-servers" &&
+        parsed.searchParams.has("executionId")
+      ) {
+        return jsonResponse(
+          {
+            error: "workflow execution is not active",
+            code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
+            instruction: "Run `cctl workflow status`.",
+          },
+          409,
+        );
+      }
+      if (init.method === "POST") {
+        return jsonResponse(createdSession(), 201);
+      }
+      return null;
+    });
+
+    const result = await runCli(
+      ["fixture", "session", "create", "scratch", "--skip-warm", "--json"],
+      workflowEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      error: "workflow execution is not active",
+      code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
+      instruction: "Run `cctl workflow status`.",
+    });
+    expect(host.requests.filter(({ init }) => init.method === "POST")).toEqual(
+      [],
+    );
+  });
+
   it("refuses to run against the managing CC server", async () => {
     const result = await runCli(
       [

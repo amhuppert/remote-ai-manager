@@ -376,7 +376,7 @@ function createCodexExecutionWithRunningTask() {
           },
         },
         contextValidator: { enabled: false, assignments: [] },
-        scriptValidator: { enabled: false },
+        scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
         mutability: { allowAgentTaskAdd: false },

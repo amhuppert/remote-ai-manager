@@ -57,7 +57,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
           },
         ],
       },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
@@ -98,7 +98,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
           },
         ],
       },
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["pre-merge"] },
       humanApprovalGate: { enabled: true },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
@@ -146,7 +146,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
           },
         ],
       },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
@@ -454,12 +454,14 @@ describe("projectLiveOutline — config summaries", () => {
           reasoningEffort: "medium",
         },
       ],
-      scriptValidator: false,
+      scriptValidator: { commands: [] },
       humanApprovalGate: false,
       askUserQuestions: false,
+      // Contexts resolved before the selector snapshot existed carry none.
+      agentValidation: null,
     });
     expect(byId["impl"]).toMatchObject({
-      scriptValidator: true,
+      scriptValidator: { commands: ["pre-merge"] },
       humanApprovalGate: true,
     });
     // verify: codex implementer, cohort disabled — but its dormant assignment
@@ -473,6 +475,98 @@ describe("projectLiveOutline — config summaries", () => {
       validatorCohortEnabled: false,
       validators: [{ assignmentId: "dormant-security", strategy: "task" }],
     });
+  });
+
+  it("carries concrete command selections when the snapshot declares them", () => {
+    const execution = buildExecution();
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      executionContexts: execution.workingDefinition.executionContexts.map(
+        (context) =>
+          context.id === "impl"
+            ? {
+                ...context,
+                scriptValidator: {
+                  commands: ["typecheck", "test"],
+                },
+                agentValidation: {
+                  implementer: {
+                    value: { mode: "all", except: ["format"] },
+                    source: "workflow",
+                  },
+                  contextValidator: {
+                    value: { mode: "only", commands: [] },
+                    source: "global",
+                  },
+                },
+              }
+            : context,
+      ),
+    };
+
+    const result = projectLiveOutline(execution, { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    const impl = result.outline.config.find((c) => c.contextId === "impl");
+    expect(impl).toMatchObject({
+      scriptValidator: { commands: ["typecheck", "test"] },
+      agentValidation: {
+        implementer: { mode: "all", except: ["format"] },
+        contextValidator: { mode: "only", commands: [] },
+      },
+    });
+
+    // The full-config selector returns the resolved snapshot verbatim so a
+    // live edit can address it.
+    const slice = projectLiveOutline(execution, {
+      kind: "context",
+      contextId: "impl",
+    });
+    if (!slice.ok || slice.section !== "context")
+      throw new Error("expected context");
+    expect(slice.context.config.scriptValidator).toEqual({
+      commands: ["typecheck", "test"],
+    });
+    expect(slice.context.config.agentValidation).toEqual({
+      implementer: {
+        value: { mode: "all", except: ["format"] },
+        source: "workflow",
+      },
+      contextValidator: {
+        value: { mode: "only", commands: [] },
+        source: "global",
+      },
+    });
+  });
+
+  it("projects the workflow-scope lane-merge validation snapshot", () => {
+    const execution = buildExecution();
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
+    };
+    const result = projectLiveOutline(execution, { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    expect(result.outline.laneMergeValidation).toEqual({
+      strategy: "final-only",
+      commands: { mode: "project" },
+    });
+  });
+
+  it("projects null lane-merge validation for executions seeded before the snapshot", () => {
+    const execution = buildExecution();
+    const legacyWorkingDefinition = execution.workingDefinition as Partial<
+      typeof execution.workingDefinition
+    >;
+    delete legacyWorkingDefinition.laneMergeValidation;
+    const result = projectLiveOutline(execution, { kind: "outline" });
+    if (!result.ok || result.section !== "outline")
+      throw new Error("expected outline");
+    expect(result.outline.laneMergeValidation).toBeNull();
   });
 
   /**
@@ -570,7 +664,9 @@ describe("projectLiveOutline — section selectors", () => {
       deps: ["plan"],
     });
     // Full resolved config (doc 06): concrete blocks, not the compact summary.
-    expect(result.context.config.scriptValidator).toEqual({ enabled: true });
+    expect(result.context.config.scriptValidator).toEqual({
+      commands: ["pre-merge"],
+    });
     expect(result.context.config.humanApprovalGate).toEqual({ enabled: true });
     expect(result.context.config.iterationPolicy.maxIterations).toBe(20);
     expect(result.context.config.circuitBreaker).toBeDefined();
@@ -627,7 +723,7 @@ describe("projectLiveOutline — section selectors", () => {
         enabled: false,
         assignments: [{ id: "dormant-security" }],
       },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },

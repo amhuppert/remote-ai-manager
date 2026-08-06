@@ -24,7 +24,14 @@ import type {
   RunValidationOutput,
 } from "@/lib/workflows/validation-fix/actors";
 import type { DeliveryGateEvaluator } from "@/lib/workflows/merge/types";
+import type { MergeValidationMode } from "@/lib/workflows/validation-fix/types";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
+
+const graphLaneValidationMode = {
+  mode: "run",
+  source: "graph_lane_merge",
+  selection: { mode: "only", commands: ["typecheck"] },
+} satisfies MergeValidationMode;
 
 /** Real merge machine with stubbed actors; captures the resolver's input. */
 function buildCapturingMachine(
@@ -33,6 +40,7 @@ function buildCapturingMachine(
     status: "completed",
     mergeHash: "merge-hash",
   },
+  capturedValidation: RunValidationInput[] = [],
 ) {
   return mergeMachine.provide({
     actors: {
@@ -63,7 +71,10 @@ function buildCapturingMachine(
         AnalyzeConflictsInput
       >(async () => ({ status: "analyzed", conflicts: [] })),
       runValidation: fromPromise<RunValidationOutput, RunValidationInput>(
-        async () => null,
+        async ({ input }) => {
+          capturedValidation.push(input);
+          return null;
+        },
       ),
       prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(async () => ({
         status: "prepared",
@@ -114,6 +125,7 @@ describe("graph-merge-runner", () => {
       targetWorktreePath: "/tmp/session",
       message: "final publish",
       finalPublish: true,
+      validationMode: graphLaneValidationMode,
     } as const;
 
     const linked = await runner.run({
@@ -161,6 +173,7 @@ describe("graph-merge-runner", () => {
       message: "final publish",
       executionId: "workflow-execution-linked",
       finalPublish: true,
+      validationMode: graphLaneValidationMode,
     });
 
     expect(delivered).toEqual([
@@ -189,6 +202,7 @@ describe("graph-merge-runner", () => {
       targetBranch: "csm/lane-a",
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
+      validationMode: graphLaneValidationMode,
       resolutionContext: "Ours: verification work. Theirs: implementation.",
     });
 
@@ -217,12 +231,49 @@ describe("graph-merge-runner", () => {
       targetBranch: "csm/lane-a",
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
+      validationMode: graphLaneValidationMode,
       conversationId: "conv-lane-b-implementer",
     });
 
     expect(output.status).toBe("completed");
     expect(captured).toHaveLength(1);
     expect(captured[0]?.conversationId).toBe("conv-lane-b-implementer");
+  });
+
+  it("threads graph workflow attribution into lane validation submissions", async () => {
+    const capturedValidation: RunValidationInput[] = [];
+    const runner = createGraphWorkflowMergeRunner({
+      buildMachine: () =>
+        buildCapturingMachine([], undefined, capturedValidation),
+      recordMergeIntent: () => {},
+    });
+
+    await runner.run({
+      jobId: "job-validation-attribution",
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      contextId: "context-verify",
+      branchName: "csm/lane-b",
+      featureWorktreePath: "/tmp/lane-b",
+      targetBranch: "csm/lane-a",
+      targetWorktreePath: "/tmp/lane-a",
+      message: "join merge",
+      conversationId: "conv-lane-b-implementer",
+      executionId: "execution-1",
+      validationMode: graphLaneValidationMode,
+    });
+
+    expect(capturedValidation).toContainEqual(
+      expect.objectContaining({
+        source: "graph_lane_merge",
+        conversationId: "conv-lane-b-implementer",
+        workflow: {
+          executionId: "execution-1",
+          contextId: "context-verify",
+        },
+      }),
+    );
   });
 
   it("records the intent against the landed squash commit when the merge completes", async () => {
@@ -245,6 +296,7 @@ describe("graph-merge-runner", () => {
       targetBranch: "csm/lane-a",
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
+      validationMode: graphLaneValidationMode,
       resolutionContext: "Ours: verification work. Theirs: implementation.",
     });
 
@@ -279,6 +331,7 @@ describe("graph-merge-runner", () => {
       targetBranch: "csm/lane-a",
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
+      validationMode: graphLaneValidationMode,
       resolutionContext: "Ours: verification. Theirs: implementation.",
     });
 
@@ -324,6 +377,7 @@ describe("graph-merge-runner", () => {
       targetBranch: "csm/lane-a",
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
+      validationMode: graphLaneValidationMode,
     });
 
     expect(output.status).toBe("ready-to-land");
@@ -362,6 +416,7 @@ describe("graph-merge-runner", () => {
       targetBranch: "csm/lane-a",
       targetWorktreePath: "/tmp/lane-a",
       message: "join merge",
+      validationMode: graphLaneValidationMode,
     });
 
     expect(recorded).toEqual([]);

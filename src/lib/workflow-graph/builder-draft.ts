@@ -20,7 +20,8 @@ export type ContextOverrideBlock =
   | "circuitBreaker"
   | "iterationPolicy"
   | "planRepair"
-  | "collaboration";
+  | "collaboration"
+  | "agentValidation";
 
 export type WorkflowConfigBlock =
   | "implementer"
@@ -32,7 +33,9 @@ export type WorkflowConfigBlock =
   | "planRepair"
   | "collaboration"
   | "humanApprovalGate"
-  | "askUserQuestions";
+  | "askUserQuestions"
+  | "agentValidation"
+  | "laneMergeValidation";
 
 export interface WorkflowBuilderDraftData {
   definition: WorkflowSemanticDefinition;

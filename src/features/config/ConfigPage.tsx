@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/ui/cn";
 import { useFullConfigQuery } from "@/lib/config/queries";
 import { useUpdateConfigMutation } from "@/lib/config/mutations";
+import { useValidationCommandOptions } from "@/lib/validation/queries";
 import { ConfigSaveBar } from "./components/ConfigSaveBar";
 import { SEEDED_WORKFLOW_DEFAULTS } from "./form-state";
 import { BackendsSection } from "./sections/BackendsSection";
@@ -78,6 +79,9 @@ export default function ConfigPage(): React.JSX.Element {
     applySaved,
     revert,
   } = useConfigForm(configQuery.data);
+  // Global scope: the union of every project's registry, since a global
+  // default may reference any project's command.
+  const commandOptions = useValidationCommandOptions(null);
   const [activeSection, setActiveSection] =
     useState<ConfigNavSection>("general");
 
@@ -192,7 +196,10 @@ export default function ConfigPage(): React.JSX.Element {
                 layoutClassName="min-h-0 flex-auto overflow-y-auto"
               >
                 <div className={CONTENT_CLASS}>
-                  <WorkflowSection controller={controller} />
+                  <WorkflowSection
+                    controller={controller}
+                    commandOptions={commandOptions}
+                  />
                 </div>
               </TabsContent>
               <TabsContent

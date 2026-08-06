@@ -53,7 +53,7 @@ function render(ui: React.ReactElement) {
 }
 
 describe("WorkflowSection", () => {
-  it("renders all nine default sub-sections with DEFAULT badges when matching seed", () => {
+  it("renders all eleven default sub-sections with DEFAULT badges when matching seed", () => {
     const { controller } = makeController();
     const { container } = render(<WorkflowSection controller={controller} />);
     const expected = [
@@ -61,6 +61,8 @@ describe("WorkflowSection", () => {
       "Collaboration",
       "Context validator",
       "Script validator",
+      "Agent validation",
+      "Lane-merge validation",
       "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
@@ -71,7 +73,7 @@ describe("WorkflowSection", () => {
       expect(screen.getByText(new RegExp(`^${title}$`))).toBeVisible();
     }
     const subs = container.querySelectorAll("[data-subsection]");
-    expect(subs.length).toBe(9);
+    expect(subs.length).toBe(11);
     for (const el of subs) {
       expect(el.textContent).toContain("DEFAULT");
       expect(el.textContent).not.toContain("MODIFIED");
@@ -146,17 +148,15 @@ describe("WorkflowSection", () => {
     expect(implementer.textContent).not.toContain("MODIFIED");
   });
 
-  it("toggling the Script validator updates only that block via the controller", () => {
-    const { controller, getState } = makeController();
+  it("uses command selection as the only Script validator control", () => {
+    const { controller } = makeController();
     const { container } = render(<WorkflowSection controller={controller} />);
     const scriptValidator = container.querySelector(
       '[data-subsection="scriptValidator"]',
     )! as HTMLElement;
-    const toggle = scriptValidator.querySelector(
-      '[role="switch"]',
-    )! as HTMLElement;
-    fireEvent.click(toggle);
-    expect(getState().workflowDefaults?.scriptValidator?.enabled).toBe(true);
+
+    expect(scriptValidator.querySelector('[role="switch"]')).toBeNull();
+    expect(scriptValidator.textContent).not.toContain("Enabled");
   });
 
   it("toggling Ask user questions updates only that block via the controller", () => {
@@ -170,6 +170,152 @@ describe("WorkflowSection", () => {
     )! as HTMLElement;
     fireEvent.click(toggle);
     expect(getState().workflowDefaults?.askUserQuestions?.enabled).toBe(true);
+  });
+
+  it("adds a script-validator command to the ordered list via the controller", () => {
+    const { controller, getState } = makeController();
+    const { container } = render(<WorkflowSection controller={controller} />);
+    const scriptValidator = container.querySelector(
+      '[data-subsection="scriptValidator"]',
+    )! as HTMLElement;
+
+    const input = scriptValidator.querySelector(
+      'input[aria-label="Add script validator command"]',
+    )! as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "typecheck" } });
+    const addButton = Array.from(
+      scriptValidator.querySelectorAll("button"),
+    ).find((el) => el.textContent === "Add")!;
+    fireEvent.click(addButton);
+
+    expect(getState().workflowDefaults?.scriptValidator).toEqual({
+      commands: ["typecheck"],
+    });
+  });
+
+  it("renders the registry multi-select and round-trips an emptied selection as commands: []", () => {
+    const seeded: WorkflowDefaults = {
+      ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
+      scriptValidator: { commands: ["typecheck"] },
+    };
+    const { controller, getState } = makeController({
+      workflowDefaults: seeded,
+    });
+    const { container } = render(
+      <WorkflowSection
+        controller={controller}
+        commandOptions={[
+          { name: "typecheck", cost: 2 },
+          { name: "test", cost: 4 },
+        ]}
+      />,
+    );
+    const scriptValidator = container.querySelector(
+      '[data-subsection="scriptValidator"]',
+    )! as HTMLElement;
+
+    // Multi-select replaces the free-form entry.
+    expect(
+      scriptValidator.querySelector(
+        'input[aria-label="Add script validator command"]',
+      ),
+    ).toBeNull();
+
+    const typecheckBox = Array.from(
+      scriptValidator.querySelectorAll('[role="checkbox"]'),
+    ).find((el) =>
+      el.closest("li")?.textContent?.includes("typecheck"),
+    )! as HTMLElement;
+    expect(typecheckBox).toHaveAttribute("aria-checked", "true");
+
+    // Unchecking the last command keeps the explicit `commands: []` block.
+    fireEvent.click(typecheckBox);
+    expect(getState().workflowDefaults?.scriptValidator).toEqual({
+      commands: [],
+    });
+  });
+
+  it("switches the agent-validation implementer selector to only-mode for that role alone", () => {
+    const { controller, getState } = makeController();
+    const { container } = render(<WorkflowSection controller={controller} />);
+    const sub = container.querySelector(
+      '[data-subsection="agentValidation"]',
+    )! as HTMLElement;
+    const implementerField = sub.querySelector(
+      '[data-field="workflowDefaults.agentValidation.implementer"]',
+    )! as HTMLElement;
+
+    fireEvent.click(
+      Array.from(implementerField.querySelectorAll('[role="radio"]')).find(
+        (el) => el.textContent === "Only",
+      )!,
+    );
+
+    expect(getState().workflowDefaults?.agentValidation).toEqual({
+      implementer: { mode: "only", commands: [] },
+      contextValidator: { mode: "only", commands: [] },
+    });
+  });
+
+  it("switches lane-merge commands to a custom list via the controller", () => {
+    const { controller, getState } = makeController();
+    const { container } = render(<WorkflowSection controller={controller} />);
+    const sub = container.querySelector(
+      '[data-subsection="laneMergeValidation"]',
+    )! as HTMLElement;
+
+    fireEvent.click(
+      Array.from(sub.querySelectorAll('[role="radio"]')).find(
+        (el) => el.textContent === "Custom list",
+      )!,
+    );
+
+    expect(getState().workflowDefaults?.laneMergeValidation).toEqual({
+      strategy: "final-only",
+      commands: { mode: "only", commands: [] },
+    });
+  });
+
+  it("surfaces that an empty custom lane-merge list disables the gate", () => {
+    const customDefaults: WorkflowDefaults = {
+      ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "only", commands: [] },
+      },
+    };
+    const { controller } = makeController({ workflowDefaults: customDefaults });
+    const { container } = render(<WorkflowSection controller={controller} />);
+    const sub = container.querySelector(
+      '[data-subsection="laneMergeValidation"]',
+    )! as HTMLElement;
+
+    expect(sub.textContent).toContain("MODIFIED");
+    expect(sub.textContent).toContain(
+      "Empty list — lane-merge validation is disabled.",
+    );
+  });
+
+  it("changes the lane-merge strategy while preserving the command selection", () => {
+    const { controller, getState } = makeController();
+    const { container } = render(<WorkflowSection controller={controller} />);
+    const sub = container.querySelector(
+      '[data-subsection="laneMergeValidation"]',
+    )! as HTMLElement;
+    const strategyField = sub.querySelector(
+      '[data-field="workflowDefaults.laneMergeValidation.strategy"]',
+    )! as HTMLElement;
+
+    fireEvent.click(
+      Array.from(strategyField.querySelectorAll("button")).find(
+        (el) => (el.textContent ?? "").trim() === "every-merge",
+      )!,
+    );
+
+    expect(getState().workflowDefaults?.laneMergeValidation).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "project" },
+    });
   });
 
   it("does not render the literal 'disabled' or 'use' kind labels in the validator", () => {

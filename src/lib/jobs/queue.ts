@@ -809,6 +809,11 @@ export function dispatchMergeJob(
         branchName,
         message,
         autoResolve,
+        validationMode: {
+          mode: "run",
+          source: "smart_merge",
+          selection: { mode: "project-pre-merge" },
+        },
         jobType: "merge",
         targetBranch,
         targetWorktreePath,
@@ -878,6 +883,11 @@ export function dispatchCommitJob(params: {
         worktreePath,
         branchName,
         message,
+        validationMode: {
+          mode: "run",
+          source: "smart_commit",
+          selection: { mode: "project-pre-merge" },
+        },
         targetBranch,
       };
       return createActor(machine, { input });
@@ -977,6 +987,11 @@ export function dispatchResolveConflictsJob(params: {
         branchName,
         message: mergeMessage,
         autoResolve: false,
+        validationMode: {
+          mode: "run",
+          source: "smart_merge",
+          selection: { mode: "project-pre-merge" },
+        },
         jobType: "resolve-conflicts",
         decisions,
         targetBranch,

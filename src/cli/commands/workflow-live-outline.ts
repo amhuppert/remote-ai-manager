@@ -3,14 +3,24 @@ import {
   formatOutputSchemaShape,
   outputSchemaShapeSchema,
 } from "./workflow-output-schema";
+import {
+  graphWorkflowCommandSelectorSchema,
+  graphWorkflowLaneMergeValidationConfigSchema,
+} from "@/lib/workflow-graph/config-schemas";
+import {
+  formatCommandSelector,
+  formatLaneMergeSelection,
+} from "./workflow-outline";
 
 /**
  * CLI-side rendering of the `GET …/graph-workflow/live-outline` projection
  * (docs/design/cc-cli/06 "Read API — live outline"). The endpoint owns the
  * projection AND the editability policy (server-side, D10); the CLI only renders
- * the returned JSON as text. The schema below is a deliberately permissive local
- * mirror — the CLI never imports the server schema graph — so an added field on
- * the projection never breaks the render.
+ * the returned JSON as text. Structural fields parse a deliberately permissive
+ * local mirror, so an added field on the projection never breaks the render;
+ * the validation selector blocks parse the foundation schemas from
+ * `@/lib/workflow-graph/config-schemas` (charter invariant
+ * contracts-from-foundation — selector shapes are never privately redefined).
  */
 
 const agentSummarySchema = z
@@ -56,6 +66,12 @@ const validatorSummarySchema = z
   .extend(assignmentProvenanceSchema.shape)
   .loose();
 
+const scriptValidatorSummarySchema = z
+  .object({
+    commands: z.array(z.string()),
+  })
+  .loose();
+
 const contextConfigSchema = z
   .object({
     contextId: z.string(),
@@ -63,9 +79,18 @@ const contextConfigSchema = z
     /** Whether the cohort dispatches. Required — see the provenance schema. */
     validatorCohortEnabled: z.boolean(),
     validators: z.array(validatorSummarySchema),
-    scriptValidator: z.boolean(),
+    scriptValidator: scriptValidatorSummarySchema,
     humanApprovalGate: z.boolean(),
     askUserQuestions: z.boolean(),
+    agentValidation: z
+      .object({
+        // Foundation selector schemas (charter invariant
+        // contracts-from-foundation), never a private mirror.
+        implementer: graphWorkflowCommandSelectorSchema,
+        contextValidator: graphWorkflowCommandSelectorSchema,
+      })
+      .loose()
+      .nullish(),
   })
   .loose();
 
@@ -118,6 +143,10 @@ export const liveOutlineSchema = z
     contexts: z.array(contextRowSchema),
     tasks: z.array(taskRowSchema),
     config: z.array(contextConfigSchema),
+    // The workflow-scope lane-merge snapshot (foundation schema — charter
+    // invariant contracts-from-foundation). `nullish` because pre-selector
+    // servers omit it and legacy executions carry `null`.
+    laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.nullish(),
   })
   .loose();
 
@@ -210,13 +239,26 @@ function validatorSummary(config: LiveOutlineContextConfig): string {
     .join(", ");
 }
 
+function scriptGateSummary(
+  scriptValidator: LiveOutlineContextConfig["scriptValidator"],
+): string {
+  return scriptValidator.commands.length > 0
+    ? `script ${scriptValidator.commands.join("+")}`
+    : "script off";
+}
+
 function configLine(config: LiveOutlineContextConfig): string {
   const impl = `${config.implementer.backend} ${config.implementer.model} ${config.implementer.reasoningEffort}`;
   const parts = [
     impl,
     validatorSummary(config),
-    `script ${config.scriptValidator ? "on" : "off"}`,
+    scriptGateSummary(config.scriptValidator),
   ];
+  if (config.agentValidation != null) {
+    parts.push(
+      `roles implementer ${formatCommandSelector(config.agentValidation.implementer)}, validator ${formatCommandSelector(config.agentValidation.contextValidator)}`,
+    );
+  }
   if (config.humanApprovalGate) parts.push("approval on");
   if (config.askUserQuestions) parts.push("questions on");
   return parts.join("; ");
@@ -325,13 +367,21 @@ function staffingBlock(config: LiveOutlineData["config"]): string {
 
 /** Render the full live-outline projection as the doc-06 text table. */
 export function renderLiveOutline(outline: LiveOutlineData): string {
-  return [
+  const blocks = [
     headerLine(outline.header),
     contextsBlock(outline.contexts),
     tasksBlock(outline.tasks),
     configBlock(outline.config),
     staffingBlock(outline.config),
-  ].join("\n");
+  ];
+  // Workflow-scope, so it renders once below the per-context config rows;
+  // absent for legacy executions and pre-selector servers alike.
+  if (outline.laneMergeValidation != null) {
+    blocks.push(
+      `laneMerge: ${formatLaneMergeSelection(outline.laneMergeValidation)}`,
+    );
+  }
+  return blocks.join("\n");
 }
 
 // ============================================================

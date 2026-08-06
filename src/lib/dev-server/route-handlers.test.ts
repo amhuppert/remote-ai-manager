@@ -20,6 +20,14 @@ import {
 import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
 import type { PublishFn } from "@/lib/events/publication";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
+import {
+  DevServerTargetError,
+  type ResolvedDevServerTarget,
+  type DevServerTargetResolver,
+} from "./target-resolver";
+
+const SESSION_WORKTREE = "/repos/project/.worktrees/s1";
+const LANE_WORKTREE = "/repos/project/.worktrees/s1.lane";
 
 function makeStatus(
   overrides: Partial<DevServerStatusItem> = {},
@@ -62,8 +70,28 @@ function makeHandlers(
   const deps: DevServerRouteDeps = {
     resolveProjectPath: vi.fn(async () => "/repos/project"),
     getSession: vi.fn(async () => ({
-      worktreePath: "/repos/project/.worktrees/s1",
+      worktreePath: SESSION_WORKTREE,
     })),
+    targetResolver: {
+      resolve: vi.fn(
+        async ({ target }): Promise<ResolvedDevServerTarget> => ({
+          kind: target.kind,
+          worktreePath:
+            target.kind === "workflow-context"
+              ? LANE_WORKTREE
+              : SESSION_WORKTREE,
+          branchName:
+            target.kind === "workflow-context" ? "lane-branch" : "s1-branch",
+          isolation:
+            target.kind === "workflow-context" ? "worktree" : "session",
+          executionId:
+            target.kind === "workflow-context" ? target.executionId : null,
+          contextId:
+            target.kind === "workflow-context" ? target.contextId : null,
+          laneId: target.kind === "workflow-context" ? "lane-1" : null,
+        }),
+      ),
+    },
     service,
     stopAllForSession: vi.fn(async () => {}),
     getServer: vi.fn(() => ({ status: "running" })),
@@ -107,6 +135,7 @@ describe("dev-server route handlers", () => {
     expect(service.list).toHaveBeenCalledWith({
       projectPath: "/repos/project",
       sessionName: "s1",
+      worktreePath: SESSION_WORKTREE,
     });
     expect(await json(response)).toMatchObject({
       servers: [
@@ -139,7 +168,139 @@ describe("dev-server route handlers", () => {
       sessionName: "s1",
       serverName: "web",
       wait: false,
+      worktreePath: SESSION_WORKTREE,
     });
+  });
+
+  it("GET lists only the server-owned workflow context target", async () => {
+    const service = makeService();
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.GET(
+      new Request(
+        "http://cc.test/dev-servers?executionId=execution-1&contextId=ctx-1",
+      ),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(service.list).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: "s1",
+      worktreePath: LANE_WORKTREE,
+    });
+  });
+
+  it("START spawns only in the server-owned workflow context target", async () => {
+    const service = makeService();
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.START(
+      new Request(
+        "http://cc.test/dev-servers/web/start?executionId=execution-1&contextId=ctx-1",
+        { method: "POST" },
+      ),
+      context({ name: "project", session: "s1", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(service.ensure).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: "s1",
+      serverName: "web",
+      wait: false,
+      worktreePath: LANE_WORKTREE,
+    });
+  });
+
+  it("STOP looks up and stops only the server-owned workflow context target", async () => {
+    const service = makeService();
+    const { handlers, deps } = makeHandlers(service);
+
+    const response = await handlers.STOP(
+      new Request(
+        "http://cc.test/dev-servers/web/stop?executionId=execution-1&contextId=ctx-1",
+        { method: "POST" },
+      ),
+      context({ name: "project", session: "s1", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.getServer).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: "s1",
+      worktreePath: LANE_WORKTREE,
+      serverName: "web",
+    });
+    expect(deps.stopServer).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: "s1",
+      worktreePath: LANE_WORKTREE,
+      serverName: "web",
+    });
+  });
+
+  it("rejects a partial workflow target before invoking the service", async () => {
+    const service = makeService();
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.GET(
+      new Request("http://cc.test/dev-servers?executionId=execution-1"),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toMatchObject({
+      code: "INVALID_DEV_SERVER_TARGET",
+    });
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it("rejects ambiguous duplicate workflow identity before invoking the service", async () => {
+    const service = makeService();
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.GET(
+      new Request(
+        "http://cc.test/dev-servers?executionId=execution-1&executionId=execution-2&contextId=ctx-1",
+      ),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await json(response)).toMatchObject({
+      code: "INVALID_DEV_SERVER_TARGET",
+    });
+    expect(service.list).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale workflow target before invoking the service", async () => {
+    const service = makeService();
+    const targetResolver: DevServerTargetResolver = {
+      resolve: vi.fn(async () => {
+        throw new DevServerTargetError(
+          "WORKFLOW_EXECUTION_NOT_ACTIVE",
+          "stale workflow execution",
+          409,
+          "Run `cctl workflow status`.",
+        );
+      }),
+    };
+    const { handlers } = makeHandlers(service, { targetResolver });
+
+    const response = await handlers.GET(
+      new Request(
+        "http://cc.test/dev-servers?executionId=stale&contextId=ctx-1",
+      ),
+      context({ name: "project", session: "s1" }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({
+      code: "WORKFLOW_EXECUTION_NOT_ACTIVE",
+      instruction: "Run `cctl workflow status`.",
+    });
+    expect(service.list).not.toHaveBeenCalled();
   });
 
   it("START_ALL ensures only inactive servers after reconciliation", async () => {
@@ -383,6 +544,17 @@ describe("dev-server START durable-acceptance boundary", () => {
     const routeDeps: DevServerRouteDeps = {
       resolveProjectPath: async () => projectPath,
       getSession: async () => ({ worktreePath }),
+      targetResolver: {
+        resolve: async () => ({
+          kind: "session",
+          worktreePath,
+          branchName: "accept-boundary",
+          isolation: "session",
+          executionId: null,
+          contextId: null,
+          laneId: null,
+        }),
+      },
       service,
       stopAllForSession: async () => {},
       getServer: registry.getServer,

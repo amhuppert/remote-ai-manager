@@ -16,6 +16,10 @@ import type {
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
+import {
+  buildValidationCommandsSection,
+  type ValidationPromptSelections,
+} from "./validation-prompt-section";
 
 /**
  * The command that advances the workflow. `<taskId>` is the task's id from the
@@ -143,6 +147,12 @@ export interface BuildIterationPromptInput {
     conversationId: string;
     note: string;
   };
+  /**
+   * This context's effective command selections (validation-concurrency §8):
+   * rendered as the `## Validation Commands` section, including explicit
+   * empty registry and script-gate state.
+   */
+  validationSelections: ValidationPromptSelections;
 }
 
 function buildTaskLines(
@@ -461,6 +471,8 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   }
 
   sections.push(toolDocs.join("\n"));
+
+  sections.push(buildValidationCommandsSection(input.validationSelections));
 
   // Shared documents — the charter has its own top section, so exclude its
   // entry from the generic list.

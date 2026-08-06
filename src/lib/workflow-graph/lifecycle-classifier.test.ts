@@ -43,7 +43,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
         },
       },
       contextValidator: { enabled: false, assignments: [] },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
@@ -347,7 +347,13 @@ describe("isResumableHalt", () => {
     script_validator_missing_command: {
       type: "script_validator_missing_command",
       contextId: "ctx-1",
-      message: "no preMergeCommand",
+      message: "stored script-validator configuration was incomplete",
+    },
+    script_validator_unknown_command: {
+      type: "script_validator_unknown_command",
+      contextId: "ctx-1",
+      commandName: "missing",
+      message: "unknown validation command",
     },
     validation_candidate_unavailable: {
       type: "validation_candidate_unavailable",

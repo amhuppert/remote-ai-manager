@@ -273,4 +273,27 @@ describe("validation-fix (executeWorkflowTaskRun)", () => {
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input.prompt).toContain("/scripts/check.sh");
   });
+
+  it("includes covered-lane intent context in the remediation brief", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    await fixValidationErrors({
+      worktreePath: "/tmp/worktree",
+      validationOutput: "typecheck failed",
+      resolutionContext:
+        "Covered lane lane-b planned the contract. Covered lane lane-c implemented it.",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Covered lane lane-b planned the contract");
+    expect(input.prompt).toContain("Covered lane lane-c implemented it");
+  });
 });

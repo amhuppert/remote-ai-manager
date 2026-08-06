@@ -610,7 +610,7 @@ describe("applyDefinitionEdits", () => {
     const record = createWorkflowDefinitionRecord({
       definition: createWorkflowDefinition({
         workflowConfig: {
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["pre-merge"] },
         },
       }),
     });
@@ -639,6 +639,78 @@ describe("applyDefinitionEdits", () => {
           ?.consecutiveFailureThreshold,
       ).toBe(5);
     }
+  });
+
+  it("sets and clears the validation selector blocks at both tiers", () => {
+    const record = createWorkflowDefinitionRecord();
+
+    const set = applyDefinitionEdits(
+      record,
+      ops(
+        {
+          type: "update-workflow-config",
+          agentValidation: {
+            implementer: { mode: "all", except: ["format"] },
+            contextValidator: { mode: "only", commands: ["test"] },
+          },
+          laneMergeValidation: {
+            strategy: "every-merge",
+            commands: { mode: "only", commands: ["typecheck"] },
+          },
+        },
+        {
+          type: "update-context",
+          contextId: "context-plan",
+          agentValidation: {
+            implementer: { mode: "only", commands: ["typecheck"] },
+          },
+        },
+      ),
+    );
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(set.record.definition.workflowConfig.agentValidation).toEqual({
+      implementer: { mode: "all", except: ["format"] },
+      contextValidator: { mode: "only", commands: ["test"] },
+    });
+    expect(set.record.definition.workflowConfig.laneMergeValidation).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "only", commands: ["typecheck"] },
+    });
+    const setContext = set.record.definition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    );
+    expect(setContext?.agentValidation).toEqual({
+      implementer: { mode: "only", commands: ["typecheck"] },
+    });
+
+    const cleared = applyDefinitionEdits(
+      set.record,
+      ops(
+        {
+          type: "update-workflow-config",
+          agentValidation: null,
+          laneMergeValidation: null,
+        },
+        {
+          type: "update-context",
+          contextId: "context-plan",
+          agentValidation: null,
+        },
+      ),
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(
+      cleared.record.definition.workflowConfig.agentValidation,
+    ).toBeUndefined();
+    expect(
+      cleared.record.definition.workflowConfig.laneMergeValidation,
+    ).toBeUndefined();
+    const clearedContext = cleared.record.definition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    );
+    expect(clearedContext?.agentValidation).toBeUndefined();
   });
 
   it("clears a per-context override with null on update-context", () => {

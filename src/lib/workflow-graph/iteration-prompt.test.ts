@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import {
+  buildIterationPrompt as buildIterationPromptWithValidation,
+  buildFollowUpPrompt,
+  type BuildIterationPromptInput,
+} from "./iteration-prompt";
 import {
   formatQuestionAnswersBlock,
   splitQuestionAnswersBlock,
@@ -15,6 +19,29 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
 import { makeProfileSnapshot } from "./test-fixtures";
+import type { ValidationPromptSelections } from "./validation-prompt-section";
+
+const EMPTY_VALIDATION_SELECTIONS = {
+  registry: "none",
+  enabled: { kind: "commands", commands: [] },
+  disabled: [],
+  scriptGate: { kind: "off" },
+} satisfies ValidationPromptSelections;
+
+type TestBuildIterationPromptInput = Omit<
+  BuildIterationPromptInput,
+  "validationSelections"
+> & {
+  validationSelections?: ValidationPromptSelections;
+};
+
+function buildIterationPrompt(input: TestBuildIterationPromptInput): string {
+  return buildIterationPromptWithValidation({
+    ...input,
+    validationSelections:
+      input.validationSelections ?? EMPTY_VALIDATION_SELECTIONS,
+  });
+}
 
 function makeCharter(
   overrides: Partial<WorkflowCharter> = {},
@@ -60,7 +87,7 @@ function makeContext(
       agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
     },
     contextValidator: { enabled: false, assignments: [] },
-    scriptValidator: { enabled: false },
+    scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
     mutability: { allowAgentTaskAdd: true },
@@ -150,6 +177,12 @@ function makeLatestContextValidationFailure() {
 }
 
 describe("buildIterationPrompt", () => {
+  it("requires resolved validation selections", () => {
+    expectTypeOf<
+      BuildIterationPromptInput["validationSelections"]
+    >().toEqualTypeOf<ValidationPromptSelections>();
+  });
+
   it("includes execution context title and goal", () => {
     const prompt = buildIterationPrompt({
       context: makeContext({
@@ -164,6 +197,87 @@ describe("buildIterationPrompt", () => {
 
     expect(prompt).toContain("Implement");
     expect(prompt).toContain("Build the feature");
+  });
+
+  it("renders the validation commands section from the provided selections", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      validationSelections: {
+        registry: "loaded",
+        enabled: {
+          kind: "commands",
+          commands: [
+            { name: "typecheck", cost: 2 },
+            { name: "test", cost: 4 },
+          ],
+        },
+        disabled: ["format"],
+        scriptGate: { kind: "commands", commands: ["typecheck", "test"] },
+      },
+    });
+
+    expect(prompt).toContain("## Validation Commands");
+    expect(prompt).toContain("`cctl validate run <name>`");
+    expect(prompt).toContain(
+      "Enabled for you in this context: typecheck (cost 2), test (cost 4).",
+    );
+    expect(prompt).toContain("Disabled for you in this context: format.");
+    expect(prompt).toContain(
+      "Script gate for this context (runs separately when the context completes): typecheck, test.",
+    );
+    expect(prompt).toContain(
+      "If a run is refused for capacity, continue other work and retry later, or re-run with `--wait` to queue for a slot.",
+    );
+  });
+
+  it("renders the validation section for an empty registry and frozen script gate", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      validationSelections: {
+        registry: "none",
+        enabled: { kind: "commands", commands: [] },
+        disabled: [],
+        scriptGate: { kind: "commands", commands: ["typecheck"] },
+      },
+    });
+
+    expect(prompt).toContain("## Validation Commands");
+    expect(prompt).toContain(
+      "No validation commands are enabled for you in this context.",
+    );
+    expect(prompt).toContain(
+      "Script gate for this context (runs separately when the context completes): typecheck.",
+    );
+  });
+
+  it("renders explicit empty validation state", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      validationSelections: {
+        registry: "none",
+        enabled: { kind: "commands", commands: [] },
+        disabled: [],
+        scriptGate: { kind: "off" },
+      },
+    });
+
+    expect(prompt).toContain("## Validation Commands");
+    expect(prompt).toContain(
+      "No validation commands are enabled for you in this context.",
+    );
+    expect(prompt).toContain("No script gate is selected for this context.");
   });
 
   it("instructs the exact `cctl workflow task complete` invocation with taskId and summary", () => {

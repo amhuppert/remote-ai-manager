@@ -29,6 +29,10 @@ import type {
   FixValidationInput,
   FixValidationOutput,
 } from "../validation-fix/actors";
+import {
+  nonRemediableValidationError,
+  validationFixLoopError,
+} from "../validation-fix/actors";
 
 // ============================================================
 // Typed Actor Helpers
@@ -98,6 +102,18 @@ function mockFixValidation(
   );
 }
 
+function validationFailure(message: string): Error {
+  return validationFixLoopError(
+    {
+      status: "fail",
+      kind: "script_validation",
+      reason: message,
+      details: { failureClass: "validation_failed", timedOut: false },
+    },
+    "",
+  );
+}
+
 function mockPrepare(
   fn: (input: PrepareActorInput) => Promise<PrepareActorOutput>,
 ) {
@@ -135,6 +151,11 @@ const defaultInput: MergeInput = {
   branchName: "csm/test-session",
   message: "Merge: feature work",
   autoResolve: true,
+  validationMode: {
+    mode: "run",
+    source: "smart_merge",
+    selection: { mode: "project-pre-merge" },
+  },
 };
 
 type ActorOverrides = {
@@ -432,6 +453,60 @@ describe("mergeMachine", () => {
     });
   });
 
+  describe("validation mode", () => {
+    it("skips only validation while preserving conflict resolution, commit, prepare, and publish", async () => {
+      let resolutionCalls = 0;
+      let commitCalls = 0;
+      let prepareCalls = 0;
+      let publishCalls = 0;
+      const phases: Array<string | null> = [];
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["src/integration.ts"],
+        })),
+        resolveConflicts: mockResolveConflicts(async () => {
+          resolutionCalls += 1;
+          return { status: "resolved", conflicts: [] };
+        }),
+        commitChanges: mockCommitChanges(async () => {
+          commitCalls += 1;
+          return { hash: "resolution-hash" };
+        }),
+        runValidation: mockRunValidation(async () => {
+          throw new Error("validation must not run in skip mode");
+        }),
+        prepare: mockPrepare(async () => {
+          prepareCalls += 1;
+          return {
+            status: "prepared",
+            preparedSha: "prepared-sha",
+            expectedTargetSha: "expected-target-sha",
+            parkedRef: "refs/cc-merges/test",
+          };
+        }),
+        publish: mockPublish(async () => {
+          publishCalls += 1;
+          return { status: "completed", mergeHash: "merge-hash" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, validationMode: { mode: "skip" } },
+      });
+      actor.subscribe((snapshot) => phases.push(snapshot.context.phase));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("completed");
+      expect(resolutionCalls).toBe(1);
+      expect(commitCalls).toBe(1);
+      expect(prepareCalls).toBe(1);
+      expect(publishCalls).toBe(1);
+      expect(phases).not.toContain("validating");
+    });
+  });
+
   describe("happy path without conflicts", () => {
     it("transitions: checkingUncommitted → mergingMain → validating → preparing → publishing → completed", async () => {
       const states: string[] = [];
@@ -599,6 +674,72 @@ describe("mergeMachine", () => {
   });
 
   describe("validation failure with auto-fix", () => {
+    it("fails without dispatching the fix actor for an admission outcome", async () => {
+      let fixCallCount = 0;
+      const states: string[] = [];
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          throw nonRemediableValidationError(
+            "validation command cost exceeds limit",
+          );
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount += 1;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.subscribe((snapshot) => states.push(String(snapshot.value)));
+      actor.start();
+
+      const output = await toPromise(actor);
+
+      expect(output.status).toBe("failed");
+      expect(output.error).toBe("validation command cost exceeds limit");
+      expect(fixCallCount).toBe(0);
+      expect(states).not.toContain("fixingValidation");
+    });
+
+    it("keeps a service capacity wait in validating without dispatching a fix", async () => {
+      let releaseValidation!: (output: RunValidationOutput) => void;
+      let markValidationStarted!: () => void;
+      let received: RunValidationInput | undefined;
+      let fixCallCount = 0;
+      const validationCompletion = new Promise<RunValidationOutput>(
+        (resolve) => {
+          releaseValidation = resolve;
+        },
+      );
+      const validationStarted = new Promise<void>((resolve) => {
+        markValidationStarted = resolve;
+      });
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async (input) => {
+          received = input;
+          markValidationStarted();
+          return validationCompletion;
+        }),
+        fixValidation: mockFixValidation(async () => {
+          fixCallCount += 1;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      await validationStarted;
+
+      expect(actor.getSnapshot().value).toBe("validating");
+      expect(received?.source).toBe("smart_merge");
+      expect(fixCallCount).toBe(0);
+
+      releaseValidation(null);
+      await expect(toPromise(actor)).resolves.toMatchObject({
+        status: "completed",
+      });
+      expect(fixCallCount).toBe(0);
+    });
+
     it("fixes validation errors and revalidates", async () => {
       let validationCallCount = 0;
       let checkCallCount = 0;
@@ -614,7 +755,7 @@ describe("mergeMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount === 1) {
-            throw new Error("typecheck failed: TS2345");
+            throw validationFailure("typecheck failed: TS2345");
           }
           // Second call succeeds
           return null;
@@ -642,7 +783,7 @@ describe("mergeMachine", () => {
     it("goes directly to failed", async () => {
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("Tests failed");
+          throw validationFailure("Tests failed");
         }),
       });
       const actor = createActor(machine, {
@@ -697,7 +838,7 @@ describe("mergeMachine", () => {
           validationCallCount++;
           // First validation fails normally (fixable), revalidation times out.
           if (validationCallCount === 1) {
-            throw new Error("typecheck failed: TS2345");
+            throw validationFailure("typecheck failed: TS2345");
           }
           throw Object.assign(
             new Error("Pre-merge validation timed out after 300s"),
@@ -730,7 +871,7 @@ describe("mergeMachine", () => {
     it("fails when fix returns failed status", async () => {
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("TS2345: type error");
+          throw validationFailure("TS2345: type error");
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "failed",
@@ -752,7 +893,7 @@ describe("mergeMachine", () => {
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
-          throw new Error(`Validation error #${validationCallCount}`);
+          throw validationFailure(`Validation error #${validationCallCount}`);
         }),
         fixValidation: mockFixValidation(async () => ({
           status: "fixed",
@@ -781,7 +922,7 @@ describe("mergeMachine", () => {
           validationCallCount++;
           // First two calls fail (initial validation + first revalidation)
           if (validationCallCount <= 2) {
-            throw new Error(`Validation error #${validationCallCount}`);
+            throw validationFailure(`Validation error #${validationCallCount}`);
           }
           // Third call (second revalidation) succeeds
           return null;
@@ -815,7 +956,7 @@ describe("mergeMachine", () => {
 
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("persistent error");
+          throw validationFailure("persistent error");
         }),
         fixValidation: mockFixValidation(async () => {
           fixCallCount++;
@@ -845,7 +986,7 @@ describe("mergeMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount <= 2) {
-            throw new Error(`error ${validationCallCount}`);
+            throw validationFailure(`error ${validationCallCount}`);
           }
           return null;
         }),
@@ -869,7 +1010,7 @@ describe("mergeMachine", () => {
 
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("error");
+          throw validationFailure("error");
         }),
         fixValidation: mockFixValidation(async () => {
           fixCallCount++;
@@ -897,7 +1038,7 @@ describe("mergeMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationCallCount++;
           if (validationCallCount === 1) {
-            throw new Error("lint errors");
+            throw validationFailure("lint errors");
           }
           // Second call (revalidation) succeeds
           return null;
@@ -1028,6 +1169,42 @@ describe("mergeMachine", () => {
       expect(capturedInput!.targetBranch).toBe("main");
     });
 
+    it("passes the covered-lane resolutionContext to the validation-fix actor", async () => {
+      let capturedInput: FixValidationInput | null = null;
+      let validationRuns = 0;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async () => {
+          validationRuns += 1;
+          if (validationRuns === 1) {
+            throw validationFailure("typecheck failed");
+          }
+          return null;
+        }),
+        fixValidation: mockFixValidation(async (input) => {
+          capturedInput = input;
+          return { status: "fixed" };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          resolutionContext:
+            "Covered lanes: lane-b planned the contract; lane-c implemented it.",
+        },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.resolutionContext).toContain(
+        "lane-b planned the contract",
+      );
+      expect(capturedInput!.resolutionContext).toContain(
+        "lane-c implemented it",
+      );
+    });
+
     it("passes conversationId and the detected conflictFiles to the resolveConflicts actor", async () => {
       let capturedInput: ResolveConflictsInput | null = null;
 
@@ -1095,7 +1272,7 @@ describe("mergeMachine", () => {
         runValidation: mockRunValidation(async () => {
           validationRuns += 1;
           if (validationRuns === 1) {
-            throw new Error("validation failed: lint error");
+            throw validationFailure("validation failed: lint error");
           }
           return null;
         }),
@@ -1133,7 +1310,7 @@ describe("mergeMachine", () => {
 
       const machine = createTestMachine({
         runValidation: mockRunValidation(async () => {
-          throw new Error("lint errors");
+          throw validationFailure("lint errors");
         }),
         fixValidation: mockFixValidation(async (input) => {
           capturedInput = input;

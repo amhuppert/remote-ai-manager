@@ -26,6 +26,64 @@ describe("validateWorkflowPlan", () => {
     }
   });
 
+  it("locates unknown selector command names when a registry is provided", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        scriptValidator: { commands: ["typecheck", "ghost"] },
+      },
+    });
+
+    const result = validateWorkflowPlan(makePlan(definition), {
+      validationCommandPreflight: {
+        commandCosts: { typecheck: 2 },
+        concurrencyLimit: 8,
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toEqual([
+      {
+        path: "definition.workflowConfig.scriptValidator.commands.1",
+        message: expect.stringContaining('Unknown validation command "ghost"'),
+      },
+    ]);
+  });
+
+  it("skips the registry check at project-unbound callers (no registry option)", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        scriptValidator: { commands: ["ghost"] },
+      },
+    });
+
+    expect(validateWorkflowPlan(makePlan(definition)).ok).toBe(true);
+  });
+
+  it("rejects an oversized selected command with a located machine-readable error", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        scriptValidator: { commands: ["test"] },
+      },
+    });
+
+    const result = validateWorkflowPlan(makePlan(definition), {
+      validationCommandPreflight: {
+        commandCosts: { test: 5 },
+        concurrencyLimit: 4,
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("validation_cost_exceeds_limit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        path: "definition.workflowConfig.scriptValidator.commands.0",
+        message: expect.stringMatching(/cost 5.*limit 4.*lower-worker/),
+      }),
+    );
+  });
+
   it("rejects a plan whose definition is missing the required charter", () => {
     const { charter: _charter, ...noCharter } = createWorkflowDefinition();
 

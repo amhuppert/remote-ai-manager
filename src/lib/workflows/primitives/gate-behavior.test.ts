@@ -84,15 +84,15 @@ describe("shared gate behavior", () => {
   it("classifies a script-validator infrastructure error distinctly so workflows can halt rather than retry", () => {
     const gate = scriptValidationGateFromOutcome({
       kind: "infra_error",
-      reason: "missing_pre_merge_command",
-      message: "Script validator enabled but no preMergeCommand configured",
+      reason: "exception",
+      message: "Validation service unavailable",
     });
     expectSharedShape(gate);
     expect(gate.status).toBe("fail");
     if (gate.status !== "fail") return;
     expect(gate.details).toMatchObject({
       failureClass: "infrastructure",
-      infraReason: "missing_pre_merge_command",
+      infraReason: "exception",
     });
   });
 

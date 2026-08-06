@@ -68,7 +68,7 @@ function fullContext(): GraphWorkflowResolvedContext {
         },
       ],
     },
-    scriptValidator: { enabled: true },
+    scriptValidator: { commands: ["pre-merge"] },
     humanApprovalGate: { enabled: true },
     askUserQuestions: { enabled: true },
     mutability: { allowAgentTaskAdd: true },
@@ -122,6 +122,10 @@ function startedExecution(
     status: opts.status ?? "paused",
     workingDefinition: {
       schemaVersion: 1,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
       executionContexts: [context],
       tasks: [],
       edges: [],
@@ -146,6 +150,10 @@ function unstartedExecution(
     status: opts.status ?? "running",
     workingDefinition: {
       schemaVersion: 1,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
       executionContexts: [context],
       tasks,
       edges: [],
@@ -186,7 +194,9 @@ describe("ContextConfigTab — display", () => {
       within(val).getByLabelText("Context limit tokens for general"),
     ).toHaveValue(50000);
 
-    expect(screen.getByLabelText("Script validator enabled")).toBeChecked();
+    expect(
+      screen.queryByLabelText("Script validator enabled"),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Human approval gate enabled")).toBeChecked();
     expect(screen.getByLabelText("Ask user questions enabled")).toBeChecked();
     expect(screen.getByLabelText("Allow agent task add")).toBeChecked();
@@ -575,6 +585,331 @@ describe("ContextConfigTab — disable matrix per lifecycle × execution status"
       screen.getByTestId("config-affordance-readonly"),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("config-save-bar")).not.toBeInTheDocument();
+  });
+});
+
+describe("ContextConfigTab — validation command selectors", () => {
+  // A resolved context whose snapshot carries selector names and mixed
+  // per-role provenance.
+  function contextWithValidationSelectors(): GraphWorkflowResolvedContext {
+    const context = fullContext();
+    context.scriptValidator = {
+      commands: ["typecheck", "test"],
+    };
+    context.scriptValidatorSource = "workflow";
+    context.agentValidation = {
+      implementer: {
+        value: { mode: "all", except: ["format"] },
+        source: "workflow",
+      },
+      contextValidator: {
+        value: { mode: "only", commands: [] },
+        source: "global",
+      },
+    };
+    return context;
+  }
+
+  function roleSection(
+    block: HTMLElement,
+    role: "implementer" | "contextValidator",
+  ): HTMLElement {
+    const section = block.querySelector(`[data-role="${role}"]`);
+    if (!(section instanceof HTMLElement)) {
+      throw new Error(`No ${role} role section rendered`);
+    }
+    return section;
+  }
+
+  it("renders effective selections with per-role provenance labels", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(
+          contextWithValidationSelectors(),
+          startedContextState(),
+          { status: "paused" },
+        )}
+        contextId="context-impl"
+      />,
+    );
+
+    const script = screen.getByTestId("config-block-script-validator");
+    expect(within(script).getByText("typecheck")).toBeInTheDocument();
+    expect(within(script).getByText("test")).toBeInTheDocument();
+    expect(
+      within(script).getByTestId("script-validator-source"),
+    ).toHaveTextContent("Workflow");
+
+    const block = screen.getByTestId("config-block-agent-validation");
+    expect(
+      within(block).getByTestId("agent-validation-source-implementer"),
+    ).toHaveTextContent("Workflow");
+    expect(
+      within(block).getByTestId("agent-validation-source-context-validator"),
+    ).toHaveTextContent("Global");
+
+    const implementer = roleSection(block, "implementer");
+    expect(
+      within(implementer).getByRole("radio", { name: "All except" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(within(implementer).getByText("format")).toBeInTheDocument();
+
+    const validator = roleSection(block, "contextValidator");
+    expect(
+      within(validator).getByRole("radio", { name: "Only" }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("labels a per-context script command selection as Context", () => {
+    const context = contextWithValidationSelectors();
+    context.scriptValidatorSource = "per-node";
+    render(
+      <ContextConfigTab
+        execution={startedExecution(context, startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+      />,
+    );
+
+    expect(screen.getByTestId("script-validator-source")).toHaveTextContent(
+      "Context",
+    );
+  });
+
+  it("falls back to seeded defaults labeled Global when the snapshot is absent", () => {
+    // fullContext() predates the field — exactly the legacy-execution case.
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+      />,
+    );
+
+    const block = screen.getByTestId("config-block-agent-validation");
+    expect(screen.getByTestId("script-validator-source")).toHaveTextContent(
+      "Global",
+    );
+    expect(
+      within(block).getByTestId("agent-validation-source-implementer"),
+    ).toHaveTextContent("Global");
+    expect(
+      within(block).getByTestId("agent-validation-source-context-validator"),
+    ).toHaveTextContent("Global");
+    expect(
+      within(roleSection(block, "implementer")).getByRole("radio", {
+        name: "All except",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      within(roleSection(block, "contextValidator")).getByRole("radio", {
+        name: "Only",
+      }),
+    ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("editing one role stamps only that role per-node; the untouched role echoes its stored provenance", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(
+          contextWithValidationSelectors(),
+          startedContextState(),
+          { status: "paused" },
+        )}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    const block = screen.getByTestId("config-block-agent-validation");
+    fireEvent.click(
+      within(roleSection(block, "implementer")).getByRole("radio", {
+        name: "Only",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        agentValidation: {
+          implementer: {
+            value: { mode: "only", commands: [] },
+            source: "per-node",
+          },
+          // Untouched: keeps the stored resolved leaf verbatim, so a one-role
+          // edit never converts inherited provenance to Context.
+          contextValidator: {
+            value: { mode: "only", commands: [] },
+            source: "global",
+          },
+        },
+      },
+    ]);
+  });
+
+  it("adding a script-validator command sends the whole config in the op", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(
+          contextWithValidationSelectors(),
+          startedContextState(),
+          { status: "paused" },
+        )}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    const script = screen.getByTestId("config-block-script-validator");
+    fireEvent.change(
+      within(script).getByLabelText("Add script validator command"),
+      { target: { value: "lint" } },
+    );
+    fireEvent.click(within(script).getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        scriptValidator: {
+          commands: ["typecheck", "test", "lint"],
+        },
+      },
+    ]);
+  });
+
+  it("removing every script-validator command round-trips commands: [] (explicitly off)", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(
+          contextWithValidationSelectors(),
+          startedContextState(),
+          { status: "paused" },
+        )}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    const script = screen.getByTestId("config-block-script-validator");
+    fireEvent.click(
+      within(script).getByRole("button", { name: "Remove typecheck" }),
+    );
+    fireEvent.click(
+      within(script).getByRole("button", { name: "Remove test" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        scriptValidator: { commands: [] },
+      },
+    ]);
+  });
+
+  it("renders a registry multi-select when command options are provided and toggles compose the op", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(
+          contextWithValidationSelectors(),
+          startedContextState(),
+          { status: "paused" },
+        )}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+        commandOptions={[
+          { name: "typecheck", cost: 2 },
+          { name: "test", cost: 4, description: "Scoped vitest" },
+          { name: "lint", cost: 1 },
+        ]}
+      />,
+    );
+
+    const script = screen.getByTestId("config-block-script-validator");
+    // Registered commands render as labelled checkboxes with cost annotation;
+    // the free-form add input is gone.
+    expect(
+      within(script).queryByLabelText("Add script validator command"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(script).getByText("cost 4 — Scoped vitest"),
+    ).toBeInTheDocument();
+    expect(
+      within(script).getByRole("checkbox", { name: "typecheck" }),
+    ).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.click(within(script).getByRole("checkbox", { name: "lint" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        scriptValidator: {
+          commands: ["typecheck", "test", "lint"],
+        },
+      },
+    ]);
+  });
+
+  it("marks a selected-but-unregistered command and keeps it removable", () => {
+    const execution = startedExecution(
+      contextWithValidationSelectors(),
+      startedContextState(),
+      { status: "paused" },
+    );
+    render(
+      <ContextConfigTab
+        execution={execution}
+        contextId="context-impl"
+        onSaveContextConfig={vi.fn()}
+        commandOptions={[{ name: "typecheck", cost: 2 }]}
+      />,
+    );
+
+    // "test" is selected in the snapshot but absent from the registry.
+    const script = screen.getByTestId("config-block-script-validator");
+    expect(
+      within(script).getByTestId("command-chip-unregistered"),
+    ).toBeInTheDocument();
+    expect(
+      within(script).getByRole("button", { name: "Remove test" }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables the selector editors while the context is not editable", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(
+          contextWithValidationSelectors(),
+          startedContextState(),
+          { status: "running", activeContextIds: ["context-impl"] },
+        )}
+        contextId="context-impl"
+      />,
+    );
+
+    const block = screen.getByTestId("config-block-agent-validation");
+    expect(
+      within(roleSection(block, "implementer")).getByRole("radio", {
+        name: "Only",
+      }),
+    ).toBeDisabled();
+    const script = screen.getByTestId("config-block-script-validator");
+    expect(
+      within(script).getByLabelText("Add script validator command"),
+    ).toBeDisabled();
   });
 });
 

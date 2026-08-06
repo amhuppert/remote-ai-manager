@@ -327,6 +327,7 @@ describe("workflow-graph validation", () => {
           targetLaneId: "lane-down",
           sourceLaneIds: ["lane-up"],
           mergedSourceLaneIds: ["lane-up"],
+          validationDebtSourceLaneIds: [],
           status: "succeeded",
           errorMessage: null,
           conflicts: null,

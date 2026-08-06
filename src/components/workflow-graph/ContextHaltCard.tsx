@@ -338,6 +338,12 @@ export function formatGraphWorkflowHaltReason(
         detail: <pre className={haltPreClass}>{reason.message}</pre>,
         action: null,
       };
+    case "script_validator_unknown_command":
+      return {
+        headline: `Script validator command ${reason.commandName} is not registered in ${reason.contextId}`,
+        detail: <pre className={haltPreClass}>{reason.message}</pre>,
+        action: null,
+      };
     case "validation_candidate_unavailable":
       return {
         headline: `Could not read the reviewed tree in ${reason.contextId}`,

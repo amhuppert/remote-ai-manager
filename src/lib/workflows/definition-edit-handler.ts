@@ -9,6 +9,11 @@ import {
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { workflowDefinitionEditRequestSchema } from "@/lib/workflows/edit-schemas";
+import { collectValidationCommandIssues } from "@/lib/workflow-graph/command-selector-validation";
+import {
+  VALIDATION_COST_EXCEEDS_LIMIT_CODE,
+  type ValidationCommandPreflight,
+} from "@/lib/validation/preflight";
 import { assignmentReferenceRefusal } from "@/lib/workflows/assignment-reference-refusal";
 
 const logger = createLogger("workflow-graph");
@@ -26,6 +31,7 @@ export interface DefinitionEditRequestParams {
   /** 404 message for this tier ("Workflow not found" / "Template not found"). */
   notFoundError: string;
   loadRecord(): Promise<WorkflowDefinitionRecord | null>;
+  loadValidationCommandPreflight?(): Promise<ValidationCommandPreflight>;
   persist(draft: WorkflowDefinitionDraft): Promise<unknown>;
 }
 
@@ -101,6 +107,34 @@ export async function runDefinitionEditRequest(
       },
       { status: regionLocked ? 409 : 400 },
     );
+  }
+
+  if (params.loadValidationCommandPreflight) {
+    const preflight = await params.loadValidationCommandPreflight();
+    const commandIssues = collectValidationCommandIssues(
+      applied.record.definition,
+      preflight,
+    );
+    if (commandIssues.length > 0) {
+      const hasOversizedCommand = commandIssues.some(
+        (issue) => issue.code === VALIDATION_COST_EXCEEDS_LIMIT_CODE,
+      );
+      logger.warn("workflow-graph.definition-edit.rejected", {
+        workflowId: record.id,
+        operationCount: parsed.data.operations.length,
+        codes: commandIssues.map((issue) => issue.code),
+      });
+      return NextResponse.json(
+        {
+          error: "Workflow edit is invalid",
+          code: hasOversizedCommand
+            ? VALIDATION_COST_EXCEEDS_LIMIT_CODE
+            : "invalid_edit",
+          issues: commandIssues.map(formatDefinitionEditIssue),
+        },
+        { status: 400 },
+      );
+    }
   }
 
   const operationCount = parsed.data.operations.length;

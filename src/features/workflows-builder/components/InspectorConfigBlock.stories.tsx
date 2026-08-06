@@ -126,7 +126,7 @@ export const GateWithSwitch = {
     summary: undefined,
     source: "global",
     collapsible: false,
-    description: "Runs the project's preMergeCommand before agent validation.",
+    description: "Runs selected registered commands before agent validation.",
     headerSwitch: {
       checked: true,
       onCheckedChange: fn(),

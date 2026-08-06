@@ -606,7 +606,11 @@ describe("canonical Markdown module boundary", () => {
     }
 
     expect(violations).toEqual([]);
-  });
+    // Whole-tree budget, not a unit-test one: this parses every production
+    // source under `src` to answer the boundary question, so its cost tracks
+    // repository size and it runs alongside seven other workers. The 15s
+    // project default left no headroom once the tree grew.
+  }, 60_000);
 });
 
 /**

@@ -27,6 +27,7 @@ import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
 import { deriveUserInputStandings } from "@/hooks/use-user-input-gate";
 import ParkedQuestionPanel from "./ParkedQuestionPanel";
+import { useValidationCommandOptions } from "@/lib/validation/queries";
 
 interface GraphWorkflowPanelProps {
   projectName: string;
@@ -215,6 +216,9 @@ export default function GraphWorkflowPanel({
         ))
       : null;
 
+  // This project's registry, for the config tab's command multi-selects.
+  const commandOptions = useValidationCommandOptions(projectName);
+
   const viewingTask =
     execution && viewingTaskId
       ? resolveViewingTask(execution, viewingTaskId)
@@ -330,6 +334,7 @@ export default function GraphWorkflowPanel({
                 onViewConversation={handleViewConversation}
                 onEditSchema={handleEditOutputSchema}
                 contextTabRequest={contextTabRequest}
+                commandOptions={commandOptions}
               />
               {mobilePanel === "log" && (
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden">
@@ -419,6 +424,7 @@ export default function GraphWorkflowPanel({
                 onViewConversation={handleViewConversation}
                 onEditSchema={handleEditOutputSchema}
                 contextTabRequest={contextTabRequest}
+                commandOptions={commandOptions}
               />
             </>
           )}

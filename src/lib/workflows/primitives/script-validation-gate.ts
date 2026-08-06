@@ -39,7 +39,13 @@ export type ScriptValidationOutcome =
     }
   | {
       kind: "infra_error";
-      reason: "missing_pre_merge_command" | "exception";
+      reason: "exception";
+      message: string;
+    }
+  | {
+      kind: "infra_error";
+      reason: "unknown_command";
+      commandName: string;
       message: string;
     };
 

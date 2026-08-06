@@ -1198,6 +1198,7 @@ describe("graph workflow manager", () => {
     ]) {
       const repository = createRepository(buildExecutionWithRunningTasks());
       const abortConversation = vi.fn();
+      const abortExecutionLoop = vi.fn();
 
       const manager = createGraphWorkflowManager({
         executionRepository: repository,
@@ -1208,6 +1209,7 @@ describe("graph workflow manager", () => {
           return "2026-03-27T15:05:00.000Z";
         },
         abortConversation,
+        abortExecutionLoop,
       });
 
       transitions.push({
@@ -1227,6 +1229,8 @@ describe("graph workflow manager", () => {
               sessionName: "session-1",
             });
           }
+          expect(abortExecutionLoop).toHaveBeenCalledOnce();
+          expect(abortExecutionLoop).toHaveBeenCalledWith("/repo", "session-1");
         },
       });
     }
@@ -2525,6 +2529,7 @@ describe("graph workflow manager", () => {
             targetLaneId: "lane-target",
             sourceLaneIds: ["lane-a", "lane-b"],
             mergedSourceLaneIds: ["lane-a"],
+            validationDebtSourceLaneIds: [],
             status: "running",
             errorMessage: null,
             conflicts: null,
@@ -2581,6 +2586,7 @@ describe("graph workflow manager", () => {
             targetLaneId: "lane-target",
             sourceLaneIds: ["lane-a", "lane-b"],
             mergedSourceLaneIds: ["lane-a", "lane-b"],
+            validationDebtSourceLaneIds: [],
             status: "succeeded",
             errorMessage: null,
             conflicts: null,
@@ -2596,6 +2602,7 @@ describe("graph workflow manager", () => {
             targetLaneId: "lane-other",
             sourceLaneIds: ["lane-c", "lane-d"],
             mergedSourceLaneIds: ["lane-c"],
+            validationDebtSourceLaneIds: [],
             status: "failed",
             errorMessage: "merge tool exited 1",
             conflicts: null,
@@ -2739,6 +2746,7 @@ describe("graph workflow manager", () => {
             targetLaneId: "__session__",
             sourceLaneIds: ["lane-plan"],
             mergedSourceLaneIds: [],
+            validationDebtSourceLaneIds: [],
             status: "running",
             errorMessage: null,
             conflicts: null,
@@ -3485,6 +3493,7 @@ describe("graph workflow manager", () => {
             targetLaneId: "session-lane",
             sourceLaneIds: ["lane-a", "lane-b"],
             mergedSourceLaneIds: ["lane-a"],
+            validationDebtSourceLaneIds: [],
             status: "conflicts",
             errorMessage: "resolution failed",
             conflicts: {
@@ -3540,6 +3549,7 @@ describe("graph workflow manager", () => {
       targetLaneId: "lane-a",
       sourceLaneIds: ["lane-a", "lane-c"],
       mergedSourceLaneIds: ["lane-c"],
+      validationDebtSourceLaneIds: [],
       status: "succeeded" as const,
       errorMessage: null,
       conflicts: null,
@@ -5716,7 +5726,7 @@ describe("graph workflow manager", () => {
               },
             },
             contextValidator: { enabled: false, assignments: [] },
-            scriptValidator: { enabled: false },
+            scriptValidator: { commands: [] },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
@@ -5742,7 +5752,7 @@ describe("graph workflow manager", () => {
               },
             },
             contextValidator: { enabled: false, assignments: [] },
-            scriptValidator: { enabled: false },
+            scriptValidator: { commands: [] },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
@@ -5768,7 +5778,7 @@ describe("graph workflow manager", () => {
               },
             },
             contextValidator: { enabled: false, assignments: [] },
-            scriptValidator: { enabled: false },
+            scriptValidator: { commands: [] },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
@@ -6158,6 +6168,7 @@ describe("graph workflow manager", () => {
               targetLaneId: "lane-target",
               sourceLaneIds: ["lane-a", "lane-b"],
               mergedSourceLaneIds: ["lane-a", "lane-b"],
+              validationDebtSourceLaneIds: [],
               status: "succeeded",
               errorMessage: null,
               conflicts: null,

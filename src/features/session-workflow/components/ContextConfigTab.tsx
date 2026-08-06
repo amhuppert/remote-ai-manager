@@ -7,8 +7,10 @@ import {
   useMultilinePrimaryActionRegistry,
 } from "@/components/MultilineInput";
 import {
+  AgentValidationEditor,
   CircuitBreakerEditor,
   CollaborationEditor,
+  CommandNameListEditor,
   ImplementerEditor,
   IterationPolicyEditor,
   PlanRepairEditor,
@@ -30,16 +32,22 @@ import {
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
+  CollaborationConfigSource,
   ResolvedCollaborationConfig,
   WorkflowCollaborationConfig,
 } from "@/lib/workflow-graph/collaboration-schemas";
-import type {
-  AgentAssignment,
-  ValidatorCohort,
-  GraphWorkflowCircuitBreakerPolicy,
-  GraphWorkflowIterationPolicy,
-  GraphWorkflowPlanRepairPolicy,
+import {
+  DEFAULT_AGENT_VALIDATION_CONFIG,
+  type AgentAssignment,
+  type ValidatorCohort,
+  type GraphWorkflowAgentValidationConfig,
+  type GraphWorkflowCircuitBreakerPolicy,
+  type GraphWorkflowIterationPolicy,
+  type GraphWorkflowPlanRepairPolicy,
+  type GraphWorkflowScriptValidatorConfig,
 } from "@/lib/workflow-graph/config-schemas";
+import type { ResolvedAgentValidationConfig } from "@/lib/workflow-graph/definition-schemas";
+import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 
 const BLOCK = "rounded-md border border-solid border-border-subtle bg-bg-base";
@@ -92,6 +100,58 @@ function toProvenancedCollaboration(
   };
 }
 
+// Same bridge for the per-role validation allowlists: the resolved config
+// carries per-role provenance ({value, source}); the shared editor edits the
+// flat block. A human live edit is attributed to the per-node layer wholesale,
+// mirroring collaboration.
+function toFlatAgentValidation(
+  resolved: ResolvedAgentValidationConfig | undefined,
+): GraphWorkflowAgentValidationConfig {
+  // Executions seeded before the field existed carry no snapshot; policy
+  // enforcement treats absence as the seeded defaults, so display those
+  // (labeled global by the caller).
+  if (!resolved) return structuredClone(DEFAULT_AGENT_VALIDATION_CONFIG);
+  return {
+    implementer: resolved.implementer.value,
+    contextValidator: resolved.contextValidator.value,
+  };
+}
+
+// The edit is PER LEAF: only a role the user actually changed is attributed to
+// the per-node layer. An untouched role echoes its stored resolved leaf
+// (value, source, and any frozen `commands` snapshot) so a one-role edit never
+// rewrites the other role's inherited global/workflow provenance — the
+// whole-block-replacement trap the cascade exists to prevent. A legacy
+// execution with no stored snapshot echoes the displayed global fallback.
+function toProvenancedAgentValidation(
+  flat: GraphWorkflowAgentValidationConfig,
+  base: GraphWorkflowAgentValidationConfig,
+  resolved: ResolvedAgentValidationConfig | undefined,
+): ResolvedAgentValidationConfig {
+  function role(
+    name: "implementer" | "contextValidator",
+  ): ResolvedAgentValidationConfig["implementer"] {
+    if (deepEqualJson(flat[name], base[name])) {
+      const stored = resolved?.[name];
+      if (stored) return stored;
+      return { value: flat[name], source: "global" };
+    }
+    return { value: flat[name], source: "per-node" };
+  }
+  return {
+    implementer: role("implementer"),
+    contextValidator: role("contextValidator"),
+  };
+}
+
+// "per-node" reads as Context — the tier vocabulary an operator sees across
+// the builder and live surfaces (global / workflow / context).
+const AGENT_VALIDATION_SOURCE_LABEL: Record<CollaborationConfigSource, string> =
+  {
+    global: "Global",
+    workflow: "Workflow",
+    "per-node": "Context",
+  };
 // The editable projection of a resolved context: prose plus every concrete
 // config block the live-edit endpoint accepts. Collaboration is held flat
 // (null when the resolved context has none — editing it is out of scope until
@@ -106,7 +166,7 @@ interface ConfigDraft {
   outputSchema: string;
   implementer: AgentAssignment;
   contextValidator: ValidatorCohort;
-  scriptValidator: boolean;
+  scriptValidator: GraphWorkflowScriptValidatorConfig;
   humanApprovalGate: boolean;
   askUserQuestions: boolean;
   mutability: boolean;
@@ -114,6 +174,7 @@ interface ConfigDraft {
   circuitBreaker: GraphWorkflowCircuitBreakerPolicy;
   planRepair: GraphWorkflowPlanRepairPolicy;
   collaboration: WorkflowCollaborationConfig | null;
+  agentValidation: GraphWorkflowAgentValidationConfig;
 }
 
 type ResolvedContext =
@@ -177,7 +238,7 @@ function toDraft(context: ResolvedContext): ConfigDraft {
       assignments:
         context.contextValidator.assignments.map(toAuthoredAssignment),
     },
-    scriptValidator: context.scriptValidator.enabled,
+    scriptValidator: context.scriptValidator,
     humanApprovalGate: context.humanApprovalGate.enabled,
     askUserQuestions: context.askUserQuestions.enabled,
     mutability: context.mutability.allowAgentTaskAdd,
@@ -187,6 +248,7 @@ function toDraft(context: ResolvedContext): ConfigDraft {
     collaboration: context.collaboration
       ? toFlatCollaboration(context.collaboration)
       : null,
+    agentValidation: toFlatAgentValidation(context.agentValidation),
   };
 }
 
@@ -202,6 +264,7 @@ function diffToUpdateContextOp(
   contextId: string,
   draft: ConfigDraft,
   base: ConfigDraft,
+  resolvedAgentValidation: ResolvedAgentValidationConfig | undefined,
 ): UpdateContextOp | null {
   const changes: Omit<UpdateContextOp, "type" | "contextId"> = {};
   if (draft.title !== base.title) changes.title = draft.title;
@@ -231,8 +294,8 @@ function diffToUpdateContextOp(
   if (!deepEqualJson(draft.contextValidator, base.contextValidator)) {
     changes.contextValidator = draft.contextValidator;
   }
-  if (draft.scriptValidator !== base.scriptValidator) {
-    changes.scriptValidator = { enabled: draft.scriptValidator };
+  if (!deepEqualJson(draft.scriptValidator, base.scriptValidator)) {
+    changes.scriptValidator = draft.scriptValidator;
   }
   if (draft.humanApprovalGate !== base.humanApprovalGate) {
     changes.humanApprovalGate = { enabled: draft.humanApprovalGate };
@@ -258,6 +321,13 @@ function diffToUpdateContextOp(
     !deepEqualJson(draft.collaboration, base.collaboration)
   ) {
     changes.collaboration = toProvenancedCollaboration(draft.collaboration);
+  }
+  if (!deepEqualJson(draft.agentValidation, base.agentValidation)) {
+    changes.agentValidation = toProvenancedAgentValidation(
+      draft.agentValidation,
+      base.agentValidation,
+      resolvedAgentValidation,
+    );
   }
 
   if (Object.keys(changes).length === 0) return null;
@@ -346,6 +416,11 @@ function rebaseDraft(
       draft.collaboration,
       seedBase.collaboration,
       freshBase.collaboration,
+    ),
+    agentValidation: threeWay(
+      draft.agentValidation,
+      seedBase.agentValidation,
+      freshBase.agentValidation,
     ),
   };
 }
@@ -522,6 +597,8 @@ interface ContextConfigTabProps {
   editConflict?: boolean;
   /** The last save succeeded — offer Resume for the pause-to-edit flow. */
   saveSucceeded?: boolean;
+  /** Project-scoped registry summaries; undefined = registry unavailable. */
+  commandOptions?: readonly ValidationCommandSummary[];
   /** Scopes the agent-profile listing the assignment pickers offer. */
   libraryProjectName?: string | null;
   /**
@@ -554,6 +631,7 @@ export default function ContextConfigTab({
   isResuming = false,
   editConflict = false,
   saveSucceeded = false,
+  commandOptions,
   libraryProjectName,
   onResetAssignment,
   resettingAssignmentId,
@@ -649,9 +727,14 @@ export default function ContextConfigTab({
   const pendingOp = useMemo(
     () =>
       draft && seedBase
-        ? diffToUpdateContextOp(contextId, draft, seedBase)
+        ? diffToUpdateContextOp(
+            contextId,
+            draft,
+            seedBase,
+            context?.agentValidation,
+          )
         : null,
-    [contextId, draft, seedBase],
+    [contextId, draft, seedBase, context?.agentValidation],
   );
   // Dirtiness cannot be `pendingOp !== null` alone any more: text that does not
   // parse produces no op, yet the author has unmistakably changed something.
@@ -690,6 +773,7 @@ export default function ContextConfigTab({
       contextId,
       submittedDraft,
       seedBase,
+      context?.agentValidation,
     );
     if (!submittedOp) return;
     onSaveContextConfig([submittedOp]);
@@ -932,15 +1016,79 @@ export default function ContextConfigTab({
         </section>
 
         <section className="flex flex-col gap-sm" data-section="quality-gates">
-          <GateBlock
+          <ConfigBlock
             testId="config-block-script-validator"
             label="Script validator"
-            description="Runs the project's preMergeCommand before agent validation."
-            enabled={draft.scriptValidator}
-            disabled={readOnly}
-            ariaLabel="Script validator enabled"
-            onChange={(next) => patch({ scriptValidator: next })}
-          />
+          >
+            <div className="flex flex-col gap-sm">
+              <p className={BLOCK_TEXT}>
+                Runs the selected validation commands before agent validation.
+                An empty selection disables the gate.
+              </p>
+              <div className="flex items-center gap-sm">
+                <span className={RUNTIME_LABEL}>Commands</span>
+                <span
+                  className="ml-auto font-mono text-[0.7rem] font-semibold tracking-[0.07em] whitespace-nowrap text-text-tertiary uppercase"
+                  data-testid="script-validator-source"
+                >
+                  {
+                    AGENT_VALIDATION_SOURCE_LABEL[
+                      context.scriptValidatorSource ?? "global"
+                    ]
+                  }
+                </span>
+              </div>
+              <CommandNameListEditor
+                value={draft.scriptValidator.commands}
+                disabled={readOnly}
+                addLabel="Add script validator command"
+                options={commandOptions}
+                // The key survives an emptied list: `commands: []` is
+                // explicitly-off and must round-trip, never legacy-on.
+                onChange={(commands) =>
+                  patch({
+                    scriptValidator: { ...draft.scriptValidator, commands },
+                  })
+                }
+              />
+            </div>
+          </ConfigBlock>
+          <ConfigBlock
+            testId="config-block-agent-validation"
+            label="Agent validation"
+          >
+            <div className="flex flex-col gap-sm">
+              <p className={BLOCK_TEXT}>
+                {
+                  "Validation-registry commands each agent role may run — independent of the script gate's selection."
+                }
+              </p>
+              <AgentValidationEditor
+                value={draft.agentValidation}
+                onChangeRole={(role, selector) =>
+                  patch({
+                    agentValidation: {
+                      ...draft.agentValidation,
+                      [role]: selector,
+                    },
+                  })
+                }
+                options={commandOptions}
+                readOnly={readOnly}
+                roleSourceLabels={{
+                  implementer:
+                    AGENT_VALIDATION_SOURCE_LABEL[
+                      context.agentValidation?.implementer.source ?? "global"
+                    ],
+                  contextValidator:
+                    AGENT_VALIDATION_SOURCE_LABEL[
+                      context.agentValidation?.contextValidator.source ??
+                        "global"
+                    ],
+                }}
+              />
+            </div>
+          </ConfigBlock>
           <GateBlock
             testId="config-block-human-approval-gate"
             label="Human approval gate"

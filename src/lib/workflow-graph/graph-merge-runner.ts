@@ -18,6 +18,7 @@ import type {
   MergePhase,
 } from "@/lib/workflows/merge/types";
 import { createDeliveryGateActor } from "@/lib/workflows/merge/actors";
+import type { MergeValidationMode } from "@/lib/workflows/validation-fix/types";
 
 const logger = createLogger("graph-workflow-merge-runner");
 
@@ -45,8 +46,12 @@ export interface GraphMergeRunnerInput {
   resolutionContext?: string;
   /** Opaque graph-workflow execution identity supplied to the merge gate. */
   executionId?: string;
+  /** Graph execution identity used only for validation-ledger attribution. */
+  workflowExecutionId?: string;
   /** Whether this merge publishes the workflow's final joined result. */
   finalPublish?: boolean;
+  /** Explicit validation behavior for this graph-owned merge. */
+  validationMode: MergeValidationMode;
 }
 
 export interface GraphMergeRunner {
@@ -122,6 +127,11 @@ export function createGraphWorkflowMergeRunner(
         targetWorktreePath: input.targetWorktreePath,
         executionId: input.executionId,
         finalPublish: input.finalPublish === true,
+        validationMode: input.validationMode.mode,
+        validationCoveredLaneIds:
+          input.validationMode.mode === "run"
+            ? (input.validationMode.coveredLaneIds ?? [])
+            : [],
       });
 
       const baseMachine = buildMachine();
@@ -132,6 +142,8 @@ export function createGraphWorkflowMergeRunner(
             },
           })
         : baseMachine;
+      const validationWorkflowExecutionId =
+        input.workflowExecutionId ?? input.executionId;
       const mergeInput: MergeInput = {
         jobId: input.jobId,
         projectPath: input.projectPath,
@@ -144,6 +156,7 @@ export function createGraphWorkflowMergeRunner(
           ? { conversationId: input.conversationId }
           : {}),
         autoResolve: true,
+        validationMode: input.validationMode,
         ...(input.decisions !== undefined
           ? { decisions: input.decisions }
           : {}),
@@ -155,6 +168,14 @@ export function createGraphWorkflowMergeRunner(
         finalizeSessionOnPublish: false,
         ...(input.executionId !== undefined
           ? { executionId: input.executionId }
+          : {}),
+        ...(validationWorkflowExecutionId !== undefined
+          ? {
+              validationWorkflow: {
+                executionId: validationWorkflowExecutionId,
+                contextId: input.contextId,
+              },
+            }
           : {}),
         ...(input.finalPublish !== undefined
           ? { finalPublish: input.finalPublish }
@@ -193,6 +214,10 @@ export function createGraphWorkflowMergeRunner(
         status: output.status,
         mergeHash: output.mergeHash,
         conflictFiles: output.conflictFiles.length,
+        validationCoveredLaneIds:
+          input.validationMode.mode === "run"
+            ? (input.validationMode.coveredLaneIds ?? [])
+            : [],
       });
 
       if (

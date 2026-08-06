@@ -45,6 +45,7 @@ function makeJoin(
     kind: "context_merge",
     contextId: null,
     mergedSourceLaneIds: [],
+    validationDebtSourceLaneIds: [],
     status: "succeeded",
     errorMessage: null,
     conflicts: null,

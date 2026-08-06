@@ -603,15 +603,22 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     const writes: Array<{ path: string; content: string }> = [];
     const mkdirs: string[] = [];
     const runner = createScriptValidatorRunner({
-      executeRepoValidationCommand: vi.fn().mockResolvedValue({
-        executed: true,
-        pass: false,
-        stdout: "fail",
-        stderr: "",
-        output: "fail output captured",
-        timedOut: false,
-        message: "Pre-merge validation failed",
-      }),
+      validationService: {
+        submitSystem: vi.fn().mockResolvedValue({
+          kind: "accepted",
+          runId: "run-1",
+          status: "running",
+          position: null,
+          lease: null,
+        }),
+        waitForCompletion: vi.fn().mockResolvedValue({
+          kind: "failed",
+          runId: "run-1",
+          exitCode: 1,
+          output: "fail output captured",
+        }),
+        cancelSystemOwned: vi.fn().mockResolvedValue(true),
+      },
       writeFile: async (filePath: string, contents: string) => {
         writes.push({ path: filePath, content: contents });
       },
@@ -629,12 +636,13 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       branchName: "csm/ctx-abc",
       executionId: "exec-task-6-2",
       contextId: "ctx-plan",
+      commands: ["pre-merge"],
     });
 
     expect(outcome.kind).toBe("fail");
     if (outcome.kind === "fail") {
       expect(outcome.logRelativePath).toMatch(
-        /^\.cc\/workflow\/exec-task-6-2\/pre-merge-\d{8}T\d{6}Z\.log$/,
+        /^\.cc\/workflow\/exec-task-6-2\/pre-merge-\d{8}T\d{6}Z-run-1\.log$/,
       );
       expect(
         outcome.logFilePath.startsWith(

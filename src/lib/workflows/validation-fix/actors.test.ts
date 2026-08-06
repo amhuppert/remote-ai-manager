@@ -1,29 +1,23 @@
-import { describe, expect, it } from "vitest";
-import type { RepoValidationCommandResult } from "@/lib/projects/repo-config";
+import { describe, expect, it, vi } from "vitest";
+import { createActor } from "xstate";
+import type { PerRepoConfig } from "@/lib/config/schemas";
+import type {
+  ValidationService,
+  ValidationSubmission,
+  ValidationSystemSubmitRequest,
+} from "@/lib/validation/service";
+import type { ValidationRunResult } from "@/lib/validation/schemas";
 import { isTimeoutError } from "../utils";
 import {
-  mergeValidationGateFromResult,
+  createRunValidationActor,
   performMergeValidation,
   type MergeValidationDeps,
   type RunValidationInput,
 } from "./actors";
 
-function commandResult(
-  overrides: Partial<RepoValidationCommandResult> = {},
-): RepoValidationCommandResult {
-  return {
-    executed: true,
-    pass: true,
-    stdout: "",
-    stderr: "",
-    output: "",
-    timedOut: false,
-    message: null,
-    ...overrides,
-  };
-}
-
 const BASE_INPUT: RunValidationInput = {
+  source: "smart_merge",
+  selection: { mode: "project-pre-merge" },
   projectPath: "/projects/foo",
   worktreePath: "/projects/foo/.worktrees/my-session",
   sessionName: "my-session",
@@ -32,50 +26,108 @@ const BASE_INPUT: RunValidationInput = {
   timeoutMs: 300_000,
 };
 
+const REGISTERED_CONFIG: PerRepoConfig = {
+  validation: {
+    commands: {
+      typecheck: {
+        command: "./scripts/typecheck.sh",
+        cost: 2,
+        scopeArgs: "forbid",
+      },
+      test: {
+        command: "./scripts/test.sh",
+        cost: 3,
+        scopeArgs: "forbid",
+      },
+      lint: {
+        command: "./scripts/lint.sh",
+        cost: 1,
+        scopeArgs: "forbid",
+      },
+    },
+    preMerge: ["typecheck", "test"],
+  },
+};
+
+function accepted(
+  runId: string,
+  status: "queued" | "running" = "running",
+): ValidationSubmission {
+  return {
+    kind: "accepted",
+    runId,
+    status,
+    position: status === "queued" ? 0 : null,
+    lease: null,
+  };
+}
+
+function passed(runId: string): ValidationRunResult {
+  return { kind: "passed", runId, exitCode: 0, output: "" };
+}
+
 interface DepsHarness {
   deps: MergeValidationDeps;
-  validationCalls: Array<{
-    projectPath: string;
-    worktreePath: string;
-    sessionName: string;
-    branchName: string;
-    targetBranch?: string;
-    timeoutMs?: number;
-  }>;
+  submissions: ValidationSystemSubmitRequest[];
+  waitedRunIds: string[];
+  cancelledRunIds: string[];
   commitCalls: Array<{
     worktreePath: string;
     message: string;
     opts: { skipHooks?: boolean };
   }>;
+  uncommittedChecks: string[];
 }
 
-function createDepsHarness(overrides: {
-  result?: RepoValidationCommandResult;
-  repoConfig?: {
-    preMergeTimeoutMs?: number;
-    preMergeCommand?: string | null;
-  } | null;
-  repoConfigError?: Error;
-  globalConfig?: { preMergeTimeoutMs?: number };
-  globalConfigError?: Error;
-  hasChanges?: boolean;
-}): DepsHarness {
-  const validationCalls: DepsHarness["validationCalls"] = [];
+function createDepsHarness(
+  overrides: {
+    repoConfig?: PerRepoConfig | null;
+    repoConfigError?: Error;
+    submissions?: ValidationSubmission[];
+    results?: ValidationRunResult[];
+    waitForCompletion?: (runId: string) => Promise<ValidationRunResult>;
+    cancelSystemOwned?: (runId: string) => Promise<boolean>;
+    hasChanges?: boolean;
+  } = {},
+): DepsHarness {
+  const submissionCalls: ValidationSystemSubmitRequest[] = [];
+  const waitedRunIds: string[] = [];
+  const cancelledRunIds: string[] = [];
   const commitCalls: DepsHarness["commitCalls"] = [];
-  const deps: MergeValidationDeps = {
-    async readGlobalConfig() {
-      if (overrides.globalConfigError) throw overrides.globalConfigError;
-      return overrides.globalConfig ?? {};
+  const uncommittedChecks: string[] = [];
+  let submissionIndex = 0;
+  let resultIndex = 0;
+  const validationService: Pick<
+    ValidationService,
+    "submitSystem" | "waitForCompletion" | "cancelSystemOwned"
+  > = {
+    async submitSystem(request) {
+      submissionCalls.push(request);
+      const index = submissionIndex++;
+      return overrides.submissions?.[index] ?? accepted(`run-${index + 1}`);
     },
+    async waitForCompletion(runId) {
+      waitedRunIds.push(runId);
+      if (overrides.waitForCompletion) {
+        return overrides.waitForCompletion(runId);
+      }
+      return overrides.results?.[resultIndex++] ?? passed(runId);
+    },
+    async cancelSystemOwned(runId) {
+      cancelledRunIds.push(runId);
+      return overrides.cancelSystemOwned?.(runId) ?? true;
+    },
+  };
+  const deps: MergeValidationDeps = {
     async readRepoConfig() {
       if (overrides.repoConfigError) throw overrides.repoConfigError;
-      return overrides.repoConfig ?? null;
+      return overrides.repoConfig === undefined
+        ? REGISTERED_CONFIG
+        : overrides.repoConfig;
     },
-    async executeRepoValidationCommand(params) {
-      validationCalls.push(params);
-      return overrides.result ?? commandResult();
-    },
-    async hasUncommittedChanges() {
+    validationService,
+    async hasUncommittedChanges(worktreePath) {
+      uncommittedChecks.push(worktreePath);
       return overrides.hasChanges ?? false;
     },
     async commitChanges(worktreePath, message, opts) {
@@ -89,208 +141,356 @@ function createDepsHarness(overrides: {
       return "validation-ref-1";
     },
   };
-  return { deps, validationCalls, commitCalls };
+  return {
+    deps,
+    submissions: submissionCalls,
+    waitedRunIds,
+    cancelledRunIds,
+    commitCalls,
+    uncommittedChecks,
+  };
 }
 
-describe("mergeValidationGateFromResult", () => {
-  it("returns null when the project has no preMergeCommand configured", () => {
-    const gate = mergeValidationGateFromResult(
-      commandResult({ executed: false }),
-    );
-    expect(gate).toBeNull();
-  });
-
-  it("maps a passing run to a passing script_validation gate", () => {
-    const gate = mergeValidationGateFromResult(commandResult());
-    expect(gate?.status).toBe("pass");
-    expect(gate?.kind).toBe("script_validation");
-  });
-
-  it("maps a failing run to a failing gate carrying the script message and timedOut", () => {
-    const gate = mergeValidationGateFromResult(
-      commandResult({
-        pass: false,
-        output: "lint errors found",
-        message: "Pre-merge validation failed",
-      }),
-    );
-    expect(gate?.status).toBe("fail");
-    if (gate?.status !== "fail") return;
-    expect(gate.reason).toBe("Pre-merge validation failed");
-    expect(gate.details).toMatchObject({
-      failureClass: "validation_failed",
-      timedOut: false,
-    });
-  });
-
-  it("falls back to a generic reason when the result carries no message", () => {
-    const gate = mergeValidationGateFromResult(
-      commandResult({ pass: false, message: null }),
-    );
-    expect(gate?.status).toBe("fail");
-    if (gate?.status !== "fail") return;
-    expect(gate.reason).toBe("Pre-merge validation failed");
-  });
-});
-
 describe("performMergeValidation", () => {
-  it("returns a candidate-validation fact for the committed tree that passed", async () => {
-    const harness = createDepsHarness({
-      repoConfig: { preMergeCommand: "./scripts/pre-merge.sh" },
-    });
+  it("runs the registered preMerge selection sequentially through the service", async () => {
+    const harness = createDepsHarness();
 
     const fact = await performMergeValidation(BASE_INPUT, harness.deps);
 
+    expect(harness.submissions).toEqual([
+      {
+        source: "smart_merge",
+        command: { kind: "registered", name: "typecheck" },
+        projectPath: BASE_INPUT.projectPath,
+        target: {
+          worktreePath: BASE_INPUT.worktreePath,
+          sessionName: BASE_INPUT.sessionName,
+          branchName: BASE_INPUT.branchName,
+          targetBranch: BASE_INPUT.targetBranch,
+        },
+      },
+      {
+        source: "smart_merge",
+        command: { kind: "registered", name: "test" },
+        projectPath: BASE_INPUT.projectPath,
+        target: {
+          worktreePath: BASE_INPUT.worktreePath,
+          sessionName: BASE_INPUT.sessionName,
+          branchName: BASE_INPUT.branchName,
+          targetBranch: BASE_INPUT.targetBranch,
+        },
+      },
+    ]);
+    expect(harness.waitedRunIds).toEqual(["run-1", "run-2"]);
     expect(fact).toEqual({
       validationRef: "validation-ref-1",
       validatedSha: "validated-sha",
       validatedTreeHash: "validated-tree",
-      commandIdentity: "./scripts/pre-merge.sh",
+      commandIdentity: "typecheck+test",
       outcome: "pass",
     });
   });
 
-  it("resolves without committing when validation is not configured", async () => {
+  it("uses the smart_commit source supplied by the commit machine", async () => {
     const harness = createDepsHarness({
-      result: commandResult({ executed: false }),
+      repoConfig: {
+        ...REGISTERED_CONFIG,
+        validation: {
+          ...REGISTERED_CONFIG.validation!,
+          preMerge: ["typecheck"],
+        },
+      },
     });
 
-    await performMergeValidation(BASE_INPUT, harness.deps);
+    await performMergeValidation(
+      { ...BASE_INPUT, source: "smart_commit" },
+      harness.deps,
+    );
 
-    expect(harness.commitCalls).toHaveLength(0);
+    expect(harness.submissions[0]?.source).toBe("smart_commit");
   });
 
-  it("forwards the machine timeout and target branch to the validation command", async () => {
-    const harness = createDepsHarness({});
+  it("submits an explicit graph lane selection as system-owned wait work", async () => {
+    const harness = createDepsHarness();
 
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.validationCalls).toEqual([
+    await performMergeValidation(
       {
+        ...BASE_INPUT,
+        source: "graph_lane_merge",
+        selection: { mode: "only", commands: ["typecheck"] },
+        conversationId: "conv-lane",
+        workflow: { executionId: "exec-1", contextId: "context-verify" },
+      },
+      harness.deps,
+    );
+
+    expect(harness.submissions).toEqual([
+      {
+        source: "graph_lane_merge",
+        command: { kind: "registered", name: "typecheck" },
         projectPath: BASE_INPUT.projectPath,
-        worktreePath: BASE_INPUT.worktreePath,
-        sessionName: BASE_INPUT.sessionName,
-        branchName: BASE_INPUT.branchName,
-        targetBranch: "main",
-        timeoutMs: 300_000,
+        conversationId: "conv-lane",
+        workflow: { executionId: "exec-1", contextId: "context-verify" },
+        target: {
+          worktreePath: BASE_INPUT.worktreePath,
+          sessionName: BASE_INPUT.sessionName,
+          branchName: BASE_INPUT.branchName,
+          targetBranch: BASE_INPUT.targetBranch,
+          contextId: "context-verify",
+        },
       },
     ]);
+    expect(harness.waitedRunIds).toEqual(["run-1"]);
   });
 
-  it("prefers the per-repo preMergeTimeoutMs over the machine default", async () => {
+  it("stops at the first failure and sends its output to the fix loop", async () => {
     const harness = createDepsHarness({
-      repoConfig: { preMergeTimeoutMs: 42_000 },
+      results: [
+        passed("run-1"),
+        {
+          kind: "failed",
+          runId: "run-2",
+          exitCode: 1,
+          output: "2 tests failed",
+        },
+      ],
     });
 
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.validationCalls[0]?.timeoutMs).toBe(42_000);
-  });
-
-  it("uses the machine timeout when the repo config cannot be read", async () => {
-    const harness = createDepsHarness({
-      repoConfigError: new Error("unreadable"),
+    await expect(
+      performMergeValidation(BASE_INPUT, harness.deps),
+    ).rejects.toMatchObject({
+      message: 'Validation command "test" failed',
+      gitOutput: "2 tests failed",
+      timedOut: false,
     });
-
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.validationCalls[0]?.timeoutMs).toBe(300_000);
-  });
-
-  it("uses the global config timeout when no per-repo override exists", async () => {
-    const harness = createDepsHarness({
-      globalConfig: { preMergeTimeoutMs: 3_600_000 },
-      repoConfig: null,
-    });
-
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.validationCalls[0]?.timeoutMs).toBe(3_600_000);
-  });
-
-  it("lets the per-repo timeout override the global config", async () => {
-    const harness = createDepsHarness({
-      globalConfig: { preMergeTimeoutMs: 3_600_000 },
-      repoConfig: { preMergeTimeoutMs: 600_000 },
-    });
-
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.validationCalls[0]?.timeoutMs).toBe(600_000);
-  });
-
-  it("is best-effort: a failing global config read falls through to the per-repo timeout", async () => {
-    const harness = createDepsHarness({
-      globalConfigError: new Error("config unreadable"),
-      repoConfig: { preMergeTimeoutMs: 900_000 },
-    });
-
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.validationCalls[0]?.timeoutMs).toBe(900_000);
-  });
-
-  it("throws with gitOutput on a validation failure so the fix loop sees the script output", async () => {
-    const harness = createDepsHarness({
-      result: commandResult({
-        pass: false,
-        output: "lint errors found\n2 problems",
-        message: "Pre-merge validation failed",
-      }),
-    });
-
-    try {
-      await performMergeValidation(BASE_INPUT, harness.deps);
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const e = err as Error & { gitOutput?: string; timedOut?: boolean };
-      expect(e.message).toBe("Pre-merge validation failed");
-      expect(e.gitOutput).toContain("lint errors found");
-      expect(e.gitOutput).toContain("2 problems");
-      expect(isTimeoutError(e)).toBe(false);
-    }
+    expect(harness.submissions.map((call) => call.command.name)).toEqual([
+      "typecheck",
+      "test",
+    ]);
     expect(harness.commitCalls).toHaveLength(0);
   });
 
-  it("omits gitOutput when the failing script produced no output", async () => {
+  it("classifies a service spawn failure as non-remediable infrastructure", async () => {
     const harness = createDepsHarness({
-      result: commandResult({ pass: false, output: "" }),
+      results: [
+        {
+          kind: "failed",
+          runId: "run-1",
+          exitCode: null,
+          output: "spawn ./scripts/typecheck.sh ENOENT",
+        },
+      ],
+    });
+
+    await expect(
+      performMergeValidation(BASE_INPUT, harness.deps),
+    ).rejects.toMatchObject({
+      message:
+        'Validation command "typecheck" could not be spawned: spawn ./scripts/typecheck.sh ENOENT',
+      validationFailureClass: "infrastructure",
+    });
+    expect(harness.submissions.map((call) => call.command.name)).toEqual([
+      "typecheck",
+    ]);
+    expect(harness.commitCalls).toHaveLength(0);
+  });
+
+  it("preserves timeout-ness so the fragment short-circuits the fix loop", async () => {
+    const harness = createDepsHarness({
+      repoConfig: {
+        ...REGISTERED_CONFIG,
+        validation: {
+          ...REGISTERED_CONFIG.validation!,
+          preMerge: ["test"],
+        },
+      },
+      results: [
+        {
+          kind: "timed_out",
+          runId: "run-1",
+          timeoutMs: 120_000,
+          output: "tests starting...",
+        },
+      ],
     });
 
     try {
       await performMergeValidation(BASE_INPUT, harness.deps);
       expect.unreachable("should have thrown");
-    } catch (err) {
-      const e = err as Error & { gitOutput?: string };
-      expect(e.gitOutput).toBeUndefined();
+    } catch (error) {
+      expect(error).toMatchObject({
+        message: 'Validation command "test" timed out after 120000ms',
+        gitOutput: "tests starting...",
+      });
+      expect(isTimeoutError(error)).toBe(true);
     }
   });
 
-  it("preserves timeout-ness on the thrown error so the fragment can short-circuit the fix loop", async () => {
+  it("treats an explicitly empty preMerge selection as disabled", async () => {
     const harness = createDepsHarness({
-      result: commandResult({
-        pass: false,
-        output: "tests starting...",
-        timedOut: true,
-        message: "Pre-merge validation timed out after 300s",
-      }),
+      repoConfig: {
+        validation: { commands: {}, preMerge: [] },
+      },
     });
 
-    try {
-      await performMergeValidation(BASE_INPUT, harness.deps);
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const e = err as Error & { timedOut?: boolean };
-      expect(e.message).toContain("timed out");
-      expect(isTimeoutError(e)).toBe(true);
-    }
+    const fact = await performMergeValidation(BASE_INPUT, harness.deps);
+
+    expect(fact).toBeNull();
+    expect(harness.submissions).toHaveLength(0);
+    expect(harness.commitCalls).toHaveLength(0);
   });
 
-  it("auto-commits script fixes on pass so they are included in the squash merge", async () => {
+  it("does not submit or commit when validation is not configured", async () => {
+    const harness = createDepsHarness({ repoConfig: null });
+
+    const fact = await performMergeValidation(BASE_INPUT, harness.deps);
+
+    expect(fact).toBeNull();
+    expect(harness.submissions).toHaveLength(0);
+    expect(harness.commitCalls).toHaveLength(0);
+  });
+
+  it("fails closed when the repository validation config cannot be read", async () => {
+    const harness = createDepsHarness({
+      repoConfigError: new Error("malformed CommandCenter.json"),
+    });
+
+    await expect(
+      performMergeValidation(BASE_INPUT, harness.deps),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("malformed CommandCenter.json"),
+      validationFailureClass: "infrastructure",
+    });
+    expect(harness.submissions).toHaveLength(0);
+  });
+
+  it("keeps queued capacity waits inside the validation actor", async () => {
+    let release!: (result: ValidationRunResult) => void;
+    let markWaitStarted!: () => void;
+    const completion = new Promise<ValidationRunResult>((resolve) => {
+      release = resolve;
+    });
+    const waitStarted = new Promise<void>((resolve) => {
+      markWaitStarted = resolve;
+    });
+    const harness = createDepsHarness({
+      repoConfig: {
+        ...REGISTERED_CONFIG,
+        validation: {
+          ...REGISTERED_CONFIG.validation!,
+          preMerge: ["typecheck"],
+        },
+      },
+      submissions: [accepted("queued-run", "queued")],
+      waitForCompletion: async () => {
+        markWaitStarted();
+        return completion;
+      },
+    });
+
+    const pending = performMergeValidation(BASE_INPUT, harness.deps);
+    await waitStarted;
+
+    expect(harness.waitedRunIds).toEqual(["queued-run"]);
+    expect(harness.uncommittedChecks).toHaveLength(0);
+
+    release(passed("queued-run"));
+    await expect(pending).resolves.toMatchObject({ outcome: "pass" });
+    expect(harness.uncommittedChecks).toEqual([BASE_INPUT.worktreePath]);
+  });
+
+  it("cancels an accepted run on actor abort and waits for cancellation to finish", async () => {
+    let resolveCompletion!: (result: ValidationRunResult) => void;
+    const completion = new Promise<ValidationRunResult>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    let finishCancellation!: () => void;
+    const cancellationFinished = new Promise<void>((resolve) => {
+      finishCancellation = resolve;
+    });
+    const harness = createDepsHarness({
+      repoConfig: {
+        ...REGISTERED_CONFIG,
+        validation: {
+          ...REGISTERED_CONFIG.validation!,
+          preMerge: ["typecheck"],
+        },
+      },
+      waitForCompletion: async () => completion,
+      cancelSystemOwned: async () => {
+        await cancellationFinished;
+        return true;
+      },
+    });
+    const controller = new AbortController();
+    let settled = false;
+    const validation = performMergeValidation(
+      BASE_INPUT,
+      harness.deps,
+      controller.signal,
+    ).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(harness.waitedRunIds).toEqual(["run-1"]));
+
+    controller.abort();
+    resolveCompletion({ kind: "cancelled", runId: "run-1" });
+    await vi.waitFor(() => expect(harness.cancelledRunIds).toEqual(["run-1"]));
+    expect(settled).toBe(false);
+    finishCancellation();
+
+    await expect(validation).rejects.toMatchObject({
+      validationFailureClass: "infrastructure",
+      message: 'Validation command "typecheck" was cancelled',
+    });
+  });
+
+  it("forwards the XState actor abort signal into system-run cancellation", async () => {
+    let resolveCompletion!: (result: ValidationRunResult) => void;
+    const completion = new Promise<ValidationRunResult>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    let finishCancellation!: () => void;
+    const cancellationFinished = new Promise<void>((resolve) => {
+      finishCancellation = resolve;
+    });
+    let cancellationSettled = false;
+    const harness = createDepsHarness({
+      repoConfig: {
+        ...REGISTERED_CONFIG,
+        validation: {
+          ...REGISTERED_CONFIG.validation!,
+          preMerge: ["typecheck"],
+        },
+      },
+      waitForCompletion: async () => completion,
+      cancelSystemOwned: async () => {
+        await cancellationFinished;
+        resolveCompletion({ kind: "cancelled", runId: "run-1" });
+        cancellationSettled = true;
+        return true;
+      },
+    });
+    const actor = createActor(
+      createRunValidationActor(async () => harness.deps),
+      { input: BASE_INPUT },
+    );
+    actor.start();
+    await vi.waitFor(() => expect(harness.waitedRunIds).toEqual(["run-1"]));
+
+    actor.stop();
+    await vi.waitFor(() => expect(harness.cancelledRunIds).toEqual(["run-1"]));
+    expect(cancellationSettled).toBe(false);
+    finishCancellation();
+    await vi.waitFor(() => expect(cancellationSettled).toBe(true));
+  });
+
+  it("auto-commits formatter changes only after every command passes", async () => {
     const harness = createDepsHarness({ hasChanges: true });
 
     await performMergeValidation(BASE_INPUT, harness.deps);
 
+    expect(harness.waitedRunIds).toEqual(["run-1", "run-2"]);
     expect(harness.commitCalls).toEqual([
       {
         worktreePath: BASE_INPUT.worktreePath,
@@ -300,11 +500,28 @@ describe("performMergeValidation", () => {
     ]);
   });
 
-  it("does not commit when the passing script leaves no changes", async () => {
-    const harness = createDepsHarness({ hasChanges: false });
+  it("fails configuration errors without spawning a validation-fix command", async () => {
+    const harness = createDepsHarness({
+      submissions: [
+        {
+          kind: "not_started",
+          result: {
+            kind: "command_not_found",
+            name: "typecheck",
+            knownCommands: ["test"],
+          },
+        },
+      ],
+    });
 
-    await performMergeValidation(BASE_INPUT, harness.deps);
-
-    expect(harness.commitCalls).toHaveLength(0);
+    await expect(
+      performMergeValidation(BASE_INPUT, harness.deps),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining(
+        'Validation command "typecheck" is not registered',
+      ),
+      validationFailureClass: "infrastructure",
+    });
+    expect(harness.waitedRunIds).toHaveLength(0);
   });
 });

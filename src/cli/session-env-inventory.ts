@@ -70,6 +70,11 @@ export const CLI_SESSION_ENV_INVENTORY: Readonly<
     reason:
       "Tickets are project-level. The session env is read only as attachment provenance, which is absent (null) at project scope rather than empty.",
   },
+  validate: {
+    support: "project-supported",
+    reason:
+      "Every validate verb addresses the invoking conversation and has matching session/project route adapters; project conversations validate the canonical project root without inventing a session worktree.",
+  },
   // The `agent` group splits: the RUN verbs execute in a session worktree,
   // while the profile-library READS are project-scoped. The group default stays
   // session-only so a new run-shaped verb fails loudly; the library verbs opt

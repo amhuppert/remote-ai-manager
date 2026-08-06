@@ -120,17 +120,27 @@ function buildFirstAttemptPrompt(params: {
   validationOutput: string;
   validationOutputPath: string;
   validationCommand?: string;
+  resolutionContext?: string;
 }): string {
-  const { validationOutput, validationOutputPath, validationCommand } = params;
+  const {
+    validationOutput,
+    validationOutputPath,
+    validationCommand,
+    resolutionContext,
+  } = params;
 
   let commandContext = "";
   if (validationCommand) {
     commandContext = `\n\nThe validation script being run is: \`${validationCommand}\``;
   }
+  const integrationContext = resolutionContext
+    ? `\n\nThis validation covers integrated work from multiple lanes. The defect may originate in any lane described below:\n\n${resolutionContext}`
+    : "";
 
   return [
     "Fix the following validation errors in this codebase.",
     commandContext,
+    integrationContext,
     `\nThe full validation output has been saved to: \`${validationOutputPath}\``,
     "\nHere is the validation output:\n",
     "```",
@@ -144,17 +154,27 @@ function buildRetryPrompt(params: {
   validationOutput: string;
   validationOutputPath: string;
   validationCommand?: string;
+  resolutionContext?: string;
 }): string {
-  const { validationOutput, validationOutputPath, validationCommand } = params;
+  const {
+    validationOutput,
+    validationOutputPath,
+    validationCommand,
+    resolutionContext,
+  } = params;
 
   let commandContext = "";
   if (validationCommand) {
     commandContext = `\nThe validation script (\`${validationCommand}\`) was re-run after your previous fix attempt.`;
   }
+  const integrationContext = resolutionContext
+    ? `\nThe validation still covers integrated work from these lanes; reconsider any of them as the source of the remaining defect:\n\n${resolutionContext}`
+    : "";
 
   return [
     "Your previous fix attempt did not fully resolve the validation errors.",
     commandContext,
+    integrationContext,
     `\nThe new validation output has been saved to: \`${validationOutputPath}\``,
     "\nHere are the remaining errors:\n",
     "```",
@@ -176,6 +196,7 @@ export interface FixValidationErrorsParams {
   conversationId: string;
   branchName: string;
   validationCommand?: string;
+  resolutionContext?: string;
   /**
    * True after the first attempt failed and the merge machine is retrying.
    * The conversation actor itself preserves the backend runtime across calls,
@@ -219,6 +240,7 @@ async function fixValidationErrorsImpl(
     worktreePath,
     validationOutput,
     validationCommand,
+    resolutionContext,
     projectPath,
     sessionName,
     conversationId,
@@ -257,11 +279,13 @@ async function fixValidationErrorsImpl(
           validationOutput,
           validationOutputPath,
           validationCommand,
+          resolutionContext,
         })
       : buildFirstAttemptPrompt({
           validationOutput,
           validationOutputPath,
           validationCommand,
+          resolutionContext,
         });
 
   try {

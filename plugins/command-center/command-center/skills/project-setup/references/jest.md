@@ -2,25 +2,23 @@
 
 Load this reference when Jest is detected (`jest` in `dependencies` or `devDependencies`) and Vitest is not.
 
-Jest config covers AI-optimal output and bounded parallelism. The pre-merge script then scopes each run to the files touched by the branch.
+Jest config covers AI-optimal output and may mirror a fixed resource profile. The registered test wrapper owns worker and heap enforcement, then scopes each run to affected tests or narrower TDD paths.
 
-AI detection uses the `CLAUDECODE` env var: Claude Code sets it automatically in its sessions, and the pre-merge script exports it explicitly. Other agents (e.g. Codex) do not set it — when running tests from such a session, export `CLAUDECODE=1` first to get the same low-noise output.
+AI detection uses the `CLAUDECODE` env var, which every generated validation wrapper exports explicitly.
 
 ## Why bound parallelism
 
-Jest defaults to `--maxWorkers=<numCpus - 1>`, with each worker loading the full module graph and (for jsdom projects) a DOM. On a high-core / low-RAM box this can exhaust memory + swap during a full-suite run. Cap workers to a fraction of CPUs and set a per-worker memory ceiling so runaway tests trigger a worker restart instead of unbounded growth.
+Jest defaults to `--maxWorkers=<numCpus - 1>`, with each worker loading the full module graph and often a DOM. Pin workers to a fixed count and set a per-worker memory ceiling so the registered cost describes the maximum profile on every machine.
 
 ## Jest config
 
-Add this to `jest.config.ts` (or `jest.config.js`). When an existing config is present, merge — don't replace.
+Add this to `jest.config.ts` (or `jest.config.js`). When an existing config is present, merge — don't replace. The worker and memory values here are defense-in-depth mirrors; candidate-worktree configuration is not the enforcement boundary.
 
 ```typescript
 const isAI = process.env.CLAUDECODE === "1";
 
 export default {
-  // Caps worker count against CPU/RAM. "50%" lets Jest scale with the box
-  // without fanning out to N=cores workers on a 16-core machine.
-  maxWorkers: "50%",
+  maxWorkers: 4,
 
   // Restart a worker once it crosses this heap threshold. A leaky test file
   // bounces its own worker instead of bloating the parent or the machine.
@@ -36,24 +34,32 @@ export default {
 
 | Setting | Purpose |
 |---|---|
-| `maxWorkers: "50%"` | Caps concurrent worker processes at half of CPU cores. Default is `cores - 1` with no RAM awareness. |
-| `workerIdleMemoryLimit: "2GB"` | Per-worker memory ceiling. Triggers a worker restart on exceedance, bounding growth. |
+| `maxWorkers: 4` | Mirrors the canonical wrapper's worker cap for local runs outside Command Center. |
+| `workerIdleMemoryLimit: "2GB"` | Mirrors the wrapper profile with a worker-restart threshold; it does not replace the inherited Node heap cap. |
 | `reporters: [["summary", { summaryThreshold: 0 }]]` (AI) | Eliminates per-file PASS/FAIL lines while preserving failure details. |
 
-## Pre-merge invocation
+Register this four-worker wrapper with cost `4`. If the project chooses another fixed count, change the wrapper constants and declared cost together, then update config mirrors to match.
 
-The pre-merge script (`references/pre-merge-script.md`) computes `$merge_base`. Use `--changedSince` so Jest runs only tests related to files changed against the merge target.
+## Validation wrapper invocation
+
+The shared wrapper setup in `references/pre-merge-script.md` computes `$merge_base`. Register this command with `scopeArgs: "paths"`; forwarded values are already validated as relative non-option paths.
 
 ```bash
-# Always export this; jest.config.ts checks CLAUDECODE for AI-optimal output.
+readonly TEST_WORKERS=4
+readonly TEST_HEAP_MB=2048
+
+# Wrapper-owned enforcement: NODE_OPTIONS reaches the Jest parent and workers.
+export NODE_OPTIONS="--max-old-space-size=${TEST_HEAP_MB}"
 export CLAUDECODE=1
 
-if [ -z "$merge_base" ]; then
+if [ "$#" -gt 0 ]; then
+  run_quiet npx jest --silent --no-color --bail=3 --maxWorkers="$TEST_WORKERS" --passWithNoTests --runTestsByPath "$@"
+elif [ -z "$merge_base" ]; then
   # Fallback: validate the whole tree when no merge base resolves
   # (detached HEAD, missing target branch, shallow clone).
-  npx jest --silent --no-color --bail=3
+  run_quiet npx jest --silent --no-color --bail=3 --maxWorkers="$TEST_WORKERS"
 else
-  npx jest --silent --no-color --bail=3 --changedSince="$merge_base" --passWithNoTests
+  run_quiet npx jest --silent --no-color --bail=3 --maxWorkers="$TEST_WORKERS" --changedSince="$merge_base" --passWithNoTests
 fi
 ```
 
@@ -64,3 +70,6 @@ fi
 | `--silent` | Suppress `console.log` from test code. |
 | `--no-color` | Disable ANSI codes for log capture. |
 | `--bail=3` | Stop after 3 failures — cascading errors waste tokens. |
+| `--maxWorkers="$TEST_WORKERS"` | Prevent candidate config from increasing the wrapper's declared four-unit fan-out. |
+
+The wrapper overwrites `NODE_OPTIONS` rather than preserving a caller value, so the Jest parent and every spawned Node worker inherit the fixed 2048 MB old-space cap. `workerIdleMemoryLimit` remains a useful mirror for local runs but is not the authoritative heap enforcement.

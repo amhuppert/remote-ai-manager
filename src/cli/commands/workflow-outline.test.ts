@@ -19,7 +19,7 @@ const RECORD = {
   updatedAt: "2026-03-27T12:00:00.000Z",
   definition: {
     schemaVersion: 1,
-    workflowConfig: { scriptValidator: { enabled: true } },
+    workflowConfig: { scriptValidator: { commands: ["pre-merge"] } },
     charter: {
       mission: "x".repeat(214),
       conventions: ["a", "b", "c"],
@@ -110,6 +110,64 @@ describe("workflow outline", () => {
     expect(text).toContain("parameters: feature-name (string, required)");
     expect(text).toContain("prerequisites: path:.kiro/steering/tech.md");
     expect(text).toContain("config overrides: workflow=scriptValidator");
+  });
+
+  it("renders concrete validation selections for the new selector blocks", () => {
+    const record = parseOutlineRecord({
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        workflowConfig: {
+          scriptValidator: { commands: ["typecheck", "test"] },
+          agentValidation: {
+            implementer: { mode: "all", except: ["format"] },
+            contextValidator: { mode: "only", commands: [] },
+          },
+          laneMergeValidation: {
+            strategy: "final-only",
+            commands: { mode: "project" },
+          },
+        },
+        executionContexts: [
+          RECORD.definition.executionContexts[0],
+          {
+            ...RECORD.definition.executionContexts[1],
+            agentValidation: {
+              implementer: { mode: "only", commands: ["test"] },
+            },
+          },
+        ],
+      },
+    });
+    if (!record) throw new Error("record must parse");
+    const text = renderOutline(record);
+    expect(text).toContain(
+      "validation: script typecheck+test · roles implementer all-except format, validator none · laneMerge final-only project",
+    );
+    expect(text).toContain(
+      "workflow=scriptValidator,agentValidation,laneMergeValidation",
+    );
+    // The context override list picks up the new block key.
+    expect(text).toContain("impl(agentValidation)");
+  });
+
+  it("renders an explicit lane-merge command list under every-merge", () => {
+    const record = parseOutlineRecord({
+      ...RECORD,
+      definition: {
+        ...RECORD.definition,
+        workflowConfig: {
+          laneMergeValidation: {
+            strategy: "every-merge",
+            commands: { mode: "only", commands: ["typecheck", "test"] },
+          },
+        },
+      },
+    });
+    if (!record) throw new Error("record must parse");
+    expect(renderOutline(record)).toContain(
+      "validation: laneMerge every-merge typecheck+test",
+    );
   });
 
   it("returns null for an unrecognizable payload", () => {
@@ -384,7 +442,7 @@ describe("workflow outline", () => {
     expect(config.ok).toBe(true);
     if (config.ok) {
       expect(config.value).toEqual({
-        workflow: { scriptValidator: { enabled: true } },
+        workflow: { scriptValidator: { commands: ["pre-merge"] } },
         contexts: {
           plan: { contextValidator: { enabled: false, assignments: [] } },
         },

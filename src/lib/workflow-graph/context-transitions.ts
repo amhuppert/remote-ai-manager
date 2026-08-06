@@ -258,6 +258,8 @@ export function buildLifecycleSnapshot(
 export interface ApplyJoinProgressPatch {
   status?: GraphWorkflowExecutionJoinState["status"];
   addMergedSourceLaneId?: string;
+  addValidationDebtSourceLaneId?: string;
+  clearValidationDebt?: boolean;
   errorMessage?: string | null;
   conflicts?: GraphWorkflowExecutionJoinState["conflicts"];
   conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"];
@@ -280,6 +282,13 @@ export function applyJoinProgress(
     !join.mergedSourceLaneIds.includes(patch.addMergedSourceLaneId)
       ? [...join.mergedSourceLaneIds, patch.addMergedSourceLaneId]
       : join.mergedSourceLaneIds;
+  const currentValidationDebt = join.validationDebtSourceLaneIds ?? [];
+  const validationDebtSourceLaneIds = patch.clearValidationDebt
+    ? []
+    : patch.addValidationDebtSourceLaneId &&
+        !currentValidationDebt.includes(patch.addValidationDebtSourceLaneId)
+      ? [...currentValidationDebt, patch.addValidationDebtSourceLaneId]
+      : currentValidationDebt;
 
   const status = patch.status ?? join.status;
   const completedAt =
@@ -295,6 +304,7 @@ export function applyJoinProgress(
         ...join,
         status,
         mergedSourceLaneIds,
+        validationDebtSourceLaneIds,
         errorMessage:
           patch.errorMessage !== undefined
             ? patch.errorMessage

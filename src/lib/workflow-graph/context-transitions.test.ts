@@ -37,6 +37,7 @@ function buildJoin(
     targetLaneId: "lane-a",
     sourceLaneIds: ["lane-a", "lane-b"],
     mergedSourceLaneIds: [],
+    validationDebtSourceLaneIds: [],
     status: "pending",
     errorMessage: null,
     conflicts: null,

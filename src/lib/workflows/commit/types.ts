@@ -6,6 +6,7 @@
  */
 
 import type { BaseWorkflowContext } from "../types";
+import type { RunMergeValidationMode } from "../validation-fix/types";
 
 /** Phase tracking for SSE broadcast. */
 type CommitPhase =
@@ -46,6 +47,9 @@ export interface CommitContext extends BaseWorkflowContext {
   /** Pre-merge validation timeout in ms. */
   validationTimeoutMs: number;
 
+  /** Explicit validation behavior supplied by the Smart Commit surface. */
+  validationMode: RunMergeValidationMode;
+
   /** Current fix attempt (0 = not started, incremented on each fixingValidation entry). */
   fixAttempt: number;
 
@@ -65,6 +69,7 @@ export interface CommitInput {
   worktreePath: string;
   branchName: string;
   message: string;
+  validationMode: RunMergeValidationMode;
   /** Branch this session merges into; defaults to main when omitted. */
   targetBranch?: string;
   validationTimeoutMs?: number;

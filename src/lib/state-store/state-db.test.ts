@@ -232,6 +232,62 @@ describe("state-db schema initialization", () => {
 });
 
 describe("state-db additive column migrations", () => {
+  it("adds validation session attribution on reopen without disturbing retained rows", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+
+    const first = _createTestDbAtPath(dbPath);
+    first
+      .prepare(
+        `INSERT INTO validation_runs (
+           run_id, source, command_name, cost, queue_order, status, nonce,
+           project_path, worktree_path, conversation_id, submitted_at,
+           scoped, scoped_path_count, timed_out
+         ) VALUES (
+           'vr-legacy', 'agent_cli', 'test', 8, 0, 'passed', 'nonce-legacy',
+           '/p', '/p/.worktrees/s', 'conversation-preserved',
+           '2026-08-05T10:00:00.000Z', 0, 0, 0
+         )`,
+      )
+      .run();
+    first.close();
+
+    const legacy = new Database(dbPath);
+    legacy.exec("ALTER TABLE validation_runs DROP COLUMN session_name");
+    const legacyColumns = legacy.pragma(
+      "table_info(validation_runs)",
+    ) as Array<{
+      name: string;
+    }>;
+    expect(legacyColumns.some((column) => column.name === "session_name")).toBe(
+      false,
+    );
+    legacy.close();
+
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      const columns = reopened.pragma("table_info(validation_runs)") as Array<{
+        name: string;
+      }>;
+      expect(columns.some((column) => column.name === "session_name")).toBe(
+        true,
+      );
+      expect(
+        reopened
+          .prepare(
+            "SELECT session_name, conversation_id FROM validation_runs WHERE run_id = 'vr-legacy'",
+          )
+          .get(),
+      ).toEqual({
+        session_name: null,
+        conversation_id: "conversation-preserved",
+      });
+    } finally {
+      reopened.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("adds pending_prompt_text to a pre-existing conversations table that lacks it", () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
     const dbPath = path.join(dir, "command-center.db");
@@ -746,8 +802,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 3 (the workflow agent-assignment cutover, after AgentSessionRef at 1 and the evidence-kind narrowing at 2)", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(3);
+  it("this build understands schema version 4 (the validation-status widening, after the workflow agent-assignment cutover at 3, evidence-kind narrowing at 2, and the AgentSessionRef cutover at 1)", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(4);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

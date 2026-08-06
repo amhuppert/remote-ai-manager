@@ -8,6 +8,7 @@ import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createJoinRunner, type JoinRunnerMutateActive } from "./join-runner";
 import { createWorkflowExecution } from "./test-fixtures";
+import { resetJoinForRetry } from "./context-transitions";
 import type {
   GraphMergeRunner,
   GraphMergeRunnerInput,
@@ -46,6 +47,7 @@ function makeJoin(
     kind: "context_merge",
     contextId: null,
     mergedSourceLaneIds: [],
+    validationDebtSourceLaneIds: [],
     status: "pending",
     errorMessage: null,
     conflicts: null,
@@ -177,6 +179,504 @@ function setupExecutionWithJoin(
 }
 
 describe("join-runner", () => {
+  it("defers final-only validation until the last source and resolves project commands at submission", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-validation",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b", "lane-c", "lane-d"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+        "lane-c": makeLane({
+          laneId: "lane-c",
+          branchName: "csm/lane-c",
+          worktreePath: "/tmp/lane-c",
+        }),
+        "lane-d": makeLane({
+          laneId: "lane-d",
+          branchName: "csm/lane-d",
+          worktreePath: "/tmp/lane-d",
+        }),
+      },
+    );
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
+    };
+    const observed: GraphMergeRunnerInput[] = [];
+    const deferred: Array<{
+      joinId?: unknown;
+      sourceLaneId?: unknown;
+      remaining?: unknown;
+    }> = [];
+    let sessionLockHeld = false;
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([
+          ["csm/lane-b", completed("hash-b")],
+          ["csm/lane-c", completed("hash-c")],
+          ["csm/lane-d", completed("hash-d")],
+        ]),
+        observed,
+      ),
+      sessionGitLock: {
+        async withSessionGitLock(_key, run) {
+          sessionLockHeld = true;
+          try {
+            return await run();
+          } finally {
+            sessionLockHeld = false;
+          }
+        },
+      },
+      mergeMutex: createPerSessionMergeMutex(),
+      readRepoConfig: async () => {
+        expect(sessionLockHeld).toBe(true);
+        return {
+          validation: {
+            commands: {
+              typecheck: {
+                command: "scripts/typecheck.sh",
+                cost: 1,
+                scopeArgs: "forbid",
+              },
+            },
+            preMerge: ["typecheck"],
+          },
+        };
+      },
+      logger: {
+        debug() {},
+        info(message, fields) {
+          if (message === "graph-workflow.join.validation_deferred") {
+            deferred.push(fields ?? {});
+          }
+        },
+        warn() {},
+        error() {},
+      },
+      createJobId: () => "job-validation",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-validation",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(observed.map((call) => call.validationMode)).toEqual([
+      { mode: "skip" },
+      { mode: "skip" },
+      {
+        mode: "run",
+        source: "graph_lane_merge",
+        selection: { mode: "only", commands: ["typecheck"] },
+        coveredLaneIds: ["lane-b", "lane-c", "lane-d"],
+      },
+    ]);
+    expect(observed.map((call) => call.workflowExecutionId)).toEqual([
+      execution.id,
+      execution.id,
+      execution.id,
+    ]);
+    expect(deferred).toEqual([
+      {
+        joinId: "join-validation",
+        sourceLaneId: "lane-b",
+        remaining: 3,
+      },
+      {
+        joinId: "join-validation",
+        sourceLaneId: "lane-c",
+        remaining: 2,
+      },
+    ]);
+  });
+
+  it("preserves deferred validation debt across a halt and settles it on the resumed final merge", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-resume-validation",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b", "lane-c", "lane-d"],
+        validationDebtSourceLaneIds: [],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+          includedContextIds: ["context-plan"],
+        }),
+        "lane-c": makeLane({
+          laneId: "lane-c",
+          branchName: "csm/lane-c",
+          worktreePath: "/tmp/lane-c",
+          includedContextIds: ["context-implement"],
+        }),
+        "lane-d": makeLane({
+          laneId: "lane-d",
+          branchName: "csm/lane-d",
+          worktreePath: "/tmp/lane-d",
+          includedContextIds: ["context-verify"],
+        }),
+      },
+    );
+    execution.workingDefinition.laneMergeValidation = {
+      strategy: "final-only",
+      commands: { mode: "only", commands: ["typecheck"] },
+    };
+    execution.taskStates = {
+      "task-plan-1": {
+        taskId: "task-plan-1",
+        contextId: "context-plan",
+        order: 1,
+        status: "completed",
+        summary: "Planned the shared validation contract.",
+        startedAt: t0,
+        completedAt: t0,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+      "task-implement-1": {
+        taskId: "task-implement-1",
+        contextId: "context-implement",
+        order: 1,
+        status: "completed",
+        summary: "Implemented the scheduler integration.",
+        startedAt: t0,
+        completedAt: t0,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+      "task-verify-1": {
+        taskId: "task-verify-1",
+        contextId: "context-verify",
+        order: 1,
+        status: "completed",
+        summary: "Verified the final integration behavior.",
+        startedAt: t0,
+        completedAt: t0,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+    };
+    const observed: GraphMergeRunnerInput[] = [];
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: sequencedMergeRunner(
+        new Map([
+          ["csm/lane-b", [completed("hash-b")]],
+          [
+            "csm/lane-c",
+            [failed("validation service interrupted"), completed("hash-c")],
+          ],
+          ["csm/lane-d", [completed("hash-d")]],
+        ]),
+        observed,
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      createJobId: () => "job-resume-validation",
+      now: () => t0,
+    });
+
+    const first = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-resume-validation",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(first.status).toBe("failed");
+    expect(
+      persist.read().joins["join-resume-validation"]
+        ?.validationDebtSourceLaneIds,
+    ).toEqual(["lane-b"]);
+
+    await persist.mutateActive((current) =>
+      resetJoinForRetry(current, "join-resume-validation", t0),
+    );
+    const resumed = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-resume-validation",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(resumed).toEqual({ status: "succeeded" });
+    const finalCall = observed.at(-1);
+    expect(finalCall?.validationMode).toEqual({
+      mode: "run",
+      source: "graph_lane_merge",
+      selection: { mode: "only", commands: ["typecheck"] },
+      coveredLaneIds: ["lane-b", "lane-c", "lane-d"],
+    });
+    expect(finalCall?.resolutionContext).toContain(
+      "Planned the shared validation contract.",
+    );
+    expect(finalCall?.resolutionContext).toContain(
+      "Implemented the scheduler integration.",
+    );
+    expect(finalCall?.resolutionContext).toContain(
+      "Verified the final integration behavior.",
+    );
+    expect(
+      persist.read().joins["join-resume-validation"]
+        ?.validationDebtSourceLaneIds,
+    ).toEqual([]);
+  });
+
+  it("validates a single-source join under final-only", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-single",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+      },
+    );
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
+    };
+    const observed: GraphMergeRunnerInput[] = [];
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([["csm/lane-b", completed("hash-b")]]),
+        observed,
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      readRepoConfig: async () => ({
+        validation: {
+          commands: {
+            typecheck: {
+              command: "scripts/typecheck.sh",
+              cost: 1,
+              scopeArgs: "forbid",
+            },
+            test: {
+              command: "scripts/test.sh",
+              cost: 2,
+              scopeArgs: "forbid",
+            },
+          },
+          preMerge: ["typecheck"],
+          laneMerge: ["test"],
+        },
+      }),
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-single",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(observed.map((call) => call.validationMode)).toEqual([
+      {
+        mode: "run",
+        source: "graph_lane_merge",
+        selection: { mode: "only", commands: ["test"] },
+        coveredLaneIds: ["lane-b"],
+      },
+    ]);
+  });
+
+  it("validates every final-publish merge even under final-only", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-final-validation",
+        kind: "final_publish",
+        targetLaneId: "lane-session",
+        sourceLaneIds: ["lane-b", "lane-c"],
+      }),
+      {
+        "lane-session": makeLane({
+          laneId: "lane-session",
+          branchName: "csm/session",
+          worktreePath: "/tmp/session",
+          kind: "session",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+        "lane-c": makeLane({
+          laneId: "lane-c",
+          branchName: "csm/lane-c",
+          worktreePath: "/tmp/lane-c",
+        }),
+      },
+    );
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "only", commands: ["typecheck"] },
+      },
+    };
+    const observed: GraphMergeRunnerInput[] = [];
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([
+          ["csm/lane-b", completed("hash-b")],
+          ["csm/lane-c", completed("hash-c")],
+        ]),
+        observed,
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-final-validation",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(observed.map((call) => call.validationMode.mode)).toEqual([
+      "run",
+      "run",
+    ]);
+    expect(observed.map((call) => call.finalPublish)).toEqual([false, false]);
+  });
+
+  it("validates every source when the strategy is every-merge", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-every-merge",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b", "lane-c", "lane-d"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+        "lane-c": makeLane({
+          laneId: "lane-c",
+          branchName: "csm/lane-c",
+          worktreePath: "/tmp/lane-c",
+        }),
+        "lane-d": makeLane({
+          laneId: "lane-d",
+          branchName: "csm/lane-d",
+          worktreePath: "/tmp/lane-d",
+        }),
+      },
+    );
+    execution.workingDefinition = {
+      ...execution.workingDefinition,
+      laneMergeValidation: {
+        strategy: "every-merge",
+        commands: { mode: "only", commands: ["typecheck"] },
+      },
+    };
+    const observed: GraphMergeRunnerInput[] = [];
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner: fakeMergeRunner(
+        new Map([
+          ["csm/lane-b", completed("hash-b")],
+          ["csm/lane-c", completed("hash-c")],
+          ["csm/lane-d", completed("hash-d")],
+        ]),
+        observed,
+      ),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-every-merge",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result).toEqual({ status: "succeeded" });
+    expect(observed.map((call) => call.validationMode.mode)).toEqual([
+      "run",
+      "run",
+      "run",
+    ]);
+    expect(
+      observed.map((call) =>
+        call.validationMode.mode === "run"
+          ? call.validationMode.coveredLaneIds
+          : null,
+      ),
+    ).toEqual([["lane-b"], ["lane-c"], ["lane-d"]]);
+  });
+
   it("gates every final-publish source without marking delivery at the session boundary", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({

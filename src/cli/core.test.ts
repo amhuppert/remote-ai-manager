@@ -398,6 +398,15 @@ describe("usage errors", () => {
     expect(result.stderr).toContain("--token");
   });
 
+  it("rejects literal '--' passthrough for commands that do not declare it", async () => {
+    const host = makeHost();
+    const result = await runCli(["doctor", "--", "stray"], baseEnv, host);
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("does not accept arguments after '--'");
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("emits the --json envelope for an unknown command", async () => {
     const result = await runCli(["frobnicate", "--json"], {}, makeHost());
     expect(result.exitCode).toBe(2);

@@ -2,14 +2,30 @@
 
 ## File Location
 
-Place `CommandCenter.json` at the root of the git repository. It is optional — projects without it work normally.
+Place `CommandCenter.json` at the repository root. It is optional; projects without it work normally.
 
 ## Schema
 
 ```json
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh",
+  "validation": {
+    "commands": {
+      "lint": {
+        "command": "scripts/validate/lint.sh",
+        "cost": 1,
+        "description": "Lint changed files"
+      },
+      "test": {
+        "command": "scripts/validate/test.sh",
+        "cost": 4,
+        "timeoutMs": 900000,
+        "scopeArgs": "paths"
+      }
+    },
+    "preMerge": ["lint", "test"],
+    "laneMerge": ["test"]
+  },
   "devServers": [
     {
       "name": "nextjs",
@@ -24,32 +40,43 @@ Place `CommandCenter.json` at the root of the git repository. It is optional —
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `initScriptPath` | `string \| null` | Yes (can be null) | Script to run after a session worktree is created |
-| `preMergeCommand` | `string \| null` | No | Validation script to run before squash-merging into main |
+| `initScriptPath` | `string \| null` | No | Script to run after a session worktree is created |
+| `validation` | `ValidationConfig` | No | Registered validation commands and merge-gate selections |
 | `devServers` | `Array<DevServer>` | No | Dev servers launchable from the session UI |
 
-## Path Resolution
+### ValidationConfig
 
-Both `initScriptPath` and `preMergeCommand` can be relative or absolute paths. Relative paths resolve from the **project root** (the original repository, not the worktree).
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `commands` | `Record<string, ValidationCommand>` | Yes | Commands keyed by stable kebab-case names |
+| `preMerge` | `string[]` | No | Ordered selection for Smart Merge and Smart Commit; defaults to `[]` |
+| `laneMerge` | `string[]` | No | Ordered graph lane-merge selection; inherits `preMerge` when omitted |
+
+Every name selected by `preMerge` or `laneMerge` must exist in `validation.commands`.
+
+### ValidationCommand
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `command` | `string` | Yes | Executable wrapper path, normally under `scripts/validate/` |
+| `cost` | positive integer | Yes | Fixed reservation weight against the global validation budget |
+| `timeoutMs` | positive integer | No | Command-specific execution timeout |
+| `description` | `string` | No | Human-readable text surfaced by validation discovery |
+| `scopeArgs` | `"forbid" \| "paths"` | No | Whether validated relative path arguments may narrow the run; defaults to `"forbid"` |
+
+`cost` must describe the wrapper's maximum fixed resource profile. Use about one unit per configured test worker and keep the convention consistent across projects on the same machine.
+
+## Path Resolution and Execution
+
+`initScriptPath` and validation `command` paths may be relative or absolute. Relative paths resolve from the canonical project root, while validation runs use the target session or lane worktree as `cwd`. Validation wrappers are invoked with `execFile`, so they need a shebang and executable permissions and cannot be shell command strings.
+
+Because command paths resolve from the canonical project root, an unmerged branch cannot test edits to its own registry or wrappers through `cctl validate`.
 
 ## Dev Server Entry
 
-Each dev server entry requires:
-- `name` — unique identifier (min 1 char), displayed in the UI
-- `command` — shell command or script path to start the server (min 1 char)
+Each dev-server entry requires a unique `name` and a `command`. Optional fields include `cwd`, `port`, and `readiness`. `cc-assigned` is the supported port strategy: CC picks a port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT` and `$PORT`, and waits for readiness.
 
-Optional fields:
-- `cwd` — working directory relative to the worktree (e.g. `apps/web`)
-- `port` — port allocation strategy (see [`references/dev-servers.md`](./dev-servers.md))
-- `readiness` — how CC decides the server is ready
-
-Server names must be unique within the `devServers` array.
-
-### Port Strategy
-
-`cc-assigned` is the only supported strategy. CC picks the port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT`/`$PORT`/your optional `env` alias, and waits for TCP readiness.
-
-For full dev-server schema and examples, see the `dev-server-setup` skill (its `references/dev-servers.md`). This project-setup skill does not write `devServers` entries.
+For the complete dev-server schema and examples, use the `dev-server-setup` skill. This skill preserves existing `devServers` entries but does not create or change them.
 
 ## Minimal Example
 
@@ -59,24 +86,18 @@ For full dev-server schema and examples, see the `dev-server-setup` skill (its `
 }
 ```
 
-## Full Example
+## Validation-Only Example
 
 ```json
 {
-  "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh",
-  "devServers": [
-    {
-      "name": "nextjs",
-      "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 },
-      "readiness": { "type": "tcp", "timeoutMs": 60000 }
+  "validation": {
+    "commands": {
+      "typecheck": {
+        "command": "scripts/validate/typecheck.sh",
+        "cost": 1
+      }
     },
-    {
-      "name": "storybook",
-      "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
-      "port": { "strategy": "cc-assigned", "base": 6006, "range": 50 }
-    }
-  ]
+    "preMerge": ["typecheck"]
+  }
 }
 ```

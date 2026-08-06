@@ -22,7 +22,15 @@ my-project/
 ```json
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh",
+  "validation": {
+    "commands": {
+      "pre-merge": {
+        "command": "scripts/pre-merge-validate.sh",
+        "cost": 8
+      }
+    },
+    "preMerge": ["pre-merge"]
+  },
   "devServers": [
     {
       "name": "nextjs",
@@ -36,7 +44,7 @@ my-project/
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `initScriptPath` | `string \| null` | No | Script to run after a session worktree is created |
-| `preMergeCommand` | `string \| null` | No | Validation script to run before squash-merging into main |
+| `validation` | `ValidationConfig` | No | Named validation commands and merge-workflow selections |
 | `devServers` | `Array<DevServer>` | No | Dev servers that can be launched from the session UI (see [`devServers`](#devservers--dev-server-configuration)) |
 
 ---
@@ -126,83 +134,56 @@ npx prisma generate
 
 ---
 
-## `preMergeCommand` — Pre-Merge Validation Script
+## `validation` — Registered Validation Commands
 
-Runs automatically during Command Center's smart merge workflow, before squash-merging a session branch into main. Use this to run linters, type checkers, formatters, and tests to ensure the branch is clean before it lands on main.
-
-### When It Runs
-
-The smart merge workflow is a multi-phase process:
-
-1. **Phase 1 — Forward merge:** Command Center merges `main` into the session branch to catch conflicts early
-2. **Phase 2 — Validation:** **The pre-merge script executes** against the worktree (which now has main merged in)
-3. **Phase 3 — Auto-fix (if validation failed):** If the script fails and auto-fix is enabled, Command Center sends the validation output to Claude to fix the issues, then re-runs validation
-4. **Phase 4 — Squash merge:** If validation passes, the session branch is squash-merged into main
-
-The script may run **multiple times** during a single merge if auto-fix retries are enabled.
-
-### Path Resolution
-
-Same as `initScriptPath` — relative paths resolve from the project root.
+Register each deterministic check under a stable name. Command Center resolves
+the script from the canonical project root and executes it through the shared
+validation service, which enforces the global weighted concurrency budget.
 
 ```json
-{ "preMergeCommand": "scripts/pre-merge-validate.sh" }
+{
+  "validation": {
+    "commands": {
+      "typecheck": {
+        "command": "scripts/validate/typecheck.sh",
+        "cost": 2,
+        "description": "Check TypeScript"
+      },
+      "test": {
+        "command": "scripts/validate/test.sh",
+        "cost": 6,
+        "timeoutMs": 900000,
+        "scopeArgs": "paths"
+      }
+    },
+    "preMerge": ["typecheck", "test"],
+    "laneMerge": ["typecheck"]
+  }
+}
 ```
 
-### Execution Environment
-
-| Property | Value |
-|---|---|
-| **Working directory** | The session worktree path |
-| **Timeout** | Configurable via Command Center's global `preMergeTimeoutMs` setting (default: **5 minutes**) |
-| **Shell** | Direct execution (must have a shebang line) |
-| **Exit code** | `0` = validation passed, non-zero = validation failed (merge aborted or auto-fix attempted) |
-
-### Environment Variables
-
-| Variable | Description | Example |
+| Field | Required | Description |
 |---|---|---|
-| `PROJECT_ROOT` | Absolute path to the session worktree (where the code is) | `/home/user/repos/my-project/.worktrees/my-session` |
-| `CLAUDE_PROJECT_DIR` | Absolute path to the original project root | `/home/user/repos/my-project` |
-| `WORKTREE_PATH` | Same as `PROJECT_ROOT` — absolute path to the session worktree | `/home/user/repos/my-project/.worktrees/my-session` |
-| `SESSION_NAME` | Session identifier | `my-session` |
-| `BRANCH_NAME` | Git branch for this session | `csm/my-session` |
+| `commands` | Yes | Map of command names to command registrations |
+| `commands.<name>.command` | Yes | Executable path relative to the canonical project root, or an absolute path |
+| `commands.<name>.cost` | Yes | Positive integer reservation weight |
+| `commands.<name>.timeoutMs` | No | Per-command timeout; falls back to the global validation default |
+| `commands.<name>.description` | No | Description shown by validation tooling |
+| `commands.<name>.scopeArgs` | No | `"forbid"` (default) or `"paths"` to allow safe path-only narrowing |
+| `preMerge` | No | Ordered command names used by Smart Merge and Smart Commit |
+| `laneMerge` | No | Ordered command names used by graph lane merges; falls back to `preMerge` |
 
-> **Note:** `PROJECT_ROOT` points to the **worktree** (not the original repo root) because the script should validate the code as it exists in the worktree — which already has main merged in at this point. Use `CLAUDE_PROJECT_DIR` if you need to reference the original project root.
+Graph workflow contexts select their own ordered command names through
+`scriptValidator.commands`. That selection is independent from `preMerge` and
+`laneMerge`; an empty list disables the context gate.
 
-### Contract
-
-- The script **must be executable** (`chmod +x`) with a **shebang line**.
-- **Exit 0** means all checks passed — the merge proceeds.
-- **Non-zero exit** means validation failed — the merge is aborted (or auto-fix is attempted if enabled).
-- **Stdout and stderr are captured** and included in the error notification when validation fails. Write clear, actionable output so failures can be diagnosed. When auto-fix is enabled, Claude reads this output to understand what needs fixing.
-- The script **may make changes to files** (e.g., auto-formatting via Prettier, ESLint `--fix`). Any uncommitted changes left by the script are automatically committed by Command Center with the message `auto-fix: pre-merge validation` (using `--no-verify` to skip git hooks). These changes are included in the squash merge.
-- The script **must complete within the configured timeout** (default 5 minutes). Exceeding the timeout kills the script and fails validation.
-- The script runs with **`NODE_ENV` unset** and Next.js/Turbopack internal variables stripped, same as the init script.
-
-### Example
-
-```bash
-#!/usr/bin/env bash
-# scripts/pre-merge-validate.sh
-set -euo pipefail
-
-# Auto-fix formatting (changes are auto-committed by CC after this script)
-npx prettier --write . > /dev/null 2>&1
-npx eslint . --fix --quiet --no-color --no-warn-ignored
-
-# Type checking
-npx tsc --noEmit --pretty false
-
-# Tests
-npx vitest run --no-color
-```
-
-### Tips
-
-- **Formatting first:** Run formatters (`prettier --write`, `eslint --fix`) before checkers (`tsc`, `vitest`). Command Center auto-commits any file changes the script makes, so formatters work seamlessly.
-- **Suppress noise:** Use `--no-color`, `--quiet`, and `--pretty false` to keep output clean and machine-readable. This helps both human debugging and Claude auto-fix.
-- **Fail fast with `set -euo pipefail`:** The script should stop at the first failure. Don't swallow errors — Command Center needs the non-zero exit code to detect failure.
+Validation scripts run with the target worktree as their working directory.
+They receive `PROJECT_ROOT`, `CLAUDE_PROJECT_DIR`, `WORKTREE_PATH`,
+`SESSION_NAME`, `BRANCH_NAME`, and, where applicable, `TARGET_BRANCH` and
+`CONTEXT_ID`. The service also supplies `CC_VALIDATION_RUN_ID`,
+`CC_VALIDATION_COMMAND`, and `CC_VALIDATION_COST`. Scripts must be executable,
+include a shebang, and exit non-zero on failure. Keep failure output complete
+and machine-readable; use colorless, quiet output on success.
 
 ---
 
@@ -385,7 +366,16 @@ A project using all features:
 ```json
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh",
+  "validation": {
+    "commands": {
+      "pre-merge": {
+        "command": "scripts/pre-merge-validate.sh",
+        "cost": 8
+      }
+    },
+    "preMerge": ["pre-merge"],
+    "laneMerge": ["pre-merge"]
+  },
   "devServers": [
     {
       "name": "nextjs",

@@ -110,7 +110,9 @@ function createCohortExecution(
                 makeSeededValidatorAssignment({ id: "security-reviewer" }),
               ],
             },
-            scriptValidator: { enabled: options.scriptValidator ?? true },
+            scriptValidator: {
+              commands: (options.scriptValidator ?? true) ? ["pre-merge"] : [],
+            },
           }
         : context,
     ),

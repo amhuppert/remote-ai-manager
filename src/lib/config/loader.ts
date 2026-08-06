@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { readFile, mkdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -18,6 +18,7 @@ import {
 } from "@/lib/agent-backends/schemas";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { atomicWriteJson } from "@/lib/shared/atomic-write-json";
 
 /**
  * Resolve the config directory for Command Center.
@@ -153,6 +154,10 @@ function defaultConfig(): GlobalConfig {
       messageModel: "sonnet",
       effort: "medium",
       timeoutMs: 180_000,
+    },
+    validation: {
+      concurrencyLimit: 8,
+      defaultTimeoutMs: 600_000,
     },
     conversationNaming: {
       enabled: true,
@@ -321,15 +326,17 @@ export function createConfigReader(configDir: string): ConfigReader {
 
     async writeConfig(config: GlobalConfig): Promise<void> {
       await ensureDir();
-      const json = JSON.stringify(config, null, 2);
-      await writeFile(configFile, json, "utf-8");
+      // Atomic temp-then-rename, not a truncating write: this file is read
+      // concurrently by every other Command Center process, and a plain
+      // `writeFile` leaves a window where a reader observes it truncated and
+      // fails on `JSON.parse("")`.
+      await atomicWriteJson(configFile, config);
       configCache = null;
     },
 
     async writeRawConfig(config: RawGlobalConfig): Promise<void> {
       await ensureDir();
-      const json = JSON.stringify(config, null, 2);
-      await writeFile(configFile, json, "utf-8");
+      await atomicWriteJson(configFile, config);
       configCache = null;
       log.info("config.raw_write", {
         fieldCount: Object.keys(config).length,

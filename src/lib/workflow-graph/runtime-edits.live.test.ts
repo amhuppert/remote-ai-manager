@@ -21,7 +21,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
   },
   contextValidator: { enabled: false, assignments: [] },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
@@ -37,6 +37,13 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     negotiationRounds: { value: 3, source: "global" },
     autonomousResolutionThreshold: { value: "minor", source: "global" },
   },
+  agentValidation: {
+    implementer: { value: { mode: "all", except: [] }, source: "global" },
+    contextValidator: {
+      value: { mode: "only", commands: [] },
+      source: "global",
+    },
+  },
 };
 
 function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
@@ -44,8 +51,11 @@ function makeDeps(overrides: Partial<LiveEditDeps> = {}): LiveEditDeps {
   return {
     createTaskId: () => `task-minted-${(counter += 1)}`,
     resolvedGlobalDefaults: () => RESOLVED_DEFAULTS,
+    validationCommandPreflight: () => ({
+      commandCosts: { typecheck: 2, test: 5 },
+      concurrencyLimit: 8,
+    }),
     snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
-    hasPreMergeCommand: () => true,
     now: () => "2026-07-29T00:00:00.000Z",
     ...overrides,
   };
@@ -175,6 +185,228 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
     });
   });
 
+  it("rejects a live agentValidation selection naming an unregistered command", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        agentValidation: {
+          implementer: {
+            // "format" is not in the deps' registry (["typecheck", "test"]).
+            value: { mode: "all", except: ["format"] },
+            source: "per-node",
+          },
+          contextValidator: {
+            value: { mode: "only", commands: [] },
+            source: "global",
+          },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues[0]).toMatchObject({
+      code: "unknown-validation-command",
+      contextId: "context-implement",
+      field:
+        "executionContexts.context-implement.agentValidation.implementer.value.except.0",
+    });
+    expect(execution).toEqual(before);
+  });
+
+  it("rejects an oversized validation selection without mutating live state", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const before = structuredClone(execution);
+
+    const result = apply(
+      execution,
+      [
+        {
+          type: "update-context",
+          contextId: "context-implement",
+          scriptValidator: { commands: ["test"] },
+        },
+      ],
+      makeDeps({
+        validationCommandPreflight: () => ({
+          commandCosts: { typecheck: 2, test: 5 },
+          concurrencyLimit: 4,
+        }),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("validation_cost_exceeds_limit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "validation_cost_exceeds_limit",
+        contextId: "context-implement",
+        field: "executionContexts.context-implement.scriptValidator.commands.0",
+        message: expect.stringMatching(/cost 5.*limit 4.*lower-worker/),
+      }),
+    );
+    expect(execution).toEqual(before);
+  });
+
+  it("does not preflight a pre-existing oversized selection on a prose-only edit", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    if (!context) throw new Error("fixture missing context-implement");
+    context.scriptValidator = { commands: ["test"] };
+
+    const result = apply(
+      execution,
+      [
+        {
+          type: "update-context",
+          contextId: "context-implement",
+          title: "Clarified title",
+        },
+      ],
+      makeDeps({
+        validationCommandPreflight: () => ({
+          commandCosts: { typecheck: 2, test: 5 },
+          concurrencyLimit: 4,
+        }),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("applies a registered agentValidation selection without touching in-flight state", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const before = structuredClone(execution);
+    const agentValidation = {
+      implementer: {
+        value: { mode: "only" as const, commands: ["typecheck", "test"] },
+        source: "per-node" as const,
+      },
+      contextValidator: {
+        value: { mode: "only" as const, commands: ["test"] },
+        source: "per-node" as const,
+      },
+    };
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        agentValidation,
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    // The edit boundary re-freezes each rewritten role to an explicit
+    // command-name snapshot, the same expansion a seed performs (design §6).
+    expect(context?.agentValidation).toEqual({
+      implementer: {
+        ...agentValidation.implementer,
+        commands: ["typecheck", "test"],
+      },
+      contextValidator: {
+        ...agentValidation.contextValidator,
+        commands: ["test"],
+      },
+    });
+    // Future submissions only: the edit rewrites the working definition that
+    // upcoming submissions resolve against; task/context runtime state — where
+    // in-flight work lives — is untouched.
+    expect(result.execution.taskStates).toEqual(before.taskStates);
+    expect(result.execution.contextStates).toEqual(before.contextStates);
+  });
+
+  it('expands and freezes a live `mode:"all"` selector against the current registry', () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        agentValidation: {
+          implementer: {
+            value: { mode: "all", except: ["test"] },
+            source: "per-node",
+          },
+          contextValidator: {
+            value: { mode: "only", commands: [] },
+            source: "global",
+          },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const context = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    expect(context?.agentValidation?.implementer.commands).toEqual([
+      "typecheck",
+    ]);
+    expect(context?.agentValidation?.contextValidator.commands).toEqual([]);
+  });
+
+  it("preserves an untouched role's frozen snapshot when the registry has since grown", () => {
+    const base = createWorkflowExecution({ status: "paused" });
+    const execution = structuredClone(base);
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    // Frozen at seed when the registry knew only "typecheck".
+    const frozenImplementer = {
+      value: { mode: "all" as const, except: [] },
+      source: "global" as const,
+      commands: ["typecheck"],
+    };
+    context!.agentValidation = {
+      implementer: frozenImplementer,
+      contextValidator: {
+        value: { mode: "only", commands: [] },
+        source: "global",
+        commands: [],
+      },
+    };
+
+    // The operator edits ONLY the context-validator role; the UI echoes the
+    // implementer role verbatim. The registry now also registers "test".
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-implement",
+        agentValidation: {
+          implementer: frozenImplementer,
+          contextValidator: {
+            value: { mode: "only", commands: ["test"] },
+            source: "per-node",
+          },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const next = result.execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    );
+    // Echoing an unchanged selector must NOT re-expand it against the grown
+    // registry — that would silently broaden a frozen permission set.
+    expect(next?.agentValidation?.implementer.commands).toEqual(["typecheck"]);
+    expect(next?.agentValidation?.contextValidator.commands).toEqual(["test"]);
+  });
+
   it("updates a context's prose and concrete config on an unstarted context", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(execution, [
@@ -192,7 +424,7 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
             reasoningEffort: "high",
           },
         },
-        scriptValidator: { enabled: false },
+        scriptValidator: { commands: [] },
         mutability: { allowAgentTaskAdd: true },
       },
     ]);
@@ -623,6 +855,107 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
   });
 });
 
+describe("applyLiveExecutionEdits — update-lane-merge-validation", () => {
+  it("rewrites the workflow-scope snapshot; future merge submissions read it, runtime state is untouched", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "update-lane-merge-validation",
+        laneMergeValidation: {
+          strategy: "every-merge",
+          commands: { mode: "only", commands: ["typecheck"] },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.execution.workingDefinition.laneMergeValidation).toEqual({
+      strategy: "every-merge",
+      commands: { mode: "only", commands: ["typecheck"] },
+    });
+    expect(result.execution.taskStates).toEqual(before.taskStates);
+    expect(result.execution.contextStates).toEqual(before.contextStates);
+  });
+
+  it("rejects an unregistered command name path-qualified at the edit boundary", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "update-lane-merge-validation",
+        laneMergeValidation: {
+          strategy: "final-only",
+          commands: { mode: "only", commands: ["ghost"] },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues[0]).toMatchObject({
+      code: "unknown-validation-command",
+      field: "laneMergeValidation.commands.commands.0",
+    });
+    expect(execution).toEqual(before);
+  });
+
+  it("rejects an oversized explicit lane-merge command", () => {
+    const execution = createWorkflowExecution({ status: "paused" });
+
+    const result = apply(
+      execution,
+      [
+        {
+          type: "update-lane-merge-validation",
+          laneMergeValidation: {
+            strategy: "final-only",
+            commands: { mode: "only", commands: ["test"] },
+          },
+        },
+      ],
+      makeDeps({
+        validationCommandPreflight: () => ({
+          commandCosts: { typecheck: 2, test: 5 },
+          concurrencyLimit: 4,
+        }),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("validation_cost_exceeds_limit");
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "validation_cost_exceeds_limit",
+        field: "laneMergeValidation.commands.commands.0",
+      }),
+    );
+  });
+
+  it("requires a quiescent execution", () => {
+    const execution = createWorkflowExecution({ status: "running" });
+
+    const result = apply(execution, [
+      {
+        type: "update-lane-merge-validation",
+        laneMergeValidation: {
+          strategy: "every-merge",
+          commands: { mode: "project" },
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("requires_pause");
+  });
+});
+
 describe("applyLiveExecutionEdits — structural ops + frontier invariant", () => {
   it("adds a context seeded from resolved global defaults and seeds its runtime state", () => {
     const execution = createWorkflowExecution({ status: "paused" });
@@ -945,7 +1278,7 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
     ).toBe(true);
   });
 
-  it("rejects enabling a script validator when the project has no preMergeCommand", () => {
+  it("allows selecting a registered script-validator command", () => {
     const execution = createWorkflowExecution({ status: "paused" });
     const result = apply(
       execution,
@@ -953,30 +1286,17 @@ describe("applyLiveExecutionEdits — structural ops + frontier invariant", () =
         {
           type: "update-context",
           contextId: "context-implement",
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["typecheck"] },
         },
       ],
-      makeDeps({ hasPreMergeCommand: () => false }),
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.code).toBe("invalid_edit");
-  });
-
-  it("allows enabling a script validator when a preMergeCommand exists", () => {
-    const execution = createWorkflowExecution({ status: "paused" });
-    const result = apply(
-      execution,
-      [
-        {
-          type: "update-context",
-          contextId: "context-implement",
-          scriptValidator: { enabled: true },
-        },
-      ],
-      makeDeps({ hasPreMergeCommand: () => true }),
+      makeDeps(),
     );
     expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const updated = result.execution.workingDefinition.executionContexts.find(
+      (context) => context.id === "context-implement",
+    );
+    expect(updated).toHaveProperty("scriptValidatorSource", "per-node");
   });
 
   it("allows prose edits on a quiescent started context without tripping the frozen-past net", () => {

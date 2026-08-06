@@ -14,14 +14,16 @@
 
 import { NextResponse } from "next/server";
 import { readConfig } from "@/lib/config/loader";
-import type { GlobalConfig } from "@/lib/config/schemas";
 import { resolveProjectSessionOr404 } from "@/lib/shared/route-resolution";
 import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
 import { resolveProjectPath } from "@/lib/projects/resolver";
+import { readRepoConfig } from "@/lib/projects/repo-config";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { getSession } from "@/lib/state-store";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
+import { createValidationCommandPreflight } from "@/lib/validation/preflight";
 import {
   createAssignmentReferenceChecker,
   type AssignmentDocumentScope,
@@ -65,14 +67,20 @@ export interface GraphWorkflowValidateRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<{ sessionName: string } | null>;
-  assignmentReferences?: AssignmentReferenceChecker;
+  /**
+   * Reads `CommandCenter.json` so command selections can be preflighted
+   * against the project's validation registry and global capacity so this
+   * endpoint retains exact create-path parity (validation-concurrency §§3, 6).
+   */
+  readRepoConfig(projectPath: string): Promise<PerRepoConfig | null>;
   /**
    * The CURRENT global config, read per request. Validate is the pre-flight for
    * a launch, and the launch staffs from `workflowDefaults` as well as from the
    * plan, so answering "would this launch?" means reading them now rather than
    * trusting whatever was valid when they were written.
    */
-  readConfig?: () => Promise<GlobalConfig>;
+  readConfig(): Promise<GlobalConfig>;
+  assignmentReferences?: AssignmentReferenceChecker;
 }
 
 export function createGraphWorkflowValidateHandlers(
@@ -120,15 +128,29 @@ export function createGraphWorkflowValidateHandlers(
       );
     }
 
-    const validation = validateWorkflowPlan(rawBody);
+    const [repoConfig, globalConfig] = await Promise.all([
+      deps.readRepoConfig(resolved.value.projectPath),
+      deps.readConfig(),
+    ]);
+    const validation = validateWorkflowPlan(rawBody, {
+      validationCommandPreflight: createValidationCommandPreflight(
+        repoConfig?.validation,
+        globalConfig.validation,
+      ),
+    });
     if (!validation.ok) {
       log.info("graph-workflow-validate.invalid", {
         projectName,
         sessionName,
+        code: validation.code ?? "invalid_plan",
         issueCount: validation.issues.length,
       });
       return NextResponse.json(
-        { error: "Workflow plan is invalid", issues: validation.issues },
+        {
+          error: "Workflow plan is invalid",
+          ...(validation.code ? { code: validation.code } : {}),
+          issues: validation.issues,
+        },
         { status: 400 },
       );
     }
@@ -176,6 +198,8 @@ const defaultHandlers = createGraphWorkflowValidateHandlers({
   auth: createAgentAuth(),
   resolveProjectPath,
   getSession,
+  readRepoConfig,
+  readConfig,
 });
 
 /** POST /api/projects/[name]/sessions/[session]/graph-workflow/validate */

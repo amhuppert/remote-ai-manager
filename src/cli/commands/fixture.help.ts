@@ -9,12 +9,13 @@ import type { CommandHelpEntry } from "../help-types";
 
 /**
  * The load-bearing safety fact for every fixture verb: it runs against the
- * session's WORKTREE dev server, never the managing CC instance. Preserved as
- * shared `domainContext` on the leaves — each node is disclosed independently, so
- * the warning must ride with each one, not only the hub.
+ * invoking session or workflow context's WORKTREE dev server, never the
+ * managing CC instance. Preserved as shared `domainContext` on the leaves —
+ * each node is disclosed independently, so the warning must ride with each one,
+ * not only the hub.
  */
 const TARGET_NOTE =
-  "Targets the session's WORKTREE dev server (auto-resolved via `cctl dev`), never the managing CC instance — fixtures create and delete real sessions. An explicit --target equal to the managing server is refused. `--dev <serverName>` disambiguates when several dev servers run.";
+  "Targets the invoking session or workflow context's WORKTREE dev server (auto-resolved via `cctl dev`), never the managing CC instance — fixtures create and delete real sessions. Workflow identity is verified server-side and resolves the canonical lane worktree without falling back to the session. An explicit --target equal to the managing server is refused. `--dev <serverName>` disambiguates when several dev servers run.";
 
 const CC_LIVE_FEATURE_TEST = {
   name: "cc-live-feature-test",
@@ -28,7 +29,7 @@ export const fixtureHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "scaffold test sessions and run prompts against a dev server",
     description:
-      "Scaffold live-test state — throwaway sessions and real LLM turns — for verifying features in the running app. Every verb targets the session's worktree dev server (via `cctl dev`'s registry), never the managing CC instance.",
+      "Scaffold live-test state — throwaway sessions and real LLM turns — for verifying features in the running app. Every verb targets the invoking session or workflow context's worktree dev server (via `cctl dev`'s registry), never the managing CC instance.",
     usage: ["cctl fixture <session create|session delete|prompt|status>"],
     flags: [],
     examples: [],
@@ -65,7 +66,7 @@ export const fixtureHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "create a throwaway test session and pre-warm its routes",
     description:
-      "Create the session and return everything a live test needs in one envelope: sessionName, a ready conversationId, deep-link urls (session page + /conversations?c=<id>), and the dev instance's dbPath/transcriptPath for backend verification. It pre-warms the returned routes so the first browser navigation lands warm; --skip-warm opts out.",
+      "Create the session and return everything a live test needs in one envelope: sessionName, a ready conversationId, deep-link urls (session page + /conversations?c=<id>), and the verified dev instance's worktreePath/dbPath/transcriptPath for backend verification. It pre-warms the returned routes so the first browser navigation lands warm; --skip-warm opts out.",
     usage: [
       "cctl fixture session create <project> [--name <n>] [--dev <serverName>] [--target <url>] [--skip-warm]",
     ],

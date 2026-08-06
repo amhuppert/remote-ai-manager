@@ -4,6 +4,7 @@ import {
   notFound,
   resolveProjectOr404,
   resolveProjectSessionOr404,
+  type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, withTracing } from "@/lib/logging";
@@ -35,6 +36,13 @@ import type {
   DevServerRuntimeState,
   DevServersStatusResponse,
 } from "@/lib/dev-server/schemas";
+import {
+  DevServerTargetError,
+  devServerTargetResolver,
+  parseDevServerTarget,
+  type DevServerTargetResolver,
+  type ResolvedDevServerTarget,
+} from "./target-resolver";
 const logger = createLogger("dev-server-route");
 
 type RouteContext = {
@@ -47,6 +55,7 @@ export interface DevServerRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<{ worktreePath: string } | null>;
+  targetResolver: DevServerTargetResolver;
   service: DevServerService;
   stopAllForSession(params: {
     projectPath: string;
@@ -69,6 +78,7 @@ export interface DevServerRouteDeps {
 const defaultDeps: DevServerRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
+  targetResolver: devServerTargetResolver,
   service: {
     list: listDevServers,
     ensure: ensureDevServer,
@@ -147,6 +157,17 @@ function serviceErrorResponse(error: unknown): Response {
   return apiError(getErrorMessage(error), 500);
 }
 
+function targetErrorResponse(error: DevServerTargetError): Response {
+  const payload: ApiError & { instruction?: string } = {
+    error: error.message,
+    code: error.code,
+  };
+  if (error.instruction !== undefined) {
+    payload.instruction = error.instruction;
+  }
+  return NextResponse.json(payload, { status: error.status });
+}
+
 const stopUnmanagedRequestSchema = z.object({
   port: z.number().int().positive(),
 });
@@ -154,8 +175,38 @@ const stopUnmanagedRequestSchema = z.object({
 export function createDevServerRouteHandlers(
   deps: DevServerRouteDeps = defaultDeps,
 ) {
+  async function resolveTarget(
+    request: Request,
+    input: {
+      projectName: string;
+      projectPath: string;
+      sessionName: string;
+    },
+  ): Promise<RouteResolution<ResolvedDevServerTarget>> {
+    try {
+      const target = parseDevServerTarget(request);
+      return {
+        ok: true,
+        value: await deps.targetResolver.resolve({ ...input, target }),
+      };
+    } catch (error) {
+      if (!(error instanceof DevServerTargetError)) throw error;
+      if (error.code === "INVALID_DEV_SERVER_TARGET") {
+        logger.warn("dev-server.target.rejected", {
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          targetKind: "workflow-context",
+          executionId: null,
+          contextId: null,
+          code: error.code,
+        });
+      }
+      return { ok: false, response: targetErrorResponse(error) };
+    }
+  }
+
   async function GET(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const params = await context.params;
@@ -165,9 +216,16 @@ export function createDevServerRouteHandlers(
     if (!project.ok) return project.response;
 
     try {
+      const target = await resolveTarget(request, {
+        projectName,
+        projectPath: project.value,
+        sessionName,
+      });
+      if (!target.ok) return target.response;
       const servers = await deps.service.list({
         projectPath: project.value,
         sessionName,
+        worktreePath: target.value.worktreePath,
       });
       return NextResponse.json({
         servers: servers.map(toRuntimeState),
@@ -183,7 +241,7 @@ export function createDevServerRouteHandlers(
   }
 
   async function START(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const params = await context.params;
@@ -194,11 +252,18 @@ export function createDevServerRouteHandlers(
     if (!project.ok) return project.response;
 
     try {
+      const target = await resolveTarget(request, {
+        projectName,
+        projectPath: project.value,
+        sessionName,
+      });
+      if (!target.ok) return target.response;
       const server = await deps.service.ensure({
         projectPath: project.value,
         sessionName,
         serverName,
         wait: false,
+        worktreePath: target.value.worktreePath,
       });
       return NextResponse.json(
         { status: "accepted", server: toRuntimeState(server) },
@@ -259,40 +324,52 @@ export function createDevServerRouteHandlers(
   }
 
   async function STOP(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const params = await context.params;
     const projectName = params["name"] ?? "";
     const sessionName = params["session"] ?? "";
     const serverName = params["serverName"] ?? "";
-    const resolved = await resolveProjectSessionOr404(
-      deps,
-      projectName,
-      sessionName,
-    );
-    if (!resolved.ok) return resolved.response;
+    const project = await resolveProjectOr404(deps, projectName);
+    if (!project.ok) return project.response;
 
-    const existing = deps.getServer({
-      projectPath: resolved.value.projectPath,
-      sessionName,
-      worktreePath: resolved.value.session.worktreePath,
-      serverName,
-    });
-    if (
-      !existing ||
-      (existing.status !== "running" && existing.status !== "starting")
-    ) {
-      return notFound(`Server "${serverName}" is not running`);
+    try {
+      const target = await resolveTarget(request, {
+        projectName,
+        projectPath: project.value,
+        sessionName,
+      });
+      if (!target.ok) return target.response;
+      const existing = deps.getServer({
+        projectPath: project.value,
+        sessionName,
+        worktreePath: target.value.worktreePath,
+        serverName,
+      });
+      if (
+        !existing ||
+        (existing.status !== "running" && existing.status !== "starting")
+      ) {
+        return notFound(`Server "${serverName}" is not running`);
+      }
+
+      await deps.stopServer({
+        projectPath: project.value,
+        sessionName,
+        worktreePath: target.value.worktreePath,
+        serverName,
+      });
+      return NextResponse.json({ status: "ok" });
+    } catch (error) {
+      logger.warn("dev-server.route.stop.error", {
+        projectName,
+        sessionName,
+        serverName,
+        error: getErrorMessage(error),
+      });
+      return serviceErrorResponse(error);
     }
-
-    await deps.stopServer({
-      projectPath: resolved.value.projectPath,
-      sessionName,
-      worktreePath: resolved.value.session.worktreePath,
-      serverName,
-    });
-    return NextResponse.json({ status: "ok" });
   }
 
   async function STOP_ALL(

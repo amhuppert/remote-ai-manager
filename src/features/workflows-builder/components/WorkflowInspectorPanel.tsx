@@ -27,6 +27,8 @@ import {
   updateTask,
 } from "@/lib/workflow-graph/builder-draft";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
+import { useValidationCommandOptions } from "@/lib/validation/queries";
+import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import type { WorkflowDefaults } from "@/lib/config/schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import type { WorkflowCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
@@ -35,8 +37,11 @@ import type {
   ValidatorCohort,
   GraphWorkflowAskUserQuestionsConfig,
   GraphWorkflowCircuitBreakerPolicy,
+  GraphWorkflowCommandSelector,
   GraphWorkflowHumanApprovalGateConfig,
   GraphWorkflowIterationPolicy,
+  GraphWorkflowLaneMergeValidationConfig,
+  GraphWorkflowLaneMergeValidationOverride,
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowPlanRepairPolicy,
   GraphWorkflowScriptValidatorConfig,
@@ -51,6 +56,15 @@ import {
   resolveContextCollaboration,
   resolveWorkflowCollaboration,
 } from "./collaboration-cascade";
+import {
+  resolveContextAgentValidation,
+  resolveWorkflowAgentValidation,
+  resolveWorkflowLaneMergeValidation,
+  type AgentValidationRoleSource,
+  type ContextAgentValidationCascade,
+  type ResolvedAgentValidationRole,
+  type WorkflowAgentValidationCascade,
+} from "./validation-cascade";
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";
@@ -58,11 +72,15 @@ import ParameterDeclarationEditor from "./ParameterDeclarationEditor";
 import { SectionLabel } from "@/components/ui/SectionHeader";
 import type { ParameterDeclaration } from "@/lib/workflow-graph/definition-schemas";
 import {
+  AgentValidationEditor,
   CircuitBreakerEditor,
   CollaborationEditor,
+  CommandNameListEditor,
   ImplementerEditor,
   IterationPolicyEditor,
+  LaneMergeValidationEditor,
   PlanRepairEditor,
+  type AgentValidationRole,
 } from "@/components/workflow-config/FieldEditors";
 import {
   CohortEditor,
@@ -137,6 +155,9 @@ interface WorkflowInspectorPanelProps {
   activeTab?: InspectorTab;
   onTabChange?: (tab: InspectorTab) => void;
   voiceProjectName?: string | null;
+  /** Builder scope: the project whose registry feeds the command
+   * multi-selects, or null for the global builder (union of all projects). */
+  projectName?: string | null;
   /**
    * Scopes the agent-profile listing the assignment pickers offer: builtin +
    * global + this project's own profiles.
@@ -306,6 +327,37 @@ function summarizePlanRepair(policy: GraphWorkflowPlanRepairPolicy): string {
   return `on · ${policy.maxAttemptsPerContext}/context · ${agent}`;
 }
 
+function summarizeSelector(selector: GraphWorkflowCommandSelector): string {
+  if (selector.mode === "all") {
+    return selector.except.length === 0
+      ? "all"
+      : `all -${selector.except.length}`;
+  }
+  return selector.commands.length === 0
+    ? "none"
+    : `only ${selector.commands.length}`;
+}
+
+function summarizeLaneMergeValidation(
+  config: GraphWorkflowLaneMergeValidationConfig,
+): string {
+  const commands =
+    config.commands.mode === "project"
+      ? "project default"
+      : config.commands.commands.length === 0
+        ? "disabled"
+        : `${config.commands.commands.length} command${config.commands.commands.length === 1 ? "" : "s"}`;
+  return `${config.strategy} · ${commands}`;
+}
+
+// Per-role provenance labels; "context-override" reads as Context to match the
+// three cascade tiers an author reasons about (global / workflow / context).
+const ROLE_SOURCE_LABEL: Record<AgentValidationRoleSource, string> = {
+  global: "Global",
+  workflow: "Workflow",
+  "context-override": "Context",
+};
+
 type ResolvedContextCascade = {
   implementer: {
     value: AgentAssignment;
@@ -350,6 +402,7 @@ type ResolvedContextCascade = {
     value: WorkflowCollaborationConfig;
     source: InspectorConfigBlockSource;
   };
+  agentValidation: ContextAgentValidationCascade;
 };
 
 function computeContextCascade(
@@ -421,6 +474,11 @@ function computeContextCascade(
       workflowConfig.collaboration,
       globalDefaults.collaboration,
     ),
+    agentValidation: resolveContextAgentValidation(
+      context.agentValidation,
+      workflowConfig.agentValidation,
+      globalDefaults.agentValidation,
+    ),
   };
 }
 
@@ -442,6 +500,7 @@ function contextOverrideCount(cascade: ResolvedContextCascade): number {
     cascade.mutability.source,
     cascade.planRepair.source,
     cascade.collaboration.source,
+    cascade.agentValidation.blockSource,
   ];
   return sources.filter(
     (source) => source === "context-override" || source === "disabled",
@@ -478,7 +537,7 @@ function ResolvedSetupStrip({
             </BackendChip>
           ))
         : null}
-      {cascade.scriptValidator.value.enabled ? (
+      {(cascade.scriptValidator.value.commands ?? []).length > 0 ? (
         <GateChip tone="neutral" icon={<ScriptGlyphIcon size={13} />}>
           Script
         </GateChip>
@@ -546,6 +605,11 @@ type WorkflowCascade = {
     value: WorkflowCollaborationConfig;
     source: "global" | "context-override";
   };
+  agentValidation: WorkflowAgentValidationCascade;
+  laneMergeValidation: {
+    value: GraphWorkflowLaneMergeValidationConfig;
+    source: "global" | "context-override";
+  };
 };
 
 function computeWorkflowCascade(
@@ -581,6 +645,14 @@ function computeWorkflowCascade(
     collaboration: resolveWorkflowCollaboration(
       workflowConfig.collaboration,
       globalDefaults.collaboration,
+    ),
+    agentValidation: resolveWorkflowAgentValidation(
+      workflowConfig.agentValidation,
+      globalDefaults.agentValidation,
+    ),
+    laneMergeValidation: resolveWorkflowLaneMergeValidation(
+      workflowConfig.laneMergeValidation,
+      globalDefaults.laneMergeValidation,
     ),
   };
 }
@@ -626,10 +698,12 @@ export default function WorkflowInspectorPanel({
   activeTab: controlledActiveTab,
   onTabChange,
   voiceProjectName,
+  projectName,
   libraryProjectName,
   onOutputSchemaBlockedChange,
 }: WorkflowInspectorPanelProps): React.JSX.Element {
   const defaults = globalDefaults ?? SEEDED_WORKFLOW_DEFAULTS;
+  const commandOptions = useValidationCommandOptions(projectName ?? null);
   const draftDefinition = _useGraphWorkflowBuilderStore(
     (state) => state.draftDefinition,
   );
@@ -818,6 +892,7 @@ export default function WorkflowInspectorPanel({
                 }}
                 onPrimaryAction={handleSave}
                 voiceProjectName={voiceProjectName}
+                commandOptions={commandOptions}
                 libraryProjectName={libraryProjectName}
                 onSetOverride={(block, value) => {
                   updateDefinition(
@@ -924,6 +999,7 @@ export default function WorkflowInspectorPanel({
                   onDelete={() => onDelete(selectedContext.id)}
                   onPrimaryAction={handleSave}
                   voiceProjectName={voiceProjectName}
+                  commandOptions={commandOptions}
                   libraryProjectName={libraryProjectName}
                 />
               </TabsContent>
@@ -943,6 +1019,7 @@ function WorkflowTabBody({
   onParametersChange,
   onPrimaryAction,
   voiceProjectName,
+  commandOptions,
   libraryProjectName,
   onSetOverride,
   onClearOverride,
@@ -954,6 +1031,7 @@ function WorkflowTabBody({
   onParametersChange: (next: ParameterDeclaration[]) => void;
   onPrimaryAction: (force?: boolean) => void;
   voiceProjectName?: string | null;
+  commandOptions?: readonly ValidationCommandSummary[];
   libraryProjectName?: string | null;
   onSetOverride: <K extends keyof WorkflowConfigOverride>(
     block: K,
@@ -1075,12 +1153,36 @@ function WorkflowTabBody({
           </InspectorConfigBlock>
 
           <ScriptValidatorBlock
-            scopeLabel="Workflow script validator"
             cascade={cascade.scriptValidator}
+            options={commandOptions}
             onChange={(value) =>
               onSetOverride("scriptValidator", deepClone(value))
             }
             onReset={() => onClearOverride("scriptValidator")}
+          />
+
+          <AgentValidationBlock
+            implementer={cascade.agentValidation.implementer}
+            contextValidator={cascade.agentValidation.contextValidator}
+            blockSource={cascade.agentValidation.blockSource}
+            options={commandOptions}
+            onChangeRole={(role, selector) =>
+              onSetOverride("agentValidation", {
+                ...(workflowConfig.agentValidation ?? {}),
+                [role]: selector,
+              })
+            }
+            onReset={() => onClearOverride("agentValidation")}
+          />
+
+          <LaneMergeValidationBlock
+            cascade={cascade.laneMergeValidation}
+            currentOverride={workflowConfig.laneMergeValidation}
+            options={commandOptions}
+            onSetOverride={(value) =>
+              onSetOverride("laneMergeValidation", value)
+            }
+            onReset={() => onClearOverride("laneMergeValidation")}
           />
 
           <HumanApprovalGateBlock
@@ -1184,7 +1286,8 @@ type ContextBlock =
   | "circuitBreaker"
   | "mutability"
   | "planRepair"
-  | "collaboration";
+  | "collaboration"
+  | "agentValidation";
 
 function serializeOutputSchema(
   schema: Record<string, unknown> | undefined,
@@ -1271,6 +1374,7 @@ function ContextTabBody({
   onDelete,
   onPrimaryAction,
   voiceProjectName,
+  commandOptions,
   libraryProjectName,
 }: {
   context: GraphWorkflowExecutionContextDefinition;
@@ -1303,6 +1407,7 @@ function ContextTabBody({
   onDelete: () => void;
   onPrimaryAction: (force?: boolean) => void;
   voiceProjectName?: string | null;
+  commandOptions?: readonly ValidationCommandSummary[];
   libraryProjectName?: string | null;
 }): React.JSX.Element {
   const cascade = computeContextCascade(
@@ -1472,12 +1577,26 @@ function ContextTabBody({
           />
 
           <ScriptValidatorBlock
-            scopeLabel="Context script validator"
             cascade={cascade.scriptValidator}
+            options={commandOptions}
             onChange={(value) =>
               onSetContextOverride("scriptValidator", deepClone(value))
             }
             onReset={() => onClearContextOverride("scriptValidator")}
+          />
+
+          <AgentValidationBlock
+            implementer={cascade.agentValidation.implementer}
+            contextValidator={cascade.agentValidation.contextValidator}
+            blockSource={cascade.agentValidation.blockSource}
+            options={commandOptions}
+            onChangeRole={(role, selector) =>
+              onSetContextOverride("agentValidation", {
+                ...(context.agentValidation ?? {}),
+                [role]: selector,
+              })
+            }
+            onReset={() => onClearContextOverride("agentValidation")}
           />
 
           <HumanApprovalGateBlock
@@ -1848,22 +1967,20 @@ function CohortChips({
   );
 }
 
-const GATE_CODE_CLASS =
-  "rounded-[3px] bg-bg-raised px-[5px] py-[1px] font-mono text-[0.7rem] text-cyan";
-
 function ScriptValidatorBlock({
-  scopeLabel,
   cascade,
+  options,
   onChange,
   onReset,
 }: {
-  scopeLabel: string;
   cascade:
     | ResolvedContextCascade["scriptValidator"]
     | WorkflowCascade["scriptValidator"];
+  options?: readonly ValidationCommandSummary[];
   onChange: (value: GraphWorkflowScriptValidatorConfig) => void;
   onReset: () => void;
 }): React.JSX.Element {
+  const value = cascade.value;
   return (
     <InspectorConfigBlock
       label="Script validator"
@@ -1874,20 +1991,112 @@ function ScriptValidatorBlock({
       }
       collapsible={false}
       source={cascade.source}
+      allowInheritedEditing
       description={
         <>
-          Runs the project&apos;s{" "}
-          <code className={GATE_CODE_CLASS}>preMergeCommand</code> before agent
-          validation.
+          Runs the selected validation commands before agent validation. An
+          empty selection disables the gate.
         </>
       }
-      headerSwitch={{
-        checked: cascade.value.enabled,
-        onCheckedChange: (enabled) => onChange({ enabled }),
-        ariaLabel: scopeLabel,
-      }}
       onReset={cascade.source === "context-override" ? onReset : undefined}
-    />
+    >
+      <div className="flex flex-col gap-xs">
+        <span className={cn(WB_FIELD_LABEL, "mb-0")}>Commands</span>
+        <CommandNameListEditor
+          value={value.commands ?? []}
+          addLabel="Add script validator command"
+          options={options}
+          // The key survives an emptied list: `commands: []` is explicitly-off
+          // and must round-trip, never collapse to legacy-on.
+          onChange={(commands) => onChange({ ...deepClone(value), commands })}
+        />
+      </div>
+    </InspectorConfigBlock>
+  );
+}
+
+function AgentValidationBlock({
+  implementer,
+  contextValidator,
+  blockSource,
+  options,
+  onChangeRole,
+  onReset,
+}: {
+  implementer:
+    | ResolvedAgentValidationRole
+    | WorkflowAgentValidationCascade["implementer"];
+  contextValidator:
+    | ResolvedAgentValidationRole
+    | WorkflowAgentValidationCascade["contextValidator"];
+  blockSource: InspectorConfigBlockSource;
+  options?: readonly ValidationCommandSummary[];
+  onChangeRole: (
+    role: AgentValidationRole,
+    selector: GraphWorkflowCommandSelector,
+  ) => void;
+  onReset: () => void;
+}): React.JSX.Element {
+  return (
+    <InspectorConfigBlock
+      label="Agent validation"
+      summary={`impl ${summarizeSelector(implementer.value)} · validator ${summarizeSelector(contextValidator.value)}`}
+      source={blockSource}
+      allowInheritedEditing
+      description="Validation-registry commands each agent role may run — independent of the script gate's selection. Editing a role overrides only that role; the other keeps inheriting."
+      onReset={blockSource === "context-override" ? onReset : undefined}
+    >
+      <AgentValidationEditor
+        value={{
+          implementer: implementer.value,
+          contextValidator: contextValidator.value,
+        }}
+        onChangeRole={onChangeRole}
+        options={options}
+        roleSourceLabels={{
+          implementer: ROLE_SOURCE_LABEL[implementer.source],
+          contextValidator: ROLE_SOURCE_LABEL[contextValidator.source],
+        }}
+      />
+    </InspectorConfigBlock>
+  );
+}
+
+// Workflow tier ONLY: the lane-merge gate guards the shared fan-in target, so
+// it has no per-context counterpart (validation-concurrency §6).
+function LaneMergeValidationBlock({
+  cascade,
+  currentOverride,
+  options,
+  onSetOverride,
+  onReset,
+}: {
+  cascade: WorkflowCascade["laneMergeValidation"];
+  currentOverride: GraphWorkflowLaneMergeValidationOverride | undefined;
+  options?: readonly ValidationCommandSummary[];
+  onSetOverride: (value: GraphWorkflowLaneMergeValidationOverride) => void;
+  onReset: () => void;
+}): React.JSX.Element {
+  return (
+    <InspectorConfigBlock
+      label="Lane-merge validation"
+      summary={summarizeLaneMergeValidation(cascade.value)}
+      source={cascade.source}
+      allowInheritedEditing
+      description="Validates parallel-lane merges at the shared fan-in. Workflow scope only — execution contexts cannot override it."
+      onReset={cascade.source === "context-override" ? onReset : undefined}
+    >
+      <LaneMergeValidationEditor
+        value={cascade.value}
+        options={options}
+        onChangeStrategy={(strategy) =>
+          onSetOverride({ ...(currentOverride ?? {}), strategy })
+        }
+        onChangeCommands={(commands) =>
+          onSetOverride({ ...(currentOverride ?? {}), commands })
+        }
+      />
+    </InspectorConfigBlock>
   );
 }
 

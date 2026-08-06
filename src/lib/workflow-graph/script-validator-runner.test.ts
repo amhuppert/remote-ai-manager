@@ -1,31 +1,11 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { RepoValidationCommandResult } from "@/lib/projects/repo-config";
+import type { ValidationSubmission } from "@/lib/validation/service";
+import type { ValidationRunResult } from "@/lib/validation/schemas";
 import {
   createScriptValidatorRunner,
   type ScriptValidatorDeps,
 } from "./script-validator-runner";
-import type { ExecutionTarget } from "./execution-target-resolver";
-
-function createDeps(
-  overrides: Partial<ScriptValidatorDeps> = {},
-): ScriptValidatorDeps {
-  return {
-    executeRepoValidationCommand: vi.fn(async () => ({
-      executed: true,
-      pass: true,
-      stdout: "ok",
-      stderr: "",
-      output: "ok",
-      timedOut: false,
-      message: null,
-    })),
-    writeFile: vi.fn(async () => {}),
-    mkdir: vi.fn(async () => undefined as unknown as string | undefined),
-    now: () => new Date("2026-04-18T01:00:00.000Z"),
-    ...overrides,
-  };
-}
 
 const BASE_INPUT = {
   projectPath: "/projects/acme",
@@ -36,361 +16,362 @@ const BASE_INPUT = {
   contextId: "ctx-plan",
   targetBranch: "csm/ctx-abc",
   timeoutMs: 60_000,
+  commands: ["pre-merge"],
 };
 
+function accepted(runId: string): ValidationSubmission {
+  return {
+    kind: "accepted",
+    runId,
+    status: "running",
+    position: null,
+    lease: null,
+  };
+}
+
+function createDeps(
+  options: {
+    submissions?: ValidationSubmission[];
+    results?: ValidationRunResult[];
+    resolveTreeState?: ScriptValidatorDeps["resolveTreeState"];
+  } = {},
+): ScriptValidatorDeps & {
+  validationService: ScriptValidatorDeps["validationService"] & {
+    submitSystem: ReturnType<typeof vi.fn>;
+    waitForCompletion: ReturnType<typeof vi.fn>;
+    cancelSystemOwned: ReturnType<typeof vi.fn>;
+  };
+  writeFile: ReturnType<typeof vi.fn>;
+  mkdir: ReturnType<typeof vi.fn>;
+} {
+  const submissions = [...(options.submissions ?? [accepted("run-1")])];
+  const results = [
+    ...(options.results ?? [
+      {
+        kind: "passed" as const,
+        runId: "run-1",
+        exitCode: 0,
+        output: "clean",
+      },
+    ]),
+  ];
+  const submitSystem = vi.fn(async () => {
+    const submission = submissions.shift();
+    if (!submission) throw new Error("unexpected submission");
+    return submission;
+  });
+  const waitForCompletion = vi.fn(async () => {
+    const result = results.shift();
+    if (!result) throw new Error("unexpected completion wait");
+    return result;
+  });
+  const cancelSystemOwned = vi.fn(async () => true);
+  return {
+    validationService: {
+      submitSystem,
+      waitForCompletion,
+      cancelSystemOwned,
+    },
+    writeFile: vi.fn(async () => {}),
+    mkdir: vi.fn(async () => undefined as unknown as string | undefined),
+    now: () => new Date("2026-04-18T01:00:00.000Z"),
+    resolveTreeState:
+      options.resolveTreeState ??
+      vi.fn(async () => ({ headSha: "abc123", dirty: false })),
+  };
+}
+
 describe("createScriptValidatorRunner", () => {
-  it("returns pass when the repo validation command reports success", async () => {
+  it("runs registered commands sequentially, stops on failure, and writes one artifact per command", async () => {
+    const deps = createDeps({
+      submissions: [accepted("run-typecheck"), accepted("run-test")],
+      results: [
+        {
+          kind: "passed",
+          runId: "run-typecheck",
+          exitCode: 0,
+          output: "types clean",
+        },
+        {
+          kind: "failed",
+          runId: "run-test",
+          exitCode: 1,
+          output: "one failing test",
+        },
+      ],
+    });
+    const runner = createScriptValidatorRunner(deps);
+
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      commands: ["typecheck", "test", "format"],
+    });
+
+    expect(deps.validationService.submitSystem).toHaveBeenCalledTimes(2);
+    expect(
+      deps.validationService.submitSystem.mock.calls.map(
+        ([request]) => request.command,
+      ),
+    ).toEqual([
+      { kind: "registered", name: "typecheck" },
+      { kind: "registered", name: "test" },
+    ]);
+    expect(
+      deps.validationService.waitForCompletion.mock.calls.map(
+        ([runId]) => runId,
+      ),
+    ).toEqual(["run-typecheck", "run-test"]);
+    expect(deps.writeFile).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({
+      kind: "fail",
+      command: "test",
+      runId: "run-test",
+      summary: 'Validation command "test" failed',
+      timedOut: false,
+    });
+  });
+
+  it("runs each command against the resolved lane target and returns the final tree identity", async () => {
+    const resolveTreeState = vi
+      .fn()
+      .mockResolvedValueOnce({ headSha: "before-1", dirty: false })
+      .mockResolvedValueOnce({ headSha: "after-1", dirty: false })
+      .mockResolvedValueOnce({ headSha: "before-2", dirty: false })
+      .mockResolvedValueOnce({ headSha: "after-2", dirty: true });
+    const deps = createDeps({
+      submissions: [accepted("run-1"), accepted("run-2")],
+      results: [
+        { kind: "passed", runId: "run-1", exitCode: 0, output: "one" },
+        { kind: "passed", runId: "run-2", exitCode: 0, output: "two" },
+      ],
+      resolveTreeState,
+    });
+    const runner = createScriptValidatorRunner(deps);
+    const executionTarget = {
+      worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
+      branchName: "csm/ctx-abc-ctx-plan",
+      isolation: "worktree" as const,
+      laneId: null,
+    };
+
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      commands: ["typecheck", "test"],
+      executionTarget,
+    });
+
+    expect(outcome).toEqual({
+      kind: "pass",
+      treeState: { headSha: "after-2", dirty: true },
+      command: "test",
+    });
+    expect(resolveTreeState).toHaveBeenCalledTimes(4);
+    expect(resolveTreeState).toHaveBeenCalledWith(executionTarget.worktreePath);
+    expect(deps.validationService.submitSystem).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        source: "graph_script_validator",
+        workflow: { executionId: "exec-1", contextId: "ctx-plan" },
+        target: {
+          worktreePath: executionTarget.worktreePath,
+          sessionName: BASE_INPUT.sessionName,
+          branchName: executionTarget.branchName,
+          targetBranch: BASE_INPUT.targetBranch,
+          contextId: BASE_INPUT.contextId,
+        },
+      }),
+    );
+    expect(deps.writeFile).toHaveBeenCalledTimes(2);
+    const [writtenPath, content] = deps.writeFile.mock.calls[1] ?? [];
+    expect(writtenPath).toContain(
+      path.join(".cc", "workflow", "exec-1", "test-"),
+    );
+    expect(content).toContain("tree-before: before-2");
+    expect(content).toContain("tree-after: after-2 (dirty)");
+    expect(content).toContain("run: run-2");
+  });
+
+  it("reports an unknown registered command distinctly without submitting later commands", async () => {
+    const deps = createDeps({
+      submissions: [
+        {
+          kind: "not_started",
+          result: {
+            kind: "command_not_found",
+            name: "missing",
+            knownCommands: ["typecheck", "test"],
+          },
+        },
+      ],
+    });
+    const runner = createScriptValidatorRunner(deps);
+
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      commands: ["missing", "test"],
+    });
+
+    expect(outcome).toEqual({
+      kind: "infra_error",
+      reason: "unknown_command",
+      commandName: "missing",
+      message:
+        'Script validator command "missing" is not registered; registered commands: typecheck, test',
+    });
+    expect(deps.validationService.submitSystem).toHaveBeenCalledTimes(1);
+    expect(deps.validationService.waitForCompletion).not.toHaveBeenCalled();
+    expect(deps.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("treats an empty registered-command selection as disabled", async () => {
     const deps = createDeps();
     const runner = createScriptValidatorRunner(deps);
 
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-
-    expect(outcome.kind).toBe("pass");
-    expect(deps.executeRepoValidationCommand).toHaveBeenCalledWith({
-      projectPath: BASE_INPUT.projectPath,
-      worktreePath: BASE_INPUT.worktreePath,
-      sessionName: BASE_INPUT.sessionName,
-      branchName: BASE_INPUT.branchName,
-      targetBranch: BASE_INPUT.targetBranch,
-      timeoutMs: BASE_INPUT.timeoutMs,
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      commands: [],
     });
-    expect(deps.writeFile).not.toHaveBeenCalled();
+
+    expect(outcome).toEqual({ kind: "pass", command: null });
+    expect(deps.validationService.submitSystem).not.toHaveBeenCalled();
   });
 
-  it("returns infra_error with missing_pre_merge_command when no script is configured", async () => {
-    const failingResult: RepoValidationCommandResult = {
-      executed: false,
-      pass: true,
-      stdout: "",
-      stderr: "",
-      output: "",
-      timedOut: false,
-      message: null,
-    };
+  it("maps a service timeout to a command-specific failure artifact", async () => {
     const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => failingResult),
+      results: [
+        {
+          kind: "timed_out",
+          runId: "run-1",
+          timeoutMs: 60_000,
+          output: "partial output",
+        },
+      ],
     });
     const runner = createScriptValidatorRunner(deps);
 
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-
-    expect(outcome.kind).toBe("infra_error");
-    if (outcome.kind !== "infra_error") return;
-    expect(outcome.reason).toBe("missing_pre_merge_command");
-    expect(deps.writeFile).not.toHaveBeenCalled();
-  });
-
-  it("returns fail with log file path when the script fails", async () => {
-    const failingResult: RepoValidationCommandResult = {
-      executed: true,
-      pass: false,
-      stdout: "failure out",
-      stderr: "failure err",
-      output: "failure err\nfailure out",
-      timedOut: false,
-      message: "Pre-merge validation failed",
-    };
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => failingResult),
+    const outcome = await runner.runScriptValidator({
+      ...BASE_INPUT,
+      commands: ["test"],
     });
-    const runner = createScriptValidatorRunner(deps);
 
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-
-    expect(outcome.kind).toBe("fail");
-    if (outcome.kind !== "fail") return;
-    expect(outcome.logFilePath).toContain(".cc/workflow/exec-1/");
-    expect(outcome.logFilePath).toMatch(/pre-merge-.*\.log$/);
-    expect(outcome.logRelativePath).toMatch(
-      /^\.cc\/workflow\/exec-1\/pre-merge-.*\.log$/,
-    );
-    expect(outcome.summary).toBe("Pre-merge validation failed");
-    expect(outcome.timedOut).toBe(false);
-
-    const mockedWriteFile = deps.writeFile as ReturnType<typeof vi.fn>;
-    expect(mockedWriteFile).toHaveBeenCalledTimes(1);
-    const [writtenPath, writtenContent] = mockedWriteFile.mock.calls[0] ?? [];
-    expect(writtenPath).toBe(outcome.logFilePath);
-    expect(writtenContent).toContain("failure out");
-    expect(writtenContent).toContain("failure err");
-  });
-
-  it("ensures the log directory exists before writing", async () => {
-    const failingResult: RepoValidationCommandResult = {
-      executed: true,
-      pass: false,
-      stdout: "",
-      stderr: "tests failed",
-      output: "tests failed",
-      timedOut: false,
-      message: "Pre-merge validation failed",
-    };
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => failingResult),
-    });
-    const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-    if (outcome.kind !== "fail") throw new Error("expected fail");
-
-    const mockedMkdir = deps.mkdir as ReturnType<typeof vi.fn>;
-    expect(mockedMkdir).toHaveBeenCalledTimes(1);
-    const [dirArg, opts] = mockedMkdir.mock.calls[0] ?? [];
-    expect(dirArg).toBe(path.dirname(outcome.logFilePath));
-    expect(opts).toEqual({ recursive: true });
-  });
-
-  it("includes metadata in the log file header (context + timestamp)", async () => {
-    const failingResult: RepoValidationCommandResult = {
-      executed: true,
-      pass: false,
-      stdout: "boom",
-      stderr: "",
-      output: "boom",
-      timedOut: false,
-      message: "Pre-merge validation failed",
-    };
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => failingResult),
-    });
-    const runner = createScriptValidatorRunner(deps);
-
-    await runner.runScriptValidator(BASE_INPUT);
-
-    const mockedWriteFile = deps.writeFile as ReturnType<typeof vi.fn>;
-    const [, content] = mockedWriteFile.mock.calls[0] ?? [];
-    expect(content).toContain("execution: exec-1");
-    expect(content).toContain("context: ctx-plan");
-    expect(content).toContain("2026-04-18T01:00:00.000Z");
-  });
-
-  it("marks timedOut when the command reports a timeout", async () => {
-    const timedOutResult: RepoValidationCommandResult = {
-      executed: true,
-      pass: false,
-      stdout: "",
-      stderr: "",
-      output: "",
+    expect(outcome).toMatchObject({
+      kind: "fail",
+      command: "test",
       timedOut: true,
-      message: "Pre-merge validation timed out after 60s",
-    };
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => timedOutResult),
+      summary: 'Validation command "test" timed out',
     });
-    const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-    expect(outcome.kind).toBe("fail");
-    if (outcome.kind !== "fail") return;
-    expect(outcome.timedOut).toBe(true);
-    expect(outcome.summary).toBe("Pre-merge validation timed out after 60s");
+    const [, content] = deps.writeFile.mock.calls[0] ?? [];
+    expect(content).toContain("partial output");
+    expect(content).toContain("outcome: timed_out");
   });
 
-  it("returns infra_error with exception reason when the command throws", async () => {
+  it("maps a service spawn failure to infrastructure without remediation", async () => {
     const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => {
-        throw new Error("boom");
-      }),
+      results: [
+        {
+          kind: "failed",
+          runId: "run-1",
+          exitCode: null,
+          output: "spawn scripts/validate.sh ENOENT",
+        },
+      ],
     });
     const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-    expect(outcome.kind).toBe("infra_error");
-    if (outcome.kind !== "infra_error") return;
-    expect(outcome.reason).toBe("exception");
-    expect(outcome.message).toBe("boom");
-  });
-
-  it("uses executionTarget.worktreePath/branchName when an executionTarget is provided", async () => {
-    const executeRepoValidationCommand = vi.fn(async () => ({
-      executed: true,
-      pass: true,
-      stdout: "ok",
-      stderr: "",
-      output: "ok",
-      timedOut: false,
-      message: null,
-    }));
-    const deps = createDeps({ executeRepoValidationCommand });
-    const runner = createScriptValidatorRunner(deps);
-
-    const executionTarget: ExecutionTarget = {
-      worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
-      branchName: "csm/ctx-abc-ctx-plan",
-      isolation: "worktree",
-      laneId: null,
-    };
 
     const outcome = await runner.runScriptValidator({
       ...BASE_INPUT,
-      executionTarget,
+      commands: ["test"],
     });
 
-    expect(outcome.kind).toBe("pass");
-    expect(executeRepoValidationCommand).toHaveBeenCalledWith({
-      projectPath: BASE_INPUT.projectPath,
-      worktreePath: executionTarget.worktreePath,
-      sessionName: BASE_INPUT.sessionName,
-      branchName: executionTarget.branchName,
-      targetBranch: BASE_INPUT.targetBranch,
-      timeoutMs: BASE_INPUT.timeoutMs,
+    expect(outcome).toEqual({
+      kind: "infra_error",
+      reason: "exception",
+      message:
+        'Validation command "test" could not be spawned: spawn scripts/validate.sh ENOENT',
     });
+    expect(deps.writeFile).toHaveBeenCalledTimes(1);
+    const [, content] = deps.writeFile.mock.calls[0] ?? [];
+    expect(content).toContain("outcome: failed");
+    expect(content).toContain("spawn scripts/validate.sh ENOENT");
   });
 
-  it("writes failure logs under the executionTarget worktree when provided", async () => {
-    const failingResult: RepoValidationCommandResult = {
-      executed: true,
-      pass: false,
-      stdout: "",
-      stderr: "fail",
-      output: "fail",
-      timedOut: false,
-      message: "Pre-merge validation failed",
-    };
+  it("returns an infrastructure error when the service refuses submission", async () => {
     const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => failingResult),
+      submissions: [
+        {
+          kind: "invalid",
+          reason: "service_unavailable",
+          message: "validation unavailable",
+        },
+      ],
     });
     const runner = createScriptValidatorRunner(deps);
-
-    const executionTarget: ExecutionTarget = {
-      worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
-      branchName: "csm/ctx-abc-ctx-plan",
-      isolation: "worktree",
-      laneId: null,
-    };
 
     const outcome = await runner.runScriptValidator({
       ...BASE_INPUT,
-      executionTarget,
+      commands: ["test"],
     });
-    if (outcome.kind !== "fail") throw new Error("expected fail");
 
-    expect(outcome.logFilePath.startsWith(executionTarget.worktreePath)).toBe(
-      true,
+    expect(outcome).toEqual({
+      kind: "infra_error",
+      reason: "exception",
+      message: "validation unavailable",
+    });
+  });
+
+  it("cancels an accepted system run on orchestration abort and waits for cancellation to finish", async () => {
+    const deps = createDeps();
+    let resolveWait!: (result: ValidationRunResult) => void;
+    const waitResult = new Promise<ValidationRunResult>((resolve) => {
+      resolveWait = resolve;
+    });
+    let finishCancellation!: () => void;
+    const cancellationFinished = new Promise<void>((resolve) => {
+      finishCancellation = resolve;
+    });
+    deps.validationService.waitForCompletion.mockImplementation(
+      async () => waitResult,
     );
-  });
-
-  it("falls back to input.worktreePath/branchName when no executionTarget is provided", async () => {
-    const executeRepoValidationCommand = vi.fn(async () => ({
-      executed: true,
-      pass: true,
-      stdout: "ok",
-      stderr: "",
-      output: "ok",
-      timedOut: false,
-      message: null,
-    }));
-    const deps = createDeps({ executeRepoValidationCommand });
-    const runner = createScriptValidatorRunner(deps);
-
-    await runner.runScriptValidator(BASE_INPUT);
-
-    expect(executeRepoValidationCommand).toHaveBeenCalledWith({
-      projectPath: BASE_INPUT.projectPath,
-      worktreePath: BASE_INPUT.worktreePath,
-      sessionName: BASE_INPUT.sessionName,
-      branchName: BASE_INPUT.branchName,
-      targetBranch: BASE_INPUT.targetBranch,
-      timeoutMs: BASE_INPUT.timeoutMs,
+    deps.validationService.cancelSystemOwned.mockImplementation(async () => {
+      await cancellationFinished;
+      return true;
     });
-  });
-
-  it("places the log file under the worktree at .cc/workflow/<executionId>/", async () => {
-    const failingResult: RepoValidationCommandResult = {
-      executed: true,
-      pass: false,
-      stdout: "",
-      stderr: "fail",
-      output: "fail",
-      timedOut: false,
-      message: "Pre-merge validation failed",
-    };
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => failingResult),
-    });
+    const controller = new AbortController();
     const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-    if (outcome.kind !== "fail") throw new Error("expected fail");
-
-    expect(outcome.logFilePath.startsWith(BASE_INPUT.worktreePath)).toBe(true);
-    expect(outcome.logRelativePath).toMatch(
-      /^\.cc\/workflow\/exec-1\/pre-merge-\d{8}T\d{6}Z\.log$/,
+    let settled = false;
+    const outcomePromise = runner
+      .runScriptValidator({
+        ...BASE_INPUT,
+        commands: ["test"],
+        signal: controller.signal,
+      })
+      .then((outcome) => {
+        settled = true;
+        return outcome;
+      });
+    await vi.waitFor(() =>
+      expect(deps.validationService.waitForCompletion).toHaveBeenCalledWith(
+        "run-1",
+      ),
     );
-  });
-});
 
-describe("tree-addressed validation identity", () => {
-  it("stamps tree identity and command on a pass outcome", async () => {
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => ({
-        executed: true,
-        pass: true,
-        stdout: "ok",
-        stderr: "",
-        output: "ok",
-        timedOut: false,
-        message: null,
-        command: "/projects/acme/scripts/pre-merge.sh",
-      })),
-      resolveTreeState: vi.fn(async () => ({
-        headSha: "abc123def",
-        dirty: false,
-      })),
+    controller.abort();
+    resolveWait({ kind: "cancelled", runId: "run-1" });
+    await Promise.resolve();
+
+    try {
+      expect(deps.validationService.cancelSystemOwned).toHaveBeenCalledWith(
+        "run-1",
+      );
+      expect(settled).toBe(false);
+    } finally {
+      finishCancellation();
+    }
+
+    await expect(outcomePromise).resolves.toMatchObject({
+      kind: "infra_error",
+      reason: "exception",
+      message: 'Validation command "test" ended with cancelled',
     });
-    const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-
-    expect(outcome.kind).toBe("pass");
-    if (outcome.kind !== "pass") return;
-    expect(outcome.treeState).toEqual({ headSha: "abc123def", dirty: false });
-    expect(outcome.command).toBe("/projects/acme/scripts/pre-merge.sh");
-    expect(deps.resolveTreeState).toHaveBeenCalledWith(BASE_INPUT.worktreePath);
-  });
-
-  it("stamps tree identity on a fail outcome and writes it into the log header", async () => {
-    const writeFile = vi.fn(async (_filePath: string, _contents: string) => {});
-    const deps = createDeps({
-      executeRepoValidationCommand: vi.fn(async () => ({
-        executed: true,
-        pass: false,
-        stdout: "",
-        stderr: "1 test failed",
-        output: "1 test failed",
-        timedOut: false,
-        message: "Pre-merge validation failed",
-        command: "/projects/acme/scripts/pre-merge.sh",
-      })),
-      resolveTreeState: vi.fn(async () => ({
-        headSha: "abc123def",
-        dirty: true,
-      })),
-      writeFile,
-    });
-    const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-
-    expect(outcome.kind).toBe("fail");
-    if (outcome.kind !== "fail") return;
-    expect(outcome.treeState).toEqual({ headSha: "abc123def", dirty: true });
-    expect(outcome.command).toBe("/projects/acme/scripts/pre-merge.sh");
-    const written = writeFile.mock.calls[0]?.[1] ?? "";
-    expect(written).toContain("tree: abc123def (dirty)");
-    expect(written).toContain("command: /projects/acme/scripts/pre-merge.sh");
-  });
-
-  it("degrades to null identity when git state cannot be resolved", async () => {
-    const deps = createDeps({
-      resolveTreeState: vi.fn(async () => ({ headSha: null, dirty: null })),
-    });
-    const runner = createScriptValidatorRunner(deps);
-
-    const outcome = await runner.runScriptValidator(BASE_INPUT);
-
-    expect(outcome.kind).toBe("pass");
-    if (outcome.kind !== "pass") return;
-    expect(outcome.treeState).toEqual({ headSha: null, dirty: null });
   });
 });

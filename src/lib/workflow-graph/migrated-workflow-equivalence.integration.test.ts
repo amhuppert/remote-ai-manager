@@ -187,7 +187,7 @@ function legacyConfigJson(): Record<string, unknown> {
           reasoningEffort: "medium",
         },
       },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       iterationPolicy: { maxIterations: 12, continuity: { enabled: true } },

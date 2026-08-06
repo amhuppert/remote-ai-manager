@@ -41,6 +41,8 @@ interface WorkflowBuilderEditorProps {
   isMobile?: boolean;
   onAutoSwitchPanel?: (panel: BuilderMobilePanel) => void;
   voiceProjectName?: string | null;
+  /** Builder scope: registry source for command multi-selects (null = global). */
+  projectName?: string | null;
   /** Scopes the agent-profile listing the assignment pickers offer. */
   libraryProjectName?: string | null;
 }
@@ -71,6 +73,7 @@ function WorkflowBuilderEditorInner({
   isMobile,
   onAutoSwitchPanel,
   voiceProjectName,
+  projectName,
   libraryProjectName,
 }: WorkflowBuilderEditorProps): React.JSX.Element {
   const { getNodes } = useReactFlow();
@@ -233,6 +236,7 @@ function WorkflowBuilderEditorInner({
           activeTab={activeTab}
           onTabChange={onTabChange}
           voiceProjectName={voiceProjectName}
+          projectName={projectName}
           libraryProjectName={libraryProjectName}
           onOutputSchemaBlockedChange={setOutputSchemaBlocked}
         />

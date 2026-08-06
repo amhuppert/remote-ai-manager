@@ -144,21 +144,57 @@ describe("graph-workflow-executions split symmetry", () => {
 
 describe("graph-workflow-executions-repo durability contract", () => {
   it("round-trips every persisted execution key path through setActive -> getActive", async () => {
-    await assertRoundTripDurability({
-      label: "graph-workflow-executions",
-      schema: graphWorkflowExecutionSchema,
-      buildMaximalFixture: maximalExecution,
-      persist: (fixture) => {
-        repo.setActive(
-          PROJECT_PATH,
-          SESSION_NAME,
-          fixture,
-          "2026-03-01T00:00:00Z",
-        );
-        return fixture;
-      },
-      reload: () => repo.getActive(PROJECT_PATH, SESSION_NAME),
-    });
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+
+      await assertRoundTripDurability({
+        label: "graph-workflow-executions",
+        schema: graphWorkflowExecutionSchema,
+        buildMaximalFixture: maximalExecution,
+        persist: (execution) => {
+          fixture.graphWorkflowExecutions.setActive(
+            PROJECT_PATH,
+            SESSION_NAME,
+            execution,
+            "2026-03-01T00:00:00Z",
+          );
+          return execution;
+        },
+        reload: () =>
+          createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+            PROJECT_PATH,
+            SESSION_NAME,
+          ),
+      });
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("persists lane validation debt across a restarted repository", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        maximalExecution(),
+        "2026-03-01T00:00:00Z",
+      );
+
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.joins["join-1"]?.validationDebtSourceLaneIds).toEqual([
+        "lane-2",
+      ]);
+    } finally {
+      fixture.close();
+    }
   });
 
   it("carries the attributed validator infrastructure halt in the maximal SQLite fixture", () => {

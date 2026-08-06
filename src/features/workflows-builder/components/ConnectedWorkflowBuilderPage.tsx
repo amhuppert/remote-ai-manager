@@ -304,6 +304,7 @@ export default function ConnectedWorkflowBuilderPage({
                 isMobile={isMobile}
                 onAutoSwitchPanel={autoSwitchPanel}
                 voiceProjectName={projectName}
+                projectName={projectName}
                 libraryProjectName={projectName}
               />
             ) : (

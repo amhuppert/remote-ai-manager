@@ -261,15 +261,22 @@ describe("section 4 production paths — migrated publishers go through the shar
   it("script validator runner writes its validation_log through the shared artifact registry (preserving the .cc/workflow/<executionId>/ canonical layout)", async () => {
     const { registry, calls } = makeRecordingArtifactRegistry();
     const runner = createScriptValidatorRunner({
-      executeRepoValidationCommand: vi.fn().mockResolvedValue({
-        executed: true,
-        pass: false,
-        stdout: "fail",
-        stderr: "",
-        output: "fail",
-        timedOut: false,
-        message: "Pre-merge validation failed",
-      }),
+      validationService: {
+        submitSystem: vi.fn().mockResolvedValue({
+          kind: "accepted",
+          runId: "run-1",
+          status: "running",
+          position: null,
+          lease: null,
+        }),
+        waitForCompletion: vi.fn().mockResolvedValue({
+          kind: "failed",
+          runId: "run-1",
+          exitCode: 1,
+          output: "fail",
+        }),
+        cancelSystemOwned: vi.fn().mockResolvedValue(true),
+      },
       writeFile: vi.fn().mockResolvedValue(undefined),
       mkdir: vi.fn().mockResolvedValue(undefined),
       now: () => new Date("2026-04-28T01:02:03.000Z"),
@@ -283,6 +290,7 @@ describe("section 4 production paths — migrated publishers go through the shar
       branchName: "csm/ctx-abc",
       executionId: "exec-prod-1",
       contextId: "ctx-plan",
+      commands: ["pre-merge"],
     });
 
     expect(outcome.kind).toBe("fail");
@@ -293,7 +301,7 @@ describe("section 4 production paths — migrated publishers go through the shar
     expect(req.kind).toBe("validation_log");
     expect(req.audience).toBe("internal_log");
     expect(req.relativePath).toMatch(
-      /^\.cc\/workflow\/exec-prod-1\/pre-merge-\d{8}T\d{6}Z\.log$/,
+      /^\.cc\/workflow\/exec-prod-1\/pre-merge-\d{8}T\d{6}Z-run-1\.log$/,
     );
     expect(req.source.workflowId).toBe("exec-prod-1");
   });
@@ -317,15 +325,22 @@ describe("section 4 production paths — migrated publishers go through the shar
       },
     };
     const runner = createScriptValidatorRunner({
-      executeRepoValidationCommand: vi.fn().mockResolvedValue({
-        executed: true,
-        pass: false,
-        stdout: "fail",
-        stderr: "",
-        output: "fail",
-        timedOut: false,
-        message: "Pre-merge validation failed",
-      }),
+      validationService: {
+        submitSystem: vi.fn().mockResolvedValue({
+          kind: "accepted",
+          runId: "run-1",
+          status: "running",
+          position: null,
+          lease: null,
+        }),
+        waitForCompletion: vi.fn().mockResolvedValue({
+          kind: "failed",
+          runId: "run-1",
+          exitCode: 1,
+          output: "fail",
+        }),
+        cancelSystemOwned: vi.fn().mockResolvedValue(true),
+      },
       writeFile: vi.fn(),
       mkdir: vi.fn(),
       now: () => new Date("2026-04-28T01:02:03.000Z"),
@@ -339,6 +354,7 @@ describe("section 4 production paths — migrated publishers go through the shar
       branchName: "csm/ctx-abc",
       executionId: "exec-fail",
       contextId: "ctx-plan",
+      commands: ["pre-merge"],
     });
 
     expect(outcome.kind).toBe("infra_error");

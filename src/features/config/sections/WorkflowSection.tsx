@@ -1,22 +1,28 @@
 import type { WorkflowDefaults } from "@/lib/config/schemas";
+import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import { ConfigSubsection } from "../components/ConfigSubsection";
 import { SettingsPage } from "../components/SettingsPage";
 import { deepEqual, SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
 import type { ConfigFormController } from "./types";
+import { AgentValidationFields } from "./workflow/AgentValidationFields";
 import { AskUserQuestionsFields } from "./workflow/AskUserQuestionsFields";
 import { CircuitBreakerFields } from "./workflow/CircuitBreakerFields";
 import { CollaborationFields } from "./workflow/CollaborationFields";
 import { ContextValidatorFields } from "./workflow/ContextValidatorFields";
 import { ImplementerFields } from "./workflow/ImplementerFields";
 import { IterationPolicyFields } from "./workflow/IterationPolicyFields";
+import { LaneMergeValidationFields } from "./workflow/LaneMergeValidationFields";
 import { MutabilityFields } from "./workflow/MutabilityFields";
 import { PlanRepairFields } from "./workflow/PlanRepairFields";
 import { ScriptValidatorFields } from "./workflow/ScriptValidatorFields";
 
 export function WorkflowSection({
   controller,
+  commandOptions,
 }: {
   controller: ConfigFormController;
+  /** Registry summaries (global scope = union); undefined = unavailable. */
+  commandOptions?: readonly ValidationCommandSummary[];
 }): React.JSX.Element {
   const { formState, handleChangeBlock } = controller;
   return (
@@ -28,6 +34,7 @@ export function WorkflowSection({
       <WorkflowDefaultsSubsections
         defaults={formState.workflowDefaults}
         onChangeBlock={handleChangeBlock}
+        commandOptions={commandOptions}
       />
     </SettingsPage>
   );
@@ -36,9 +43,11 @@ export function WorkflowSection({
 function WorkflowDefaultsSubsections({
   defaults,
   onChangeBlock,
+  commandOptions,
 }: {
   defaults: WorkflowDefaults | undefined;
   onChangeBlock: ConfigFormController["handleChangeBlock"];
+  commandOptions?: readonly ValidationCommandSummary[];
 }) {
   const effective: WorkflowDefaults = defaults ?? SEEDED_WORKFLOW_DEFAULTS;
 
@@ -77,6 +86,14 @@ function WorkflowDefaultsSubsections({
   const collaborationIsDefault = deepEqual(
     effective.collaboration,
     SEEDED_WORKFLOW_DEFAULTS.collaboration,
+  );
+  const agentValidationIsDefault = deepEqual(
+    effective.agentValidation,
+    SEEDED_WORKFLOW_DEFAULTS.agentValidation,
+  );
+  const laneMergeValidationIsDefault = deepEqual(
+    effective.laneMergeValidation,
+    SEEDED_WORKFLOW_DEFAULTS.laneMergeValidation,
   );
 
   return (
@@ -124,6 +141,31 @@ function WorkflowDefaultsSubsections({
         <ScriptValidatorFields
           value={effective.scriptValidator}
           onChange={(v) => onChangeBlock("scriptValidator", v)}
+          commandOptions={commandOptions}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="agentValidation"
+        title="Agent validation"
+        isDefault={agentValidationIsDefault}
+      >
+        <AgentValidationFields
+          value={effective.agentValidation}
+          onChange={(v) => onChangeBlock("agentValidation", v)}
+          commandOptions={commandOptions}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="laneMergeValidation"
+        title="Lane-merge validation"
+        isDefault={laneMergeValidationIsDefault}
+      >
+        <LaneMergeValidationFields
+          value={effective.laneMergeValidation}
+          onChange={(v) => onChangeBlock("laneMergeValidation", v)}
+          commandOptions={commandOptions}
         />
       </ConfigSubsection>
 

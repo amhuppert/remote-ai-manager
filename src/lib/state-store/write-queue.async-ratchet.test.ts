@@ -285,7 +285,15 @@ function scanLib(): {
   const violationSites: string[] = [];
   let total = 0;
   for (const file of collectSourceFiles(LIB_ROOT)) {
-    const { calls, violations } = scanSource(file, readFileSync(file, "utf8"));
+    const text = readFileSync(file, "utf8");
+    // Parse only what can possibly contribute. Every counted call and every
+    // rejected indirection — a direct call, a property-access call, an import
+    // rename, a destructure rename — spells the entry's name in source, so a
+    // file that never mentions it yields zero calls and zero violations. The
+    // AST walk costs ~15x more than this check across `src/lib`, which is what
+    // kept the two whole-tree scans inside their budget as the tree grew.
+    if (!text.includes(ASYNC_ENTRY)) continue;
+    const { calls, violations } = scanSource(file, text);
     const rel = path.relative(LIB_ROOT, file);
     if (calls > 0) {
       byFile.set(rel, calls);

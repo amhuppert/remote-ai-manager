@@ -96,7 +96,7 @@ export const WorkflowTabScriptValidatorEnabled = {
       const def = createWorkflowDefinition();
       def.workflowConfig = {
         ...def.workflowConfig,
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
       };
       return def;
     })(),
@@ -138,7 +138,7 @@ export const ContextTabScriptValidatorEnabled = {
     definition: (() => {
       const def = createWorkflowDefinition();
       const plan = def.executionContexts.find((c) => c.id === "context-plan")!;
-      plan.scriptValidator = { enabled: true };
+      plan.scriptValidator = { commands: ["pre-merge"] };
       return def;
     })(),
   },

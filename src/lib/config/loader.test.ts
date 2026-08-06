@@ -20,13 +20,43 @@ async function createTempConfigDir(): Promise<string> {
 }
 
 describe("createConfigReader", () => {
+  it("seeds the global validation budget defaults", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(path.join(configDir, "config.json"), "{}", "utf-8");
+
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+
+    expect(config.validation).toEqual({
+      concurrencyLimit: 8,
+      defaultTimeoutMs: 600_000,
+    });
+  });
+
+  it("keeps an explicit validation limit while defaulting the timeout", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ validation: { concurrencyLimit: 4 } }),
+      "utf-8",
+    );
+
+    const reader = createConfigReader(configDir);
+    const config = await reader.readConfig();
+
+    expect(config.validation).toEqual({
+      concurrencyLimit: 4,
+      defaultTimeoutMs: 600_000,
+    });
+  });
+
   it("merges partial workflowDefaults from disk with seeded defaults", async () => {
     const configDir = await createTempConfigDir();
     await writeFile(
       path.join(configDir, "config.json"),
       JSON.stringify({
         workflowDefaults: {
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["pre-merge"] },
         },
       }),
       "utf-8",
@@ -36,7 +66,9 @@ describe("createConfigReader", () => {
     const config = await reader.readConfig();
     expect(config.workflowDefaults).toBeDefined();
 
-    expect(config.workflowDefaults?.scriptValidator).toEqual({ enabled: true });
+    expect(config.workflowDefaults?.scriptValidator).toEqual({
+      commands: ["pre-merge"],
+    });
     expect(config.workflowDefaults?.implementer).toBeDefined();
     expect(config.workflowDefaults?.iterationPolicy).toBeDefined();
     expect(config.workflowDefaults?.circuitBreaker).toBeDefined();
@@ -47,7 +79,7 @@ describe("createConfigReader", () => {
     const configDir = await createTempConfigDir();
     const rawConfig = {
       workflowDefaults: {
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["pre-merge"] },
       },
     };
     await writeFile(

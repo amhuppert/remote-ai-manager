@@ -43,6 +43,7 @@ import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 import { type SessionGitLock } from "@/lib/shared/lock-retry";
 import { sleep } from "@/lib/shared/sleep";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
+import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
 import type { SoloContextCommitter } from "@/lib/workflow-graph/solo-context-committer";
 import {
   applyLaneCommitSnapshot,
@@ -94,6 +95,10 @@ import type {
   RecordPendingHaltReasonResult,
   ScheduleEligibleContextsResult,
 } from "./workflow-manager";
+import {
+  resolveLaneMergeRunValidationMode,
+  type ReadLaneMergeRepoConfig,
+} from "./lane-merge-validation";
 
 export interface GraphWorkflowExecutionLoopInput {
   projectPath: string;
@@ -158,6 +163,7 @@ interface GraphWorkflowExecutionLoopIterationOrchestrator {
     contextId: string;
     executionTarget?: ExecutionTarget;
     resumeUserInputs?: readonly ResumeUserInputContext[];
+    signal: AbortSignal;
   }): Promise<GraphWorkflowIterationResult>;
 }
 
@@ -195,6 +201,7 @@ export interface GraphWorkflowExecutionLoopDeps {
    */
   getMaxConcurrentQueries?: () => Promise<number>;
   createJobId?: () => string;
+  readRepoConfig?: ReadLaneMergeRepoConfig;
   /**
    * Read tracked dirty paths from the session worktree. Used by the pre-batch
    * preflight to halt before scheduling worktree-isolation contexts whose
@@ -283,8 +290,16 @@ export interface GraphWorkflowExecutionLoopDeps {
 // entry when it still owns it so a stale generation cannot hide its successor.
 const ACTIVE_LOOPS_KEY = "__cc_graph_workflow_active_loops" as const;
 
-function getActiveLoops(): Map<string, string> {
-  return getGlobalSingleton(ACTIVE_LOOPS_KEY, () => new Map<string, string>());
+interface ActiveExecutionLoop {
+  token: string;
+  abortController: AbortController;
+}
+
+function getActiveLoops(): Map<string, ActiveExecutionLoop> {
+  return getGlobalSingleton(
+    ACTIVE_LOOPS_KEY,
+    () => new Map<string, ActiveExecutionLoop>(),
+  );
 }
 
 function loopKey(projectPath: string, sessionName: string): string {
@@ -297,6 +312,16 @@ export function isExecutionLoopActive(
   sessionName: string,
 ): boolean {
   return getActiveLoops().has(loopKey(projectPath, sessionName));
+}
+
+export function abortExecutionLoop(
+  projectPath: string,
+  sessionName: string,
+): boolean {
+  const active = getActiveLoops().get(loopKey(projectPath, sessionName));
+  if (!active) return false;
+  active.abortController.abort();
+  return true;
 }
 
 /** Reset the active loop registry (for testing only). */
@@ -489,6 +514,7 @@ export function createGraphWorkflowExecutionLoop(
   const getMaxConcurrentQueries =
     deps.getMaxConcurrentQueries ?? defaultGetMaxConcurrentQueries;
   const createJobId = deps.createJobId ?? (() => randomUUID());
+  const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
   const approvalGateService =
     deps.approvalGateService ??
     createApprovalGateService({
@@ -543,7 +569,11 @@ export function createGraphWorkflowExecutionLoop(
   ): Promise<GraphWorkflowExecution> {
     const key = loopKey(input.projectPath, input.sessionName);
     const loopInstanceToken = randomUUID();
-    getActiveLoops().set(key, loopInstanceToken);
+    const loopAbortController = new AbortController();
+    getActiveLoops().set(key, {
+      token: loopInstanceToken,
+      abortController: loopAbortController,
+    });
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
     // Answers consumed on the awaiting-user-input resume path, keyed by context.
@@ -1262,8 +1292,13 @@ export function createGraphWorkflowExecutionLoop(
                 projectPath: input.projectPath,
                 sessionName: input.sessionName,
               },
-              async () =>
-                deps.mergeRunner.run({
+              async () => {
+                const validationMode = await resolveLaneMergeRunValidationMode({
+                  projectPath: input.projectPath,
+                  config: execution.workingDefinition.laneMergeValidation,
+                  readRepoConfig,
+                });
+                return deps.mergeRunner.run({
                   jobId: createJobId(),
                   projectPath: input.projectPath,
                   projectName: input.projectName,
@@ -1274,7 +1309,10 @@ export function createGraphWorkflowExecutionLoop(
                   targetBranch: session.branchName,
                   targetWorktreePath: session.worktreePath,
                   message: `Graph workflow context ${contextId}`,
-                }),
+                  workflowExecutionId: execution.id,
+                  validationMode,
+                });
+              },
             );
             mergeStatus = output.status;
             mergeError = output.error;
@@ -1628,6 +1666,7 @@ export function createGraphWorkflowExecutionLoop(
               contextId,
               executionTarget: target,
               ...(resumeUserInputs ? { resumeUserInputs } : {}),
+              signal: loopAbortController.signal,
             });
             retryableRecoveryAttempts.delete(contextId);
           } catch (error) {
@@ -3049,7 +3088,7 @@ export function createGraphWorkflowExecutionLoop(
       return haltedExecution;
     } finally {
       const activeLoops = getActiveLoops();
-      if (activeLoops.get(key) === loopInstanceToken) {
+      if (activeLoops.get(key)?.token === loopInstanceToken) {
         activeLoops.delete(key);
       }
     }

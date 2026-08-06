@@ -26,6 +26,7 @@ import { metaHelpEntries } from "./commands/meta.help";
 import { notifyHelpEntries } from "./commands/notify.help";
 import { specHelpEntries } from "./commands/spec/spec.help";
 import { ticketHelpEntries } from "./commands/ticket.help";
+import { validateHelpEntries } from "./commands/validate.help";
 import { workflowHelpEntries } from "./commands/workflow.help";
 import {
   buildHelpJson,
@@ -175,6 +176,7 @@ const ENTRIES: CommandHelpEntry[] = [
   ...charterHelpEntries,
   ...decisionsHelpEntries,
   ...agentHelpEntries,
+  ...validateHelpEntries,
   ...conversationHelpEntries,
   ...ticketHelpEntries,
   ...specHelpEntries,

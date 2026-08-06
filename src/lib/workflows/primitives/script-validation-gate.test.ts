@@ -67,25 +67,6 @@ describe("scriptValidationGateFromOutcome", () => {
     expect(gate.details).not.toHaveProperty("logRelativePath");
   });
 
-  it("returns a failing gate result with infrastructure class for a missing pre-merge command", () => {
-    const outcome: ScriptValidationOutcome = {
-      kind: "infra_error",
-      reason: "missing_pre_merge_command",
-      message:
-        "Script validator enabled but the project has no preMergeCommand configured",
-    };
-    const gate = scriptValidationGateFromOutcome(outcome);
-    expect(() => gateResultSchema.parse(gate)).not.toThrow();
-    expect(gate.status).toBe("fail");
-    if (gate.status !== "fail") return;
-    expect(gate.kind).toBe("script_validation");
-    expect(gate.reason).toContain("preMergeCommand");
-    expect(gate.details).toMatchObject({
-      failureClass: "infrastructure",
-      infraReason: "missing_pre_merge_command",
-    });
-  });
-
   it("returns a failing gate result with infrastructure class for an exception", () => {
     const outcome: ScriptValidationOutcome = {
       kind: "infra_error",

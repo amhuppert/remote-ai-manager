@@ -121,6 +121,10 @@ function buildCleanExecution(): GraphWorkflowExecution {
     definitionApproval: null,
     workingDefinition: {
       schemaVersion: 1,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
       executionContexts: [],
       tasks: [],
       edges: [],

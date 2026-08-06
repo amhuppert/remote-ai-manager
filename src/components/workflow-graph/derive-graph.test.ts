@@ -604,7 +604,7 @@ describe("getDisplayValidators", () => {
         },
       },
       contextValidator: { enabled: false, assignments: [] },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
@@ -646,8 +646,20 @@ describe("getDisplayValidators", () => {
   });
 
   it("surfaces an inherited script validator as enabled", () => {
-    const ctx = makeResolved({ scriptValidator: { enabled: true } });
+    const ctx = makeResolved({ scriptValidator: { commands: ["pre-merge"] } });
     expect(getDisplayValidators(ctx)).toEqual({ script: true, agent: null });
+  });
+
+  it("derives script-gate presence from a non-empty commands selection", () => {
+    const selected = makeResolved({
+      scriptValidator: { commands: ["typecheck", "test"] },
+    });
+    expect(getDisplayValidators(selected).script).toBe(true);
+    // An explicit empty selection means the gate is off.
+    const emptied = makeResolved({
+      scriptValidator: { commands: [] },
+    });
+    expect(getDisplayValidators(emptied).script).toBe(false);
   });
 
   it("surfaces an inherited claude agent validator", () => {
@@ -730,7 +742,7 @@ describe("getDisplayValidators", () => {
 
   it("surfaces both validators together when both are enabled", () => {
     const ctx = makeResolved({
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["pre-merge"] },
       contextValidator: {
         enabled: true,
         assignments: [
@@ -860,7 +872,7 @@ describe("getDisplayApprovalGate", () => {
         },
       },
       contextValidator: { enabled: false, assignments: [] },
-      scriptValidator: { enabled: false },
+      scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
       mutability: { allowAgentTaskAdd: false },

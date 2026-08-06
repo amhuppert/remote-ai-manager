@@ -15,6 +15,7 @@ import {
   agentProfileSnapshotSchema,
 } from "@/lib/agent-profiles/schemas";
 import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
+import { validationCommandNameSchema } from "@/lib/validation/schemas";
 
 // ============================================================
 // Graph Workflow Agent Configuration Schemas
@@ -298,12 +299,120 @@ export function selectRunnableCohortAssignments<T extends ValidatorAssignment>(
   return cohort.enabled ? [...cohort.assignments] : [];
 }
 
-export const graphWorkflowScriptValidatorConfigSchema = z.object({
-  enabled: z.boolean().default(false),
-});
+export const graphWorkflowScriptValidatorConfigSchema = z
+  .object({
+    commands: z.array(validationCommandNameSchema).default([]),
+  })
+  .strict();
 export type GraphWorkflowScriptValidatorConfig = z.infer<
   typeof graphWorkflowScriptValidatorConfigSchema
 >;
+
+// ============================================================
+// Validation command selectors (design: validation-concurrency §6)
+// ============================================================
+
+// `all` intentionally opts into future registrations (after exclusions);
+// `only` is stable and fail-closed. Both expand to explicit names when an
+// execution is seeded (see expandCommandSelector), so later registry edits
+// never broaden a running execution's permissions.
+export const graphWorkflowCommandSelectorSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("all"),
+    except: z.array(validationCommandNameSchema).default([]),
+  }),
+  z.object({
+    mode: z.literal("only"),
+    commands: z.array(validationCommandNameSchema),
+  }),
+]);
+export type GraphWorkflowCommandSelector = z.infer<
+  typeof graphWorkflowCommandSelectorSchema
+>;
+
+// Per-role agent allowlists, independent of script-gate selection: an
+// implementer doing TDD keeps test access even when the script validator
+// will also run tests. The context-validator default of no commands
+// mechanizes the prompt instruction that deterministic checks are not its
+// responsibility.
+export const graphWorkflowAgentValidationConfigSchema = z.object({
+  implementer: graphWorkflowCommandSelectorSchema.default({
+    mode: "all",
+    except: [],
+  }),
+  contextValidator: graphWorkflowCommandSelectorSchema.default({
+    mode: "only",
+    commands: [],
+  }),
+});
+export type GraphWorkflowAgentValidationConfig = z.infer<
+  typeof graphWorkflowAgentValidationConfigSchema
+>;
+
+// Override tiers must keep omitted role selectors absent — a defaulted
+// contextValidator on a workflow override would silently erase the inherited
+// selector, which is exactly the whole-block-replacement trap the per-leaf
+// cascade exists to prevent.
+export const graphWorkflowAgentValidationOverrideSchema = z.object({
+  implementer: graphWorkflowCommandSelectorSchema.optional(),
+  contextValidator: graphWorkflowCommandSelectorSchema.optional(),
+});
+export type GraphWorkflowAgentValidationOverride = z.infer<
+  typeof graphWorkflowAgentValidationOverrideSchema
+>;
+
+/**
+ * The one canonical agent-validation default, derived from the schema's own
+ * field defaults (same contract as DEFAULT_PLAN_REPAIR_POLICY).
+ */
+export const DEFAULT_AGENT_VALIDATION_CONFIG: GraphWorkflowAgentValidationConfig =
+  graphWorkflowAgentValidationConfigSchema.parse({});
+
+// `{mode:"project"}` resolves to the project's validation.laneMerge list when
+// configured, else its preMerge list — resolved at merge submission against
+// current project config. `{mode:"only", commands:[]}` disables lane-merge
+// validation entirely.
+export const graphWorkflowLaneMergeCommandSelectorSchema = z.discriminatedUnion(
+  "mode",
+  [
+    z.object({ mode: z.literal("project") }),
+    z.object({
+      mode: z.literal("only"),
+      commands: z.array(validationCommandNameSchema),
+    }),
+  ],
+);
+export type GraphWorkflowLaneMergeCommandSelector = z.infer<
+  typeof graphWorkflowLaneMergeCommandSelectorSchema
+>;
+
+// Under `final-only`, validation is skipped for every merge in a join series
+// except the last; `every-merge` restores per-lane validation for workflows
+// that want integration failures isolated to a single lane.
+export const graphWorkflowLaneMergeValidationConfigSchema = z.object({
+  strategy: z.enum(["final-only", "every-merge"]).default("final-only"),
+  commands: graphWorkflowLaneMergeCommandSelectorSchema.default({
+    mode: "project",
+  }),
+});
+export type GraphWorkflowLaneMergeValidationConfig = z.infer<
+  typeof graphWorkflowLaneMergeValidationConfigSchema
+>;
+
+export const graphWorkflowLaneMergeValidationOverrideSchema = z.object({
+  strategy: z.enum(["final-only", "every-merge"]).optional(),
+  commands: graphWorkflowLaneMergeCommandSelectorSchema.optional(),
+});
+export type GraphWorkflowLaneMergeValidationOverride = z.infer<
+  typeof graphWorkflowLaneMergeValidationOverrideSchema
+>;
+
+/**
+ * The one canonical lane-merge-validation default, derived from the schema's
+ * own field defaults (same contract as DEFAULT_PLAN_REPAIR_POLICY).
+ */
+export const DEFAULT_LANE_MERGE_VALIDATION_CONFIG: GraphWorkflowLaneMergeValidationConfig =
+  graphWorkflowLaneMergeValidationConfigSchema.parse({});
 
 export const graphWorkflowHumanApprovalGateConfigSchema = z.object({
   enabled: z.boolean().default(false),

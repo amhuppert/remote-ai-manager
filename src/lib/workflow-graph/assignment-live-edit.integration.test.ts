@@ -34,7 +34,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
   },
   contextValidator: { enabled: false, assignments: [] },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
@@ -50,13 +50,23 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     negotiationRounds: { value: 3, source: "global" },
     autonomousResolutionThreshold: { value: "minor", source: "global" },
   },
+  agentValidation: {
+    implementer: { value: { mode: "all", except: [] }, source: "global" },
+    contextValidator: {
+      value: { mode: "only", commands: [] },
+      source: "global",
+    },
+  },
 };
 
 const LIVE_EDIT_DEPS: LiveEditDeps = {
   createTaskId: () => "task-minted-1",
   resolvedGlobalDefaults: () => RESOLVED_DEFAULTS,
   snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
-  hasPreMergeCommand: () => true,
+  validationCommandPreflight: () => ({
+    commandCosts: {},
+    concurrencyLimit: 8,
+  }),
   now: () => "2026-08-04T12:00:00.000Z",
 };
 

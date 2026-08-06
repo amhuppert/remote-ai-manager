@@ -9,8 +9,8 @@ import {
   createWorkflowLayout,
   makeValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
-import type { GlobalConfig } from "@/lib/config/schemas";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
 import { createAssignmentReferenceChecker } from "./assignment-references";
@@ -75,6 +75,9 @@ describe("graph-workflow validate route handler", () => {
         _sessionName: string,
       ) => Promise<{ sessionName: string } | null>
     >();
+  const readRepoConfig =
+    vi.fn<(_projectPath: string) => Promise<PerRepoConfig | null>>();
+  const readConfig = vi.fn<() => Promise<GlobalConfig>>();
 
   let profileDir: string;
   let handlers: ReturnType<typeof createGraphWorkflowValidateHandlers>;
@@ -83,12 +86,18 @@ describe("graph-workflow validate route handler", () => {
     vi.resetAllMocks();
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue({ sessionName: "sess" });
+    readRepoConfig.mockResolvedValue(null);
+    readConfig.mockResolvedValue({
+      validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
+    } as GlobalConfig);
 
     profileDir = await mkdtemp(path.join(tmpdir(), "cc-validate-profiles-"));
     handlers = createGraphWorkflowValidateHandlers({
       auth: tokenAuth("good-token"),
       resolveProjectPath,
       getSession,
+      readRepoConfig,
+      readConfig,
       assignmentReferences: createAssignmentReferenceChecker({
         library: createAgentProfileLibraryService({
           storage: createAgentProfileStorage({
@@ -160,6 +169,7 @@ describe("graph-workflow validate route handler", () => {
       auth: tokenAuth("good-token"),
       resolveProjectPath,
       getSession,
+      readRepoConfig,
       assignmentReferences: createAssignmentReferenceChecker({
         library: createAgentProfileLibraryService({
           storage: createAgentProfileStorage({
@@ -263,6 +273,90 @@ describe("graph-workflow validate route handler", () => {
     expect(body.error.length).toBeGreaterThan(0);
     const paths = body.issues.map((i) => i.path);
     expect(paths).toContain("definition.edges");
+  });
+
+  it("returns 400 with path-qualified issues for unknown validation commands", async () => {
+    readRepoConfig.mockResolvedValue({
+      validation: {
+        commands: {
+          typecheck: {
+            command: "scripts/validate/typecheck.sh",
+            cost: 2,
+            scopeArgs: "forbid",
+          },
+        },
+        preMerge: ["typecheck"],
+      },
+    });
+
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        scriptValidator: { commands: ["typecheck", "ghost"] },
+        agentValidation: {
+          implementer: { mode: "all", except: ["phantom"] },
+        },
+      },
+    });
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(definition)),
+      makeContext(),
+    );
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      issues: { path: string; message: string }[];
+    };
+    expect(body.issues).toEqual([
+      expect.objectContaining({
+        path: "definition.workflowConfig.scriptValidator.commands.1",
+        message: expect.stringContaining('Unknown validation command "ghost"'),
+      }),
+      expect.objectContaining({
+        path: "definition.workflowConfig.agentValidation.implementer.except.0",
+        message: expect.stringContaining(
+          'Unknown validation command "phantom"',
+        ),
+      }),
+    ]);
+  });
+
+  it("rejects the same oversized selection that create rejects", async () => {
+    readRepoConfig.mockResolvedValue({
+      validation: {
+        commands: {
+          test: {
+            command: "scripts/validate/test.sh",
+            cost: 5,
+            scopeArgs: "paths",
+          },
+        },
+        preMerge: ["test"],
+      },
+    });
+    readConfig.mockResolvedValue({
+      validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
+    } as GlobalConfig);
+    const definition = createWorkflowDefinition({
+      workflowConfig: { scriptValidator: { commands: ["test"] } },
+    });
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(definition)),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    const responseBody = (await response.json()) as {
+      code?: string;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(responseBody.code).toBe("validation_cost_exceeds_limit");
+    expect(responseBody.issues).toContainEqual(
+      expect.objectContaining({
+        path: "definition.workflowConfig.scriptValidator.commands.0",
+        message: expect.stringMatching(/cost 5.*limit 4.*lower-worker/),
+      }),
+    );
   });
 
   // R4.2: validate is the pre-flight for a save, so it has to be held to the
@@ -410,6 +504,11 @@ describe("graph-workflow validate persists nothing", () => {
       auth: tokenAuth("good-token"),
       resolveProjectPath: async () => "/repo",
       getSession: async () => ({ sessionName: "sess" }),
+      readRepoConfig: async () => null,
+      readConfig: async () =>
+        ({
+          validation: { concurrencyLimit: 8, defaultTimeoutMs: 600_000 },
+        }) as GlobalConfig,
       assignmentReferences: createAssignmentReferenceChecker({
         library: createAgentProfileLibraryService({
           storage: createAgentProfileStorage({

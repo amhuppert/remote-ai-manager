@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createConfigReader } from "./loader";
 import { createAgentProfileLibraryService } from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
 import { createAssignmentReferenceChecker } from "@/lib/workflow-graph/assignment-references";
@@ -32,12 +33,14 @@ const fullConfig = {
   defaultAgentBackend: "claude" as const,
   preMergeTimeoutMs: 300_000,
   maxConcurrentQueries: 3,
+  validation: { concurrencyLimit: 4, defaultTimeoutMs: 600_000 },
   tailscaleEnabled: true,
 };
 
 const rawConfig = {
   baseDir: "/home/user/projects",
   agentBackends: { claude: { timeoutMs: 3_600_000 } },
+  validation: { concurrencyLimit: 4 },
 };
 
 // ---------------------------------------------------------------------------
@@ -125,6 +128,19 @@ describe("GET /api/config", () => {
     expect(body.raw).not.toHaveProperty("ignorePatterns");
   });
 
+  it("returns resolved and raw validation settings", async () => {
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.config.validation).toEqual({
+      concurrencyLimit: 4,
+      defaultTimeoutMs: 600_000,
+    });
+    expect(body.raw.validation).toEqual({
+      concurrencyLimit: 4,
+    });
+  });
+
   it("returns 500 with { error } when readConfig throws", async () => {
     vi.mocked(deps.readConfig).mockRejectedValue(
       new Error("Disk read failure"),
@@ -198,6 +214,63 @@ describe("PUT /api/config", () => {
 
     expect(response.status).toBe(200);
     expect(deps.writeRawConfig).toHaveBeenCalledWith(input);
+  });
+
+  it("persists both validation settings and reads back raw and resolved values", async () => {
+    const configDir = await mkdtemp(path.join(tmpdir(), "cc-config-route-"));
+    try {
+      await writeFile(
+        path.join(configDir, "config.json"),
+        JSON.stringify({ validation: { concurrencyLimit: 4 } }),
+        "utf-8",
+      );
+      const reader = createConfigReader(configDir);
+      const realHandlers = createConfigRouteHandlers({
+        readConfig: () => reader.readConfig(),
+        readRawConfig: () => reader.readRawConfig(),
+        writeRawConfig: (config) => reader.writeRawConfig(config),
+      });
+
+      const initialResponse = await realHandlers.GET();
+      const initial = await initialResponse.json();
+      expect(initial.raw.validation).toEqual({ concurrencyLimit: 4 });
+      expect(initial.config.validation).toEqual({
+        concurrencyLimit: 4,
+        defaultTimeoutMs: 600_000,
+      });
+
+      const input = {
+        validation: {
+          concurrencyLimit: 3,
+          defaultTimeoutMs: 900_000,
+        },
+      };
+      const response = await realHandlers.PUT(makePutRequest(input));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.raw.validation).toEqual(input.validation);
+      expect(body.config.validation).toEqual(input.validation);
+      await expect(reader.readRawConfig()).resolves.toEqual(input);
+    } finally {
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["concurrencyLimit", 0],
+    ["concurrencyLimit", 1.5],
+    ["defaultTimeoutMs", 0],
+    ["defaultTimeoutMs", 1.5],
+  ])("rejects invalid validation.%s", async (field, value) => {
+    const response = await handlers.PUT(
+      makePutRequest({ validation: { [field]: value } }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toContain(`validation.${field}`);
+    expect(deps.writeRawConfig).not.toHaveBeenCalled();
   });
 
   describe("workflowDefaults assignment references (R4.2)", () => {

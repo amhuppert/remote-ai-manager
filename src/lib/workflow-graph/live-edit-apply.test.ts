@@ -28,7 +28,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
   },
   contextValidator: { enabled: false, assignments: [] },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
@@ -44,6 +44,13 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
     negotiationRounds: { value: 3, source: "global" },
     autonomousResolutionThreshold: { value: "minor", source: "global" },
   },
+  agentValidation: {
+    implementer: { value: { mode: "all", except: [] }, source: "global" },
+    contextValidator: {
+      value: { mode: "only", commands: [] },
+      source: "global",
+    },
+  },
 };
 
 /** A hash shaped like the real thing — the execution schema pins the format. */
@@ -56,8 +63,11 @@ const SECURITY_V2 = hash("b");
 const LIVE_EDIT_DEPS: LiveEditDeps = {
   createTaskId: () => "task-minted-1",
   resolvedGlobalDefaults: () => RESOLVED_DEFAULTS,
+  validationCommandPreflight: () => ({
+    commandCosts: {},
+    concurrencyLimit: 8,
+  }),
   snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
-  hasPreMergeCommand: () => true,
   now: () => "2026-07-29T00:00:00.000Z",
 };
 

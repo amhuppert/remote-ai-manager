@@ -19,66 +19,88 @@ The goal is simple: **maximize signal, minimize noise**. Show every failure in f
 5. **Truncate large diffs** — A 5,000-character snapshot diff burns tokens without helping the agent, which can read the source file directly.
 6. **Use a backend-neutral signal** — Expose an explicit project-owned `AI_OUTPUT=1` switch and let provider- or CI-specific signals opt into it. Claude Code sets `CLAUDECODE=1`; CI systems commonly set `CI=true`; Codex environments do not guarantee the Claude variable.
 
-## Command Center's Validation Script Feature
+## Command Center Validation Commands
 
 ### How It Works
 
-Each project managed by CC can specify a validation script in its `CommandCenter.json` file. CC runs this script automatically before squash-merging a session branch into main.
+Projects register granular wrappers under `validation.commands` in `CommandCenter.json`. Stable command names let workflows and merge operations select only the checks they need. `validation.preMerge` defines the ordered Smart Merge and Smart Commit gate, while `validation.laneMerge` defines the graph lane-merge gate.
 
 ```json
 {
-  "preMergeCommand": "scripts/pre-merge-validate.sh"
+  "validation": {
+    "commands": {
+      "format": {
+        "command": "scripts/validate/format.sh",
+        "cost": 1
+      },
+      "lint": {
+        "command": "scripts/validate/lint.sh",
+        "cost": 2
+      },
+      "typecheck": {
+        "command": "scripts/validate/typecheck.sh",
+        "cost": 2
+      },
+      "test": {
+        "command": "scripts/validate/test.sh",
+        "cost": 8,
+        "timeoutMs": 900000,
+        "scopeArgs": "paths"
+      }
+    },
+    "preMerge": ["format", "lint", "typecheck", "test"],
+    "laneMerge": ["typecheck", "test"]
+  }
 }
 ```
 
-The path can be relative (to the project root) or absolute. When CC initiates a merge:
+Every execution goes through Command Center's server-owned validation service. The service resolves the registered command, enforces the allowed-command policy and global weighted budget, targets the correct worktree, and records queue and execution timing. A command whose configured cost exceeds the global limit is rejected rather than clamped.
 
-1. CC commits any uncommitted changes in the session worktree (WIP commit, hooks skipped)
-2. CC merges main into the session branch
-3. **CC runs your validation script** in the session worktree
-4. If the script auto-fixes files (e.g., Prettier/ESLint formatting), CC commits them automatically
-5. CC squash-merges the session branch into main
+Use one executable wrapper per command. Keep the configured `cost` honest: a test wrapper pinned to eight workers should reserve eight units. Use `scopeArgs: "paths"` only when the wrapper safely accepts forwarded repository-relative paths; otherwise omit it so extra arguments fail closed.
 
-If the script exits with a non-zero code, the merge is aborted and the error output is surfaced to the user.
+The selected commands run in order. A non-zero exit aborts the gate and preserves the full failure output. Successful wrappers should emit nothing.
 
 ### Environment Variables
 
-CC passes these environment variables to your validation script:
+CC passes these environment variables to registered wrappers:
 
 | Variable | Description |
 |----------|-------------|
-| `PROJECT_ROOT` | Absolute path to the project root |
-| `CLAUDE_PROJECT_DIR` | Same as `PROJECT_ROOT` |
+| `PROJECT_ROOT` | Absolute path to the target worktree |
+| `CLAUDE_PROJECT_DIR` | Absolute path to the canonical project root |
 | `WORKTREE_PATH` | Absolute path to the session worktree |
 | `SESSION_NAME` | Session identifier (e.g., `feature-auth`) |
 | `BRANCH_NAME` | Git branch name (e.g., `csm/feature-auth`) |
+| `TARGET_BRANCH` | Comparison branch when the caller supplies one |
+| `CONTEXT_ID` | Graph execution context when applicable |
+| `CC_VALIDATION_RUN_ID` | Durable validation run identifier |
+| `CC_VALIDATION_COMMAND` | Registered command name |
+| `CC_VALIDATION_COST` | Configured reservation cost |
 
 `CLAUDECODE` is a Claude Code process signal, not part of Command Center's backend-neutral validation contract. Projects should expose explicit `:ai` scripts or accept `AI_OUTPUT=1` so the same low-noise path works for Claude, Codex, CI, and direct operator runs.
 
-### Timeout
+### Timeouts and Queueing
 
-Validation scripts have a default timeout of 5 minutes (`preMergeTimeoutMs` in CC's global config). If your validation suite takes longer, increase this in CC's config.
+Each command may set `timeoutMs`; otherwise the service default applies. Time spent waiting for budget does not consume the execution timeout. Capacity remains reserved until the spawned process group is confirmed dead on every terminal path.
 
-### Example Validation Script
+### Wrapper Pattern
 
-This is the pattern CC uses for its own validation:
+Wrappers must have a shebang and executable permission. Suppress passing output, preserve failing output, and pin internal parallelism so the registered cost remains true. Scope formatting and linting to files changed from `TARGET_BRANCH` when safe; keep type checking full-project because a changed declaration can break unchanged dependents. A test wrapper may accept forwarded path filters when its registration uses `scopeArgs: "paths"`.
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-npx prettier --write .
-npx eslint . --fix
-npx tsc --noEmit --pretty
-npx vitest run --project unit-node --project unit-jsdom
-```
-
-The `set -euo pipefail` causes the script to exit on the first failure. The `&&` chaining approach in a `package.json` script achieves the same effect:
-
-```json
-{
-  "check:ai": "eslint . --quiet --no-color --no-warn-ignored && tsc --noEmit --pretty false && vitest run --no-color"
-}
+output_file="$(mktemp -t validation.XXXXXX)"
+if npx tsc --noEmit --pretty false >"$output_file" 2>&1; then
+  rm -f "$output_file"
+  exit 0
+else
+  status=$?
+fi
+sed -n '1,$p' "$output_file" >&2
+rm -f "$output_file"
+exit "$status"
 ```
 
 ### Pre-Commit Hooks
@@ -378,31 +400,46 @@ Place this file in your project root to configure CC integration:
 
 ```json
 {
-  "preMergeCommand": "scripts/pre-merge-validate.sh"
+  "validation": {
+    "commands": {
+      "format": {
+        "command": "scripts/validate/format.sh",
+        "cost": 1
+      },
+      "lint": {
+        "command": "scripts/validate/lint.sh",
+        "cost": 2
+      },
+      "typecheck": {
+        "command": "scripts/validate/typecheck.sh",
+        "cost": 2
+      },
+      "test": {
+        "command": "scripts/validate/test.sh",
+        "cost": 8,
+        "scopeArgs": "paths"
+      }
+    },
+    "preMerge": ["format", "lint", "typecheck", "test"],
+    "laneMerge": ["typecheck", "test"]
+  }
 }
 ```
 
-### 2. Create the Validation Script
+This is the concrete `validation.commands` registry and its `validation.preMerge` policy. Adjust costs to the wrappers' fixed maximum resource use rather than copying the example blindly.
+
+### 2. Create Granular Wrappers
+
+Create one executable script per registered command under `scripts/validate/`:
 
 ```bash
-#!/usr/bin/env bash
-# scripts/pre-merge-validate.sh
-set -euo pipefail
-
-# Auto-fix formatting (changes are committed by CC after this script runs)
-npx prettier --write .
-
-# Lint with auto-fix
-npx eslint . --fix
-
-# Type check
-npx tsc --noEmit --pretty
-
-# Run tests
-npx vitest run
+scripts/validate/format.sh
+scripts/validate/lint.sh
+scripts/validate/typecheck.sh
+scripts/validate/test.sh
 ```
 
-Note: The pre-merge validation script intentionally uses **human-readable output** (no `--quiet`, no `--pretty false`). CC captures both stdout and stderr — using readable output here helps when debugging failed merges. The AI-optimal flags are for pre-commit hooks and CI, where the output is consumed by agents in real time.
+Each wrapper should use the AI-quiet pattern above: no output on success and complete, colorless diagnostics on failure. Pin test workers and register the same number as the command cost. Formatting and lint wrappers can use `TARGET_BRANCH` to select changed files; type checking should remain full-project. When `test.sh` accepts path arguments, pass them only as test-file filters and set `scopeArgs` to `"paths"`.
 
 ### 3. Set Up the Pre-Commit Hook
 

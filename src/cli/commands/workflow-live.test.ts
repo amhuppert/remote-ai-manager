@@ -148,7 +148,7 @@ const OUTLINE_BODY = {
           },
         ],
         validatorCohortEnabled: true,
-        scriptValidator: false,
+        scriptValidator: { commands: [] },
         humanApprovalGate: false,
         askUserQuestions: false,
         collaboration: null,
@@ -179,7 +179,11 @@ const OUTLINE_BODY = {
           },
         ],
         validatorCohortEnabled: true,
-        scriptValidator: true,
+        scriptValidator: { commands: ["typecheck", "test"] },
+        agentValidation: {
+          implementer: { mode: "all", except: ["format"] },
+          contextValidator: { mode: "only", commands: [] },
+        },
         humanApprovalGate: true,
         askUserQuestions: false,
         collaboration: null,
@@ -212,7 +216,7 @@ const OUTLINE_BODY = {
             reasoningEffort: "low",
           },
         ],
-        scriptValidator: false,
+        scriptValidator: { commands: [] },
         humanApprovalGate: false,
         askUserQuestions: false,
         collaboration: null,
@@ -306,7 +310,7 @@ describe("cctl workflow live get", () => {
               3 impl-tests  pending    "Add tests"           (704 chars)
       config:
         plan    claude opus medium; validator general conversation claude sonnet medium; script off
-        impl    claude opus medium; validator general conversation claude sonnet medium; script on; approval on
+        impl    claude opus medium; validator general conversation claude sonnet medium; script typecheck+test; roles implementer all-except format, validator none; approval on
         verify  codex gpt-5.4 high; validator off; script off
       staffing (snapshots):
         plan    implementer  implementer       builtin:general-implementer@2  #cccccccccccc  claude opus medium
@@ -412,6 +416,51 @@ describe("cctl workflow live get", () => {
     );
   });
 
+  it("renders the workflow-scope lane-merge selection when the projection carries it", async () => {
+    const body = {
+      ...OUTLINE_BODY,
+      outline: {
+        ...OUTLINE_BODY.outline,
+        laneMergeValidation: {
+          strategy: "final-only",
+          commands: { mode: "project" },
+        },
+      },
+    };
+    const host = makeHost(() => jsonResponse(body));
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("laneMerge: final-only project");
+  });
+
+  it("renders an explicit lane-merge command list, and 'none' when empty", async () => {
+    const withCommands = (commands: string[]) => ({
+      ...OUTLINE_BODY,
+      outline: {
+        ...OUTLINE_BODY.outline,
+        laneMergeValidation: {
+          strategy: "every-merge",
+          commands: { mode: "only", commands },
+        },
+      },
+    });
+    const hostOnly = makeHost(() =>
+      jsonResponse(withCommands(["typecheck", "test"])),
+    );
+    const only = await runCli(["workflow", "live", "get"], baseEnv, hostOnly);
+    expect(only.stdout).toContain("laneMerge: every-merge typecheck+test");
+
+    const hostNone = makeHost(() => jsonResponse(withCommands([])));
+    const none = await runCli(["workflow", "live", "get"], baseEnv, hostNone);
+    expect(none.stdout).toContain("laneMerge: every-merge none");
+  });
+
+  it("omits the lane-merge line for projections without the snapshot", async () => {
+    const host = makeHost(() => jsonResponse(OUTLINE_BODY));
+    const result = await runCli(["workflow", "live", "get"], baseEnv, host);
+    expect(result.stdout).not.toContain("laneMerge");
+  });
+
   it("passes the endpoint JSON through the envelope with --json", async () => {
     const host = makeHost(() => jsonResponse(OUTLINE_BODY));
     const result = await runCli(
@@ -499,7 +548,7 @@ describe("cctl workflow live get", () => {
             },
           },
           contextValidator: { enabled: false, assignments: [] },
-          scriptValidator: { enabled: true },
+          scriptValidator: { commands: ["pre-merge"] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
           iterationPolicy: { maxIterations: 20 },

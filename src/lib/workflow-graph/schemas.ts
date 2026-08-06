@@ -116,6 +116,12 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     message: z.string(),
   }),
   z.object({
+    type: z.literal("script_validator_unknown_command"),
+    contextId: z.string().trim().min(1),
+    commandName: z.string().trim().min(1),
+    message: z.string(),
+  }),
+  z.object({
     type: z.literal("merge_failure"),
     contextId: z.string().trim().min(1),
     message: z.string(),
@@ -288,6 +294,11 @@ export const graphWorkflowExecutionJoinStateSchema = z.object({
   // here after the merge runner reports success (including no-op merges). The
   // runner skips lanes already present here on resume.
   mergedSourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema).default([]),
+  // Deferred lanes remain validation debt until a validating merge succeeds;
+  // this survives halt/resume independently of merge progress.
+  validationDebtSourceLaneIds: z
+    .array(graphWorkflowExecutionLaneIdSchema)
+    .default([]),
   status: graphWorkflowExecutionJoinStatusSchema,
   errorMessage: z.string().nullable().default(null),
   conflicts: graphWorkflowExecutionJoinConflictDetailSchema

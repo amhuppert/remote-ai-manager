@@ -45,6 +45,15 @@ import {
   type DefinitionPath,
 } from "./locked-regions";
 import { applyCharterContentEdit } from "./definition-edits";
+import {
+  collectValidationCommandIssuesForResolvedContext,
+  collectLaneMergeValidationCommandIssues,
+} from "./command-selector-validation";
+import {
+  VALIDATION_COST_EXCEEDS_LIMIT_CODE,
+  type ValidationCommandPreflight,
+} from "@/lib/validation/preflight";
+import { expandCommandSelector } from "./resolve-config";
 import { computeCharterHash } from "./charter/render";
 import {
   workflowCharterSchema,
@@ -305,6 +314,7 @@ export type ResolvedContextConfig = Pick<
   | "implementer"
   | "contextValidator"
   | "scriptValidator"
+  | "scriptValidatorSource"
   | "humanApprovalGate"
   | "askUserQuestions"
   | "mutability"
@@ -313,17 +323,23 @@ export type ResolvedContextConfig = Pick<
   | "planRepair"
 > & {
   collaboration: NonNullable<GraphWorkflowResolvedContext["collaboration"]>;
+  agentValidation: NonNullable<GraphWorkflowResolvedContext["agentValidation"]>;
 };
 
 /**
  * Injected capabilities for the pure core — method syntax for bivariant checking
  * (engineering-principles Deps rule). `createTaskId` mints slugs for id-less task
- * adds; `resolvedGlobalDefaults` supplies the `add-context` config base;
- * `hasPreMergeCommand` gates enabling a script validator (frontier invariant #3).
+ * adds; `resolvedGlobalDefaults` supplies the `add-context` config base.
  */
 export interface LiveEditDeps {
   createTaskId(): string;
   resolvedGlobalDefaults(): ResolvedContextConfig;
+  /**
+   * The target project's command-cost snapshot and global capacity. Validation
+   * selections written by a live edit are checked here for unknown names and
+   * oversized costs. Only consulted for validation-selection batches.
+   */
+  validationCommandPreflight(): ValidationCommandPreflight;
   /**
    * The snapshot for an assignment a live edit INTRODUCES.
    *
@@ -336,7 +352,6 @@ export interface LiveEditDeps {
    * no bytes behind it.
    */
   snapshotFor(assignment: AgentAssignment): AgentProfileSnapshot;
-  hasPreMergeCommand(): boolean;
   /** ISO timestamp source for `amend-charter` amendment-log entries. */
   now(): string;
   executionContract?: GraphExecutionContract;
@@ -347,6 +362,7 @@ export type LiveEditRejectionCode =
   | "requires_pause"
   | "region_locked"
   | "spec_grouping_frozen"
+  | typeof VALIDATION_COST_EXCEEDS_LIMIT_CODE
   | "invalid_edit";
 
 export type ApplyLiveExecutionEditsResult =
@@ -390,13 +406,15 @@ function laneAgentLiveEditDeps(
         "lane-agent add_task does not seed context config from global defaults",
       );
     },
+    validationCommandPreflight() {
+      throw new Error(
+        "lane-agent add_task does not edit validation command selections",
+      );
+    },
     snapshotFor() {
       throw new Error(
         "lane-agent add_task does not introduce an agent assignment",
       );
-    },
-    hasPreMergeCommand() {
-      throw new Error("lane-agent add_task does not enable a script validator");
     },
     now() {
       throw new Error("lane-agent add_task does not amend the charter");
@@ -413,7 +431,13 @@ interface LiveEditOpContext {
   quiescent: boolean;
   deps: LiveEditDeps;
   affectedContextIds: Set<string>;
-  configTouchedContextIds: Set<string>;
+  validationTouchedContextIds: Set<string>;
+  /**
+   * Set by `update-lane-merge-validation` so the frontier check preflights
+   * the (workflow-scope, context-free) lane-merge selection — the per-context
+   * `validationTouchedContextIds` scoping cannot see it.
+   */
+  laneMergeTouched: boolean;
   laneAgentContextId: string | undefined;
   /**
    * Audit attribution from the request (doc 06 D15), recorded on amendment-log
@@ -477,6 +501,7 @@ function liveEditTouchedPaths(
           "mutability",
           "planRepair",
           "collaboration",
+          "agentValidation",
         ],
       );
     case "add-context":
@@ -552,6 +577,8 @@ function liveEditTouchedPaths(
       );
       return [["edges", edge?.id ?? "unknown"]];
     }
+    case "update-lane-merge-validation":
+      return [["laneMergeValidation"]];
   }
 }
 
@@ -580,14 +607,15 @@ export function applyLiveExecutionEdits(
 
   const next = cloneExecution(execution);
   const affectedContextIds = new Set<string>();
-  const configTouchedContextIds = new Set<string>();
+  const validationTouchedContextIds = new Set<string>();
   let hasStructuralOp = false;
 
   const opContext: LiveEditOpContext = {
     quiescent,
     deps,
     affectedContextIds,
-    configTouchedContextIds,
+    validationTouchedContextIds,
+    laneMergeTouched: false,
     laneAgentContextId: options.laneAgentContextId,
     source: request.source,
   };
@@ -764,6 +792,37 @@ function liveContextEditGate(
 }
 
 /**
+ * Live-boundary counterpart of the seed-time selector freeze (design §6):
+ * each role an edit REWRITES is expanded to an explicit command-name snapshot
+ * against the current registry; a role whose selector the edit merely echoes
+ * unchanged keeps its existing frozen snapshot — re-expanding it would let a
+ * registry addition silently broaden a running execution's permissions. The
+ * op's own `commands` field (if a client sent one) is never trusted.
+ */
+function freezeAgentValidationSnapshot(
+  context: GraphWorkflowResolvedContext,
+  prior: GraphWorkflowResolvedContext["agentValidation"],
+  deps: LiveEditDeps,
+): void {
+  if (!context.agentValidation) return;
+  const registered = Object.keys(
+    deps.validationCommandPreflight().commandCosts,
+  );
+  for (const role of ["implementer", "contextValidator"] as const) {
+    const next = context.agentValidation[role];
+    const stored = prior?.[role];
+    if (
+      stored?.commands !== undefined &&
+      isDeepStrictEqual(stored.value, next.value)
+    ) {
+      next.commands = [...stored.commands];
+    } else {
+      next.commands = expandCommandSelector(next.value, registered).commands;
+    }
+  }
+}
+
+/**
  * An authored assignment plus the bytes it will run under. Applied at the live-
  * edit boundary for the same reason execution start applies it at the seed
  * boundary: past this point the working definition is snapshot-bearing, and
@@ -805,6 +864,7 @@ function applyLiveConfigBlocks(
   }
   if (op.scriptValidator !== undefined) {
     context.scriptValidator = op.scriptValidator;
+    context.scriptValidatorSource = "per-node";
   }
   if (op.humanApprovalGate !== undefined) {
     context.humanApprovalGate = op.humanApprovalGate;
@@ -821,6 +881,9 @@ function applyLiveConfigBlocks(
   if (op.mutability !== undefined) context.mutability = op.mutability;
   if (op.planRepair !== undefined) context.planRepair = op.planRepair;
   if (op.collaboration !== undefined) context.collaboration = op.collaboration;
+  if (op.agentValidation !== undefined) {
+    context.agentValidation = op.agentValidation;
+  }
 }
 
 /**
@@ -896,6 +959,8 @@ function applyLiveEditOperation(
       return applyAddEdge(next, operation, index, ctx);
     case "remove-edge":
       return applyRemoveEdge(next, operation, index, ctx);
+    case "update-lane-merge-validation":
+      return applyUpdateLaneMergeValidation(next, operation, index, ctx);
     default:
       return assertNever(
         operation,
@@ -981,6 +1046,31 @@ function applyAmendCharter(
   return null;
 }
 
+/**
+ * Workflow-scope snapshot rewrite (design §6). Quiescence-gated like the
+ * other workflow-scope op (`amend-charter`); the new selection is what FUTURE
+ * merge submissions resolve against — an in-flight merge keeps the selection
+ * it was submitted with, which is the service's snapshot, not this record.
+ */
+function applyUpdateLaneMergeValidation(
+  next: GraphWorkflowExecution,
+  op: Extract<
+    WorkflowLiveEditOperation,
+    { type: "update-lane-merge-validation" }
+  >,
+  index: number,
+  ctx: LiveEditOpContext,
+): LiveEditRejection | null {
+  const notQuiescent = requireQuiescent(ctx, index);
+  if (notQuiescent) return notQuiescent;
+
+  next.workingDefinition.laneMergeValidation = structuredClone(
+    op.laneMergeValidation,
+  );
+  ctx.laneMergeTouched = true;
+  return null;
+}
+
 function applyUpdateContext(
   next: GraphWorkflowExecution,
   op: Extract<WorkflowLiveEditOperation, { type: "update-context" }>,
@@ -1030,10 +1120,16 @@ function applyUpdateContext(
       delete next.contextOutputs[op.contextId];
     }
   }
+  const priorAgentValidation = context.agentValidation;
   applyLiveConfigBlocks(context, op, ctx.deps);
+  if (op.agentValidation !== undefined) {
+    freezeAgentValidationSnapshot(context, priorAgentValidation, ctx.deps);
+  }
 
   ctx.affectedContextIds.add(op.contextId);
-  ctx.configTouchedContextIds.add(op.contextId);
+  if (op.scriptValidator !== undefined || op.agentValidation !== undefined) {
+    ctx.validationTouchedContextIds.add(op.contextId);
+  }
   return null;
 }
 
@@ -1393,6 +1489,7 @@ function resolvedConfigFromContext(
     implementer: source.implementer,
     contextValidator: source.contextValidator,
     scriptValidator: source.scriptValidator,
+    scriptValidatorSource: source.scriptValidatorSource ?? "global",
     humanApprovalGate: source.humanApprovalGate,
     askUserQuestions: source.askUserQuestions,
     mutability: source.mutability,
@@ -1401,6 +1498,8 @@ function resolvedConfigFromContext(
     planRepair: source.planRepair,
     collaboration:
       source.collaboration ?? deps.resolvedGlobalDefaults().collaboration,
+    agentValidation:
+      source.agentValidation ?? deps.resolvedGlobalDefaults().agentValidation,
   };
 }
 
@@ -1464,6 +1563,10 @@ function applyAddContext(
         ? base.contextValidator
         : seedLiveCohort(op.contextValidator, ctx.deps),
     scriptValidator: op.scriptValidator ?? base.scriptValidator,
+    scriptValidatorSource:
+      op.scriptValidator !== undefined
+        ? "per-node"
+        : (base.scriptValidatorSource ?? "global"),
     humanApprovalGate: op.humanApprovalGate ?? base.humanApprovalGate,
     askUserQuestions: op.askUserQuestions ?? base.askUserQuestions,
     mutability: op.mutability ?? base.mutability,
@@ -1471,8 +1574,12 @@ function applyAddContext(
     iterationPolicy: op.iterationPolicy ?? base.iterationPolicy,
     planRepair: op.planRepair ?? base.planRepair,
     collaboration: op.collaboration ?? base.collaboration,
+    agentValidation: op.agentValidation ?? base.agentValidation,
     charter: next.charter,
   };
+  // A config copied from a source context keeps that context's frozen
+  // snapshot (never broadens); an explicit op selector freezes fresh here.
+  freezeAgentValidationSnapshot(context, base.agentValidation, ctx.deps);
   next.workingDefinition.executionContexts.push(context);
   next.contextStates[op.id] = buildInitialContextState(
     context,
@@ -1480,7 +1587,7 @@ function applyAddContext(
   );
 
   ctx.affectedContextIds.add(op.id);
-  ctx.configTouchedContextIds.add(op.id);
+  ctx.validationTouchedContextIds.add(op.id);
   return null;
 }
 
@@ -1741,7 +1848,7 @@ function mintLiveEdgeId(
  * what the per-op gates already enforce. In order: graph validity (unique ids,
  * DAG acyclicity), frozen-past unchanged (a completed/started context's prose +
  * config, completed tasks, and incoming edges are byte-identical), resolved-config
- * validity (concrete model/effort pairs, script validator prerequisite), and
+ * validity (concrete model/effort pairs and command selections), and
  * runtime-map 1:1 consistency. A violation rejects the whole batch.
  */
 function checkLiveEditFrontier(
@@ -1764,9 +1871,17 @@ function checkLiveEditFrontier(
     return { code: "invalid_edit", issues: resolved.errors };
   }
 
-  const scriptIssues = checkScriptValidatorPrerequisite(next, ctx);
-  if (scriptIssues.length > 0) {
-    return { code: "invalid_edit", issues: scriptIssues };
+  const commandIssues = checkValidationCommandSelections(next, ctx);
+  if (commandIssues.length > 0) {
+    const hasOversizedCommand = commandIssues.some(
+      (issue) => issue.code === VALIDATION_COST_EXCEEDS_LIMIT_CODE,
+    );
+    return {
+      code: hasOversizedCommand
+        ? VALIDATION_COST_EXCEEDS_LIMIT_CODE
+        : "invalid_edit",
+      issues: commandIssues,
+    };
   }
 
   const mapIssues = checkRuntimeMapConsistency(next);
@@ -1868,32 +1983,36 @@ function checkFrozenPastUnchanged(
 }
 
 /**
- * Frontier check #3 tail (doc 06): a context may enable its script validator only
- * when the project defines a `preMergeCommand` — otherwise the
- * `script_validator_missing_command` halt would be baked into the next tick.
- * Scoped to `configTouchedContextIds` so a pre-existing (already-halting) context
- * elsewhere never fails an unrelated task-only batch.
+ * Frontier check (validation-concurrency §§3, 6): command selections written by
+ * a live edit must be registered and runnable under the global capacity.
+ * Scoped to `validationTouchedContextIds` (same rationale as the script-validator
+ * prerequisite): a pre-existing bad selection elsewhere never fails an
+ * unrelated batch, and a task-only batch never consults the registry.
  */
-function checkScriptValidatorPrerequisite(
+function checkValidationCommandSelections(
   next: GraphWorkflowExecution,
   ctx: LiveEditOpContext,
 ): WorkflowGraphValidationError[] {
-  if (ctx.configTouchedContextIds.size === 0) return [];
-  if (ctx.deps.hasPreMergeCommand()) return [];
+  if (ctx.validationTouchedContextIds.size === 0 && !ctx.laneMergeTouched) {
+    return [];
+  }
+  const preflight = ctx.deps.validationCommandPreflight();
 
   const errors: WorkflowGraphValidationError[] = [];
-  for (const contextId of ctx.configTouchedContextIds) {
+  for (const contextId of ctx.validationTouchedContextIds) {
     const context = findLiveContext(next, contextId);
-    if (context?.scriptValidator.enabled) {
-      errors.push(
-        liveEditIssue(
-          "script-validator-missing-command",
-          `Context "${contextId}" enables a script validator but the project has no preMergeCommand`,
-          undefined,
-          { contextId },
-        ),
-      );
-    }
+    if (!context) continue;
+    errors.push(
+      ...collectValidationCommandIssuesForResolvedContext(context, preflight),
+    );
+  }
+  if (ctx.laneMergeTouched) {
+    errors.push(
+      ...collectLaneMergeValidationCommandIssues(
+        next.workingDefinition.laneMergeValidation?.commands,
+        preflight,
+      ),
+    );
   }
   return errors;
 }

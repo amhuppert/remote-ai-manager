@@ -35,6 +35,7 @@ import {
   type ResumeUserInputContext,
 } from "./user-input-gate";
 import {
+  abortExecutionLoop,
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
   _resetActiveLoopsForTesting,
@@ -120,8 +121,13 @@ function createRunningExecution(
     boundInputs: {},
     launchedTier: "project",
     definitionApproval: null,
-    workingDefinition:
-      definition as unknown as ResolvedWorkflowSemanticDefinition,
+    workingDefinition: {
+      ...definition,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
+    } as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),
     status: "running",
     activeContextIds: [],
@@ -500,6 +506,7 @@ interface BuildHarnessInput {
   acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
   eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
   getMaxConcurrentQueries?: GraphWorkflowExecutionLoopDeps["getMaxConcurrentQueries"];
+  readRepoConfig?: GraphWorkflowExecutionLoopDeps["readRepoConfig"];
 }
 
 /**
@@ -741,6 +748,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     acquireConversationLock: input.acquireConversationLock,
     eventPublisher: input.eventPublisher,
     getMaxConcurrentQueries: input.getMaxConcurrentQueries ?? (async () => 999),
+    readRepoConfig: input.readRepoConfig ?? (async () => null),
   };
 
   return {
@@ -1047,6 +1055,48 @@ describe("execution loop", () => {
 
     expect(wasActiveDuringIteration).toBe(true);
     expect(isExecutionLoopActive("/repo", "session-1")).toBe(false);
+  });
+
+  it("threads a loop-owned abort signal into an in-flight iteration", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+    });
+    let observedSignal: AbortSignal | undefined;
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration({ signal }): Promise<GraphWorkflowIterationResult> {
+          observedSignal = signal;
+          await new Promise<void>((resolve) => {
+            signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+    _resetActiveLoopsForTesting();
+    const runPromise = createGraphWorkflowExecutionLoop(harness.deps).run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+    expect(abortExecutionLoop("/repo", "session-1")).toBe(true);
+    expect(observedSignal?.aborted).toBe(true);
+    await runPromise;
   });
 
   it("shares active loop state with a separately loaded module instance", async () => {
@@ -2272,6 +2322,16 @@ describe("execution loop", () => {
     });
 
     expect(mergeRunner.run).toHaveBeenCalledTimes(1);
+    expect(mergeRunner.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowExecutionId: initial.id,
+        validationMode: {
+          mode: "run",
+          source: "graph_lane_merge",
+          selection: { mode: "only", commands: [] },
+        },
+      }),
+    );
     expect(runIterationSpy).not.toHaveBeenCalled();
     expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
     expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
@@ -3475,6 +3535,7 @@ describe("execution loop", () => {
           targetLaneId: "lane-a",
           sourceLaneIds: ["lane-a", "lane-b"],
           mergedSourceLaneIds: [],
+          validationDebtSourceLaneIds: [],
           status: "pending",
           errorMessage: null,
           conflicts: null,
@@ -4517,6 +4578,7 @@ describe("execution loop", () => {
           targetLaneId: "lane-a",
           sourceLaneIds: ["lane-a", "lane-b"],
           mergedSourceLaneIds: ["lane-b"],
+          validationDebtSourceLaneIds: [],
           status: "succeeded",
           errorMessage: null,
           conflicts: null,

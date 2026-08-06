@@ -85,6 +85,10 @@ function makeGraphWorkflowExecution(
     definitionApproval: null,
     workingDefinition: {
       schemaVersion: 1,
+      laneMergeValidation: {
+        strategy: "final-only",
+        commands: { mode: "project" },
+      },
       executionContexts: [
         {
           id: "ctx-1",
@@ -102,7 +106,7 @@ function makeGraphWorkflowExecution(
             },
           },
           contextValidator: { enabled: false, assignments: [] },
-          scriptValidator: { enabled: false },
+          scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
@@ -124,7 +128,7 @@ function makeGraphWorkflowExecution(
             },
           },
           contextValidator: { enabled: false, assignments: [] },
-          scriptValidator: { enabled: false },
+          scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
           mutability: { allowAgentTaskAdd: false },

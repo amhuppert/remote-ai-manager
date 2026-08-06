@@ -228,6 +228,19 @@ export default function InspectorConfigBlock({
         {description ? (
           <div className={DESCRIPTION_CLASS}>{description}</div>
         ) : null}
+        {children ? (
+          <div className="border-t border-solid border-border-dim p-[14px]">
+            <div
+              className={cn(
+                "block",
+                !editable && "pointer-events-none opacity-65",
+              )}
+              aria-disabled={editable ? undefined : true}
+            >
+              {children}
+            </div>
+          </div>
+        ) : null}
         {source === "context-override" && onReset ? (
           <div className="flex justify-end px-[14px] pb-[10px]">
             <Button variant="ghost" size="sm" touch onClick={onReset}>

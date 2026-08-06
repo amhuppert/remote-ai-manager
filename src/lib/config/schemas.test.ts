@@ -165,6 +165,90 @@ describe("agent backend config", () => {
   });
 });
 
+describe("validation config composition", () => {
+  const registry = {
+    commands: {
+      lint: { command: "scripts/validate/lint.sh", cost: 2 },
+      test: {
+        command: "scripts/validate/test.sh",
+        cost: 8,
+        timeoutMs: 900_000,
+        scopeArgs: "paths",
+      },
+    },
+    preMerge: ["lint", "test"],
+    laneMerge: ["test"],
+  };
+
+  it("perRepoConfigSchema parses a CommandCenter.json validation registry", () => {
+    const parsed = perRepoConfigSchema.parse({ validation: registry });
+
+    expect(parsed.validation?.preMerge).toEqual(["lint", "test"]);
+    expect(parsed.validation?.laneMerge).toEqual(["test"]);
+    expect(parsed.validation?.commands.test?.scopeArgs).toBe("paths");
+    expect(parsed.validation?.commands.lint?.scopeArgs).toBe("forbid");
+  });
+
+  it("rejects preMergeCommand with an actionable registry replacement", () => {
+    const result = perRepoConfigSchema.safeParse({
+      preMergeCommand: "scripts/validate.sh",
+      validation: registry,
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        path: ["preMergeCommand"],
+        message: expect.stringContaining("validation.commands/preMerge"),
+      }),
+    );
+  });
+
+  it("perRepoConfigSchema rejects a registry entry without a cost", () => {
+    expect(
+      perRepoConfigSchema.safeParse({
+        validation: {
+          commands: { lint: { command: "scripts/validate/lint.sh" } },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rawGlobalConfigSchema retains an explicit validation block", () => {
+    expect(
+      rawGlobalConfigSchema.parse({
+        validation: { concurrencyLimit: 4 },
+      }),
+    ).toEqual({ validation: { concurrencyLimit: 4 } });
+  });
+
+  it("globalConfigSchema materializes validation defaults", () => {
+    const parsed = globalConfigSchema.parse({
+      baseDir: "/projects",
+      ignorePatterns: [],
+      agentBackends: {
+        claude: {
+          model: "opus",
+          reasoningEffort: "high",
+          timeoutMs: 60_000,
+        },
+        codex: {
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+          timeoutMs: null,
+        },
+      },
+      validation: {},
+    });
+
+    expect(parsed.validation).toEqual({
+      concurrencyLimit: 8,
+      defaultTimeoutMs: 600_000,
+    });
+  });
+});
+
 describe("conversationNamingConfigSchema", () => {
   it("materializes enabled/backend/model/effort defaults but leaves timeout unset", () => {
     const result = conversationNamingConfigSchema.parse({});

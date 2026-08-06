@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdir, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -271,7 +271,11 @@ async function seedSession(
 // ============================================================
 
 beforeEach(async () => {
-  TEST_DIR = path.join("/tmp", "cc-conversations-test-" + Date.now());
+  // `mkdtemp`, not a timestamp: this file runs under two vitest projects whose
+  // `beforeEach` can land in the same millisecond, and the fixtures inside use
+  // fixed names like `source.jsonl` — a shared directory lets one process
+  // truncate a transcript the other is mid-read on.
+  TEST_DIR = await mkdtemp(path.join("/tmp", "cc-conversations-test-"));
   await mkdir(TEST_DIR, { recursive: true });
   _installTestDb(_createTestDb({ inMemory: true }));
 });

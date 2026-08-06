@@ -43,7 +43,16 @@ import {
   validateResolvedWorkflow,
   validateWorkflowDefinition,
 } from "./validation";
-import type { GlobalConfig } from "@/lib/config/schemas";
+import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
+import { readRepoConfig } from "@/lib/projects/repo-config";
+import {
+  collectValidationCommandIssues,
+  freezeResolvedDefinitionSelections,
+} from "./command-selector-validation";
+import {
+  createValidationCommandPreflight,
+  type ValidationCommandPreflight,
+} from "@/lib/validation/preflight";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
@@ -166,6 +175,12 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   >;
   charterService?: WorkflowCharterService;
   readConfig?: () => Promise<GlobalConfig>;
+  /**
+   * Reads `CommandCenter.json` so execution start can preflight the seed
+   * definition's command selections against the project's validation registry
+   * and global capacity (validation-concurrency §§3, 6).
+   */
+  readRepoConfig?: (projectPath: string) => Promise<PerRepoConfig | null>;
   agentProfileLibrary?: AgentProfileLibraryService;
   assignmentReferences?: AssignmentReferenceChecker;
 }
@@ -185,6 +200,7 @@ async function createExecutionFromSeed(
   seed: GraphWorkflowExecutionSeed,
   readConfigDep: () => Promise<GlobalConfig>,
   assignmentSeeding: ExecutionAssignmentSeedingDeps,
+  validationPreflight: ValidationCommandPreflight,
 ): Promise<GraphWorkflowExecution> {
   assertNoLegacyWorkflowFields(
     seed.definition,
@@ -251,18 +267,43 @@ async function createExecutionFromSeed(
   }
 
   const cascade = resolveWorkflowDefinition(global, concrete);
-  const workingDefinition = await seedAssignmentSnapshots(cascade, {
+  // Snapshot seeding comes first: past this point the definition is
+  // snapshot-bearing, which is the shape resolved validation and the selector
+  // freeze below both operate on.
+  const resolvedDefinition = await seedAssignmentSnapshots(cascade, {
     library: assignmentSeeding.library,
     projectPath: assignmentSeeding.projectPath,
   });
 
-  const resolvedValidation = validateResolvedWorkflow(workingDefinition);
+  const resolvedValidation = validateResolvedWorkflow(resolvedDefinition);
   if (!resolvedValidation.ok) {
     throw new GraphWorkflowValidationError(
       resolvedValidation.errors,
       "Workflow definition failed resolved validation",
     );
   }
+
+  // Seed-time freeze (design §6): expand every resolved role selector into an
+  // explicit command-name snapshot, and fail the start for unknown or
+  // oversized selections inherited from global defaults, which the authored
+  // definition preflight in create() cannot see.
+  const frozen = freezeResolvedDefinitionSelections(
+    resolvedDefinition,
+    validationPreflight,
+  );
+  if (frozen.issues.length > 0) {
+    logger.warn("graph-workflow.validation_preflight_rejected", {
+      boundary: "start.resolved",
+      definitionId: seed.definitionId,
+      issueCount: frozen.issues.length,
+      codes: frozen.issues.map((issue) => issue.code),
+    });
+    throw new GraphWorkflowValidationError(
+      frozen.issues,
+      "Resolved workflow configuration has invalid validation command selections",
+    );
+  }
+  const workingDefinition = frozen.definition;
 
   const contextStates = buildInitialContextStates(workingDefinition);
   const taskStates = buildInitialTaskStates(workingDefinition);
@@ -305,6 +346,7 @@ export function createGraphWorkflowExecutionRepository(
       publishCharterRegistered: eventPublisher.publishCharterRegistered,
     });
   const readConfigDep = deps.readConfig ?? readConfig;
+  const readRepoConfigDep = deps.readRepoConfig ?? readRepoConfig;
   const agentProfileLibrary =
     deps.agentProfileLibrary ?? createAgentProfileLibraryService();
   const assignmentReferences =
@@ -322,11 +364,46 @@ export function createGraphWorkflowExecutionRepository(
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution> {
-    const baseExecution = await createExecutionFromSeed(seed, readConfigDep, {
-      library: agentProfileLibrary,
-      assignmentReferences,
-      projectPath,
-    });
+    // Start-boundary preflight. The seed definition is checked against the
+    // current registry and capacity because either may have changed since
+    // create/replace accepted it. Command selections are not substitution
+    // targets, so checking before substitution is equivalent.
+    const [repoConfig, globalConfig] = await Promise.all([
+      readRepoConfigDep(projectPath),
+      readConfigDep(),
+    ]);
+    const validationPreflight = createValidationCommandPreflight(
+      repoConfig?.validation,
+      globalConfig.validation,
+    );
+    const commandSelectionIssues = collectValidationCommandIssues(
+      seed.definition,
+      validationPreflight,
+    );
+    if (commandSelectionIssues.length > 0) {
+      logger.warn("graph-workflow.validation_preflight_rejected", {
+        boundary: "start.authored",
+        projectPath,
+        definitionId: seed.definitionId,
+        issueCount: commandSelectionIssues.length,
+        codes: commandSelectionIssues.map((issue) => issue.code),
+      });
+      throw new GraphWorkflowValidationError(
+        commandSelectionIssues,
+        "Workflow definition has invalid validation command selections",
+      );
+    }
+
+    const baseExecution = await createExecutionFromSeed(
+      seed,
+      readConfigDep,
+      {
+        library: agentProfileLibrary,
+        assignmentReferences,
+        projectPath,
+      },
+      validationPreflight,
+    );
 
     const session = await deps.getSession(projectPath, sessionName);
     if (!session) {

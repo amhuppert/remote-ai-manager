@@ -562,6 +562,11 @@ describe("candidate-proof closure over the wired merge bridge", () => {
       message: "Publish candidate-proof closure",
       executionId: workflowExecutionId,
       finalPublish: true,
+      validationMode: {
+        mode: "run",
+        source: "graph_lane_merge",
+        selection: { mode: "only", commands: [] },
+      },
     });
   }
 
@@ -782,6 +787,7 @@ function multiSourceWorkflowExecution(): GraphWorkflowExecution {
     targetLaneId: "lane-session",
     sourceLaneIds: ["lane-session", "lane-source-a", "lane-source-b"],
     mergedSourceLaneIds: [],
+    validationDebtSourceLaneIds: [],
     status: "pending",
     errorMessage: null,
     conflicts: null,

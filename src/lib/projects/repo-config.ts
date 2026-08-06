@@ -1,33 +1,7 @@
 import { existsSync as defaultExistsSync } from "node:fs";
 import { readFile as defaultReadFile } from "node:fs/promises";
 import path from "node:path";
-import { execFileGroup as timedExecFileGroup } from "../shared/exec";
-import { buildChildEnv as defaultBuildChildEnv } from "../shared/child-env";
 import { perRepoConfigSchema, type PerRepoConfig } from "../config/schemas";
-import { createLogger } from "../logging";
-
-const logger = createLogger("repo-config");
-
-const defaultExecFileAsync = (
-  cmd: string,
-  args: string[],
-  opts?: {
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    timeout?: number;
-    maxBuffer?: number;
-  },
-): Promise<{ stdout: string; stderr: string }> =>
-  // Group-aware exec: the pre-merge script forks a deep tree (npx → node →
-  // vitest → one worker per core). A plain timeout would SIGTERM only the
-  // shell and orphan the workers; this kills the whole process group.
-  timedExecFileGroup(cmd, args, {
-    cwd: opts?.cwd,
-    env: opts?.env,
-    timeout: opts?.timeout,
-    maxBuffer: opts?.maxBuffer,
-    eventPrefix: "pre-merge.script",
-  });
 
 // ============================================================
 // Types
@@ -36,30 +10,11 @@ const defaultExecFileAsync = (
 export interface RepoConfigDeps {
   existsSync: typeof defaultExistsSync;
   readFile: typeof defaultReadFile;
-  execFileAsync: typeof defaultExecFileAsync;
-  buildChildEnv: typeof defaultBuildChildEnv;
-}
-
-export interface RepoValidationCommandResult {
-  executed: boolean;
-  pass: boolean;
-  stdout: string;
-  stderr: string;
-  output: string;
-  timedOut: boolean;
-  message: string | null;
-  /**
-   * Resolved script path that ran, for audit identity of the validation
-   * result. Null/absent when nothing executed.
-   */
-  command?: string | null;
 }
 
 const defaultDeps: RepoConfigDeps = {
   existsSync: defaultExistsSync,
   readFile: defaultReadFile,
-  execFileAsync: defaultExecFileAsync,
-  buildChildEnv: defaultBuildChildEnv,
 };
 
 // ============================================================
@@ -67,123 +22,7 @@ const defaultDeps: RepoConfigDeps = {
 // ============================================================
 
 export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
-  const { existsSync, readFile, execFileAsync, buildChildEnv } = deps;
-
-  function resolveValidationScriptPath(
-    projectPath: string,
-    preMergeCommand: string,
-  ): string {
-    return path.isAbsolute(preMergeCommand)
-      ? preMergeCommand
-      : path.join(projectPath, preMergeCommand);
-  }
-
-  async function executeRepoValidationCommand(params: {
-    projectPath: string;
-    worktreePath: string;
-    sessionName: string;
-    branchName: string;
-    /**
-     * Branch this session will merge into. Forwarded as `TARGET_BRANCH` so the
-     * validation script can scope checks to the diff against the real merge
-     * target (precise for stacked sessions). Omitted callers let the script
-     * fall back to its own default (main).
-     */
-    targetBranch?: string;
-    timeoutMs?: number;
-  }): Promise<RepoValidationCommandResult> {
-    const {
-      projectPath,
-      worktreePath,
-      sessionName,
-      branchName,
-      targetBranch,
-      timeoutMs,
-    } = params;
-
-    const repoConfig = await readRepoConfig(projectPath);
-    if (!repoConfig?.preMergeCommand) {
-      return {
-        executed: false,
-        pass: true,
-        stdout: "",
-        stderr: "",
-        output: "",
-        timedOut: false,
-        message: null,
-      };
-    }
-
-    const scriptPath = resolveValidationScriptPath(
-      projectPath,
-      repoConfig.preMergeCommand,
-    );
-
-    if (!existsSync(scriptPath)) {
-      throw new Error(`Pre-merge validation script not found: ${scriptPath}`);
-    }
-
-    logger.info("pre-merge.validation_start", {
-      sessionName,
-      scriptPath,
-      worktreePath,
-    });
-
-    try {
-      const result = await execFileAsync(scriptPath, [], {
-        cwd: worktreePath,
-        env: {
-          ...buildChildEnv(),
-          PROJECT_ROOT: worktreePath,
-          CLAUDE_PROJECT_DIR: projectPath,
-          WORKTREE_PATH: worktreePath,
-          SESSION_NAME: sessionName,
-          BRANCH_NAME: branchName,
-          ...(targetBranch ? { TARGET_BRANCH: targetBranch } : {}),
-        },
-        timeout: timeoutMs,
-      });
-
-      const stdout = result.stdout?.trim() ?? "";
-      const stderr = result.stderr?.trim() ?? "";
-      const output = [stderr, stdout].filter(Boolean).join("\n").trim();
-
-      return {
-        executed: true,
-        pass: true,
-        stdout,
-        stderr,
-        output,
-        timedOut: false,
-        message: null,
-        command: scriptPath,
-      };
-    } catch (err) {
-      const childErr = err as Error & {
-        stderr?: string;
-        stdout?: string;
-        killed?: boolean;
-      };
-      const stderr = childErr.stderr?.trim() ?? "";
-      const stdout = childErr.stdout?.trim() ?? "";
-      const output = [stderr, stdout].filter(Boolean).join("\n").trim();
-      const timedOut = childErr.killed === true;
-      const timeoutSec = Math.round((timeoutMs ?? 0) / 1000);
-
-      return {
-        executed: true,
-        pass: false,
-        stdout,
-        stderr,
-        output,
-        timedOut,
-        message: timedOut
-          ? `Pre-merge validation timed out after ${timeoutSec}s`
-          : "Pre-merge validation failed",
-        command: scriptPath,
-      };
-    }
-  }
+  const { existsSync, readFile } = deps;
 
   /** Read optional per-repo config */
   async function readRepoConfig(
@@ -196,10 +35,7 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     return perRepoConfigSchema.parse(JSON.parse(raw));
   }
 
-  return {
-    readRepoConfig,
-    executeRepoValidationCommand,
-  };
+  return { readRepoConfig };
 }
 
 // ============================================================
@@ -209,5 +45,3 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
 const defaultInstance = createRepoConfig();
 
 export const readRepoConfig = defaultInstance.readRepoConfig;
-export const executeRepoValidationCommand =
-  defaultInstance.executeRepoValidationCommand;

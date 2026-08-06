@@ -77,7 +77,7 @@ const workflowDefaults: WorkflowDefaults = {
       },
     ],
   },
-  scriptValidator: { enabled: false },
+  scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
@@ -93,6 +93,14 @@ const workflowDefaults: WorkflowDefaults = {
     },
     negotiationRounds: 3,
     autonomousResolutionThreshold: "minor",
+  },
+  agentValidation: {
+    implementer: { mode: "all", except: [] },
+    contextValidator: { mode: "only", commands: [] },
+  },
+  laneMergeValidation: {
+    strategy: "final-only",
+    commands: { mode: "project" },
   },
 };
 

@@ -885,6 +885,11 @@ export function createSpecSpineWorld(): SpecSpineWorld {
       message: "Publish the spec spine feature",
       executionId: SPINE_WORKFLOW_EXECUTION_ID,
       finalPublish: true,
+      validationMode: {
+        mode: "run",
+        source: "graph_lane_merge",
+        selection: { mode: "only", commands: [] },
+      },
     });
   }
 

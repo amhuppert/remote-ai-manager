@@ -1,5 +1,12 @@
 import { z } from "zod";
 import {
+  graphWorkflowAgentValidationOverrideSchema,
+  graphWorkflowLaneMergeValidationOverrideSchema,
+  graphWorkflowScriptValidatorConfigSchema,
+  type GraphWorkflowCommandSelector,
+  type GraphWorkflowLaneMergeValidationOverride,
+} from "@/lib/workflow-graph/config-schemas";
+import {
   formatOutputSchemaShape,
   summarizeOutputSchemaShape,
   type OutputSchemaShape,
@@ -11,13 +18,15 @@ import {
  * structure + identifiers + prose SIZES (never prose bodies), so addressing an
  * edit costs a few hundred tokens instead of the whole definition. The section
  * selectors return one full slice (prose included) for the piece the agent
- * intends to change. These parse a deliberately minimal, permissive local mirror
- * of the record — the CLI never imports the server schema graph — retaining
- * unknown keys (`.loose()`) so per-context config-override blocks survive for the
- * `--context` / `--config` slices.
+ * intends to change. Structural fields parse a deliberately minimal, permissive
+ * local mirror of the record, retaining unknown keys (`.loose()`) so per-context
+ * config-override blocks survive for the `--context` / `--config` slices. The
+ * validation selector blocks are the exception: those parse the foundation
+ * schemas from `@/lib/workflow-graph/config-schemas` (charter invariant
+ * contracts-from-foundation — selector shapes are never privately redefined).
  */
 
-/** The ten cascade override blocks, in the order the outline reports them. */
+/** The cascade override blocks, in the order the outline reports them. */
 const CONFIG_BLOCK_KEYS = [
   "implementer",
   "contextValidator",
@@ -29,6 +38,10 @@ const CONFIG_BLOCK_KEYS = [
   "collaboration",
   "humanApprovalGate",
   "askUserQuestions",
+  "agentValidation",
+  // Workflow tier only — never present on a context, but the shared key list
+  // is harmless there and keeps `--config` slicing uniform.
+  "laneMergeValidation",
 ] as const;
 
 /**
@@ -75,6 +88,51 @@ const outlineStaffingSchema = z.object({
   contextValidator: outlineValidatorCohortSchema.optional(),
 });
 
+/** `all-except format` / `only test` / `none` / `all` — the outline vocabulary. */
+export function formatCommandSelector(
+  selector: GraphWorkflowCommandSelector,
+): string {
+  if (selector.mode === "all") {
+    return selector.except.length > 0
+      ? `all-except ${selector.except.join("+")}`
+      : "all";
+  }
+  return selector.commands.length > 0
+    ? `only ${selector.commands.join("+")}`
+    : "none";
+}
+
+/**
+ * `final-only project` / `every-merge typecheck+test` / `final-only none` —
+ * the lane-merge vocabulary shared by the saved and live outline renderers.
+ * Accepts the override shape (resolved snapshots are assignable to it); an
+ * omitted strategy reads as the schema default.
+ */
+export function formatLaneMergeSelection(
+  laneMergeValidation: GraphWorkflowLaneMergeValidationOverride,
+): string {
+  const commands = laneMergeValidation.commands;
+  const selection =
+    !commands || commands.mode === "project"
+      ? "project"
+      : commands.commands.length > 0
+        ? commands.commands.join("+")
+        : "none";
+  return `${laneMergeValidation.strategy ?? "final-only"} ${selection}`;
+}
+
+// The selector blocks parse with the FOUNDATION schemas (charter invariant
+// contracts-from-foundation): the CLI renders exactly the shapes the server
+// validates, so the two can never drift. The wrapper stays `.loose()` so an
+// unrelated workflowConfig block never breaks the validation line.
+const validationSelectionsSchema = z
+  .object({
+    scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
+    agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
+    laneMergeValidation:
+      graphWorkflowLaneMergeValidationOverrideSchema.optional(),
+  })
+  .loose();
 const outlineContextSchema = z
   .object({
     id: z.string(),
@@ -390,7 +448,52 @@ export function renderOutline(record: OutlineRecord): string {
     `config overrides: workflow=${workflowOverrides} · contexts: ${contextOverrides}`,
   );
 
+  const validationLine = renderValidationSelections(
+    record.definition.workflowConfig,
+  );
+  if (validationLine) lines.push(validationLine);
+
   return `${lines.join("\n")}\n`;
+}
+
+/**
+ * The concrete workflow-tier validation selections (validation-concurrency §6):
+ * `validation: script typecheck+test · roles implementer all-except format,
+ * validator none · laneMerge final-only project`. Omitted entirely when the
+ * workflow config declares no selection.
+ */
+function renderValidationSelections(workflowConfig: unknown): string | null {
+  const parsed = validationSelectionsSchema.safeParse(workflowConfig ?? {});
+  if (!parsed.success) return null;
+  const { scriptValidator, agentValidation, laneMergeValidation } = parsed.data;
+
+  const parts: string[] = [];
+  if (scriptValidator) {
+    parts.push(
+      scriptValidator.commands.length > 0
+        ? `script ${scriptValidator.commands.join("+")}`
+        : "script none",
+    );
+  }
+  if (agentValidation) {
+    const roles: string[] = [];
+    if (agentValidation.implementer) {
+      roles.push(
+        `implementer ${formatCommandSelector(agentValidation.implementer)}`,
+      );
+    }
+    if (agentValidation.contextValidator) {
+      roles.push(
+        `validator ${formatCommandSelector(agentValidation.contextValidator)}`,
+      );
+    }
+    if (roles.length > 0) parts.push(`roles ${roles.join(", ")}`);
+  }
+  if (laneMergeValidation) {
+    parts.push(`laneMerge ${formatLaneMergeSelection(laneMergeValidation)}`);
+  }
+
+  return parts.length > 0 ? `validation: ${parts.join(" · ")}` : null;
 }
 
 // ============================================================

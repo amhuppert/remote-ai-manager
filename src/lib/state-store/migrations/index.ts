@@ -9,7 +9,11 @@ import { moveMachineSnapshotsToSidecar } from "./0007-move-machine-snapshots-to-
 import { addSpecAuthoringStage } from "./0008-add-spec-authoring-stage";
 import { narrowEvidenceKinds } from "./0009-narrow-evidence-kinds";
 import { freezeSpecExecutionLaunch } from "./0010-freeze-spec-execution-launch";
+import { addValidationRuns } from "./0011-add-validation-runs";
 import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
+import { validationCostExceedsLimitStatus } from "./0012-validation-cost-exceeds-limit-status";
+import { scriptValidatorCommands } from "./0013-script-validator-commands";
+import { validationRunSessionName } from "./0014-validation-run-session-name";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -28,7 +32,11 @@ export const migrations: readonly StateMigration[] = [
   addSpecAuthoringStage,
   narrowEvidenceKinds,
   freezeSpecExecutionLaunch,
+  addValidationRuns,
   workflowAgentAssignments,
+  validationCostExceedsLimitStatus,
+  scriptValidatorCommands,
+  validationRunSessionName,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

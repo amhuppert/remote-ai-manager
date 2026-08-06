@@ -68,8 +68,16 @@ import {
 } from "../validation-fix/actors";
 import { createValidationFixStates } from "../validation-fix/states";
 import { errorAssign } from "../utils";
+import type { RunMergeValidationMode } from "../validation-fix/types";
 
 const SCHEMA_VERSION = 1;
+
+function requireRunValidationMode(
+  context: MergeContext,
+): RunMergeValidationMode {
+  if (context.validationMode.mode === "run") return context.validationMode;
+  throw new Error("Merge validation routing invoked a skipped validation run");
+}
 
 function formatDeliveryGateRefusal(
   output: Extract<DeliveryGateActorOutput, { status: "refused" }>,
@@ -86,14 +94,25 @@ function formatDeliveryGateRefusal(
  * to `failed`; only autoResolve merges dispatch the fix agent.
  */
 const validationFixStates = createValidationFixStates<MergeContext>({
-  validateInput: (context) => ({
-    projectPath: context.projectPath,
-    worktreePath: context.worktreePath,
-    sessionName: context.sessionName,
-    branchName: context.branchName,
-    targetBranch: context.targetBranch,
-    timeoutMs: context.validationTimeoutMs,
-  }),
+  validateInput: (context) => {
+    const validationMode = requireRunValidationMode(context);
+    return {
+      source: validationMode.source,
+      selection: validationMode.selection,
+      projectPath: context.projectPath,
+      worktreePath: context.worktreePath,
+      sessionName: context.sessionName,
+      branchName: context.branchName,
+      targetBranch: context.targetBranch,
+      ...(context.conversationId !== null
+        ? { conversationId: context.conversationId }
+        : {}),
+      ...(context.validationWorkflow !== null
+        ? { workflow: context.validationWorkflow }
+        : {}),
+      timeoutMs: context.validationTimeoutMs,
+    };
+  },
   onValidated: {
     target: "preparing",
     actions: [
@@ -160,6 +179,7 @@ export const mergeMachine = setup({
     isDiscardEntry: ({ context }) => context.entryMode === "discard",
     isResolveConflictsJob: ({ context }) =>
       context.jobType === "resolve-conflicts",
+    shouldRunValidation: ({ context }) => context.validationMode.mode === "run",
     branchMatchesExpected: ({ context, event }) => {
       const e = event as unknown as { output: GetCurrentBranchOutput };
       return e.output.branch === context.branchName;
@@ -235,6 +255,7 @@ export const mergeMachine = setup({
     mergeHash: null,
     commitHash: null,
     validationTimeoutMs: input.validationTimeoutMs ?? 300_000,
+    validationMode: input.validationMode,
     fixAttempt: 0,
     maxFixAttempts: input.maxFixAttempts ?? 2,
     finalStatus: null,
@@ -249,6 +270,7 @@ export const mergeMachine = setup({
     maxCasAttempts: input.maxCasAttempts ?? 3,
     finalizeSessionOnPublish: input.finalizeSessionOnPublish ?? true,
     executionId: input.executionId ?? null,
+    validationWorkflow: input.validationWorkflow ?? null,
     candidateValidation: input.candidateValidation ?? null,
     haltReason: null,
   }),
@@ -351,7 +373,7 @@ export const mergeMachine = setup({
             }),
             target: "conflictsDetected",
           },
-          { target: "validating" },
+          { target: "validationRouting" },
         ],
         onError: { target: "failed", actions: errorAssign() },
       },
@@ -432,9 +454,16 @@ export const mergeMachine = setup({
           message: "resolve merge conflicts",
           skipHooks: true,
         }),
-        onDone: "validating",
+        onDone: "validationRouting",
         onError: { target: "failed", actions: errorAssign() },
       },
+    },
+
+    validationRouting: {
+      always: [
+        { guard: "shouldRunValidation", target: "validating" },
+        { target: "preparing" },
+      ],
     },
 
     // Shared validate → fix → check → commit-fix → revalidate fragment

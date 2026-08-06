@@ -346,6 +346,17 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl agent get` — read one agent profile, including its instructions
   - `cctl agent get <tier:id> [--json]`
 
+- `cctl validate` — list and run registered validation under the global cost budget
+  - `cctl validate <list|run|status|cancel>`
+- `cctl validate list` — list commands, policy enablement, and current capacity
+  - `cctl validate list [--json]`
+- `cctl validate run` — run one registered validation command
+  - `cctl validate run <name> [--wait] [--json] [-- <validated paths>]`
+- `cctl validate status` — inspect active validation or one run
+  - `cctl validate status [run-id] [--json]`
+- `cctl validate cancel` — cancel an owned validation run
+  - `cctl validate cancel <run-id> [--json]`
+
 - `cctl conversation` — read conversation transcripts and manage compaction artifacts
   - `cctl conversation <read|compact|compaction get|compaction list>`
 - `cctl conversation read` — render a bounded window of a transcript
@@ -481,6 +492,27 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl version`
 
 <!-- END GENERATED COMMAND REFERENCE -->
+
+## cctl validate
+
+List and execute the project's registered validation commands through the server-owned ValidationService and its global cost budget.
+
+```
+cctl validate list [--json]
+cctl validate run <name> [--wait] [--json] [-- <validated paths>]
+cctl validate status [run-id] [--json]
+cctl validate cancel <run-id> [--json]
+```
+
+- `list` shows stable command names, declared costs, descriptions, path-scope support, caller enablement, and current global capacity. It intentionally does not reveal executable paths.
+- `run` submits one registered name. Admission is fail-fast by default; `--wait` joins the strict weighted FIFO queue. A capacity refusal means systemic capacity or an older waiter currently blocks admission, not that the validation tool failed. A command whose declared cost exceeds the machine limit is invalid configuration and is rejected even with `--wait`.
+- Values after `--` may only narrow a command registered with path scoping. The server rejects option tokens, absolute paths, traversal, and worktree escapes, so callers cannot override workers, heap, pool, or configuration. Omit `--` entirely for a command that forbids scope arguments.
+- A command disabled for the caller's graph role exits successfully as a policy no-op, consumes no capacity, and spawns nothing. Do not retry it or bypass the policy.
+- `status` without an id lists active queued/running jobs and capacity; with an id it reports that run's queue or terminal state. `cancel` requires the submitter's private lease. A blocking `run` renews its lease and attempts cancellation on SIGINT/SIGTERM; lease expiry is the fallback for a dead client.
+
+Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, builds, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
+
+Use `cctl validate list` before assuming a conventional name such as `test`, `lint`, or `typecheck`; projects may register arbitrary kebab-case names. Use the `project-setup` skill when adding or changing registry entries and wrappers.
 
 ## cctl notify
 

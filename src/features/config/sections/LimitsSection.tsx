@@ -20,7 +20,7 @@ export function LimitsSection({
     <SettingsPage
       title="Limits &"
       accent="timeouts"
-      sub="Bounds for runaway agents, idle sessions and pre-merge automation."
+      sub="Bounds for runaway agents, idle sessions, validation load and merge automation."
     >
       <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-md rounded-lg border border-solid border-border-subtle bg-bg-surface px-[14px] pt-md pb-[14px] max-768:grid-cols-[1fr]">
         <ConfigField
@@ -58,6 +58,53 @@ export function LimitsSection({
               handleValidityChange("maxConcurrentQueries", valid)
             }
             resetKey={formRevision}
+            positive
+            integer
+          />
+        </ConfigField>
+        <ConfigField
+          label="Validation capacity"
+          fieldPath="validation.concurrencyLimit"
+          isDefault={isDefault("validation.concurrencyLimit")}
+          isModified={isModified("validation.concurrencyLimit")}
+          hint="Weighted machine budget. Running command costs cannot exceed this total."
+        >
+          <ConfigNumericInput
+            value={formState.validation?.concurrencyLimit}
+            onChange={(value) =>
+              handleChange("validation.concurrencyLimit", value)
+            }
+            name="validation.concurrencyLimit"
+            aria-label="Validation capacity"
+            aria-describedby="validation.concurrencyLimit-hint"
+            onValidityChange={(valid) =>
+              handleValidityChange("validation.concurrencyLimit", valid)
+            }
+            resetKey={formRevision}
+            positive
+            integer
+          />
+        </ConfigField>
+        <ConfigField
+          label="Validation timeout"
+          fieldPath="validation.defaultTimeoutMs"
+          isDefault={isDefault("validation.defaultTimeoutMs")}
+          isModified={isModified("validation.defaultTimeoutMs")}
+          hint="Minutes. Starts when the command process spawns; queue time is excluded."
+        >
+          <ConfigNumericInput
+            value={formState.validation?.defaultTimeoutMs}
+            onChange={(value) =>
+              handleChange("validation.defaultTimeoutMs", value)
+            }
+            name="validation.defaultTimeoutMs"
+            aria-label="Validation timeout"
+            aria-describedby="validation.defaultTimeoutMs-hint"
+            onValidityChange={(valid) =>
+              handleValidityChange("validation.defaultTimeoutMs", valid)
+            }
+            resetKey={formRevision}
+            displayAsMinutes
             positive
             integer
           />

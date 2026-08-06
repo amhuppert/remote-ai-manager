@@ -146,7 +146,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           },
         ],
       },
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["typecheck", "test"] },
       iterationPolicy: {
         maxIterations: 9,
         continuity: { enabled: false, contextLimitTokens: 80_000 },
@@ -174,6 +174,14 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
       },
       humanApprovalGate: { enabled: true },
       askUserQuestions: { enabled: true },
+      agentValidation: {
+        implementer: { mode: "all", except: ["format"] },
+        contextValidator: { mode: "only", commands: ["test"] },
+      },
+      laneMergeValidation: {
+        strategy: "every-merge",
+        commands: { mode: "only", commands: ["typecheck"] },
+      },
     },
     charter: makeTestCharter(),
     parameters: [
@@ -262,7 +270,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
             },
           ],
         },
-        scriptValidator: { enabled: true },
+        scriptValidator: { commands: ["typecheck"] },
         mutability: { allowAgentTaskAdd: true },
         circuitBreaker: { consecutiveFailureThreshold: 5 },
         iterationPolicy: {
@@ -290,6 +298,10 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: true },
+        agentValidation: {
+          implementer: { mode: "only", commands: ["typecheck", "test"] },
+          contextValidator: { mode: "all", except: ["format"] },
+        },
         // `taskValidation` is a removed CC config field name reused here as an
         // ordinary output property: the cutover guard runs on every definition
         // read, so this pins the outputSchema subtree as opaque to it.

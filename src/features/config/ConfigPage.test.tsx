@@ -59,6 +59,10 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
     },
     maxConcurrentQueries: 3,
     preMergeTimeoutMs: 300_000,
+    validation: {
+      concurrencyLimit: 8,
+      defaultTimeoutMs: 600_000,
+    },
     ignorePatterns: ["node_modules"],
     tailscaleEnabled: false,
     workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),
@@ -310,6 +314,60 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(screen.queryByText(/invalid field/i)).not.toBeInTheDocument();
   });
 
+  it("saves global validation settings as a sparse nested block", async () => {
+    await renderConfigPage();
+    selectSettingsTab("Limits & timeouts");
+
+    fireEvent.change(
+      screen.getByRole("textbox", {
+        name: "Validation capacity",
+      }),
+      { target: { value: "4" } },
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Validation timeout" }),
+      { target: { value: "15" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig()).toEqual({
+      baseDir: "/home/user/projects",
+      validation: {
+        concurrencyLimit: 4,
+        defaultTimeoutMs: 900_000,
+      },
+    });
+  });
+
+  it("reverts validation edits and clears validation errors", async () => {
+    await renderConfigPage();
+    selectSettingsTab("Limits & timeouts");
+
+    const concurrencyLimit = screen.getByRole("textbox", {
+      name: "Validation capacity",
+    });
+    const defaultTimeout = screen.getByRole("textbox", {
+      name: "Validation timeout",
+    });
+    fireEvent.change(concurrencyLimit, { target: { value: "4" } });
+    fireEvent.change(defaultTimeout, { target: { value: "0" } });
+
+    expect(screen.getByText(/1 invalid field/i)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Save changes/i }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revert" }));
+
+    expect(concurrencyLimit).toHaveValue("8");
+    expect(defaultTimeout).toHaveValue("10");
+    expect(defaultTimeout).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText(/invalid field/i)).not.toBeInTheDocument();
+  });
+
   it("wires the active section to a role=tabpanel", async () => {
     await renderConfigPage();
 
@@ -370,10 +428,10 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen.queryByRole("button", { name: /Implementer/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/^Implementer$/i)).toBeVisible();
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(9);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(11);
   });
 
-  it("renders all nine workflow default blocks at the page top level", async () => {
+  it("renders all eleven workflow default blocks at the page top level", async () => {
     await renderConfigPage();
     expandWorkflowDefaults();
 
@@ -382,6 +440,8 @@ describe("ConfigPage — Workflow Defaults", () => {
       "Collaboration",
       "Context validator",
       "Script validator",
+      "Agent validation",
+      "Lane-merge validation",
       "Ask user questions",
       "Iteration policy",
       "Circuit breaker",
@@ -397,7 +457,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
-    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(9);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(11);
   });
 
   it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", async () => {
@@ -579,7 +639,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     });
   });
 
-  it("marks the Script validator sub-section modified and saves only that block after enabling it", async () => {
+  it("marks the Script validator sub-section modified and saves only that block after selecting a command", async () => {
     const { container } = await renderConfigPage();
     expandWorkflowDefaults();
 
@@ -588,10 +648,14 @@ describe("ConfigPage — Workflow Defaults", () => {
     ) as HTMLElement;
     expect(scriptValidator.textContent).toContain("DEFAULT");
 
-    const toggle = scriptValidator.querySelector(
-      '[role="switch"]',
-    ) as HTMLElement;
-    fireEvent.click(toggle);
+    const input = scriptValidator.querySelector(
+      'input[aria-label="Add script validator command"]',
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "typecheck" } });
+    const addButton = Array.from(
+      scriptValidator.querySelectorAll("button"),
+    ).find((button) => button.textContent === "Add")!;
+    fireEvent.click(addButton);
 
     expect(scriptValidator.textContent).toContain("MODIFIED");
 
@@ -605,7 +669,73 @@ describe("ConfigPage — Workflow Defaults", () => {
     );
     const defaults = savedConfig().workflowDefaults;
     expect(defaults).toEqual({
-      scriptValidator: { enabled: true },
+      scriptValidator: { commands: ["typecheck"] },
+    });
+  });
+
+  it("marks Agent validation modified and saves only that block after a role selector edit", async () => {
+    const { container } = await renderConfigPage();
+    expandWorkflowDefaults();
+
+    const agentValidation = container.querySelector(
+      '[data-subsection="agentValidation"]',
+    ) as HTMLElement;
+    expect(agentValidation.textContent).toContain("DEFAULT");
+
+    const implementerField = agentValidation.querySelector(
+      '[data-field="workflowDefaults.agentValidation.implementer"]',
+    ) as HTMLElement;
+    const onlyRadio = Array.from(
+      implementerField.querySelectorAll('[role="radio"]'),
+    ).find((el) => el.textContent === "Only") as HTMLElement;
+    fireEvent.click(onlyRadio);
+
+    expect(agentValidation.textContent).toContain("MODIFIED");
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig().workflowDefaults).toEqual({
+      agentValidation: {
+        implementer: { mode: "only", commands: [] },
+        contextValidator: { mode: "only", commands: [] },
+      },
+    });
+  });
+
+  it("marks Lane-merge validation modified and saves only that block after a strategy edit", async () => {
+    const { container } = await renderConfigPage();
+    expandWorkflowDefaults();
+
+    const laneMerge = container.querySelector(
+      '[data-subsection="laneMergeValidation"]',
+    ) as HTMLElement;
+    expect(laneMerge.textContent).toContain("DEFAULT");
+
+    const strategyField = laneMerge.querySelector(
+      '[data-field="workflowDefaults.laneMergeValidation.strategy"]',
+    ) as HTMLElement;
+    const everyMerge = Array.from(
+      strategyField.querySelectorAll("button"),
+    ).find(
+      (el) => (el.textContent ?? "").trim() === "every-merge",
+    ) as HTMLElement;
+    fireEvent.click(everyMerge);
+
+    expect(laneMerge.textContent).toContain("MODIFIED");
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+
+    await vi.waitFor(() =>
+      expect(api.requestsTo("PUT", "/api/config")).toHaveLength(1),
+    );
+    expect(savedConfig().workflowDefaults).toEqual({
+      laneMergeValidation: {
+        strategy: "every-merge",
+        commands: { mode: "project" },
+      },
     });
   });
 });
