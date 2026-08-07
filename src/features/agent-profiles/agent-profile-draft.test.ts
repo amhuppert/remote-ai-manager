@@ -53,11 +53,18 @@ describe("validateAgentProfileDraft", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(Object.keys(result.errors).sort()).toEqual([
-      "description",
-      "instructions",
-      "name",
-    ]);
+    // Instructions are not among them: empty instructions are a no-op profile,
+    // which is a legitimate record — the identity fields are what a profile
+    // cannot go without.
+    expect(Object.keys(result.errors).sort()).toEqual(["description", "name"]);
+  });
+
+  it("accepts a draft with no instructions — a no-op profile authored by hand", () => {
+    const result = validateAgentProfileDraft({ ...VALID, instructions: "" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.content.instructions).toBe("");
   });
 
   it("refuses a duplicate tag with the schema's own message", () => {

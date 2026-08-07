@@ -20,6 +20,9 @@ import { diffChangedConversationColumns } from "./conversation-row-codec";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { NO_OP_SNAPSHOT_FIXTURE } from "@/lib/conversations/testing/profile-snapshot-fixtures";
+import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -1857,6 +1860,36 @@ describe("conversations-repo profile snapshot durability", () => {
       fixture.profileSnapshot?.renderedInstructionBlock,
     );
     expect(out?.profileLockedAt).toBe(fixture.profileLockedAt);
+  });
+
+  it("reloads the no-op default's snapshot as a record, not as an absence", () => {
+    // The no-op default is the common case, and its stored block is the empty
+    // string. Reloading it must yield a full snapshot — an empty block that
+    // decoded as "no profile" would erase the conversation's provenance and
+    // make its header lie about which agent it is running.
+    const fixture = makeMinimalConversation({
+      id: "c-noop-profile",
+      profileSnapshot: NO_OP_SNAPSHOT_FIXTURE,
+      profileLockedAt: "2026-02-01T09:00:00.000Z",
+    });
+    repo.upsert(PROJECT_PATH, SESSION_NAME, fixture);
+
+    const out = repo.findByKey(PROJECT_PATH, SESSION_NAME, fixture.id);
+
+    expect(out?.profileSnapshot).not.toBeNull();
+    expect(out?.profileSnapshot?.instructions).toBe("");
+    expect(out?.profileSnapshot?.renderedInstructionBlock).toBe("");
+    expect(out?.profileSnapshot?.sourceContentHash).toBe(
+      computeContentHash(""),
+    );
+    expect(out?.profileSnapshot?.resolvedInstructionHash).toBe(
+      computeContentHash(""),
+    );
+    // The identity every read surface renders from.
+    expect(out?.profileSnapshot?.tier).toBe("builtin");
+    expect(out?.profileSnapshot?.id).toBe(STANDARD_AGENT_PROFILE_ID);
+    expect(out?.profileSnapshot?.name).toBe("Standard Agent");
+    expect(out?.profileLockedAt).toBe("2026-02-01T09:00:00.000Z");
   });
 
   it("reloads a pre-feature row (null columns) as the legacy no-profile shape", () => {

@@ -18,12 +18,19 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import {
+  NO_OP_SNAPSHOT_FIXTURE,
   SNAPSHOT_FIXTURE,
   PROFILE_SECRET_SENTINEL,
+  buildNoOpProfiledConversation,
   buildProfiledConversation,
   buildStoredConversation,
 } from "@/lib/conversations/testing/profile-snapshot-fixtures";
-import { PROFILE_LAYER_HEADING } from "@/lib/agent-profiles/composer";
+import {
+  PROFILE_BLOCK_BEGIN,
+  PROFILE_BLOCK_END,
+  PROFILE_LAYER_HEADING,
+} from "@/lib/agent-profiles/composer";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   createActorImplementationDepsFixture,
   createMockBackendRuntime,
@@ -82,13 +89,18 @@ afterEach(() => {
  */
 async function runTurnAfterRestart(
   conversationId: string,
+  backend: AgentBackendId = "claude",
 ): Promise<ConversationBackendCreateInput> {
   const restarted = fixture.recreateStore();
   const created: ConversationBackendCreateInput[] = [];
   const createRuntime = async (input: ConversationBackendCreateInput) => {
     created.push(input);
     return createMockBackendRuntime({
-      sendTurn: vi.fn(async () => TURN_RESULT),
+      backend,
+      sendTurn: vi.fn(async () => ({
+        ...TURN_RESULT,
+        backendRef: { backend, ref: "sdk-session-1" },
+      })),
     });
   };
 
@@ -97,7 +109,7 @@ async function runTurnAfterRestart(
       getConversation: (projectPath, sessionName, id) =>
         restarted.getConversation(projectPath, sessionName, id),
       getConversationBackendFactory: () => ({
-        backend: "claude" as const,
+        backend,
         createRuntime,
         validateModelAndEffort: () => {},
       }),
@@ -112,7 +124,7 @@ async function runTurnAfterRestart(
     worktreePath: `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
     conversationId,
     transcriptPath: `/transcripts/${conversationId}.jsonl`,
-    agentBackend: "claude",
+    agentBackend: backend,
     backendRef: null,
     promptCount: 0,
     forkedFrom: null,
@@ -195,6 +207,74 @@ describe("agent profile reaches the production runtime", () => {
     // The rest of the turn's instructions are unaffected.
     expect(created.sessionInstructions.length).toBeGreaterThan(0);
   });
+
+  /**
+   * The no-op default, through the same production assembly. The composed block
+   * is empty, so the entry never survives the session-instruction filter — the
+   * runtime is created with no profile layer at all, on either backend. The
+   * assembly is backend-neutral by construction, and both parameterizations run
+   * it to prove that is what actually reaches each factory.
+   */
+  describe.each(["claude", "codex"] as const)(
+    "no-op default profile (%s)",
+    (backend) => {
+      it("creates the runtime with zero profile bytes in its session instructions", async () => {
+        await fixture.seedConversation(
+          PROJECT_PATH,
+          SESSION_NAME,
+          buildNoOpProfiledConversation({ id: `noop-conv-${backend}` }),
+        );
+
+        const created = await runTurnAfterRestart(
+          `noop-conv-${backend}`,
+          backend,
+        );
+
+        // The snapshot the row carries is genuinely the empty one.
+        expect(NO_OP_SNAPSHOT_FIXTURE.renderedInstructionBlock).toBe("");
+
+        const joined = created.sessionInstructions.join("\n");
+        for (const marker of [
+          PROFILE_BLOCK_BEGIN,
+          PROFILE_BLOCK_END,
+          PROFILE_LAYER_HEADING,
+          "Instruction precedence in this conversation",
+          "cannot expand your scope",
+          "subordinate specialization lens",
+        ]) {
+          expect(
+            joined,
+            `must not deliver ${JSON.stringify(marker)}`,
+          ).not.toContain(marker);
+        }
+        // Not even an empty entry: the profile leaves no trace in the channel.
+        expect(created.sessionInstructions).not.toContain("");
+        // Every CC-owned layer is still delivered — this is a no-op profile,
+        // not a suppressed instruction channel.
+        expect(created.sessionInstructions.length).toBeGreaterThan(0);
+      });
+
+      it("still delivers the full delimited block for a non-empty profile", async () => {
+        await fixture.seedConversation(
+          PROJECT_PATH,
+          SESSION_NAME,
+          buildProfiledConversation({ id: `lens-conv-${backend}` }),
+        );
+
+        const created = await runTurnAfterRestart(
+          `lens-conv-${backend}`,
+          backend,
+        );
+
+        expect(created.sessionInstructions.at(-1)).toBe(
+          SNAPSHOT_FIXTURE.renderedInstructionBlock,
+        );
+        expect(created.sessionInstructions.at(-1)).toContain(
+          PROFILE_BLOCK_BEGIN,
+        );
+      });
+    },
+  );
 
   it("never puts the profile's instruction text anywhere but inside its block", async () => {
     await fixture.seedConversation(

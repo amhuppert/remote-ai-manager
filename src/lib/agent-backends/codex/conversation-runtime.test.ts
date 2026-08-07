@@ -57,7 +57,10 @@ import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import { conversationProfileInstructionBlock } from "@/lib/conversations/conversation-profile";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
-import { findBuiltinAgentProfile } from "@/lib/agent-profiles/builtins";
+import {
+  findBuiltinAgentProfile,
+  STANDARD_AGENT_PROFILE_ID,
+} from "@/lib/agent-profiles/builtins";
 import type {
   AgentProfileSnapshot,
   ResolvedAgentProfile,
@@ -2263,6 +2266,49 @@ describe("CodexConversationRuntime", () => {
         input.indexOf(USER_REQUEST),
       );
       expect(deliveredProfileLayer(input)).not.toContain(USER_REQUEST);
+    });
+
+    /**
+     * R3.3 / R9.7 — the no-op default delivers nothing on this backend.
+     *
+     * The block comes from the shipped `standard-agent` record through the same
+     * persisted seam, and it is handed to the runtime UNFILTERED: production
+     * drops the empty entry before it gets here (proved in
+     * `profile-runtime-replay.integration.test.ts`), so delivering it anyway
+     * proves the Codex "## System Instructions" frame cannot manufacture a
+     * profile layer either.
+     */
+    it("delivers zero profile bytes for the no-op default (R3.3)", async () => {
+      const standard = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
+      if (standard === undefined) throw new Error("missing built-in");
+
+      const { input, snapshot } = await deliverPersistedProfile(
+        resolvedProfile(standard.instructions, {
+          id: standard.id,
+          name: standard.name,
+          revision: standard.revision,
+        }),
+      );
+
+      expect(snapshot.renderedInstructionBlock).toBe("");
+      for (const marker of [
+        PROFILE_BLOCK_BEGIN,
+        PROFILE_BLOCK_END,
+        PROFILE_LAYER_HEADING,
+        "Instruction precedence in this conversation",
+        "cannot expand your scope",
+        `Profile: ${standard.name}`,
+      ]) {
+        expect(
+          input,
+          `must not deliver ${JSON.stringify(marker)}`,
+        ).not.toContain(marker);
+      }
+      // The transport's own frame and the CC-owned layers are untouched.
+      expect(input).toContain("## System Instructions");
+      expect(input).toContain(CHARTER_LAYER);
+      expect(input).toContain(ROLE_HARNESS_LAYER);
+      expect(input).toContain(USER_REQUEST);
     });
 
     it("contains a hostile PERSISTED profile the same way (R9.5)", async () => {

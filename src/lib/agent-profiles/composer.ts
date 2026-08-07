@@ -44,7 +44,11 @@ export interface ComposeProfileBlockOptions {
 }
 
 export interface ComposedProfileBlock {
-  /** The complete rendered profile layer, delivered as one instruction entry. */
+  /**
+   * The complete rendered profile layer, delivered as one instruction entry —
+   * empty for a profile with no instruction content, which the session
+   * instruction channel then drops along with every other empty entry.
+   */
   block: string;
   /** `sha256:<hex>` over exactly `block`. */
   resolvedInstructionHash: ContentHash;

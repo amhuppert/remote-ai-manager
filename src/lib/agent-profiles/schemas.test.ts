@@ -4,6 +4,7 @@ import {
   agentProfileSchema,
   agentProfileRefSchema,
   agentProfileSnapshotSchema,
+  resolvedAgentProfileSchema,
   redactedAgentProfileSnapshotSchema,
   agentProfileTierSchema,
   parseAgentProfileRef,
@@ -40,7 +41,7 @@ describe("agentProfileSchema — identity fields (R1.1)", () => {
       revision: 1,
       name: "Standard Agent",
       description: "The Command Center default.",
-      instructions: "Work as Command Center's general-purpose agent.",
+      instructions: "Read the request as written and follow the conventions.",
     });
 
     expect(parsed.recommendedFor).toEqual([]);
@@ -126,7 +127,7 @@ describe("agentProfileSchema — identity fields (R1.1)", () => {
     }
   });
 
-  it("requires a non-empty name, description, and instructions", () => {
+  it("requires a non-empty name and description", () => {
     expect(
       agentProfileSchema.safeParse({ ...validProfile, name: "" }).success,
     ).toBe(false);
@@ -134,10 +135,18 @@ describe("agentProfileSchema — identity fields (R1.1)", () => {
       agentProfileSchema.safeParse({ ...validProfile, description: "" })
         .success,
     ).toBe(false);
-    expect(
-      agentProfileSchema.safeParse({ ...validProfile, instructions: "" })
-        .success,
-    ).toBe(false);
+  });
+
+  it("accepts empty instructions — a no-op profile is a real record", () => {
+    const parsed = agentProfileSchema.parse({
+      ...validProfile,
+      instructions: "",
+    });
+
+    expect(parsed.instructions).toBe("");
+    // Identity is unaffected: only the prompt bytes are absent.
+    expect(parsed.name).toBe(validProfile.name);
+    expect(parsed.description).toBe(validProfile.description);
   });
 
   it("requires a positive integer revision", () => {
@@ -375,6 +384,30 @@ describe("profile snapshots", () => {
 
   it("accepts the private snapshot with both hashes and both instruction fields", () => {
     expect(agentProfileSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+  });
+
+  it("accepts a no-op profile's snapshot: empty instructions and an empty rendered block", () => {
+    const parsed = agentProfileSnapshotSchema.parse({
+      ...snapshot,
+      instructions: "",
+      renderedInstructionBlock: "",
+    });
+
+    expect(parsed.instructions).toBe("");
+    expect(parsed.renderedInstructionBlock).toBe("");
+  });
+
+  it("resolves a no-op profile as a valid composer input", () => {
+    const parsed = resolvedAgentProfileSchema.parse({
+      tier: "builtin",
+      id: "standard-agent",
+      name: "Standard Agent",
+      revision: 1,
+      sourceContentHash: `sha256:${"a".repeat(64)}`,
+      instructions: "",
+    });
+
+    expect(parsed.instructions).toBe("");
   });
 
   it("rejects unknown snapshot fields and malformed hashes", () => {

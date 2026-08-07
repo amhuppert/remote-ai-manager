@@ -84,7 +84,10 @@ export const agentProfileSchema = z
     // Required and non-empty: the library is machine-discoverable by
     // description, so a planning agent staffs assignments by reading this.
     description: z.string().min(1),
-    instructions: z.string().min(1),
+    // May be empty: a profile with no instruction content is a no-op lens —
+    // a real, selectable, named record that composes to no prompt bytes at all
+    // (see `renderProfileBlock`). Identity lives in the fields above it.
+    instructions: z.string(),
     recommendedFor: z
       .array(agentProfileAudienceSchema)
       .refine((values) => new Set(values).size === values.length, {
@@ -255,7 +258,8 @@ export const resolvedAgentProfileSchema = z
     name: z.string().min(1),
     revision: z.number().int().positive(),
     sourceContentHash: contentHashSchema,
-    instructions: z.string().min(1),
+    /** Empty for a no-op profile, which the composer renders as no block. */
+    instructions: z.string(),
   })
   .strict();
 export type ResolvedAgentProfile = z.infer<typeof resolvedAgentProfileSchema>;
@@ -264,11 +268,12 @@ export type ResolvedAgentProfile = z.infer<typeof resolvedAgentProfileSchema>;
  * The private snapshot a consumer persists so later library edits never change
  * live work. It stores the rendered block verbatim: restart replays exactly
  * what was delivered, which is why `resolvedInstructionHash` can never drift
- * from what the model actually received.
+ * from what the model actually received. Verbatim includes the empty string —
+ * a no-op profile delivered no bytes, and that is what its snapshot records.
  */
 export const agentProfileSnapshotSchema = resolvedAgentProfileSchema
   .extend({
-    renderedInstructionBlock: z.string().min(1),
+    renderedInstructionBlock: z.string(),
     resolvedInstructionHash: contentHashSchema,
   })
   .strict();

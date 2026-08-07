@@ -1,6 +1,20 @@
 import "./vitest.setup";
-import "@testing-library/jest-dom/vitest";
+import { expect } from "vitest";
+import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 import { configure } from "@testing-library/dom";
+
+// Register jest-dom against the `expect` this setup file resolves, rather than
+// importing "@testing-library/jest-dom/vitest". That entry does its own
+// `import { expect } from "vitest"`, and Vite externalizes it, so it binds to
+// whichever physical vitest copy sits nearest the config root. A session
+// worktree carries its own node_modules (worktree-init.sh runs `bun install`)
+// while the validation wrapper executes the main worktree's launcher, so the
+// runner and that entry can resolve two different vitest/chai instances —
+// jest-dom then extends a chai the tests never assert through, and every
+// matcher fails as `Invalid Chai property: toBeInTheDocument`. The matchers
+// module is pure (no vitest import), so extending it here always lands on the
+// instance the tests use.
+expect.extend(jestDomMatchers);
 
 // Canonical Markdown surfaces render through a deferred (dynamic-import) adapter
 // that paints a `data-markdown-fallback` placeholder first, so `waitFor`/`findBy`

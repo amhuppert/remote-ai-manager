@@ -10,7 +10,11 @@ import {
   assertMutableProfileTier,
   AgentProfileTierReadOnlyError,
 } from "./schemas";
-import { composeProfileBlock, findReservedSequence } from "./composer";
+import {
+  composeProfileBlock,
+  findReservedSequence,
+  PROFILE_BLOCK_BEGIN,
+} from "./composer";
 import { computeContentHash } from "./hashing";
 
 const EXPECTED_IDS = [
@@ -53,12 +57,28 @@ describe("built-in agent profiles (R3.1)", () => {
     }
   });
 
-  it("carries an explicit instruction block for standard-agent — the named default, not a null path", () => {
+  it("ships standard-agent with empty instructions — the no-op default", () => {
     const standard = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
 
     expect(standard).toBeDefined();
-    expect(standard?.instructions.trim().length ?? 0).toBeGreaterThan(0);
+    expect(standard?.instructions).toBe("");
+    expect(agentProfileSchema.safeParse(standard).success).toBe(true);
+  });
+
+  it("keeps the no-op default's identity: name, description, audiences, tags", () => {
+    const standard = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
+
+    expect(standard?.name).toBe("Standard Agent");
+    expect(standard?.description.trim().length ?? 0).toBeGreaterThan(30);
     expect(standard?.recommendedFor).toContain("conversation");
+    expect(standard?.tags).toContain("default");
+  });
+
+  it("gives every specialized built-in explicit instructions", () => {
+    for (const profile of BUILTIN_AGENT_PROFILES) {
+      if (profile.id === STANDARD_AGENT_PROFILE_ID) continue;
+      expect(profile.instructions.trim().length, profile.id).toBeGreaterThan(0);
+    }
   });
 
   it("recommends each reviewer profile to workflow validators", () => {
@@ -90,7 +110,14 @@ describe("built-in agent profiles (R3.1)", () => {
         instructions: profile.instructions,
       });
 
-      expect(block, profile.id).toContain(profile.instructions);
+      if (profile.id === STANDARD_AGENT_PROFILE_ID) {
+        // The no-op default composes to nothing at all — see the empty-content
+        // rule in composer.test.ts.
+        expect(block).toBe("");
+      } else {
+        expect(block, profile.id).toContain(profile.instructions);
+        expect(block, profile.id).toContain(PROFILE_BLOCK_BEGIN);
+      }
       expect(resolvedInstructionHash).toBe(computeContentHash(block));
     }
   });

@@ -51,9 +51,26 @@ describe("resolveConversationProfileSnapshot", () => {
     expect(snapshot.tier).toBe("builtin");
     expect(snapshot.id).toBe(STANDARD_AGENT_PROFILE_ID);
     expect(snapshot.name).toBe("Standard Agent");
-    // An explicit default, not an absent one: the snapshot carries a rendered
-    // block and a hash covering it exactly as a chosen profile would (R7).
+    // A named default, not an absent one: the snapshot is a full record with
+    // identity and provenance (R7). Its content is empty, so the block it
+    // delivers is empty and both hashes cover exactly that (R3.3).
+    expect(snapshot.instructions).toBe("");
+    expect(snapshot.renderedInstructionBlock).toBe("");
+    expect(snapshot.sourceContentHash).toBe(computeContentHash(""));
+    expect(computeContentHash(snapshot.renderedInstructionBlock)).toBe(
+      snapshot.resolvedInstructionHash,
+    );
+  });
+
+  it("still renders a full block for a non-empty built-in", async () => {
+    const snapshot = await resolveConversationProfileSnapshot(
+      PROJECT_PATH,
+      { tier: "builtin", id: "security-reviewer" },
+      libraryDeps,
+    );
+
     expect(snapshot.renderedInstructionBlock.length).toBeGreaterThan(0);
+    expect(snapshot.renderedInstructionBlock).toContain(snapshot.instructions);
     expect(computeContentHash(snapshot.renderedInstructionBlock)).toBe(
       snapshot.resolvedInstructionHash,
     );

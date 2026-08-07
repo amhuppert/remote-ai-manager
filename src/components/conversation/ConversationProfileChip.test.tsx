@@ -12,8 +12,10 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { toPublicConversationState } from "@/lib/conversations/schemas";
 import {
+  NO_OP_SNAPSHOT_FIXTURE,
   PROFILE_SECRET_SENTINEL,
   SNAPSHOT_FIXTURE,
+  buildNoOpProfiledConversation,
   buildProfiledConversation,
   buildStoredConversation,
 } from "@/lib/conversations/testing/profile-snapshot-fixtures";
@@ -43,6 +45,25 @@ describe("ConversationProfileChip", () => {
     // Stated, not implied by an absent chip — a missing element would read as
     // "still loading" to a user and would satisfy no part of R6.5.
     expect(chip).toBeVisible();
+  });
+
+  // R3.3 identity-without-prompt-bytes: the no-op default delivers nothing to
+  // the model, and it still reads as a named profile here. Identity comes from
+  // the snapshot's fields, not from the instructions it no longer carries, so a
+  // conversation under the default is never confused with a legacy one.
+  it("names the no-op default as a profile, not as an absence", () => {
+    renderChipFor(buildNoOpProfiledConversation({ id: "noop-conv" }));
+
+    const chip = screen.getByLabelText(
+      "Agent profile: Standard Agent (Built-in)",
+    );
+    expect(chip).toHaveTextContent("Standard Agent");
+    expect(chip).toHaveAttribute("data-state", "profile");
+    expect(chip).toHaveAttribute("data-tier", "builtin");
+    expect(chip).toHaveAttribute(
+      "title",
+      `Agent profile builtin:standard-agent, revision ${NO_OP_SNAPSHOT_FIXTURE.revision}`,
+    );
   });
 
   // R8.2, driven from a non-default project-tier profile: the header names the

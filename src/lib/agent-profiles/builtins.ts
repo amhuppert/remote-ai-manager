@@ -19,11 +19,11 @@ const STANDARD_AGENT: AgentProfile = {
   name: "Standard Agent",
   description:
     "Command Center's default agent. No specialization: work the request as given, with the project's own conventions as the guide. Pick this when no specialist lens fits.",
-  // The named default carries an explicit block rather than an empty string, so
-  // "no profile selected" and "the default profile" render the same way and the
-  // default is a choice a user can see, not an absence.
-  instructions:
-    "Work as Command Center's general-purpose agent. Follow the project's stated conventions and the request as written, ask when a consequential choice is genuinely ambiguous, and report what you did and how you verified it. Apply no specialization beyond that.",
+  // The default is a no-op lens: its visible-choice property lives in
+  // selection, the conversation snapshot, and the header identity, never in
+  // prompt bytes. Empty content composes to no block at all, so choosing the
+  // default costs an agent nothing and specialization stays opt-in.
+  instructions: "",
   recommendedFor: [
     "conversation",
     "workflow_implementer",

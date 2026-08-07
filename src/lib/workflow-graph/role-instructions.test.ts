@@ -78,6 +78,18 @@ describe("composeWorkflowRoleInstructions", () => {
     ).toBe(roleContract);
   });
 
+  it("is the role contract alone for a no-op profile's empty block", () => {
+    const roleContract = buildValidatorRoleContract({
+      verdictSchema: VERDICT_SCHEMA,
+    });
+
+    // A profile that composes to nothing costs the role nothing — not even the
+    // separator that would otherwise mark where a lens used to be.
+    expect(
+      composeWorkflowRoleInstructions({ roleContract, profileBlock: "" }),
+    ).toBe(roleContract);
+  });
+
   it("states the scope, read-only, and verdict-schema rules the harness enforces", () => {
     const contract = buildValidatorRoleContract({
       verdictSchema: VERDICT_SCHEMA,

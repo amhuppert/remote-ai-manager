@@ -4,6 +4,11 @@ import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 
+import {
+  findBuiltinAgentProfile,
+  STANDARD_AGENT_PROFILE_ID,
+} from "@/lib/agent-profiles/builtins";
+
 import AgentProfileEditor, {
   type AgentProfileEditorProps,
 } from "./AgentProfileEditor";
@@ -18,18 +23,22 @@ const editableDraft = {
   tagsText: "style, implementation",
 } satisfies AgentProfileDraft;
 
+/**
+ * The shipped default, read from the built-in record so the read-only story
+ * shows what the library actually holds — including its empty instructions,
+ * which is how a no-op profile reads in the editor.
+ */
+const standardAgent = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
+if (standardAgent === undefined) {
+  throw new Error("the standard-agent built-in is missing");
+}
+
 const readOnlyDraft = {
-  name: "Standard Agent",
-  description:
-    "Command Center's default agent for work without a specialist lens.",
-  instructions:
-    "Work as Command Center's general-purpose agent. Follow the project's stated conventions and the request as written.",
-  recommendedFor: [
-    "conversation",
-    "workflow_implementer",
-    "workflow_validator",
-  ],
-  tagsText: "default, general",
+  name: standardAgent.name,
+  description: standardAgent.description,
+  instructions: standardAgent.instructions,
+  recommendedFor: [...standardAgent.recommendedFor],
+  tagsText: standardAgent.tags.join(", "),
 } satisfies AgentProfileDraft;
 
 function EditorFrame(props: AgentProfileEditorProps): React.JSX.Element {

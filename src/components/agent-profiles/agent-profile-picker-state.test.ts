@@ -9,6 +9,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  findBuiltinAgentProfile,
+  STANDARD_AGENT_PROFILE_ID,
+} from "@/lib/agent-profiles/builtins";
 import type { AgentProfileLibraryItem } from "@/lib/agent-profiles/schemas";
 
 import { agentProfileTierPresentation } from "./agent-profile-tier";
@@ -54,6 +58,22 @@ describe("buildAgentProfilePickerGroups", () => {
     });
     // A selectable default, not a nullable "no profile" state (R7).
     expect(options[0]?.ref).toEqual(STANDARD_AGENT_PROFILE_REF);
+  });
+
+  it("describes the pre-listing default exactly as the built-in record does", () => {
+    const standard = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
+    if (standard === undefined) throw new Error("missing built-in");
+
+    const fallback = buildAgentProfilePickerGroups([]).flatMap(
+      (group) => group.options,
+    )[0];
+
+    // The listing's own record replaces this option when it arrives, so a
+    // fallback that said something else would make the default's description
+    // change under the author mid-query.
+    expect(fallback?.name).toBe(standard.name);
+    expect(fallback?.description).toBe(standard.description);
+    expect(fallback?.recommendedFor).toEqual(standard.recommendedFor);
   });
 
   it("puts the Standard Agent first and never repeats it once the library lists it", () => {

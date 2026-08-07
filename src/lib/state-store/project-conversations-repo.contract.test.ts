@@ -8,6 +8,9 @@ import {
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { NO_OP_SNAPSHOT_FIXTURE } from "@/lib/conversations/testing/profile-snapshot-fixtures";
+import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
+import { computeContentHash } from "@/lib/agent-profiles/hashing";
 
 type Db = InstanceType<typeof Database>;
 
@@ -247,6 +250,33 @@ describe("project-conversations-repo profile snapshot durability", () => {
       fixture.profileSnapshot?.renderedInstructionBlock,
     );
     expect(out?.profileLockedAt).toBe(fixture.profileLockedAt);
+  });
+
+  it("reloads the no-op default's snapshot as a record, not as an absence", () => {
+    // Same rule as the session repo: an empty stored block is a value, and a
+    // project conversation under the named default keeps its provenance.
+    const fixture = conversationStateSchema.parse({
+      id: "noop-plc",
+      scope: "project",
+      transcriptPath: null,
+      status: "awaiting",
+      promptCount: 0,
+      createdAt: "2026-01-01T00:00:00Z",
+      lastActivityAt: "2026-01-01T00:00:00Z",
+      profileSnapshot: NO_OP_SNAPSHOT_FIXTURE,
+      profileLockedAt: "2026-02-01T09:00:00.000Z",
+    });
+    repo.upsert(PROJECT_PATH, fixture);
+
+    const out = repo.findByKey(PROJECT_PATH, fixture.id);
+
+    expect(out?.profileSnapshot).not.toBeNull();
+    expect(out?.profileSnapshot?.renderedInstructionBlock).toBe("");
+    expect(out?.profileSnapshot?.resolvedInstructionHash).toBe(
+      computeContentHash(""),
+    );
+    expect(out?.profileSnapshot?.id).toBe(STANDARD_AGENT_PROFILE_ID);
+    expect(out?.profileSnapshot?.name).toBe("Standard Agent");
   });
 
   it("reloads a pre-feature row (null columns) as the legacy no-profile shape", () => {

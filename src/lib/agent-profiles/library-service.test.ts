@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { buildAgentProfileSnapshot } from "./composer";
 import { computeContentHash } from "./hashing";
-import { findBuiltinAgentProfile } from "./builtins";
+import { findBuiltinAgentProfile, STANDARD_AGENT_PROFILE_ID } from "./builtins";
 import {
   AgentProfileTierReadOnlyError,
   deriveAgentProfileId,
@@ -851,6 +851,38 @@ describe("agent profile library — duplicate to scope (R3.2)", () => {
 
     expect(copy.id).toBe("hardened-security-reviewer");
     expect(copy.revision).toBe(1);
+  });
+
+  it("copies the no-op default into an editable empty-content record (R3.3)", async () => {
+    const copy = await library.duplicateToScope({
+      projectPath: PROJECT_PATH,
+      source: { tier: "builtin", id: STANDARD_AGENT_PROFILE_ID },
+      targetTier: "project",
+    });
+
+    expect(copy.instructions).toBe("");
+    expect(copy.readOnly).toBe(false);
+    expect(copy.name).toBe(
+      findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID)?.name,
+    );
+
+    // The empty copy is a stored record like any other: it resolves, carries a
+    // hash over its (empty) content, and takes an edit.
+    const stored = await library.resolve(
+      PROJECT_PATH,
+      refOf("project", STANDARD_AGENT_PROFILE_ID),
+    );
+    expect(stored.instructions).toBe("");
+    expect(stored.sourceContentHash).toBe(computeContentHash(""));
+
+    const edited = await library.update({
+      projectPath: PROJECT_PATH,
+      ref: refOf("project", STANDARD_AGENT_PROFILE_ID),
+      expectedRevision: 1,
+      content: authoring({ instructions: "My own default lens." }),
+    });
+    expect(edited.instructions).toBe("My own default lens.");
+    expect(edited.revision).toBe(2);
   });
 
   it("refuses duplicating a reference that does not resolve", async () => {

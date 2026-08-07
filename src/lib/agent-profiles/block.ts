@@ -166,11 +166,21 @@ export interface RenderProfileBlockOptions {
  * byte-identical frame and differs only in the profile content it carries. The
  * frame above the BEGIN marker never varies with profile content or focus,
  * which is what keeps hostile text of either origin inside its block.
+ *
+ * A profile with no instruction content renders NOTHING — not an empty frame,
+ * not a bare wrapper. The frame exists to contain and subordinate profile
+ * content; with no content there is nothing to contain, and a consumer that
+ * selected such a profile must pay zero prompt bytes for it. The rule is
+ * content emptiness alone: no profile's identity is ever special-cased here.
+ * A use-site focus narrows a profile, so it goes with the block it would have
+ * been a sub-section of.
  */
 export function renderProfileBlock(
   profile: ResolvedAgentProfile,
   options: RenderProfileBlockOptions = {},
 ): string {
+  if (profile.instructions.trim() === "") return "";
+
   const collision = findReservedSequence(profile.instructions);
   if (collision !== null) {
     throw new AgentProfileInstructionCollisionError(collision);

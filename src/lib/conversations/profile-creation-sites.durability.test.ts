@@ -91,15 +91,17 @@ async function reloadProjectConversation(
  * What every construction site owes: a real snapshot whose rendered block is
  * the composer's output and whose hash covers exactly those bytes, and no lock
  * yet — the profile stays changeable until the first turn is admitted (R8).
+ *
+ * The block a no-op profile composes to is empty, so what is invariant across
+ * every site is the hash covering the stored block, not the block's shape. The
+ * shape is asserted per case: a named default stores the empty string, a
+ * profile with content stores the delimited layer.
  */
 function expectUnlockedSnapshot(
   conversation: ConversationState,
 ): AgentProfileSnapshot {
   const snapshot = conversation.profileSnapshot ?? null;
   expect(snapshot).not.toBeNull();
-  expect(
-    snapshot!.renderedInstructionBlock.startsWith(PROFILE_LAYER_HEADING),
-  ).toBe(true);
   expect(computeContentHash(snapshot!.renderedInstructionBlock)).toBe(
     snapshot!.resolvedInstructionHash,
   );
@@ -107,18 +109,36 @@ function expectUnlockedSnapshot(
   return snapshot!;
 }
 
+/** The no-op default as it must persist: identity present, zero prompt bytes. */
+function expectNoOpDefaultSnapshot(snapshot: AgentProfileSnapshot): void {
+  expect(snapshot.tier).toBe("builtin");
+  expect(snapshot.id).toBe(STANDARD_AGENT_PROFILE_ID);
+  expect(snapshot.name).toBe("Standard Agent");
+  expect(snapshot.revision).toBeGreaterThan(0);
+  expect(snapshot.instructions).toBe("");
+  expect(snapshot.renderedInstructionBlock).toBe("");
+  expect(snapshot.sourceContentHash).toBe(computeContentHash(""));
+  expect(snapshot.resolvedInstructionHash).toBe(computeContentHash(""));
+}
+
+/** A profile with content still persists the whole delimited layer. */
+function expectRenderedBlockSnapshot(snapshot: AgentProfileSnapshot): void {
+  expect(
+    snapshot.renderedInstructionBlock.startsWith(PROFILE_LAYER_HEADING),
+  ).toBe(true);
+  expect(snapshot.renderedInstructionBlock).toContain(snapshot.instructions);
+}
+
 describe("session conversation creation", () => {
-  it("persists the explicit Standard Agent snapshot when no selection is made", async () => {
+  it("persists the named Standard Agent snapshot when no selection is made", async () => {
     const created = await conversationService().createConversation(
       PROJECT_PATH,
       SESSION_NAME,
     );
 
-    const snapshot = expectUnlockedSnapshot(
-      await reloadSessionConversation(created.id),
+    expectNoOpDefaultSnapshot(
+      expectUnlockedSnapshot(await reloadSessionConversation(created.id)),
     );
-    expect(snapshot.tier).toBe("builtin");
-    expect(snapshot.id).toBe(STANDARD_AGENT_PROFILE_ID);
   });
 
   it("persists the caller's selection when one is supplied", async () => {
@@ -133,6 +153,7 @@ describe("session conversation creation", () => {
     );
     expect(snapshot.id).toBe("security-reviewer");
     expect(snapshot.name).toBe("Security Reviewer");
+    expectRenderedBlockSnapshot(snapshot);
   });
 
   it("refuses to create a conversation under a profile that does not resolve", async () => {
@@ -164,25 +185,24 @@ describe("initialization finalization", () => {
       SESSION_NAME,
     );
 
-    const snapshot = expectUnlockedSnapshot(
-      await reloadSessionConversation(finalized.conversationId),
+    expectNoOpDefaultSnapshot(
+      expectUnlockedSnapshot(
+        await reloadSessionConversation(finalized.conversationId),
+      ),
     );
-    expect(snapshot.id).toBe(STANDARD_AGENT_PROFILE_ID);
   });
 });
 
 describe("project conversation creation", () => {
-  it("persists the explicit Standard Agent snapshot when no selection is made", async () => {
+  it("persists the named Standard Agent snapshot when no selection is made", async () => {
     const created =
       await projectConversationService().createProjectConversation(
         PROJECT_PATH,
       );
 
-    const snapshot = expectUnlockedSnapshot(
-      await reloadProjectConversation(created.id),
+    expectNoOpDefaultSnapshot(
+      expectUnlockedSnapshot(await reloadProjectConversation(created.id)),
     );
-    expect(snapshot.tier).toBe("builtin");
-    expect(snapshot.id).toBe(STANDARD_AGENT_PROFILE_ID);
   });
 
   it("persists the caller's selection when one is supplied", async () => {
@@ -196,5 +216,6 @@ describe("project conversation creation", () => {
       await reloadProjectConversation(created.id),
     );
     expect(snapshot.id).toBe("general-implementer");
+    expectRenderedBlockSnapshot(snapshot);
   });
 });

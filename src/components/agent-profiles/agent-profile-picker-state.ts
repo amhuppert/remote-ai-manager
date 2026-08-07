@@ -1,4 +1,7 @@
-import { STANDARD_AGENT_PROFILE_ID } from "@/lib/agent-profiles/builtins";
+import {
+  findBuiltinAgentProfile,
+  STANDARD_AGENT_PROFILE_ID,
+} from "@/lib/agent-profiles/builtins";
 import {
   formatAgentProfileRef,
   parseAgentProfileRef,
@@ -57,19 +60,27 @@ const TIER_ORDER: readonly AgentProfileTier[] = [
 
 /**
  * The Standard Agent as an option, for the window before the listing resolves.
- * Its description is stated here rather than read from the built-in record so
- * the picker has a complete default with no data in hand — the same reason the
- * default reference is a constant instead of a lookup.
+ *
+ * Read from the built-in record, which is a shipped constant rather than
+ * fetched data: the picker still has a complete default with nothing in hand,
+ * and the option the listing later supplies says the same thing, so the
+ * default's description cannot change under the author mid-query.
  */
-const STANDARD_AGENT_FALLBACK: AgentProfilePickerOption = {
-  value: STANDARD_AGENT_PROFILE_VALUE,
-  ref: STANDARD_AGENT_PROFILE_REF,
-  name: "Standard Agent",
-  description: "Command Center's default agent, with no specialization lens.",
-  tier: "builtin",
-  recommendedFor: ["conversation"],
-  isStandardAgent: true,
-};
+const STANDARD_AGENT_FALLBACK: AgentProfilePickerOption = (() => {
+  const standard = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
+  if (standard === undefined) {
+    throw new Error("the standard-agent built-in is missing");
+  }
+  return {
+    value: STANDARD_AGENT_PROFILE_VALUE,
+    ref: STANDARD_AGENT_PROFILE_REF,
+    name: standard.name,
+    description: standard.description,
+    tier: "builtin",
+    recommendedFor: standard.recommendedFor,
+    isStandardAgent: true,
+  };
+})();
 
 function toOption(item: AgentProfileLibraryItem): AgentProfilePickerOption {
   return {

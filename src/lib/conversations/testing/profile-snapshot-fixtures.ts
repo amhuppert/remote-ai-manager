@@ -2,6 +2,10 @@ import {
   storedConversationStateSchema,
   type StoredConversationState,
 } from "../schemas";
+import {
+  findBuiltinAgentProfile,
+  STANDARD_AGENT_PROFILE_ID,
+} from "@/lib/agent-profiles/builtins";
 import { buildAgentProfileSnapshot } from "@/lib/agent-profiles/composer";
 import { computeContentHash } from "@/lib/agent-profiles/hashing";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
@@ -67,6 +71,37 @@ export function buildProfiledConversation(
 ): StoredConversationState {
   return buildStoredConversation({
     profileSnapshot: SNAPSHOT_FIXTURE,
+    profileLockedAt: "2026-01-01T00:05:00.000Z",
+    ...overrides,
+  });
+}
+
+/**
+ * The shipped no-op default's snapshot, composed from the builtin record rather
+ * than hand-written, so a builtin that grew instruction text again would break
+ * the zero-bytes suites instead of passing them on a stale literal.
+ */
+export const NO_OP_SNAPSHOT_FIXTURE: AgentProfileSnapshot = (() => {
+  const standard = findBuiltinAgentProfile(STANDARD_AGENT_PROFILE_ID);
+  if (standard === undefined) {
+    throw new Error("the standard-agent built-in is missing");
+  }
+  return buildAgentProfileSnapshot({
+    tier: "builtin",
+    id: standard.id,
+    name: standard.name,
+    revision: standard.revision,
+    sourceContentHash: computeContentHash(standard.instructions),
+    instructions: standard.instructions,
+  });
+})();
+
+/** A conversation carrying the no-op default, locked as a live one would be. */
+export function buildNoOpProfiledConversation(
+  overrides: Record<string, unknown> = {},
+): StoredConversationState {
+  return buildStoredConversation({
+    profileSnapshot: NO_OP_SNAPSHOT_FIXTURE,
     profileLockedAt: "2026-01-01T00:05:00.000Z",
     ...overrides,
   });

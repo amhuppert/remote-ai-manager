@@ -10,6 +10,7 @@ import {
   AgentProfileInstructionCollisionError,
   PROFILE_BLOCK_BEGIN,
   PROFILE_BLOCK_END,
+  PROFILE_LAYER_HEADING,
   RESERVED_INSTRUCTION_SEQUENCES,
 } from "./composer";
 import { computeContentHash } from "./hashing";
@@ -141,6 +142,90 @@ describe("composeProfileBlock — hash coverage (R9.1)", () => {
     expect(() => buildAgentProfileSnapshot(tampered)).toThrow(
       /sourceContentHash/,
     );
+  });
+});
+
+describe("composeProfileBlock — empty canonical content (R3.3, R9.7)", () => {
+  const EMPTY_HASH = computeContentHash("");
+
+  it("composes an empty-content profile to nothing at all", () => {
+    const { block, resolvedInstructionHash } = composeProfileBlock(
+      resolved(""),
+    );
+
+    expect(block).toBe("");
+    expect(resolvedInstructionHash).toBe(EMPTY_HASH);
+  });
+
+  it("emits no wrapper, no delimiters, and no precedence contract", () => {
+    const { block } = composeProfileBlock(resolved(""));
+
+    for (const marker of [
+      PROFILE_BLOCK_BEGIN,
+      PROFILE_BLOCK_END,
+      PROFILE_LAYER_HEADING,
+      "1. Command Center safety",
+      "5. This agent profile",
+      "cannot expand your scope",
+      "Profile:",
+    ]) {
+      expect(block, `must not contain ${JSON.stringify(marker)}`).not.toContain(
+        marker,
+      );
+    }
+  });
+
+  it("keys on content emptiness, never on a profile's identity", () => {
+    // The named default composes to nothing because its content is empty...
+    expect(
+      composeProfileBlock(
+        resolved("", { tier: "builtin", id: "standard-agent" }),
+      ).block,
+    ).toBe("");
+    // ...and any other profile with empty content does too.
+    expect(
+      composeProfileBlock(resolved("", { tier: "project", id: "my-lens" }))
+        .block,
+    ).toBe("");
+    // The id is not the rule: the same id with content still gets the block.
+    const withContent = composeProfileBlock(
+      resolved(BENIGN, { tier: "builtin", id: "standard-agent" }),
+    );
+    expect(withContent.block).toContain(PROFILE_BLOCK_BEGIN);
+    expect(withContent.block).toContain(BENIGN);
+  });
+
+  it("treats whitespace-only content as empty rather than wrapping blank text", () => {
+    expect(composeProfileBlock(resolved("   \n\t ")).block).toBe("");
+  });
+
+  it("still renders the full delimited block for a non-empty profile", () => {
+    const { block } = composeProfileBlock(resolved(BENIGN));
+
+    expect(block).toContain(PROFILE_LAYER_HEADING);
+    expect(block).toContain("1. Command Center safety");
+    expect(block).toContain(
+      `${PROFILE_BLOCK_BEGIN}\n${BENIGN}\n${PROFILE_BLOCK_END}`,
+    );
+  });
+
+  it("drops a use-site focus with the block — nothing to narrow, nothing delivered", () => {
+    const { block, resolvedInstructionHash } = composeProfileBlock(
+      resolved(""),
+      { assignmentFocus: "Concentrate on the auth boundary." },
+    );
+
+    expect(block).toBe("");
+    expect(resolvedInstructionHash).toBe(EMPTY_HASH);
+  });
+
+  it("snapshots the empty block verbatim with both hashes", () => {
+    const snapshot = buildAgentProfileSnapshot(resolved(""));
+
+    expect(snapshot.instructions).toBe("");
+    expect(snapshot.sourceContentHash).toBe(EMPTY_HASH);
+    expect(snapshot.renderedInstructionBlock).toBe("");
+    expect(snapshot.resolvedInstructionHash).toBe(EMPTY_HASH);
   });
 });
 

@@ -27,7 +27,8 @@ export interface ComposeWorkflowRoleInstructionsInput {
   roleContract: string;
   /**
    * The assignment's execution-seeded `renderedInstructionBlock`, or null when
-   * the role runs with no profile lens.
+   * the role runs with no profile lens. A no-op profile's block is empty and
+   * means the same thing here: nothing to subordinate below the contract.
    */
   profileBlock: string | null;
 }
@@ -43,9 +44,10 @@ export interface ComposeWorkflowRoleInstructionsInput {
 export function composeWorkflowRoleInstructions(
   input: ComposeWorkflowRoleInstructionsInput,
 ): string {
-  return input.profileBlock === null
+  const profileBlock = input.profileBlock ?? "";
+  return profileBlock === ""
     ? input.roleContract
-    : `${input.roleContract}\n\n${input.profileBlock}`;
+    : `${input.roleContract}\n\n${profileBlock}`;
 }
 
 export interface BuildValidatorRoleContractInput {
