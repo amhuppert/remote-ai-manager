@@ -155,6 +155,11 @@ function mapContextStatus(
     case "awaiting_user_input":
       return "paused";
     case "completed":
+    // A skipped context is settled with nothing (D4 R4): it owes no work, so
+    // the lifecycle bus — whose four states answer "is anything still
+    // outstanding here" — reads it as settled. The routing detail lives on the
+    // context-skipped event, not on this coarse projection.
+    case "skipped":
       return "completed";
     default:
       return assertNever(status);

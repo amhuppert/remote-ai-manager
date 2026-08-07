@@ -4,6 +4,7 @@ import {
   VALIDATION_COST_EXCEEDS_LIMIT_CODE,
   type ValidationCommandPreflight,
 } from "@/lib/validation/preflight";
+import { lintGuardEnumCoverage } from "@/lib/workflow-graph/edge-guard-validation";
 import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
 import type { WorkflowDefinitionDraft } from "@/lib/workflow-graph/storage";
 import type {
@@ -41,8 +42,17 @@ export interface WorkflowPlanIssue {
   message: string;
 }
 
+/**
+ * `warnings` are located exactly like issues but never refuse the plan: today
+ * the guard enum-coverage lint (R3.2), which reports a source whose branches
+ * leave declared values unrouted with no else edge.
+ */
 export type WorkflowPlanValidationResult =
-  | { ok: true; draft: WorkflowDefinitionDraft }
+  | {
+      ok: true;
+      draft: WorkflowDefinitionDraft;
+      warnings: WorkflowPlanIssue[];
+    }
   | {
       ok: false;
       issues: WorkflowPlanIssue[];
@@ -333,5 +343,12 @@ export function validateWorkflowPlan(
       definition: parsed.data.definition,
       layout: parsed.data.layout,
     },
+    warnings: lintGuardEnumCoverage(
+      parsed.data.definition.executionContexts,
+      parsed.data.definition.edges,
+    ).map((warning) => ({
+      path: structuralIssuePath(warning, parsed.data.definition),
+      message: warning.message,
+    })),
   };
 }

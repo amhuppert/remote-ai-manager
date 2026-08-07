@@ -3031,6 +3031,320 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
   });
 });
 
+// ============================================================
+// D4 read surfaces (R13.1)
+// ============================================================
+
+function guardedExecution(): GraphWorkflowExecution {
+  const definition = createResolvedWorkflowDefinition();
+  definition.executionContexts = definition.executionContexts.map((context) =>
+    context.id === "context-plan"
+      ? {
+          ...context,
+          outputSchema: {
+            type: "object",
+            properties: { verdict: { type: "string" } },
+          },
+        }
+      : context,
+  );
+  definition.edges = definition.edges.map((edge) =>
+    edge.id === "edge-plan-implement"
+      ? {
+          ...edge,
+          when: { schema: { properties: { verdict: { const: "broken" } } } },
+        }
+      : edge,
+  );
+  return createWorkflowExecution({ workingDefinition: definition });
+}
+
+describe("ExecutionInspectorPanel — routing section (R13.1)", () => {
+  it("renders no routing section for a context with no guarded route", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByTestId("context-routing")).toBeNull();
+  });
+
+  it("lists each incoming guard with its resolution", () => {
+    const execution = guardedExecution();
+    render(
+      <ExecutionInspectorPanel
+        execution={{
+          ...execution,
+          contextStates: {
+            ...execution.contextStates,
+            "context-plan": {
+              ...execution.contextStates["context-plan"]!,
+              status: "completed",
+            },
+          },
+          contextOutputs: {
+            "context-plan": {
+              value: { verdict: "broken" },
+              capturedAt: "2026-03-27T14:22:00.000Z",
+              iteration: 1,
+              parse: { source: "native" },
+            },
+          },
+        }}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("context-route-row");
+    expect(rows.map((row) => row.dataset.edgeId)).toEqual([
+      "edge-plan-implement",
+    ]);
+    expect(rows[0]!.dataset.guard).toBe("schema");
+    expect(rows[0]!.dataset.resolution).toBe("active");
+    expect(rows[0]!).toHaveTextContent("context-plan");
+  });
+
+  it("badges a skipped context as Skipped rather than Pending", () => {
+    const execution = guardedExecution();
+    render(
+      <ExecutionInspectorPanel
+        execution={{
+          ...execution,
+          contextStates: {
+            ...execution.contextStates,
+            "context-implement": {
+              ...execution.contextStates["context-implement"]!,
+              status: "skipped",
+              skipReason: {
+                at: "2026-03-27T14:30:00.000Z",
+                edgeEvaluations: [
+                  { edgeId: "edge-plan-implement", verdict: "inactive" },
+                ],
+              },
+            },
+          },
+        }}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("Skipped")).toBeTruthy();
+  });
+
+  it("renders the recorded skip reason of a skipped context", () => {
+    const execution = guardedExecution();
+    render(
+      <ExecutionInspectorPanel
+        execution={{
+          ...execution,
+          contextStates: {
+            ...execution.contextStates,
+            "context-implement": {
+              ...execution.contextStates["context-implement"]!,
+              status: "skipped",
+              skipReason: {
+                at: "2026-03-27T14:30:00.000Z",
+                edgeEvaluations: [
+                  { edgeId: "edge-plan-implement", verdict: "inactive" },
+                ],
+              },
+            },
+          },
+        }}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    const skip = screen.getByTestId("context-skip-reason");
+    expect(skip).toHaveTextContent(/branch not taken/i);
+    expect(skip).toHaveTextContent("edge-plan-implement");
+    expect(skip).toHaveTextContent("inactive");
+  });
+});
+
+describe("ExecutionInspectorPanel — loop pass section (R13.1)", () => {
+  function loopExecution(): GraphWorkflowExecution {
+    const definition = createResolvedWorkflowDefinition();
+    const body = definition.executionContexts.filter(
+      (context) => context.id !== "context-plan",
+    );
+    definition.executionContexts = [
+      definition.executionContexts[0]!,
+      ...body.map((context) => ({
+        ...context,
+        id: `loop-a__p2__${context.id}`,
+      })),
+    ];
+    definition.tasks = [];
+    definition.edges = [];
+    definition.loopGroups = [
+      {
+        id: "loop-a",
+        entryContextId: "context-implement",
+        exitContextId: "context-verify",
+        until: { schema: { properties: { done: { const: true } } } },
+        maxPasses: 4,
+        templateVersion: 2,
+        template: { contexts: body, tasks: [], edges: [] },
+        planRepair: { enabled: false, maxAttemptsPerContext: 0 },
+      },
+    ];
+    return createWorkflowExecution({
+      workingDefinition: definition,
+      loopStates: {
+        "loop-a": {
+          loopGroupId: "loop-a",
+          activation: "running",
+          loopControlRevision: 1,
+          passCount: 2,
+          slotLedger: [],
+          boundaryInputs: null,
+          decisions: {},
+          passTemplateVersions: { "1": 1, "2": 2 },
+          concludingExitContextId: null,
+          activatedAt: "2026-03-27T14:00:00.000Z",
+          settledAt: null,
+        },
+      },
+    });
+  }
+
+  it("reports the pass, budget and template version of a pass instance", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={loopExecution()}
+        events={[]}
+        selectedContextId="loop-a__p2__context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    const section = screen.getByTestId("context-loop");
+    expect(section).toHaveTextContent("loop-a");
+    expect(section).toHaveTextContent("Pass 2 of 4");
+    expect(section).toHaveTextContent(/running/i);
+    expect(section).toHaveTextContent("template v2");
+    expect(section).toHaveTextContent("context-implement");
+  });
+
+  it("renders no loop section for a context outside every loop", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={loopExecution()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByTestId("context-loop")).toBeNull();
+  });
+});
+
+describe("ExecutionInspectorPanel — expansion receipts (R13.1)", () => {
+  const acceptedReceipt = {
+    requestId: "req-1",
+    payloadHash: "a".repeat(64),
+    invokerContextId: "context-plan",
+    initiatorConversationId: "conv-1",
+    rationale: "Fan out three candidate designs",
+    addedContextIds: ["context-implement"],
+    addedTaskIds: [],
+    rejoinContextIds: ["context-verify"],
+    liveRevision: 4,
+    acceptedAt: "2026-03-27T14:22:00.000Z",
+  };
+
+  function expandedExecution(): GraphWorkflowExecution {
+    return createWorkflowExecution({
+      expansionReceipts: {
+        accepted: [acceptedReceipt],
+        refusals: [
+          {
+            requestId: "req-2",
+            payloadHash: "b".repeat(64),
+            invokerContextId: "context-plan",
+            refusalCode: "expansion-context-cap-exceeded",
+            refusedAt: "2026-03-27T14:25:00.000Z",
+          },
+        ],
+      },
+    });
+  }
+
+  it("shows the authorizing receipt on a runtime-added context", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={expandedExecution()}
+        events={[]}
+        selectedContextId="context-implement"
+        {...baseHandlers}
+      />,
+    );
+
+    const section = screen.getByTestId("context-provenance");
+    expect(section).toHaveTextContent("context-plan");
+    expect(section).toHaveTextContent("Fan out three candidate designs");
+    expect(section).toHaveTextContent("req-1");
+  });
+
+  it("shows no provenance section on an authored context", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={expandedExecution()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByTestId("context-provenance")).toBeNull();
+  });
+
+  it("lists accepted expansions and refusals in the overview", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={expandedExecution()}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    const accepted = screen.getAllByTestId("expansion-accepted-row");
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]!).toHaveTextContent("Fan out three candidate designs");
+    expect(accepted[0]!).toHaveTextContent("context-implement");
+
+    const refusals = screen.getAllByTestId("expansion-refusal-row");
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0]!).toHaveTextContent("expansion-context-cap-exceeded");
+  });
+
+  it("renders no expansion section for an execution that never expanded", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByTestId("expansion-ledger")).toBeNull();
+  });
+});
+
 describe("ExecutionInspectorPanel — advisories in the round history (R9.2/R9.3/R9.5)", () => {
   function advisoryExecution(): GraphWorkflowExecution {
     const base = createResolvedWorkflowDefinition();

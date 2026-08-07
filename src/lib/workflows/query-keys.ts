@@ -32,6 +32,19 @@ export const graphWorkflowEventsKeys = {
       sessionName,
       executionId,
     ] as const,
+  /**
+   * The cursor-paginated history read (D4 decision D9). Kept distinct from
+   * `list` because it caches PAGES, not a bounded tail — an SSE invalidation of
+   * the tail must not throw away a walked history.
+   */
+  pages: (projectName: string, sessionName: string, executionId: string) =>
+    [
+      ...graphWorkflowEventsKeys.all,
+      "pages",
+      projectName,
+      sessionName,
+      executionId,
+    ] as const,
 };
 
 export const graphWorkflowExecutionKeys = {

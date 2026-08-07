@@ -606,6 +606,56 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     expect(within(block).queryByRole("switch")).not.toBeInTheDocument();
   });
 
+  /**
+   * The mutability block carries two flags and the inspector surfaces one. An
+   * editor that rebuilt the block from the flag it renders would silently strip
+   * a context's runtime graph-expansion authority the next time anyone touched
+   * the task-add switch (D4 R7.1) — pinned on both tiers the inspector edits.
+   */
+  it("preserves allowAgentContextAdd when the context task-add switch is toggled", () => {
+    resetStore();
+    const definition = createWorkflowDefinition();
+    const plan = definition.executionContexts.find(
+      (context) => context.id === "context-plan",
+    );
+    if (plan) {
+      plan.mutability = { allowAgentTaskAdd: true, allowAgentContextAdd: true };
+    }
+    setupStore({ selectedContextId: "context-plan", definition });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Allow agent task add" }),
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore
+        .getState()
+        .draftDefinition?.executionContexts.find(
+          (context) => context.id === "context-plan",
+        )?.mutability,
+    ).toEqual({ allowAgentTaskAdd: false, allowAgentContextAdd: true });
+  });
+
+  it("preserves allowAgentContextAdd when the workflow-tier task-add switch is toggled", () => {
+    resetStore();
+    const definition = createWorkflowDefinition();
+    definition.workflowConfig = {
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: true },
+    };
+    setupStore({ selectedContextId: null, definition });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Allow agent task add" }),
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .mutability,
+    ).toEqual({ allowAgentTaskAdd: true, allowAgentContextAdd: true });
+  });
+
   it("creates a context collaboration override from the header switch", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });

@@ -168,7 +168,10 @@ function cascade(
         scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
-        mutability: { allowAgentTaskAdd: false },
+        mutability: {
+          allowAgentTaskAdd: false,
+          allowAgentContextAdd: false,
+        },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },

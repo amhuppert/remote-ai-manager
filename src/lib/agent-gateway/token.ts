@@ -9,6 +9,13 @@ import {
   getGlobalValue,
   setGlobalValue,
 } from "@/lib/shared/global-singleton";
+import {
+  LANE_CAPABILITY_HEADER,
+  mintLaneCapability,
+  verifyLaneCapability,
+  type LaneCapabilityScope,
+  type LaneCapabilityVerification,
+} from "./lane-capability";
 
 const log = createLogger("agent-gateway");
 
@@ -60,6 +67,52 @@ async function readTokenFile(tokenPath: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Mint the lane capability injected into an implementer lane's environment at
+ * dispatch (D4 R7). Keyed on the instance token, so the signing secret never
+ * leaves this module. `null` when startup has not provisioned a token — the
+ * lane then runs without a capability and its expansion attempts are refused,
+ * which is the correct fail-closed behaviour for a server that has no secret to
+ * authenticate anything with.
+ */
+export function mintImplementerLaneCapability(
+  scope: Omit<LaneCapabilityScope, "laneKind">,
+  issuedAt: number = Date.now(),
+): string | null {
+  const secret = getCachedInstanceToken();
+  if (secret === null) return null;
+  return mintLaneCapability(
+    { laneKind: "implementer", ...scope },
+    secret,
+    issuedAt,
+  );
+}
+
+/**
+ * Classify the graph-workflow lane capability a request presents (D4 R7). The
+ * instance token proves "a cctl on this machine"; this proves WHICH lane is
+ * calling, which is what runtime expansion authorizes against.
+ *
+ * Deliberately NOT a method on {@link AgentAuth}: only the lane routes ask this
+ * question, and the returned scope is a CLAIM about the binding at mint time,
+ * not a gate — the caller still re-checks it against current state inside the
+ * serialized mutation, so it must not look like the bearer-token gate.
+ */
+export function createLaneCapabilityVerifier(
+  deps: AgentAuthDeps = {},
+): (request: Request) => Promise<LaneCapabilityVerification> {
+  const tokenPath = path.join(deps.configDir ?? getConfigDirPath(), TOKEN_FILE);
+  let secret: Promise<string | null> | null = null;
+
+  return async (request) => {
+    secret ??= readTokenFile(tokenPath);
+    return verifyLaneCapability(
+      request.headers.get(LANE_CAPABILITY_HEADER),
+      await secret,
+    );
+  };
 }
 
 /** Extract the token from an `Authorization: Bearer <token>` header value. */

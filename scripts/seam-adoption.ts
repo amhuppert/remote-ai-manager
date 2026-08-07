@@ -853,12 +853,17 @@ export const SEAMS: readonly SeamDefinition[] = [
     reviewedCeiling: 25,
     unit: "const *_JSON_SCHEMA/*_OUTPUT_SCHEMA = { … } declarations + inline object literals flowing into outputSchema / outputFormat.schema",
     corpus:
-      "src/**/*.{ts,tsx} minus tests; excludes src/lib/shared/testing/ (fixture modules the `.test.` filename filter misses). Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. The allowlist covers only test-fixture directories, so any new hand-written schema literal in production code still fails the ratchet until the reviewed ceiling is intentionally updated.",
+      "src/**/*.{ts,tsx} minus tests; excludes the allowlisted fixture modules the `.test.` filename filter misses. Constants and flows fed by the canonical generator (z.toJSONSchema) do not match the pattern. Both backend adapters accept the caller's complete schema, so provider compatibility is not a reason to duplicate or weaken a Zod-owned contract. Two populations share this count: (1) duplicate schema knowledge that should move to the canonical generator, and (2) independently authored neutral JSON Schema contracts that may remain when no Zod schema owns their interface. Deletion condition (per site): a literal drops when it restates a Zod contract the canonical generator can supply without changing behavior. The allowlist covers only test-support fixture modules — a directory prefix, or a named file where a domain keeps its fixtures locally — so any new hand-written schema literal in production code still fails the ratchet until the reviewed ceiling is intentionally updated.",
     allowlist: [
       {
         path: "src/lib/shared/testing/",
         justification:
           "Test-only fixture modules (never imported by production code). A maximal round-trip fixture must carry a distinctive value for the per-context `outputSchema` field — an opaque author-supplied JSON Schema document with no Zod contract behind it, so the canonical generator can never supply it. Deletion condition: this entry drops if the fixture directory stops needing a literal output-schema document.",
+      },
+      {
+        path: "src/lib/workflow-graph/loop-test-fixtures.ts",
+        justification:
+          "Test-only fixture module (imported solely by the loop settlement, crash-safety and budget suites, never by production code) that the `.test.` filename filter misses — the same population as the entry above, in a domain-local file rather than a shared directory. Its `JUDGE_OUTPUT_SCHEMA` is the judge context's authored `outputSchema`, which the definition schema models as an opaque `z.record(z.string(), z.unknown())` document precisely because no Zod contract owns it; the loop's `until` predicate is then evaluated against that document, so inventing a Zod source for it would change what the suites exercise. Deletion condition: this entry drops if the loop fixtures stop declaring a literal output-schema document, or if the module moves under an already-allowlisted fixture directory.",
       },
     ],
     inCorpus(relPath) {

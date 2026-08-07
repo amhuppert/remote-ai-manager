@@ -37,7 +37,10 @@ describe("workflow graph planner", () => {
                   reasoningEffort: "high",
                 },
               },
-              mutability: { allowAgentTaskAdd: true },
+              mutability: {
+                allowAgentTaskAdd: true,
+                allowAgentContextAdd: false,
+              },
               circuitBreaker: {},
               iterationPolicy: {
                 maxIterations: 3,
@@ -58,7 +61,10 @@ describe("workflow graph planner", () => {
                   reasoningEffort: "medium",
                 },
               },
-              mutability: { allowAgentTaskAdd: false },
+              mutability: {
+                allowAgentTaskAdd: false,
+                allowAgentContextAdd: false,
+              },
               circuitBreaker: {},
               iterationPolicy: {
                 maxIterations: 4,
@@ -136,7 +142,10 @@ describe("workflow graph planner", () => {
                   reasoningEffort: "high",
                 },
               },
-              mutability: { allowAgentTaskAdd: false },
+              mutability: {
+                allowAgentTaskAdd: false,
+                allowAgentContextAdd: false,
+              },
               circuitBreaker: {},
               iterationPolicy: {
                 maxIterations: 1,

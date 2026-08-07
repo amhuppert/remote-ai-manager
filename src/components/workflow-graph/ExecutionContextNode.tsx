@@ -5,9 +5,13 @@ import type { NodeProps, Node } from "@xyflow/react";
 import { cn } from "@/lib/ui/cn";
 import type {
   ContextDisplayPhase,
+  ContextLoopDisplay,
+  ContextProvenanceDisplay,
+  ContextSkipDisplay,
   DisplayValidators,
   ExecutionContextNodeData,
 } from "./derive-graph";
+import { StatusChip } from "@/components/ui/StatusChip";
 import {
   getContextDisplayPhase,
   getDisplayApprovalGate,
@@ -204,6 +208,8 @@ function getStatusBadge(
       return { label: "Queued", className: "pending" };
     case "dependency-blocked":
       return { label: "Blocked", className: "pending" };
+    case "skipped":
+      return { label: "Skipped", className: "pending" };
   }
 }
 
@@ -255,6 +261,8 @@ function getFooterText(
       return "Published to session";
     case "halted":
       return "Halted";
+    case "skipped":
+      return "Branch not taken";
   }
 }
 
@@ -391,6 +399,76 @@ function OutputSchemaGlyph({
   );
 }
 
+// The D4 chip row (R13): loop pass, expansion provenance, and — on a skipped
+// node — the edges that decided the skip. These are tone-coded status pills, so
+// they go through the StatusChip primitive rather than the node's hand-rolled
+// badge recipe; the status badge above stays as-is because it is one pill with
+// a per-status appearance cascade, not a tone.
+function LoopPassChip({ loop }: { loop: ContextLoopDisplay }) {
+  const label = `Loop ${loop.loopGroupId} — pass ${loop.pass} of ${loop.maxPasses}, ${loop.activation}`;
+  return (
+    <StatusChip
+      tone="violet"
+      data-testid="node-loop-badge"
+      data-activation={loop.activation}
+      aria-label={label}
+      title={label}
+    >
+      ↻ Pass {loop.pass}/{loop.maxPasses}
+    </StatusChip>
+  );
+}
+
+function ProvenanceChip({
+  provenance,
+}: {
+  provenance: ContextProvenanceDisplay;
+}) {
+  // The rationale is what makes a generated node auditable at a glance, so it
+  // rides the accessible name rather than living only in a tooltip.
+  const label = `Added at runtime by ${provenance.invokerContextId}: ${provenance.rationale}`;
+  return (
+    <StatusChip
+      tone="cyan"
+      data-testid="node-provenance-badge"
+      aria-label={label}
+      title={label}
+    >
+      ✦ Added at runtime
+    </StatusChip>
+  );
+}
+
+function SkipReasonChip({ skip }: { skip: ContextSkipDisplay }) {
+  const edges = skip.decidingEdgeIds;
+  const label =
+    edges.length > 0
+      ? `Branch not taken — guard resolved false on ${edges.join(", ")}`
+      : "Branch not taken — no incoming route activated";
+  return (
+    <StatusChip
+      tone="neutral"
+      wrap
+      data-testid="node-skip-reason"
+      aria-label={label}
+      title={label}
+    >
+      ⊘ {edges.length > 0 ? edges.join(", ") : "no route activated"}
+    </StatusChip>
+  );
+}
+
+function D4ChipRow({ data }: { data: ExecutionContextNodeData }) {
+  if (!data.loop && !data.provenance && !data.skip) return null;
+  return (
+    <div className="relative z-[1] mb-[10px] flex flex-wrap gap-[4px]">
+      {data.loop && <LoopPassChip loop={data.loop} />}
+      {data.provenance && <ProvenanceChip provenance={data.provenance} />}
+      {data.skip && <SkipReasonChip skip={data.skip} />}
+    </div>
+  );
+}
+
 export default function ExecutionContextNode({
   data,
   selected,
@@ -427,13 +505,19 @@ export default function ExecutionContextNode({
   const gateBlocked =
     waitState?.kind === "dependency-blocked" && waitState.blockedByApproval;
 
+  // A not-taken branch is ghosted rather than hidden: the graph must still show
+  // the shape the planner authored, with the untaken part visibly inert.
+  const isSkipped = waitState?.kind === "skipped";
+
   return (
     <div
+      {...(isSkipped ? { "data-skipped": "true" } : {})}
       className={cn(
         NODE_BASE,
         selected && "selected",
         nodeAppearance(waitState?.kind, selected ?? false),
         gateBlocked && "opacity-[0.55]",
+        isSkipped && "border-dashed opacity-[0.45] grayscale-[0.6]",
       )}
     >
       <Handle type="target" position={Position.Left} id="left" />
@@ -487,6 +571,8 @@ export default function ExecutionContextNode({
           </div>
         </div>
       </div>
+
+      <D4ChipRow data={data} />
 
       <ValidatorPills validators={validators} approvalGate={approvalGate} />
 

@@ -1007,3 +1007,375 @@ describe("cctl workflow live pause / resume", () => {
     expect(result.stderr).toContain("Only running");
   });
 });
+
+describe("cctl workflow live ledger (D4 R16.2)", () => {
+  const LOOP_DECISION = {
+    loopGroupId: "refine",
+    pass: 1,
+    loopControlRevision: 0,
+    templateVersion: 1,
+    exitContextId: "refine__p1__judge",
+    exitCaptureIteration: 1,
+    verdict: "unsatisfied" as const,
+    outcome: "materialized" as const,
+    nextPass: 2,
+    decidedAt: "2026-08-04T00:00:00.000Z",
+  };
+  const PASS_TWO_CONCLUDED = {
+    ...LOOP_DECISION,
+    pass: 2,
+    exitContextId: "refine__p2__judge",
+    verdict: "satisfied" as const,
+    outcome: "concluded" as const,
+    nextPass: null,
+  };
+  const PASS_TWO_AMENDED = {
+    ...PASS_TWO_CONCLUDED,
+    loopControlRevision: 1,
+    verdict: "unsatisfied" as const,
+    outcome: "materialized" as const,
+    nextPass: 3,
+  };
+
+  /**
+   * The shape an ACTIVATED loop really persists: activation pins the boundary
+   * snapshot as an array of resolved upstream rows (empty when the loop has no
+   * external inputs). A `null` here is the pre-activation shape only — reading
+   * the ledger against it would let the CLI's wire mirror drift into rejecting
+   * every normal running loop.
+   */
+  const BOUNDARY_INPUTS = [
+    {
+      contextId: "seed",
+      title: "Seed",
+      declared: true,
+      schemaFields: [
+        {
+          name: "goal",
+          type: "string",
+          required: true,
+          description: null,
+        },
+      ],
+      output: {
+        value: { goal: "tighten the summariser" },
+        iteration: 1,
+        capturedAt: "2026-08-04T00:00:00.000Z",
+        parse: { source: "native" },
+      },
+      skipped: false,
+    },
+  ];
+
+  function executionBody(
+    loopStateOverrides: Record<string, unknown> = {},
+  ): unknown {
+    return {
+      execution: {
+        id: "exec-7",
+        workingDefinition: {
+          loopGroups: [{ id: "refine", maxPasses: 4 }],
+        },
+        loopStates: {
+          refine: {
+            loopGroupId: "refine",
+            activation: "running",
+            loopControlRevision: 1,
+            passCount: 3,
+            slotLedger: [],
+            boundaryInputs: BOUNDARY_INPUTS,
+            decisions: { "1": LOOP_DECISION, "2": PASS_TWO_AMENDED },
+            passTemplateVersions: { "1": 1, "2": 1, "3": 1 },
+            concludingExitContextId: null,
+            activatedAt: "2026-08-04T00:00:00.000Z",
+            settledAt: "2026-08-04T00:00:00.000Z",
+            ...loopStateOverrides,
+          },
+        },
+      },
+    };
+  }
+
+  function decisionRow(
+    seq: number,
+    decision:
+      | typeof LOOP_DECISION
+      | typeof PASS_TWO_CONCLUDED
+      | typeof PASS_TWO_AMENDED,
+  ) {
+    return {
+      seq,
+      occurredAt: decision.decidedAt,
+      preReset: false,
+      event: {
+        type: "graph-workflow-loop-decision",
+        projectName: "cc",
+        sessionName: "my-session",
+        executionId: "exec-7",
+        ...decision,
+      },
+    };
+  }
+
+  function ledgerHost(loopStateOverrides: Record<string, unknown> = {}) {
+    return makeHost((req) => {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith("/graph-workflow/execution")) {
+        return jsonResponse(executionBody(loopStateOverrides));
+      }
+      if (url.pathname.endsWith("/graph-workflow/events")) {
+        // Ascending pages, so the CLI reads the log in the order it happened.
+        return url.searchParams.get("cursor") === "2"
+          ? jsonResponse({
+              events: [decisionRow(3, PASS_TWO_AMENDED)],
+              nextCursor: null,
+            })
+          : jsonResponse({
+              events: [
+                decisionRow(1, LOOP_DECISION),
+                decisionRow(2, PASS_TWO_CONCLUDED),
+              ],
+              nextCursor: 2,
+            });
+      }
+      return jsonResponse({ error: `unexpected ${url.pathname}` }, 404);
+    });
+  }
+
+  it("walks the paginated reader and prints every decision beside the markers", async () => {
+    const host = ledgerHost();
+    const result = await runCli(["workflow", "live", "ledger"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    const eventRequests = host.requests.filter((req) =>
+      new URL(req.url).pathname.endsWith("/graph-workflow/events"),
+    );
+    expect(eventRequests).toHaveLength(2);
+    expect(new URL(eventRequests[0]?.url ?? "").searchParams.get("page")).toBe(
+      "true",
+    );
+    expect(
+      new URL(eventRequests[1]?.url ?? "").searchParams.get("cursor"),
+    ).toBe("2");
+
+    expect(result.stdout).toContain("refine");
+    expect(result.stdout).toContain("running");
+    expect(result.stdout).toContain("pass 3 of 4");
+    // The superseded conclusion is history the blob no longer holds, and the
+    // CLI reports it rather than only the current record.
+    expect(result.stdout).toContain("satisfied");
+    expect(result.stdout).toContain("superseded");
+    expect(result.stdout).toContain("rev 1");
+  });
+
+  it("returns the derived ledger as JSON", async () => {
+    const host = ledgerHost();
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.loops).toHaveLength(1);
+    expect(parsed.loops[0].loopGroupId).toBe("refine");
+    expect(
+      parsed.loops[0].decisions.map(
+        (entry: { pass: number; loopControlRevision: number }) => [
+          entry.pass,
+          entry.loopControlRevision,
+        ],
+      ),
+    ).toEqual([
+      [1, 0],
+      [2, 0],
+      [2, 1],
+    ]);
+  });
+
+  it("reads a loop whose activation pinned an empty boundary snapshot", async () => {
+    // A loop with no external inputs pins `[]`, not null — the degenerate case
+    // of the same production shape, and the one a permissive mirror must not
+    // confuse with "no active execution".
+    const host = ledgerHost({ boundaryInputs: [] });
+    const result = await runCli(["workflow", "live", "ledger"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("refine");
+    expect(result.stdout).toContain("pass 3 of 4");
+  });
+
+  /**
+   * A log longer than any single bounded walk. D9 bounds each PAGE; complete
+   * history has to stay reachable, so the walk continues until the reader
+   * reports exhaustion.
+   */
+  function longLogHost(pageCount: number) {
+    return makeHost((req) => {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith("/graph-workflow/execution")) {
+        return jsonResponse(executionBody());
+      }
+      if (url.pathname.endsWith("/graph-workflow/events")) {
+        const cursor = Number(url.searchParams.get("cursor") ?? "0");
+        const page = cursor + 1;
+        // Only the very first page carries decisions; every later page is
+        // unrelated traffic, so reaching the LAST page is what proves the walk
+        // is not silently bounded.
+        const isLast = page >= pageCount;
+        return jsonResponse({
+          events:
+            page === pageCount
+              ? [decisionRow(page, PASS_TWO_AMENDED)]
+              : [
+                  {
+                    seq: page,
+                    occurredAt: "2026-08-04T00:00:00.000Z",
+                    preReset: false,
+                    event: { type: "graph-workflow-status", status: "running" },
+                  },
+                ],
+          nextCursor: isLast ? null : page,
+        });
+      }
+      return jsonResponse({ error: `unexpected ${url.pathname}` }, 404);
+    });
+  }
+
+  it("walks past any fixed page cap until the reader reports exhaustion", async () => {
+    const host = longLogHost(40);
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const eventRequests = host.requests.filter((req) =>
+      new URL(req.url).pathname.endsWith("/graph-workflow/events"),
+    );
+    expect(eventRequests).toHaveLength(40);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.complete).toBe(true);
+    expect(parsed.resumeCursor).toBeNull();
+    // The decision on the LAST page is in the ledger, marked against the blob's
+    // current record rather than reported only "from current state".
+    const passTwo = parsed.loops[0].decisions.filter(
+      (entry: { pass: number }) => entry.pass === 2,
+    );
+    expect(passTwo).toHaveLength(1);
+    expect(passTwo[0].markerOnly).toBe(false);
+    expect(result.stdout).not.toContain("older decisions");
+  });
+
+  it("bounds a walk on request and names the cursor to resume from", async () => {
+    const host = longLogHost(40);
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--max-pages", "3", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      host.requests.filter((req) =>
+        new URL(req.url).pathname.endsWith("/graph-workflow/events"),
+      ),
+    ).toHaveLength(3);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.complete).toBe(false);
+    expect(parsed.resumeCursor).toBe(3);
+  });
+
+  it("resumes a bounded walk from --cursor", async () => {
+    const host = longLogHost(40);
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--cursor", "3", "--max-pages", "2"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const eventRequests = host.requests.filter((req) =>
+      new URL(req.url).pathname.endsWith("/graph-workflow/events"),
+    );
+    expect(
+      eventRequests.map((req) => new URL(req.url).searchParams.get("cursor")),
+    ).toEqual(["3", "4"]);
+    expect(result.stdout).toContain("--cursor 5");
+  });
+
+  it("rejects a non-numeric --cursor before any network call", async () => {
+    const host = ledgerHost();
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--cursor", "abc"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--cursor");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("stops instead of spinning when the reader repeats a cursor", async () => {
+    // A cursor that does not advance would otherwise walk forever; the walk
+    // stops and says the history is incomplete rather than hanging.
+    const host = makeHost((req) => {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith("/graph-workflow/execution")) {
+        return jsonResponse(executionBody());
+      }
+      return jsonResponse({
+        events: [decisionRow(1, LOOP_DECISION)],
+        nextCursor: 1,
+      });
+    });
+
+    const result = await runCli(
+      ["workflow", "live", "ledger", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(
+      host.requests.filter((req) =>
+        new URL(req.url).pathname.endsWith("/graph-workflow/events"),
+      ).length,
+    ).toBeLessThanOrEqual(2);
+    expect(JSON.parse(result.stdout).complete).toBe(false);
+  });
+
+  it("says so plainly when the execution declares no loops", async () => {
+    const host = makeHost((req) => {
+      const url = new URL(req.url);
+      if (url.pathname.endsWith("/graph-workflow/execution")) {
+        return jsonResponse({
+          execution: { id: "exec-7", workingDefinition: {}, loopStates: {} },
+        });
+      }
+      return jsonResponse({ events: [], nextCursor: null });
+    });
+
+    const result = await runCli(["workflow", "live", "ledger"], baseEnv, host);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("no loop groups");
+    // A loop-free execution must not walk the log at all.
+    expect(
+      host.requests.filter((req) =>
+        new URL(req.url).pathname.endsWith("/graph-workflow/events"),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("exits 2 when the session has no active execution", async () => {
+    const host = makeHost(() => jsonResponse({ execution: null }));
+    const result = await runCli(["workflow", "live", "ledger"], baseEnv, host);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(
+      "no active graph workflow execution in this session",
+    );
+  });
+});

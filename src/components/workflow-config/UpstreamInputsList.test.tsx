@@ -5,6 +5,7 @@ import { UpstreamInputsList } from "./UpstreamInputsList";
 import type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/context-outputs";
 
 const TRIAGE: GraphWorkflowUpstreamInput = {
+  skipped: false,
   contextId: "context-triage",
   title: "Triage the failure report",
   declared: true,
@@ -17,6 +18,7 @@ const TRIAGE: GraphWorkflowUpstreamInput = {
 };
 
 const REVIEW: GraphWorkflowUpstreamInput = {
+  skipped: false,
   contextId: "context-review",
   title: "Review the spec delta",
   declared: true,
@@ -27,6 +29,7 @@ const REVIEW: GraphWorkflowUpstreamInput = {
 };
 
 const FREE_FORM: GraphWorkflowUpstreamInput = {
+  skipped: false,
   contextId: "context-notes",
   title: "Collect the notes",
   declared: false,
@@ -38,6 +41,7 @@ const FREE_FORM: GraphWorkflowUpstreamInput = {
 // payload without naming top-level properties (a bare object, or a root
 // `oneOf`). It is declared, and the list must not present it as free-form.
 const BARE_OBJECT: GraphWorkflowUpstreamInput = {
+  skipped: false,
   contextId: "context-audit",
   title: "Audit the run",
   declared: true,

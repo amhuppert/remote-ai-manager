@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "workflowConfig": {},
+  "charter": {
+    "mission": "Pin the pre-D4 scheduling, status, and event behaviour of a linear chain",
+    "sourcesOfTruth": [
+      {
+        "rank": 1,
+        "id": "compat-fixture",
+        "label": "Compatibility fixture",
+        "type": "document",
+        "locator": "src/lib/workflow-graph/compat/README.md",
+        "description": "The pre-D4 behaviour this fixture pins",
+        "accessPolicy": "worktree-relative"
+      }
+    ]
+  },
+  "parameters": [],
+  "prerequisites": [],
+  "executionContexts": [
+    {
+      "id": "ctx-plan",
+      "title": "Plan",
+      "description": "Decide the approach",
+      "acceptanceCriteria": "A plan exists",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    },
+    {
+      "id": "ctx-build",
+      "title": "Build",
+      "description": "Implement the approach",
+      "acceptanceCriteria": "The feature works",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    },
+    {
+      "id": "ctx-verify",
+      "title": "Verify",
+      "description": "Check the result",
+      "acceptanceCriteria": "Verification passes",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-plan-1",
+      "contextId": "ctx-plan",
+      "order": 1,
+      "title": "Draft the plan",
+      "instructions": "Write down the approach.",
+      "source": "user"
+    },
+    {
+      "id": "task-build-1",
+      "contextId": "ctx-build",
+      "order": 1,
+      "title": "Write the code",
+      "instructions": "Implement the approach.",
+      "source": "user"
+    },
+    {
+      "id": "task-build-2",
+      "contextId": "ctx-build",
+      "order": 2,
+      "title": "Write the tests",
+      "instructions": "Cover the implementation.",
+      "source": "user"
+    },
+    {
+      "id": "task-verify-1",
+      "contextId": "ctx-verify",
+      "order": 1,
+      "title": "Run the checks",
+      "instructions": "Verify the behaviour.",
+      "source": "user"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-plan-build",
+      "sourceContextId": "ctx-plan",
+      "targetContextId": "ctx-build"
+    },
+    {
+      "id": "edge-build-verify",
+      "sourceContextId": "ctx-build",
+      "targetContextId": "ctx-verify"
+    }
+  ]
+}

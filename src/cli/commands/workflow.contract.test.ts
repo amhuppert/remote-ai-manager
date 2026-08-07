@@ -1419,3 +1419,264 @@ describe("cctl workflow output-schema read paths (R7.2)", () => {
     expect(result.exitCode).toBe(2);
   });
 });
+
+/**
+ * R13.2: the CLI live outline reports the four D4 decisions an operator has to
+ * be able to read — edge guards, skips with their recorded reasons, loop pass
+ * counters against their budgets, and expansion provenance — driven end to end
+ * through the real live-outline projection and route handler.
+ */
+describe("cctl workflow live get — D4 read surfaces (R13.2)", () => {
+  const GUARD_SCHEMA = {
+    type: "object",
+    properties: { verdict: { type: "string" } },
+    required: ["verdict"],
+  };
+
+  /**
+   * `context-plan` classified and banked `verdict: "fine"`, so the guarded edge
+   * into `context-implement` resolved false and that branch skipped. One
+   * accepted expansion and one refusal sit in the ledgers.
+   */
+  function routedExecution(): GraphWorkflowExecution {
+    const base = createResolvedWorkflowDefinition();
+    const execution = createWorkflowExecution({
+      status: "running",
+      workingDefinition: {
+        ...base,
+        executionContexts: base.executionContexts.map((context) =>
+          context.id === "context-plan"
+            ? { ...context, outputSchema: GUARD_SCHEMA }
+            : context,
+        ),
+        edges: base.edges.map((edge) =>
+          edge.id === "edge-plan-implement"
+            ? {
+                ...edge,
+                when: {
+                  schema: { properties: { verdict: { const: "broken" } } },
+                },
+              }
+            : edge,
+        ),
+      },
+      contextOutputs: {
+        "context-plan": {
+          value: { verdict: "fine" },
+          capturedAt: "2026-07-30T10:00:00.000Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+      expansionReceipts: {
+        accepted: [
+          {
+            requestId: "req-1",
+            payloadHash: "a".repeat(64),
+            invokerContextId: "context-plan",
+            initiatorConversationId: "conv-1",
+            rationale: "Fan out three candidate designs",
+            addedContextIds: ["context-verify"],
+            addedTaskIds: [],
+            rejoinContextIds: ["context-implement"],
+            liveRevision: 3,
+            acceptedAt: "2026-07-30T10:05:00.000Z",
+          },
+        ],
+        refusals: [
+          {
+            requestId: "req-2",
+            payloadHash: "b".repeat(64),
+            invokerContextId: "context-plan",
+            refusalCode: "expansion-context-cap-exceeded",
+            refusedAt: "2026-07-30T10:06:00.000Z",
+          },
+        ],
+      },
+    });
+    return {
+      ...execution,
+      contextStates: {
+        ...execution.contextStates,
+        "context-plan": {
+          ...execution.contextStates["context-plan"]!,
+          status: "completed",
+        },
+        "context-implement": {
+          ...execution.contextStates["context-implement"]!,
+          status: "skipped",
+          skipReason: {
+            at: "2026-07-30T10:10:00.000Z",
+            edgeEvaluations: [
+              { edgeId: "edge-plan-implement", verdict: "inactive" },
+            ],
+          },
+        },
+      },
+    };
+  }
+
+  /** A concluded loop whose logical exit is satisfied by pass 2's instance. */
+  function loopExecution(): GraphWorkflowExecution {
+    const base = createResolvedWorkflowDefinition();
+    const [plan, implement, verify] = base.executionContexts;
+    const execution = createWorkflowExecution({
+      status: "running",
+      workingDefinition: {
+        ...base,
+        executionContexts: [
+          plan!,
+          { ...implement!, id: "loop-a__p2__context-implement" },
+          { ...verify!, id: "loop-a__p2__context-verify" },
+        ],
+        tasks: [],
+        edges: [
+          {
+            id: "edge-verify-plan",
+            sourceContextId: "context-verify",
+            targetContextId: "context-plan",
+          },
+        ],
+        loopGroups: [
+          {
+            id: "loop-a",
+            entryContextId: "context-implement",
+            exitContextId: "context-verify",
+            until: { schema: { properties: { done: { const: true } } } },
+            maxPasses: 4,
+            templateVersion: 2,
+            template: {
+              contexts: [implement!, verify!],
+              tasks: [],
+              edges: [],
+            },
+            planRepair: { enabled: false, maxAttemptsPerContext: 0 },
+          },
+        ],
+      },
+      loopStates: {
+        "loop-a": {
+          loopGroupId: "loop-a",
+          activation: "concluded",
+          loopControlRevision: 1,
+          passCount: 2,
+          slotLedger: [],
+          boundaryInputs: null,
+          decisions: {},
+          passTemplateVersions: { "1": 1, "2": 2 },
+          concludingExitContextId: "loop-a__p2__context-verify",
+          activatedAt: "2026-07-30T09:00:00.000Z",
+          settledAt: "2026-07-30T11:00:00.000Z",
+        },
+      },
+    });
+    return {
+      ...execution,
+      taskStates: {},
+      contextStates: {
+        "context-plan": execution.contextStates["context-plan"]!,
+        "loop-a__p2__context-implement": {
+          ...execution.contextStates["context-implement"]!,
+          contextId: "loop-a__p2__context-implement",
+        },
+        "loop-a__p2__context-verify": {
+          ...execution.contextStates["context-verify"]!,
+          contextId: "loop-a__p2__context-verify",
+        },
+      },
+    };
+  }
+
+  it("renders a routes block naming each guard and its verdict", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(routedExecution()),
+    );
+    expect(result.exitCode).toBe(0);
+    const row = result.stdout
+      .split("\n")
+      .find((line) => line.trimStart().startsWith("edge-plan-implement "));
+    expect(row).toContain("context-plan → context-implement");
+    // The guard column prints the projection's own vocabulary (schema | else),
+    // so the text view and the `--json` payload name one thing one way.
+    expect(row).toContain("schema");
+    expect(row).toContain("inactive");
+  });
+
+  it("renders the skipped context's row with its recorded reason", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(routedExecution()),
+    );
+    const row = result.stdout
+      .split("\n")
+      .find((line) => line.startsWith("  context-implement "));
+    expect(row).toContain("skipped");
+    expect(row).toContain("skip=edge-plan-implement:inactive");
+  });
+
+  it("renders expansion provenance on the row and in the ledger", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(routedExecution()),
+    );
+    expect(
+      result.stdout
+        .split("\n")
+        .find((line) => line.startsWith("  context-verify ")),
+    ).toContain("added-by=req-1");
+    expect(result.stdout).toContain("expansions:");
+    expect(result.stdout).toContain("Fan out three candidate designs");
+    expect(result.stdout).toContain("expansion-context-cap-exceeded");
+  });
+
+  it("renders loop pass counters, budgets and the concluding instance", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(loopExecution()),
+    );
+    expect(result.exitCode).toBe(0);
+    const loopRow = result.stdout
+      .split("\n")
+      .find((line) => line.trimStart().startsWith("loop-a "));
+    expect(loopRow).toContain("concluded");
+    expect(loopRow).toContain("pass 2/4");
+    expect(loopRow).toContain("exit=context-verify");
+    expect(loopRow).toContain("loop-a__p2__context-verify");
+
+    const instanceRow = result.stdout
+      .split("\n")
+      .find((line) => line.startsWith("  loop-a__p2__context-implement "));
+    expect(instanceRow).toContain("loop=loop-a pass 2/4");
+  });
+
+  it("renders the logical exit's outgoing edge with its effective instance", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(loopExecution()),
+    );
+    const row = result.stdout
+      .split("\n")
+      .find((line) => line.trimStart().startsWith("edge-verify-plan "));
+    expect(row).toContain("context-verify → context-plan");
+    expect(row).toContain("via loop-a__p2__context-verify");
+  });
+
+  it("prints no D4 blocks for an execution with no guards, loops or expansions", async () => {
+    const result = await runCli(
+      ["workflow", "live", "get"],
+      env,
+      routeHost(createWorkflowExecution({ status: "running" })),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("routes:");
+    expect(result.stdout).not.toContain("loops:");
+    expect(result.stdout).not.toContain("expansions:");
+    expect(result.stdout).not.toContain("skip=");
+  });
+});

@@ -138,6 +138,8 @@ function contextStatusToDot(status: GraphWorkflowContextStatus): EventDotKind {
       return "neutral";
     case "awaiting_user_input":
       return "neutral";
+    case "skipped":
+      return "neutral";
   }
 }
 
@@ -157,6 +159,8 @@ function contextStatusVerb(status: GraphWorkflowContextStatus): string {
       return "awaiting approval";
     case "awaiting_user_input":
       return "awaiting input";
+    case "skipped":
+      return "skipped";
   }
 }
 
@@ -255,6 +259,72 @@ function normalizeEvent(
         dot: contextStatusToDot(event.status),
         title: `${title} · ${contextStatusVerb(event.status)}`,
         detail: null,
+        expandable: null,
+      };
+    }
+
+    case "graph-workflow-context-skipped": {
+      const title = contextLookup.get(event.contextId) ?? event.contextId;
+      // The verdicts are the substance of the row: "skipped" alone leaves an
+      // operator unable to tell WHICH branch decided it.
+      const vetoes = event.edgeEvaluations.filter(
+        (evaluation) => evaluation.verdict === "inactive",
+      );
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot: "neutral",
+        title: `${title} · skipped — branch not taken`,
+        detail:
+          vetoes.length > 0 ? (
+            <span>
+              {`${vetoes.map((evaluation) => evaluation.edgeId).join(", ")} did not activate`}
+            </span>
+          ) : null,
+        expandable: null,
+      };
+    }
+
+    case "graph-workflow-route-resolved": {
+      const title =
+        contextLookup.get(event.sourceContextId) ?? event.sourceContextId;
+      // An unconditional source never emits this event, so a row here always
+      // means a guard set decided something.
+      const taken =
+        event.activatedEdgeIds.length > 0
+          ? event.activatedEdgeIds.join(", ")
+          : "no branch";
+      return {
+        key,
+        occurredAt,
+        contextId: event.sourceContextId,
+        dot: "neutral",
+        title: `${title} · routes resolved — ${taken}`,
+        detail:
+          event.inactiveEdgeIds.length > 0 ? (
+            <span>{`${event.inactiveEdgeIds.join(", ")} did not activate`}</span>
+          ) : null,
+        expandable: null,
+      };
+    }
+
+    case "graph-workflow-loop-decision": {
+      const exitTitle =
+        contextLookup.get(event.exitContextId) ?? event.exitContextId;
+      const outcome =
+        event.outcome === "materialized"
+          ? `pass ${event.nextPass ?? event.pass + 1} materialized`
+          : event.outcome;
+      return {
+        key,
+        occurredAt,
+        contextId: event.exitContextId,
+        dot: "neutral",
+        title: `${event.loopGroupId} pass ${event.pass} · ${event.verdict} — ${outcome}`,
+        detail: (
+          <span>{`${exitTitle} · control revision ${event.loopControlRevision}, template v${event.templateVersion}`}</span>
+        ),
         expandable: null,
       };
     }
@@ -359,6 +429,29 @@ function normalizeEvent(
         detail: event.diagnosis ? (
           <pre className={eventPreClass}>{event.diagnosis}</pre>
         ) : null,
+        expandable: null,
+      };
+    }
+
+    case "graph-workflow-graph-expanded": {
+      const invoker =
+        contextLookup.get(event.invokerContextId) ?? event.invokerContextId;
+      const summary =
+        event.outcome === "accepted"
+          ? `+${event.addedContextIds.length} context(s), +${event.addedTaskIds.length} task(s)`
+          : (event.refusalCode ?? "refused");
+      return {
+        key,
+        occurredAt,
+        contextId: event.invokerContextId,
+        dot: event.outcome === "accepted" ? "pass" : "fail",
+        title: `Graph expansion · ${invoker} (${summary})`,
+        detail:
+          event.outcome === "accepted" && event.rejoinContextIds.length > 0 ? (
+            <pre className={eventPreClass}>
+              {`rejoins: ${event.rejoinContextIds.join(", ")}`}
+            </pre>
+          ) : null,
         expandable: null,
       };
     }

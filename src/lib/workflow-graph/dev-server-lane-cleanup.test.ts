@@ -15,6 +15,8 @@ function ctx(
   worktreePath: string | null,
 ): GraphWorkflowExecutionContextState {
   return {
+    skipReason: null,
+    landingIntent: null,
     pendingApproval: null,
     pendingUserInputs: {},
     contextId,

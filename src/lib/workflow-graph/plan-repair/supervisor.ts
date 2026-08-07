@@ -18,7 +18,11 @@ import {
   PLAN_REPAIR_DEFAULT_AGENT,
   type GraphWorkflowAgentConfig,
 } from "../config-schemas";
-import type { GraphWorkflowExecution, PlanRepairRound } from "../schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
+  PlanRepairRound,
+} from "../schemas";
 import type {
   GraphWorkflowEventDelivery,
   PublishPlanRepairInput,
@@ -35,6 +39,7 @@ import {
 import {
   expandPlanRepairOperations,
   validatePlanRepairOperations,
+  type PlanRepairLoopContext,
   type PlanRepairOperationIssue,
   type PlanRepairVerdict,
 } from "./schemas";
@@ -139,6 +144,29 @@ function repairConversationId(
   return `__plan_repair__:${executionId}:${contextId}:${seq}`;
 }
 
+/**
+ * Whether a halt is still the one a round was triggered by. Loop halts key on
+ * the loop group (the pass instance in `contextId` changes across a
+ * re-decision); context halts key on the context.
+ */
+function haltMatchesSubject(
+  haltReason: GraphWorkflowHaltReason,
+  subject: { contextId: string; loopGroupId: string | null },
+): boolean {
+  if (haltReason.type === "loop_limit_reached") {
+    return haltReason.loopGroupId === subject.loopGroupId;
+  }
+  if (
+    haltReason.type !== "circuit_breaker" &&
+    haltReason.type !== "max_iterations"
+  ) {
+    return false;
+  }
+  return (
+    subject.loopGroupId === null && haltReason.contextId === subject.contextId
+  );
+}
+
 export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
   const inFlight = new Set<string>();
 
@@ -195,12 +223,19 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       return { ran: false, reason: trigger.reason };
     }
 
-    const { contextId, haltType, attempt, policy } = trigger;
+    const { contextId, haltType, loopGroupId, attempt, policy } = trigger;
     const executionId = execution.id;
+    // The halted loop, threaded into the op validator. Null for a context halt,
+    // which is what keeps the loop-control ops refused there.
+    const loop: PlanRepairLoopContext | null =
+      loopGroupId !== null && trigger.loopScope !== null
+        ? { loopGroupId, scope: trigger.loopScope }
+        : null;
     logger.info("plan_repair.triggered", {
       executionId,
       contextId,
       haltType,
+      loopGroupId,
       attempt,
     });
 
@@ -214,6 +249,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       if (
         !recheck.eligible ||
         recheck.contextId !== contextId ||
+        recheck.loopGroupId !== loopGroupId ||
         current.id !== executionId
       ) {
         return current;
@@ -224,6 +260,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         seq: (current.planRepairRounds.at(-1)?.seq ?? 0) + 1,
         contextId,
         haltType,
+        loopGroupId,
         startedAt: deps.now(),
         settledAt: null,
         outcome: null,
@@ -253,12 +290,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
-        contextId,
+        { contextId, loopGroupId },
         "Plan repair failed: no session worktree available for the repair agent.",
       );
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "failed",
         planningDefect: null,
@@ -286,6 +324,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       attempt,
       validationHistory,
       priorRounds,
+      ...(loop ? { loop } : {}),
     });
 
     const agentResult = await deps.runRepairAgent({
@@ -314,12 +353,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
-        contextId,
+        { contextId, loopGroupId },
         `Plan repair attempt ${attempt} failed: ${agentResult.message}`,
       );
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "failed",
         planningDefect: null,
@@ -349,12 +389,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
-        contextId,
+        { contextId, loopGroupId },
         `Plan repair declined (attempt ${attempt}): ${verdict.diagnosis}`,
       );
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "declined",
         planningDefect: verdict.planningDefect,
@@ -367,12 +408,14 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     }
 
     // Judged against the same snapshot the prompt was built from — the agent's
-    // output is diagnosed against what the agent was shown. Narrowings stay in
-    // repair vocabulary here; the cohort they are written onto is decided at
-    // apply time, below.
+    // output is diagnosed against what the agent was shown, while loop-control
+    // operations are constrained to the loop and budget scope that halted.
+    // Narrowings stay in repair vocabulary here; the cohort they are written
+    // onto is decided at apply time, below.
     const validated = validatePlanRepairOperations(
       verdict.operations,
       execution.workingDefinition.executionContexts,
+      loop,
     );
     if (!validated.ok) {
       const issueSummary = validated.issues
@@ -392,12 +435,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
-        contextId,
+        { contextId, loopGroupId },
         `Plan repair attempt ${attempt} produced disallowed operations: ${issueSummary}`,
       );
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "failed",
         planningDefect: true,
@@ -476,12 +520,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
-        contextId,
+        { contextId, loopGroupId },
         `Plan repair attempt ${attempt} no longer matches the current plan (it was edited while the repair ran): ${issueSummary}`,
       );
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "failed",
         planningDefect: true,
@@ -516,6 +561,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "superseded",
         planningDefect: true,
@@ -546,12 +592,13 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       });
       await populateHaltSummary(
         input,
-        contextId,
+        { contextId, loopGroupId },
         `Plan repair attempt ${attempt} was rejected by the live-edit gates: ${failure}`,
       );
       await emitRound(input, executionId, {
         contextId,
         haltType,
+        loopGroupId,
         attempt,
         outcome: "failed",
         planningDefect: true,
@@ -601,6 +648,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     await emitRound(input, executionId, {
       contextId,
       haltType,
+      loopGroupId,
       attempt,
       outcome: "repaired",
       planningDefect: true,
@@ -635,31 +683,27 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
 
   /**
    * Record the repair verdict on the halt reason so the halt UI explains
-   * itself (R8). Guarded: only while still halted on the same retry-exhaustion
-   * halt for the same context — a user resume/abort wins.
+   * itself (R8). Guarded: only while still halted on the SAME halt this round
+   * was triggered by — a user resume/abort wins. A loop halt is identified by
+   * its loop group, not its context: the context is a pass instance, and a
+   * resume that re-decides and re-halts names a different one.
    */
   async function populateHaltSummary(
     input: MaybeRunPlanRepairInput,
-    contextId: string,
+    subject: { contextId: string; loopGroupId: string | null },
     summary: string,
   ): Promise<void> {
     await deps.mutateActive(input.projectPath, input.sessionName, (current) => {
       if (current.status !== "halted" || current.haltReason === null) {
         return current;
       }
-      const haltReason = current.haltReason;
-      if (
-        (haltReason.type !== "circuit_breaker" &&
-          haltReason.type !== "max_iterations") ||
-        haltReason.contextId !== contextId
-      ) {
-        return current;
-      }
+      if (!haltMatchesSubject(current.haltReason, subject)) return current;
       const next = structuredClone(current);
       const nextReason = next.haltReason;
       if (
         nextReason?.type === "circuit_breaker" ||
-        nextReason?.type === "max_iterations"
+        nextReason?.type === "max_iterations" ||
+        nextReason?.type === "loop_limit_reached"
       ) {
         nextReason.summary = summary;
       }
@@ -675,7 +719,8 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     const haltReason = execution.haltReason;
     if (
       haltReason?.type !== "circuit_breaker" &&
-      haltReason?.type !== "max_iterations"
+      haltReason?.type !== "max_iterations" &&
+      haltReason?.type !== "loop_limit_reached"
     ) {
       return;
     }
@@ -683,25 +728,33 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     // durable marker that repair has spoken.
     if (haltReason.summary !== null) return;
     const contextId = haltReason.contextId;
-    const attempts = execution.planRepairRounds.filter(
-      (round) => round.contextId === contextId,
+    const loopGroupId =
+      haltReason.type === "loop_limit_reached" ? haltReason.loopGroupId : null;
+    // Counted exactly the way the trigger counts them, so the number the
+    // operator reads is the budget that actually ran out.
+    const attempts = execution.planRepairRounds.filter((round) =>
+      loopGroupId === null
+        ? round.loopGroupId === null && round.contextId === contextId
+        : round.loopGroupId === loopGroupId,
     ).length;
     logger.info("plan_repair.exhausted", {
       executionId: execution.id,
       contextId,
+      loopGroupId,
       reason,
       attempts,
     });
     await populateHaltSummary(
       input,
-      contextId,
-      `Plan repair attempts exhausted (${attempts} round(s) for this context). Human review required — see the plan-repair rounds for the diagnoses.`,
+      { contextId, loopGroupId },
+      `Plan repair attempts exhausted (${attempts} round(s) for ${loopGroupId === null ? "this context" : "this loop"}). Human review required — see the plan-repair rounds for the diagnoses.`,
     );
     // Event-only outcome (`exhausted` never appears in the round log): the
     // audit row + warning push for "repair has given up on this halt".
     await emitRound(input, execution.id, {
       contextId,
       haltType: haltReason.type,
+      loopGroupId,
       attempt: attempts,
       outcome: "exhausted",
       planningDefect: null,

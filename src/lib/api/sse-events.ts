@@ -26,10 +26,14 @@ import type {
   GraphWorkflowCharterRegisteredEvent,
   GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
+  GraphWorkflowContextSkippedEvent,
+  GraphWorkflowRouteResolvedEvent,
+  GraphWorkflowLoopDecisionEvent,
   GraphWorkflowContextStatusEvent,
   GraphWorkflowJoinStatusEvent,
   GraphWorkflowLaneCommitEvent,
   GraphWorkflowLaneStatusEvent,
+  GraphWorkflowGraphExpandedEvent,
   GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowPlanRepairEvent,
   GraphWorkflowMergeStatusEvent,
@@ -213,6 +217,9 @@ export type SSEEvent =
   | MessageQueueUpdatedEvent
   | GraphWorkflowStatusEvent
   | GraphWorkflowContextStatusEvent
+  | GraphWorkflowContextSkippedEvent
+  | GraphWorkflowRouteResolvedEvent
+  | GraphWorkflowLoopDecisionEvent
   | GraphWorkflowTaskStatusEvent
   | GraphWorkflowValidationResultEvent
   | GraphWorkflowValidationSpecialistResultEvent
@@ -232,6 +239,7 @@ export type SSEEvent =
   | GraphWorkflowCharterRegisteredEvent
   | GraphWorkflowCharterUpdatedEvent
   | GraphWorkflowLiveEditAppliedEvent
+  | GraphWorkflowGraphExpandedEvent
   | GraphWorkflowPlanRepairEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent

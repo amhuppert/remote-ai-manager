@@ -144,10 +144,11 @@ function defaultConfig(): GlobalConfig {
     preMergeTimeoutMs: 300_000,
     maxConcurrentQueries: 3,
     tailscaleEnabled: true,
-    // The one definition of "no workflow config anywhere" lives with the
-    // cascade resolver; a second literal here would drift from what the
-    // resolver actually falls back to.
-    workflowDefaults: SEEDED_WORKFLOW_DEFAULTS,
+    // The cascade resolver's global-layer fallback IS the disk-absent default —
+    // one literal, so a newly-seeded workflow default cannot mean one thing to
+    // the resolver and another to a config file that never mentions it. Cloned
+    // because callers merge disk config into the returned object.
+    workflowDefaults: structuredClone(SEEDED_WORKFLOW_DEFAULTS),
     compaction: {
       backend: "claude",
       conversationModel: "sonnet",

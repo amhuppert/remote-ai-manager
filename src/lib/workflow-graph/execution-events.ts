@@ -14,11 +14,15 @@ import type {
   GraphWorkflowCharterRegisteredEvent,
   GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
+  GraphWorkflowContextSkippedEvent,
+  GraphWorkflowRouteResolvedEvent,
   GraphWorkflowExecutionEvent,
   GraphWorkflowJoinStatusEvent,
   GraphWorkflowLaneCommitEvent,
   GraphWorkflowLaneStatusEvent,
+  GraphWorkflowGraphExpandedEvent,
   GraphWorkflowLiveEditAppliedEvent,
+  GraphWorkflowLoopDecisionEvent,
   GraphWorkflowPlanRepairEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
@@ -217,6 +221,20 @@ export interface PublishLiveEditAppliedInput {
   source: GraphWorkflowLiveEditAppliedEvent["source"];
 }
 
+export interface PublishGraphExpansionInput {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+  invokerContextId: string;
+  requestId: string;
+  outcome: GraphWorkflowGraphExpandedEvent["outcome"];
+  addedContextIds: string[];
+  addedTaskIds: string[];
+  rejoinContextIds: string[];
+  refusalCode: string | null;
+  occurredAt: string;
+}
+
 export interface GraphWorkflowPushInfo {
   kind:
     | "workflow-completed"
@@ -242,6 +260,7 @@ export interface PublishPlanRepairInput {
   executionId: string;
   contextId: string;
   haltType: GraphWorkflowPlanRepairEvent["haltType"];
+  loopGroupId: string | null;
   attempt: number;
   outcome: GraphWorkflowPlanRepairEvent["outcome"];
   planningDefect: boolean | null;
@@ -325,6 +344,16 @@ function dirtyPathsEqual(
       path.tracked === other.tracked
     );
   });
+}
+
+function stringArraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function haltReasonsEqual(
@@ -459,6 +488,48 @@ function haltReasonsEqual(
         previous.executionContextId === next.executionContextId &&
         previous.conversationId === next.conversationId &&
         previous.summary === next.summary
+      );
+    case "routing_cardinality":
+      return (
+        next.type === "routing_cardinality" &&
+        previous.contextId === next.contextId &&
+        previous.policy === next.policy &&
+        previous.outcome === next.outcome &&
+        stringArraysEqual(previous.activatedEdgeIds, next.activatedEdgeIds) &&
+        stringArraysEqual(previous.conditionalEdgeIds, next.conditionalEdgeIds)
+      );
+    case "routing_invariant":
+      return (
+        next.type === "routing_invariant" &&
+        previous.contextId === next.contextId &&
+        previous.reason === next.reason &&
+        stringArraysEqual(previous.edgeIds, next.edgeIds)
+      );
+    case "loop_exit_skipped":
+      return (
+        next.type === "loop_exit_skipped" &&
+        previous.loopGroupId === next.loopGroupId &&
+        previous.pass === next.pass &&
+        previous.contextId === next.contextId
+      );
+    case "loop_invariant":
+      return (
+        next.type === "loop_invariant" &&
+        previous.loopGroupId === next.loopGroupId &&
+        previous.pass === next.pass &&
+        previous.contextId === next.contextId &&
+        previous.reason === next.reason
+      );
+    case "loop_limit_reached":
+      return (
+        next.type === "loop_limit_reached" &&
+        // `scope` is part of the identity: the same loop and pass can be
+        // refused by its own cap or by the execution-wide backstop, and those
+        // are different halts with different remedies.
+        previous.scope === next.scope &&
+        previous.loopGroupId === next.loopGroupId &&
+        previous.pass === next.pass &&
+        previous.maxPasses === next.maxPasses
       );
   }
 
@@ -772,12 +843,115 @@ export function createGraphWorkflowExecutionEventPublisher(
       } satisfies GraphWorkflowBatchScheduledEvent);
     }
 
+    // The blob keeps one bounded settlement marker per source; the LEDGER is
+    // this event stream (decision D4). Derived from the marker diff so the
+    // route resolution and the event commit in the same mutation by
+    // construction, and a source re-decided under an amended route-control
+    // revision emits again — which is exactly the history the bounded blob
+    // cannot hold.
+    for (const [sourceContextId, settlement] of Object.entries(
+      nextExecution.routeSettlements,
+    )) {
+      const previousSettlement =
+        previousExecution?.routeSettlements[sourceContextId];
+      if (
+        previousSettlement &&
+        previousSettlement.captureIteration === settlement.captureIteration &&
+        previousSettlement.routeControlRevision ===
+          settlement.routeControlRevision
+      ) {
+        continue;
+      }
+      events.push({
+        type: "graph-workflow-route-resolved",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        sourceContextId,
+        captureIteration: settlement.captureIteration,
+        routeControlRevision: settlement.routeControlRevision,
+        activatedEdgeIds: [...settlement.activatedEdgeIds],
+        inactiveEdgeIds: [...settlement.inactiveEdgeIds],
+        omittedEdgeIds: [...settlement.omittedEdgeIds],
+        settledAt: settlement.settledAt,
+      } satisfies GraphWorkflowRouteResolvedEvent);
+    }
+
+    // Same shape as the route ledger above, for the same reason (decision D9):
+    // `loopStates[group].decisions` keeps only the LATEST record per pass, so a
+    // pass re-decided under an amended control revision — or a repaired exit
+    // instance — would leave no trace at all if the history were not this event
+    // stream. Derived from the marker diff, so the decision and its event commit
+    // in the same mutation by construction.
+    for (const [loopGroupId, loopState] of Object.entries(
+      nextExecution.loopStates,
+    )) {
+      const previousDecisions =
+        previousExecution?.loopStates[loopGroupId]?.decisions ?? {};
+      const decisions = Object.values(loopState.decisions).sort(
+        (left, right) => left.pass - right.pass,
+      );
+      for (const decision of decisions) {
+        const previousDecision = previousDecisions[String(decision.pass)];
+        if (
+          previousDecision &&
+          previousDecision.loopControlRevision ===
+            decision.loopControlRevision &&
+          previousDecision.templateVersion === decision.templateVersion &&
+          previousDecision.exitContextId === decision.exitContextId &&
+          previousDecision.exitCaptureIteration ===
+            decision.exitCaptureIteration
+        ) {
+          continue;
+        }
+        events.push({
+          type: "graph-workflow-loop-decision",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          loopGroupId,
+          pass: decision.pass,
+          loopControlRevision: decision.loopControlRevision,
+          templateVersion: decision.templateVersion,
+          exitContextId: decision.exitContextId,
+          exitCaptureIteration: decision.exitCaptureIteration,
+          verdict: decision.verdict,
+          outcome: decision.outcome,
+          nextPass: decision.nextPass,
+          decidedAt: decision.decidedAt,
+        } satisfies GraphWorkflowLoopDecisionEvent);
+      }
+    }
+
     for (const context of nextIndex.contextById.values()) {
       const previousContext =
         previousExecution?.contextStates[context.id] ?? null;
       const nextContext = nextExecution.contextStates[context.id];
       if (!nextContext) {
         continue;
+      }
+
+      // A skip is a routing decision, so it gets its own event carrying the
+      // verdicts — the status event above says only that the context reached
+      // `skipped`. Fired on the ENTRY diff and never again: `skipped` is
+      // terminal, so a later commit touching the settled context re-publishes
+      // nothing (D4 R4.3).
+      if (
+        previousContext?.status !== "skipped" &&
+        nextContext.status === "skipped" &&
+        nextContext.skipReason
+      ) {
+        events.push({
+          type: "graph-workflow-context-skipped",
+          projectName,
+          sessionName: input.sessionName,
+          executionId: nextExecution.id,
+          contextId: context.id,
+          edgeEvaluations: nextContext.skipReason.edgeEvaluations.map(
+            (evaluation) => ({ ...evaluation }),
+          ),
+          skippedAt: nextContext.skipReason.at,
+        } satisfies GraphWorkflowContextSkippedEvent);
       }
 
       if (
@@ -1223,6 +1397,38 @@ export function createGraphWorkflowExecutionEventPublisher(
   }
 
   /**
+   * One runtime graph-expansion attempt (D4 R6). Pure derivation like every
+   * other publisher here: an ACCEPTED expansion returns rows the accepting
+   * mutation commits alongside the graph change, so the receipt and the change
+   * are atomic; a REFUSED one has no mutation to ride, so its caller delivers
+   * the row directly. No push — expansion is engine-internal progress, not
+   * something the operator is asked to act on.
+   */
+  function publishGraphExpansion(
+    input: PublishGraphExpansionInput,
+  ): GraphWorkflowEventDelivery {
+    const event: GraphWorkflowGraphExpandedEvent = {
+      type: "graph-workflow-graph-expanded",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.executionId,
+      invokerContextId: input.invokerContextId,
+      requestId: input.requestId,
+      outcome: input.outcome,
+      addedContextIds: input.addedContextIds,
+      addedTaskIds: input.addedTaskIds,
+      rejoinContextIds: input.rejoinContextIds,
+      refusalCode: input.refusalCode,
+      occurredAt: input.occurredAt,
+    };
+
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
+  }
+
+  /**
    * One plan-repair round conclusion (docs/design/cc-cli/08). Superseded
    * rounds are audit-only (the user is already acting on the execution), so
    * they append the event but never push.
@@ -1237,6 +1443,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       executionId: input.executionId,
       contextId: input.contextId,
       haltType: input.haltType,
+      loopGroupId: input.loopGroupId,
       attempt: input.attempt,
       outcome: input.outcome,
       planningDefect: input.planningDefect,
@@ -1289,6 +1496,7 @@ export function createGraphWorkflowExecutionEventPublisher(
     publishCharterRegistered,
     publishCharterUpdated,
     publishLiveEditApplied,
+    publishGraphExpansion,
     publishPlanRepairRound,
     deliver,
   };

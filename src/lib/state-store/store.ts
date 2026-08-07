@@ -580,6 +580,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getArchivedProjects: accessors.getArchivedProjects,
     getPinnedProjects: accessors.getPinnedProjects,
     getGraphWorkflowEventsTail: accessors.getGraphWorkflowEventsTail,
+    getGraphWorkflowEventsPage: accessors.getGraphWorkflowEventsPage,
     findLatestGraphWorkflowContextEvent:
       accessors.findLatestGraphWorkflowContextEvent,
     getActiveGraphWorkflowExecution: accessors.getActiveGraphWorkflowExecution,

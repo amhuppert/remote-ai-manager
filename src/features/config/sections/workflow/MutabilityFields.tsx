@@ -20,7 +20,7 @@ export function MutabilityFields({
       <ConfigToggle
         label="Allow agent task add"
         value={value.allowAgentTaskAdd}
-        onChange={(v) => onChange({ allowAgentTaskAdd: v })}
+        onChange={(v) => onChange({ ...value, allowAgentTaskAdd: v })}
       />
     </ConfigField>
   );

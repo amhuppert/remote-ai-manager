@@ -47,6 +47,15 @@ import {
   renderLiveOutline,
   renderLiveOutputs,
 } from "./workflow-live-outline";
+import {
+  buildLedger,
+  ledgerEventPageSchema,
+  ledgerExecutionSchema,
+  type LedgerWalk,
+  renderLedger,
+  selectLedgerDecisionRows,
+  type LedgerDecisionRow,
+} from "./workflow-ledger";
 
 /**
  * `cctl workflow validate|create|replace|list|get|status|delete|start|templates`
@@ -78,6 +87,18 @@ const definitionItemSchema = z.object({
   revision: z.number(),
 });
 const mutationResponseSchema = z.object({ item: definitionItemSchema });
+
+/**
+ * Located advice the validate endpoint returns beside `ok: true` (today the
+ * guard enum-coverage lint). Never affects the exit code — a warned plan is
+ * still creatable — so the parse is lenient: an unrecognized shape simply
+ * yields no warnings rather than failing a valid plan.
+ */
+const validateResponseSchema = z.object({
+  warnings: z
+    .array(z.object({ path: z.string(), message: z.string() }))
+    .optional(),
+});
 
 const TEMPLATE_TIERS = ["global", "project"] as const;
 type TemplateTier = (typeof TEMPLATE_TIERS)[number];
@@ -284,6 +305,7 @@ export async function runWorkflow(
       templates: (r) => runWorkflowTemplates(r, flags, values, env, host),
       live: (r) => runWorkflowLive(r, flags, values, env, host),
       task: (r) => runWorkflowTask(r, flags, values, env, host),
+      graph: (r) => runWorkflowGraph(r, flags, values, env, host),
       "shared-doc": (r) => runWorkflowSharedDoc(r, flags, values, env, host),
       collab: (r) => runWorkflowCollab(r, flags, values, env, host),
     },
@@ -339,10 +361,17 @@ async function runWorkflowValidate(
   // its own line with its JSON path and exits 2 (doc 02 §3.1).
   if (result.kind !== "ok") return workflowFailure(result, json);
 
+  const parsed = validateResponseSchema.safeParse(result.body);
+  const warnings = parsed.success ? (parsed.data.warnings ?? []) : [];
+  const warningLines = warnings
+    .map((warning) => `warning: ${warning.path}: ${warning.message}\n`)
+    .join("");
+
   return {
     exitCode: EXIT_OK,
-    stdout: render(json, "plan is valid\n", {
+    stdout: render(json, `${warningLines}plan is valid\n`, {
       ok: true,
+      ...(warnings.length > 0 ? { warnings } : {}),
       // `workflow create` writes into THIS project, so it is not the next step
       // for a plan validated as a global template — hinting it would send the
       // author to the wrong tier after they deliberately selected the other one.
@@ -1091,6 +1120,13 @@ const liveEditResponseSchema = z.object({
  * before dispatch (see `runWorkflow`), so all three share this one implementation
  * and one help node.
  */
+/**
+ * Rows per ledger page. The PAGE is what D9 bounds; the walk itself runs to
+ * exhaustion unless `--max-pages` bounds it, because complete decision history
+ * has to stay reachable from the CLI.
+ */
+const LEDGER_PAGE_SIZE = 500;
+
 async function runWorkflowLive(
   rest: string[],
   flags: GlobalFlags,
@@ -1104,6 +1140,7 @@ async function runWorkflowLive(
     json: flags.json,
     handlers: {
       get: (r) => runWorkflowLiveGet(r, flags, values, env, host),
+      ledger: (r) => runWorkflowLiveLedger(r, flags, values, env, host),
       edit: (r) => runWorkflowLiveEdit(r, flags, values, env, host),
       pause: (r) => runWorkflowLivePause(r, flags, values, env, host),
       resume: (r) => runWorkflowLiveResume(r, flags, values, env, host),
@@ -1217,6 +1254,136 @@ async function runWorkflowLiveGet(
     stdout: render(json, humanText, envelope),
     stderr: "",
   };
+}
+
+/**
+ * The loop ledger (D4 R16.2): current markers off the execution, complete
+ * decision history off the cursor-paginated event reader, both projected by the
+ * shared `deriveLoopLedger` the inspector uses.
+ */
+async function runWorkflowLiveLedger(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow live ledger"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure("workflow live ledger takes no arguments", json);
+  }
+
+  const startCursor = integerFlag(values["cursor"], "--cursor", 0);
+  if (!startCursor.ok) return usageFailure(startCursor.message, json);
+  const maxPages = integerFlag(values["max-pages"], "--max-pages", 1);
+  if (!maxPages.ok) return usageFailure(maxPages.message, json);
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const executionResult = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "GET",
+    path: `${graphWorkflowPath(context)}/execution`,
+  });
+  if (executionResult.kind !== "ok")
+    return workflowFailure(executionResult, json);
+
+  const parsed = ledgerExecutionSchema.safeParse(executionResult.body);
+  const execution = parsed.success ? parsed.data.execution : null;
+  if (!execution) {
+    return usageFailure(
+      "no active graph workflow execution in this session",
+      json,
+    );
+  }
+
+  // A loop-free execution has no ledger to read, so it never walks the log.
+  const declaresLoops =
+    (execution.workingDefinition.loopGroups ?? []).length > 0 ||
+    Object.keys(execution.loopStates).length > 0;
+
+  const rows: LedgerDecisionRow[] = [];
+  let cursor: number | null = startCursor.value;
+  let walk: LedgerWalk = {
+    complete: true,
+    resumeCursor: null,
+    reason: "complete",
+  };
+  let pagesRead = 0;
+  while (declaresLoops) {
+    if (maxPages.value !== null && pagesRead >= maxPages.value) {
+      walk = { complete: false, resumeCursor: cursor, reason: "page-bound" };
+      break;
+    }
+    const params = new URLSearchParams({
+      executionId: execution.id,
+      page: "true",
+      direction: "asc",
+      limit: String(LEDGER_PAGE_SIZE),
+    });
+    if (cursor !== null) params.set("cursor", String(cursor));
+    const pageResult = await cliRequest(host, {
+      server: context.server,
+      token: context.token,
+      tokenSource: context.tokenSource,
+      method: "GET",
+      path: `${graphWorkflowPath(context)}/events?${params.toString()}`,
+    });
+    if (pageResult.kind !== "ok") return workflowFailure(pageResult, json);
+    const parsedPage = ledgerEventPageSchema.safeParse(pageResult.body);
+    if (!parsedPage.success) {
+      walk = { complete: false, resumeCursor: null, reason: "unreadable" };
+      break;
+    }
+    pagesRead += 1;
+    rows.push(...selectLedgerDecisionRows(parsedPage.data));
+
+    const next: number | null = parsedPage.data.nextCursor;
+    if (next === null) break;
+    // A cursor that does not advance would walk forever. It cannot happen
+    // against the keyset reader, which is exactly why the CLI must not trust it
+    // blind: a hung command reads as a broken tool, not a broken server.
+    if (cursor !== null && next <= cursor) {
+      walk = { complete: false, resumeCursor: null, reason: "reader-stalled" };
+      break;
+    }
+    cursor = next;
+  }
+
+  const entries = buildLedger(execution, rows);
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, renderLedger(entries, walk), {
+      ok: true,
+      loops: entries,
+      ...walk,
+    }),
+    stderr: "",
+  };
+}
+
+type IntegerFlag =
+  | { readonly ok: true; readonly value: number | null }
+  | { readonly ok: false; readonly message: string };
+
+/** An optional integer flag, refused locally before any network call. */
+function integerFlag(
+  raw: string | undefined,
+  flag: string,
+  minimum: number,
+): IntegerFlag {
+  if (raw === undefined) return { ok: true, value: null };
+  const parsed = Number(raw.trim());
+  if (raw.trim() === "" || !Number.isInteger(parsed) || parsed < minimum) {
+    return { ok: false, message: `${flag} must be an integer >= ${minimum}` };
+  }
+  return { ok: true, value: parsed };
 }
 
 async function runWorkflowLiveEdit(
@@ -1519,6 +1686,143 @@ async function runWorkflowTaskAdd(
   return {
     exitCode: EXIT_OK,
     stdout: render(json, `added task "${title}"\n`, { ok: true }),
+    stderr: "",
+  };
+}
+
+// --- Runtime graph expansion (D4 R6) -----------------------------------------
+
+const expandResponseSchema = z.object({
+  /** True when the server answered from a prior acceptance receipt (D4 R6.3). */
+  replayed: z.boolean().default(false),
+  liveRevision: z.number(),
+  createdContextIds: z.array(z.string()).default([]),
+  createdTaskIds: z.array(z.string()).default([]),
+  rejoinContextIds: z.array(z.string()).default([]),
+});
+
+async function runWorkflowGraph(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  return dispatchGroup({
+    group: ["workflow", "graph"],
+    rest,
+    json: flags.json,
+    handlers: {
+      expand: (r) => runWorkflowGraphExpand(r, flags, values, env, host),
+    },
+  });
+}
+
+/**
+ * `cctl workflow graph expand --file <expansion.json>` — the lane verb that
+ * appends a bounded subgraph to the RUNNING execution (D4 R6).
+ *
+ * Unlike every other lane verb it carries a SECOND credential: the signed
+ * implementer-lane capability CC injects as `CC_WORKFLOW_LANE_CAPABILITY` at
+ * dispatch, forwarded verbatim in the `x-cc-lane-capability` header. The CLI
+ * never mints, inspects, or rewrites it — it is opaque transport here, and the
+ * server is what verifies its signature and scope.
+ *
+ * The payload is NOT validated client-side beyond "is it an object": the
+ * envelope is a server decision, and a CLI that pre-judged it would drift.
+ */
+async function runWorkflowGraphExpand(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(
+    values,
+    flagNamesFor("workflow graph expand"),
+    json,
+  );
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure(
+      "workflow graph expand takes no positional arguments — pass --file",
+      json,
+    );
+  }
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      "workflow graph expand requires --file <expansion.json>",
+      json,
+    );
+  }
+
+  const file = await readJsonObjectFile(host, filePath, "expansion", json);
+  if (!file.ok) return file.result;
+  const payload = file.value;
+  if (
+    !Array.isArray((payload as Record<string, unknown>)["contexts"]) ||
+    !Array.isArray((payload as Record<string, unknown>)["tasks"])
+  ) {
+    return usageFailure(
+      `expansion file "${filePath}" must be a JSON object with "contexts" and "tasks" arrays`,
+      json,
+    );
+  }
+
+  const capability = env["CC_WORKFLOW_LANE_CAPABILITY"];
+  if (!capability) {
+    return usageFailure(
+      "no lane capability — set CC_WORKFLOW_LANE_CAPABILITY (graph expansion runs only in an implementer lane CC dispatched)",
+      json,
+    );
+  }
+
+  const resolved = await resolveLaneContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${laneContextPath(context)}/expand`,
+    headers: { "x-cc-lane-capability": capability },
+    body: { executionId: context.executionId, request: payload },
+  });
+  // 403 (no capability / unauthorized lane) and 409 (envelope refusal) both
+  // carry { error, code, issues }; the generic mapping prints them and exits 1.
+  if (result.kind !== "ok") return failureFromRequest(result, json);
+
+  const parsed = expandResponseSchema.safeParse(result.body);
+  const added = parsed.success ? parsed.data : null;
+  const contextList =
+    added === null
+      ? ""
+      : `${added.createdContextIds.map((id) => `  ${id}`).join("\n")}\n`;
+  // A replay is not an expansion. Saying "added" when the server answered from
+  // a receipt would tell a lane that retried after a lost response that it just
+  // grew the graph a second time (D4 R6.3).
+  const humanBody =
+    added === null
+      ? "expanded the graph\n"
+      : added.replayed
+        ? `this request was already applied — replayed its receipt, the graph is unchanged\n${contextList}`
+        : `expanded the graph — added ${added.createdContextIds.length} context(s), ${added.createdTaskIds.length} task(s)\n${contextList}`;
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanBody, {
+      ok: true,
+      ...(added ?? {}),
+      hint:
+        added?.replayed === true
+          ? "nothing new to wait for — these contexts are already scheduled; use a fresh requestId for a different expansion"
+          : "the scheduler picks the additions up on its next tick — keep working",
+    }),
     stderr: "",
   };
 }

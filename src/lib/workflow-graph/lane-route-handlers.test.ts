@@ -18,6 +18,7 @@ import {
   createLaneRouteHandlers,
   type LaneRouteDeps,
 } from "./lane-route-handlers";
+import type { ExpansionRefusalNotice } from "./expansion-service";
 import type {
   GraphWorkflowCollaborationContextBlock,
   GraphWorkflowToolServerContext,
@@ -25,6 +26,7 @@ import type {
 import type { PendingToolBlock } from "./tool-dispatcher";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { LoadLaneToolContextResult } from "./lane-tool-context-loader";
+import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
 
 /**
@@ -299,6 +301,13 @@ function makeDeps(
         return { kind: "valid" as const };
       },
     },
+    async verifyLaneCapability() {
+      return { kind: "absent" as const };
+    },
+    async expandGraph() {
+      throw new Error("expandGraph is not wired in this fixture");
+    },
+    publishExpansionRefusal() {},
     async resolveProjectPath() {
       return "/projects/test";
     },
@@ -953,6 +962,13 @@ describe("lane route handlers — token gate", () => {
             return { kind: "invalid" as const };
           },
         },
+        async verifyLaneCapability() {
+          return { kind: "absent" as const };
+        },
+        async expandGraph() {
+          throw new Error("expandGraph is not wired in this fixture");
+        },
+        publishExpansionRefusal() {},
         resolveProjectPath,
         loadLaneToolContext,
       });
@@ -967,4 +983,529 @@ describe("lane route handlers — token gate", () => {
       expect(store.mutateCount).toBe(0);
     },
   );
+});
+
+describe("lane route handlers — graph expansion capability chain", () => {
+  const VALID_SCOPE = {
+    laneKind: "implementer" as const,
+    executionId: "execution-1",
+    contextId: "context-plan",
+    conversationId: "conversation-7",
+  };
+
+  const REQUEST = {
+    requestId: "req-1",
+    rationale: "Fan out one candidate per approach.",
+    contexts: [
+      {
+        handle: "candidate-a",
+        title: "Candidate A",
+        acceptanceCriteria: "A works",
+      },
+    ],
+    tasks: [
+      {
+        contextHandle: "candidate-a",
+        title: "Build A",
+        instructions: "Build approach A.",
+      },
+    ],
+    edges: [{ from: "context-plan", to: "candidate-a" }],
+  };
+
+  function expansionDeps(
+    context: GraphWorkflowToolServerContext,
+    overrides: {
+      capability?: LaneCapabilityVerification;
+      expandGraph?: LaneRouteDeps["expandGraph"];
+      refusals?: ExpansionRefusalNotice[];
+    } = {},
+  ): LaneRouteDeps {
+    return {
+      ...makeDeps(context),
+      async verifyLaneCapability() {
+        return (
+          overrides.capability ?? {
+            kind: "valid" as const,
+            scope: VALID_SCOPE,
+            issuedAt: 1,
+          }
+        );
+      },
+      publishExpansionRefusal(notice) {
+        overrides.refusals?.push(notice);
+      },
+      expandGraph:
+        overrides.expandGraph ??
+        (async () => ({
+          ok: true as const,
+          replayed: false,
+          liveRevision: 4,
+          createdContextIds: ["context-plan-xdeadbeef-candidate-a"],
+          createdTaskIds: ["context-plan-xdeadbeef-candidate-a-t1"],
+          rejoinContextIds: [],
+        })),
+    };
+  }
+
+  it("passes the capability's conversation to the service and reports what was added", async () => {
+    const { context } = buildContext();
+    const seen: unknown[] = [];
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        async expandGraph(input) {
+          seen.push(input);
+          return {
+            ok: true,
+            replayed: false,
+            liveRevision: 4,
+            createdContextIds: ["context-plan-xdeadbeef-candidate-a"],
+            createdTaskIds: ["context-plan-xdeadbeef-candidate-a-t1"],
+            rejoinContextIds: ["context-verify"],
+          };
+        },
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      replayed: false,
+      liveRevision: 4,
+      rejoinContextIds: ["context-verify"],
+    });
+    // The conversation the service re-checks comes from the SIGNED scope, never
+    // from the request body — a lane cannot name someone else's conversation.
+    expect(seen[0]).toMatchObject({
+      contextId: "context-plan",
+      conversationId: "conversation-7",
+      executionId: "execution-1",
+    });
+  });
+
+  it("distinguishes a replayed acceptance from a fresh one in its 200", async () => {
+    // Both are successes carrying the same ids; only `replayed` tells the lane
+    // whether it just changed the graph or was answered from a receipt (R6.3).
+    const { context } = buildContext();
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        async expandGraph() {
+          return {
+            ok: true,
+            replayed: true,
+            liveRevision: 4,
+            createdContextIds: ["context-plan-xdeadbeef-candidate-a"],
+            createdTaskIds: ["context-plan-xdeadbeef-candidate-a-t1"],
+            rejoinContextIds: [],
+          };
+        },
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, replayed: true });
+  });
+
+  it("refuses with 403 when the request carries no capability", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        capability: { kind: "absent" },
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(expandGraph).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 403 when the capability signature does not verify", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        capability: { kind: "invalid", reason: "bad_signature" },
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(expandGraph).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 403 when the capability claims a non-implementer lane", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const refusals: ExpansionRefusalNotice[] = [];
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        // Only an implementer lane may expand (R7). The verifier refuses any
+        // other kind BEFORE the scope is read as a claim, so an unsupported
+        // kind never reaches the service at all.
+        capability: { kind: "invalid", reason: "unsupported_lane_kind" },
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+        refusals,
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(expandGraph).not.toHaveBeenCalled();
+    expect(refusals.at(-1)).toMatchObject({
+      refusalCode: "expansion-capability-invalid",
+      requestId: "req-1",
+    });
+  });
+
+  it("refuses with 403 when a valid capability is scoped to another context", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        capability: {
+          kind: "valid",
+          scope: { ...VALID_SCOPE, contextId: "context-implement" },
+          issuedAt: 1,
+        },
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(expandGraph).not.toHaveBeenCalled();
+  });
+
+  it("refuses with 403 when a valid capability is scoped to another execution", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        capability: {
+          kind: "valid",
+          scope: { ...VALID_SCOPE, executionId: "execution-other" },
+          issuedAt: 1,
+        },
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(expandGraph).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed expansion payload with 400 before reaching the service", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const handlers = createLaneRouteHandlers(
+      expansionDeps(context, {
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+      }),
+    );
+
+    const response = await handlers.expandGraph(
+      req({
+        executionId: "execution-1",
+        request: { ...REQUEST, contexts: [] },
+      }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(expandGraph).not.toHaveBeenCalled();
+  });
+
+  /**
+   * R6.2 names the unauthorized lane and the smuggled remove/update/move/reorder
+   * op as envelope violations that owe a TYPED refusal event. Both are refused at
+   * the route, before the service is reached — so the route, not the service,
+   * owes their event. Without these the two loudest refusals are the only ones
+   * invisible to the inspector and the audit stream.
+   */
+  describe("typed refusal events for route-level envelope violations (R6.2)", () => {
+    const CAPABILITY_CASES: readonly {
+      label: string;
+      capability: LaneCapabilityVerification;
+      refusalCode: string;
+    }[] = [
+      {
+        label: "no capability at all",
+        capability: { kind: "absent" },
+        refusalCode: "expansion-capability-absent",
+      },
+      {
+        label: "a signature that does not verify",
+        capability: { kind: "invalid", reason: "bad_signature" },
+        refusalCode: "expansion-capability-invalid",
+      },
+      {
+        label: "a capability scoped to another context",
+        capability: {
+          kind: "valid",
+          scope: { ...VALID_SCOPE, contextId: "context-implement" },
+          issuedAt: 1,
+        },
+        refusalCode: "expansion-capability-out-of-scope",
+      },
+      {
+        label: "a capability scoped to another execution",
+        capability: {
+          kind: "valid",
+          scope: { ...VALID_SCOPE, executionId: "execution-other" },
+          issuedAt: 1,
+        },
+        refusalCode: "expansion-capability-out-of-scope",
+      },
+    ];
+
+    for (const testCase of CAPABILITY_CASES) {
+      it(`publishes a refusal event for ${testCase.label}`, async () => {
+        const { context } = buildContext();
+        const refusals: ExpansionRefusalNotice[] = [];
+        const handlers = createLaneRouteHandlers(
+          expansionDeps(context, {
+            capability: testCase.capability,
+            refusals,
+            expandGraph: vi.fn() as unknown as LaneRouteDeps["expandGraph"],
+          }),
+        );
+
+        const response = await handlers.expandGraph(
+          req({ executionId: "execution-1", request: REQUEST }),
+          params({ ...BASE_PARAMS }),
+        );
+
+        expect(response.status).toBe(403);
+        expect(refusals).toEqual([
+          {
+            projectPath: "/projects/test",
+            sessionName: "session-1",
+            executionId: "execution-1",
+            invokerContextId: "context-plan",
+            requestId: "req-1",
+            refusalCode: testCase.refusalCode,
+          },
+        ]);
+      });
+    }
+
+    it("publishes a non-additive-operation refusal for a smuggled remove op", async () => {
+      const { context } = buildContext();
+      const refusals: ExpansionRefusalNotice[] = [];
+      const handlers = createLaneRouteHandlers(
+        expansionDeps(context, {
+          refusals,
+          expandGraph: vi.fn() as unknown as LaneRouteDeps["expandGraph"],
+        }),
+      );
+
+      const response = await handlers.expandGraph(
+        req({
+          executionId: "execution-1",
+          request: {
+            ...REQUEST,
+            operations: [
+              { type: "remove-context", contextId: "context-verify" },
+            ],
+          },
+        }),
+        params({ ...BASE_PARAMS }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(refusals).toEqual([
+        {
+          projectPath: "/projects/test",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          invokerContextId: "context-plan",
+          requestId: "req-1",
+          refusalCode: "expansion-non-additive-operation",
+        },
+      ]);
+    });
+
+    it("publishes a payload-invalid refusal for an otherwise-malformed payload", async () => {
+      const { context } = buildContext();
+      const refusals: ExpansionRefusalNotice[] = [];
+      const handlers = createLaneRouteHandlers(
+        expansionDeps(context, {
+          refusals,
+          expandGraph: vi.fn() as unknown as LaneRouteDeps["expandGraph"],
+        }),
+      );
+
+      const response = await handlers.expandGraph(
+        req({
+          executionId: "execution-1",
+          request: { ...REQUEST, contexts: [] },
+        }),
+        params({ ...BASE_PARAMS }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(refusals.map((notice) => notice.refusalCode)).toEqual([
+        "expansion-payload-invalid",
+      ]);
+    });
+
+    /**
+     * A body so broken it names no request cannot be attributed to one — the
+     * event still fires (the attempt is what the audit stream is for), with the
+     * identity fields it could recover left empty rather than invented.
+     */
+    it("publishes a refusal with empty identity when the body names no request", async () => {
+      const { context } = buildContext();
+      const refusals: ExpansionRefusalNotice[] = [];
+      const handlers = createLaneRouteHandlers(
+        expansionDeps(context, {
+          refusals,
+          expandGraph: vi.fn() as unknown as LaneRouteDeps["expandGraph"],
+        }),
+      );
+
+      const response = await handlers.expandGraph(
+        req({ nonsense: true }),
+        params({ ...BASE_PARAMS }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(refusals).toEqual([
+        {
+          projectPath: "/projects/test",
+          sessionName: "session-1",
+          executionId: "",
+          invokerContextId: "context-plan",
+          requestId: "",
+          refusalCode: "expansion-payload-invalid",
+        },
+      ]);
+    });
+
+    /**
+     * The service owns the refusal event for everything it decides; a route that
+     * also fired one would double-count every envelope refusal in the audit
+     * stream.
+     */
+    it("leaves service-decided refusals to the service", async () => {
+      const { context } = buildContext();
+      const refusals: ExpansionRefusalNotice[] = [];
+      const handlers = createLaneRouteHandlers(
+        expansionDeps(context, {
+          refusals,
+          async expandGraph() {
+            return {
+              ok: false,
+              kind: "refused",
+              issues: [
+                { code: "expansion-context-unreachable", message: "refused" },
+              ],
+            };
+          },
+        }),
+      );
+
+      const response = await handlers.expandGraph(
+        req({ executionId: "execution-1", request: REQUEST }),
+        params({ ...BASE_PARAMS }),
+      );
+
+      expect(response.status).toBe(409);
+      expect(refusals).toEqual([]);
+    });
+  });
+
+  it("maps an unauthorized-lane refusal to 403 and an envelope refusal to 409", async () => {
+    const { context } = buildContext();
+    for (const [kind, status] of [
+      ["forbidden", 403],
+      ["refused", 409],
+      ["conflict", 409],
+    ] as const) {
+      const handlers = createLaneRouteHandlers(
+        expansionDeps(context, {
+          async expandGraph() {
+            return {
+              ok: false,
+              kind,
+              issues: [{ code: `expansion-${kind}`, message: "refused" }],
+            };
+          },
+        }),
+      );
+
+      const response = await handlers.expandGraph(
+        req({ executionId: "execution-1", request: REQUEST }),
+        params({ ...BASE_PARAMS }),
+      );
+
+      expect(response.status, kind).toBe(status);
+      expect(await response.json()).toMatchObject({
+        code: `expansion-${kind}`,
+      });
+    }
+  });
+
+  it("refuses to expand through a halted execution", async () => {
+    const { context } = buildContext();
+    const expandGraph = vi.fn();
+    const handlers = createLaneRouteHandlers({
+      ...expansionDeps(context, {
+        expandGraph: expandGraph as unknown as LaneRouteDeps["expandGraph"],
+      }),
+      async loadLaneToolContext() {
+        return {
+          ok: true,
+          context: {
+            ...context,
+            getPendingHaltReason: async () => HALT_REASON,
+          },
+          reminderState: { ...DEFAULT_REMINDER_STATE },
+        };
+      },
+    });
+
+    const response = await handlers.expandGraph(
+      req({ executionId: "execution-1", request: REQUEST }),
+      params({ ...BASE_PARAMS }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ halt: true });
+    expect(expandGraph).not.toHaveBeenCalled();
+  });
 });

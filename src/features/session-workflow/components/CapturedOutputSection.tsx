@@ -61,8 +61,16 @@ export function resolveCapturedOutputView(
   const lookup = getContextOutput(execution, contextId);
   // `orphaned` renders nothing for the same reason `none` does: R7.6 scopes this
   // group to schema-DECLARING contexts, and a payload left behind by a cleared
-  // contract has no contract to report against.
-  if (lookup.kind === "none" || lookup.kind === "orphaned") return null;
+  // contract has no contract to report against. `skipped` renders nothing
+  // because the branch was not taken: the context owes no output at all, so a
+  // "Pending" caption would report a debt the engine no longer holds (D4 R4).
+  if (
+    lookup.kind === "none" ||
+    lookup.kind === "orphaned" ||
+    lookup.kind === "skipped"
+  ) {
+    return null;
+  }
   if (lookup.kind === "captured") {
     return { kind: "captured", output: lookup.output };
   }

@@ -23,6 +23,7 @@ describe("validateWorkflowPlan", () => {
       expect(result.draft.name).toBe("Test Workflow");
       expect(result.draft.description).toBe("A workflow under test");
       expect(result.draft.definition.executionContexts).toHaveLength(3);
+      expect(result.warnings).toEqual([]);
     }
   });
 
@@ -82,6 +83,52 @@ describe("validateWorkflowPlan", () => {
         message: expect.stringMatching(/cost 5.*limit 4.*lower-worker/),
       }),
     );
+  });
+
+  it("accepts a plan with uncovered guard enum values and reports it as a warning (R3.2)", () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      executionContexts: base.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              outputSchema: {
+                type: "object",
+                properties: {
+                  verdict: { type: "string", enum: ["ship", "hold", "stop"] },
+                },
+                required: ["verdict"],
+              },
+            }
+          : context,
+      ),
+      edges: base.edges.map((edge) =>
+        edge.sourceContextId === "context-plan"
+          ? {
+              ...edge,
+              when: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "ship" } },
+                  required: ["verdict"],
+                },
+              },
+            }
+          : edge,
+      ),
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.path).toBe(
+      "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+    );
+    expect(result.warnings[0]?.message).toContain('"hold"');
+    expect(result.warnings[0]?.message).toContain('"stop"');
   });
 
   it("rejects a plan whose definition is missing the required charter", () => {

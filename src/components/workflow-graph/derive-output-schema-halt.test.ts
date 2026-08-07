@@ -250,6 +250,7 @@ describe("deriveOutputSchemaHaltEvidence (R3.2)", () => {
             seq: 1,
             contextId: "context-plan",
             haltType: "circuit_breaker",
+            loopGroupId: null,
             startedAt: "2026-03-27T09:40:00.000Z",
             settledAt: "2026-03-27T09:41:00.000Z",
             outcome: "declined",

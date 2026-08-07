@@ -110,6 +110,29 @@ const headerSchema = z
   })
   .loose();
 
+// Every D4 block below is `nullish()` / defaulted for the same reason the rest
+// of this mirror is permissive: an outline from a pre-D4 server carries none of
+// them, and the CLI must still render its rows rather than fall back to a JSON
+// dump.
+const skipReasonSchema = z
+  .object({
+    at: z.string(),
+    edgeEvaluations: z.array(
+      z.object({ edgeId: z.string(), verdict: z.string() }).loose(),
+    ),
+  })
+  .loose();
+
+const contextLoopSchema = z
+  .object({
+    loopGroupId: z.string(),
+    pass: z.number(),
+    maxPasses: z.number(),
+    activation: z.string(),
+    templateVersion: z.number().nullish(),
+  })
+  .loose();
+
 const contextRowSchema = z
   .object({
     id: z.string(),
@@ -123,6 +146,67 @@ const contextRowSchema = z
     maxIterations: z.number(),
     // Absent on outlines from pre-D2 servers; renders as "declares none".
     outputSchema: outputSchemaShapeSchema.nullish(),
+    skip: skipReasonSchema.nullish(),
+    loop: contextLoopSchema.nullish(),
+    provenance: z
+      .object({ requestId: z.string(), invokerContextId: z.string() })
+      .loose()
+      .nullish(),
+  })
+  .loose();
+
+const routeRowSchema = z
+  .object({
+    id: z.string(),
+    source: z.string(),
+    effectiveSource: z.string().nullish(),
+    target: z.string(),
+    guard: z.string(),
+    resolution: z.string(),
+  })
+  .loose();
+
+const loopRowSchema = z
+  .object({
+    loopGroupId: z.string(),
+    activation: z.string(),
+    passCount: z.number(),
+    maxPasses: z.number(),
+    loopControlRevision: z.number(),
+    logicalExitContextId: z.string(),
+    concludingExitContextId: z.string().nullish(),
+  })
+  .loose();
+
+const expansionsSchema = z
+  .object({
+    accepted: z
+      .array(
+        z
+          .object({
+            requestId: z.string(),
+            invokerContextId: z.string(),
+            rationale: z.string(),
+            addedContextIds: z.array(z.string()).default([]),
+            addedTaskIds: z.array(z.string()).default([]),
+            rejoinContextIds: z.array(z.string()).default([]),
+            acceptedAt: z.string(),
+          })
+          .loose(),
+      )
+      .default([]),
+    refusals: z
+      .array(
+        z
+          .object({
+            requestId: z.string(),
+            invokerContextId: z.string(),
+            refusalCode: z.string(),
+            refusedAt: z.string(),
+          })
+          .loose(),
+      )
+      .default([]),
   })
   .loose();
 
@@ -147,11 +231,15 @@ export const liveOutlineSchema = z
     // invariant contracts-from-foundation). `nullish` because pre-selector
     // servers omit it and legacy executions carry `null`.
     laneMergeValidation: graphWorkflowLaneMergeValidationConfigSchema.nullish(),
+    routes: z.array(routeRowSchema).default([]),
+    loops: z.array(loopRowSchema).default([]),
+    expansions: expansionsSchema.default({ accepted: [], refusals: [] }),
   })
   .loose();
 
 export type LiveOutlineData = z.infer<typeof liveOutlineSchema>;
 type LiveOutlineContextConfig = z.infer<typeof contextConfigSchema>;
+type LiveOutlineContextRow = z.infer<typeof contextRowSchema>;
 
 function humanChars(chars: number): string {
   return chars >= 1000
@@ -182,6 +270,35 @@ function headerLine(header: LiveOutlineData["header"]): string {
   return `${base}  read-only (${reason})`;
 }
 
+/**
+ * The D4 suffixes a context row carries when there is something conditional to
+ * say about it (R13.2). Each is trailing and conditional for the same reason
+ * the output-schema summary is: the row keeps its pre-D4 width for the
+ * unguarded, loop-free, planner-authored contexts that are the common case.
+ */
+function d4RowSuffixes(context: LiveOutlineContextRow): string {
+  const parts: string[] = [];
+  if (context.skip) {
+    const verdicts = context.skip.edgeEvaluations
+      .map((evaluation) => `${evaluation.edgeId}:${evaluation.verdict}`)
+      .join(",");
+    parts.push(`skip=${verdicts}`);
+  }
+  if (context.loop) {
+    const template =
+      context.loop.templateVersion == null
+        ? ""
+        : ` template v${context.loop.templateVersion}`;
+    parts.push(
+      `loop=${context.loop.loopGroupId} pass ${context.loop.pass}/${context.loop.maxPasses}${template}`,
+    );
+  }
+  if (context.provenance) {
+    parts.push(`added-by=${context.provenance.requestId}`);
+  }
+  return parts.length > 0 ? `  ${parts.join("  ")}` : "";
+}
+
 function contextsBlock(contexts: LiveOutlineData["contexts"]): string {
   if (contexts.length === 0) return "contexts:\n  (none)";
   const idWidth = widestOf(contexts.map((c) => c.id));
@@ -201,9 +318,87 @@ function contextsBlock(contexts: LiveOutlineData["contexts"]): string {
     return `  ${pad(c.id, idWidth)}  ${pad(c.status, statusWidth)}  ${pad(
       c.editability,
       editWidth,
-    )}  ${deps}  tasks=${c.completedTaskCount}/${c.totalTaskCount}  iter=${c.iterationCount}/${c.maxIterations}${outputSchema}`;
+    )}  ${deps}  tasks=${c.completedTaskCount}/${c.totalTaskCount}  iter=${c.iterationCount}/${c.maxIterations}${outputSchema}${d4RowSuffixes(c)}`;
   });
   return `contexts:\n${rows.join("\n")}`;
+}
+
+/**
+ * The routes block, printed only when the graph has something CONDITIONAL to
+ * report — a guard, or a route the engine resolved onto an instance other than
+ * its authored source. A pre-D4 graph's outline is byte-identical without it,
+ * and `deps=` on the context rows already carries plain topology.
+ */
+function routesBlock(routes: LiveOutlineData["routes"]): string | null {
+  const notable = routes.filter(
+    (route) =>
+      route.guard !== "none" ||
+      (route.effectiveSource != null && route.effectiveSource !== route.source),
+  );
+  if (notable.length === 0) return null;
+  const idWidth = widestOf(routes.map((route) => route.id));
+  const pairs = routes.map((route) => `${route.source} → ${route.target}`);
+  const pairWidth = widestOf(pairs);
+  const guardWidth = widestOf(
+    routes.map((route) => (route.guard === "none" ? "-" : route.guard)),
+  );
+  const rows = routes.map((route, index) => {
+    const guard = route.guard === "none" ? "-" : route.guard;
+    const via =
+      route.effectiveSource != null && route.effectiveSource !== route.source
+        ? `  via ${route.effectiveSource}`
+        : "";
+    return `  ${pad(route.id, idWidth)}  ${pad(pairs[index]!, pairWidth)}  ${pad(
+      guard,
+      guardWidth,
+    )}  ${route.resolution}${via}`;
+  });
+  return `routes:\n${rows.join("\n")}`;
+}
+
+function loopsBlock(loops: LiveOutlineData["loops"]): string | null {
+  if (loops.length === 0) return null;
+  const idWidth = widestOf(loops.map((loop) => loop.loopGroupId));
+  const activationWidth = widestOf(loops.map((loop) => loop.activation));
+  const rows = loops.map((loop) => {
+    // The logical exit is what the author wired; the concluding instance is
+    // what actually satisfied it (D1), so the row names both.
+    const exit =
+      loop.concludingExitContextId == null
+        ? `exit=${loop.logicalExitContextId}`
+        : `exit=${loop.logicalExitContextId} → ${loop.concludingExitContextId}`;
+    return `  ${pad(loop.loopGroupId, idWidth)}  ${pad(
+      loop.activation,
+      activationWidth,
+    )}  pass ${loop.passCount}/${loop.maxPasses}  ${exit}  control rev ${loop.loopControlRevision}`;
+  });
+  return `loops:\n${rows.join("\n")}`;
+}
+
+function expansionsBlock(
+  expansions: LiveOutlineData["expansions"],
+): string | null {
+  if (expansions.accepted.length === 0 && expansions.refusals.length === 0) {
+    return null;
+  }
+  const rows = [
+    ...expansions.accepted.map((receipt) => {
+      const added = [
+        ...receipt.addedContextIds.map((id) => `+${id}`),
+        ...receipt.addedTaskIds.map((id) => `+task ${id}`),
+      ].join(" ");
+      const rejoins =
+        receipt.rejoinContextIds.length > 0
+          ? `  rejoins ${receipt.rejoinContextIds.join(",")}`
+          : "";
+      return `  accepted  ${receipt.requestId}  by ${receipt.invokerContextId}  ${added}${rejoins}  ${receipt.acceptedAt}\n    "${receipt.rationale}"`;
+    }),
+    ...expansions.refusals.map(
+      (receipt) =>
+        `  refused   ${receipt.requestId}  by ${receipt.invokerContextId}  ${receipt.refusalCode}  ${receipt.refusedAt}`,
+    ),
+  ];
+  return `expansions:\n${rows.join("\n")}`;
 }
 
 function tasksBlock(tasks: LiveOutlineData["tasks"]): string {
@@ -370,10 +565,13 @@ export function renderLiveOutline(outline: LiveOutlineData): string {
   const blocks = [
     headerLine(outline.header),
     contextsBlock(outline.contexts),
+    routesBlock(outline.routes),
+    loopsBlock(outline.loops),
+    expansionsBlock(outline.expansions),
     tasksBlock(outline.tasks),
     configBlock(outline.config),
     staffingBlock(outline.config),
-  ];
+  ].filter((block): block is string => block !== null);
   // Workflow-scope, so it renders once below the per-context config rows;
   // absent for legacy executions and pre-selector servers alike.
   if (outline.laneMergeValidation != null) {
@@ -412,6 +610,10 @@ const contextOutputSchema = z
         })
         .loose(),
       z.object({ kind: z.literal("pending") }).loose(),
+      // A not-taken branch owes nothing (D4 R4), so its declared contract
+      // reports `skipped` rather than `pending` — and a union that omitted it
+      // would drop the whole view to a JSON dump the moment a graph routed.
+      z.object({ kind: z.literal("skipped") }).loose(),
     ]),
   })
   .loose();

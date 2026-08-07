@@ -675,3 +675,53 @@ describe("post-cutover refusal of legacy singleton agent shapes", () => {
     ).not.toThrow();
   });
 });
+
+describe("edge-id normalization at the inflate boundary (D4 decision D2)", () => {
+  it("repairs duplicate and absent edge ids on a stored definition record", () => {
+    const record = makeValidDefinitionRecord();
+    record.definition.executionContexts = [
+      ...record.definition.executionContexts,
+      {
+        ...record.definition.executionContexts[0]!,
+        id: "ctx-2",
+        title: "Build",
+      },
+    ];
+    record.definition.edges = [
+      { id: "dup", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+      { id: "dup", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+      { sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+    ] as never;
+
+    const parsed = assertDefinitionRecordSupported(record);
+
+    expect(parsed.definition.edges.map((edge) => edge.id)).toEqual([
+      "dup",
+      "ctx-1__ctx-2",
+      "ctx-1__ctx-2-2",
+    ]);
+  });
+
+  it("repairs duplicate edge ids on a stored execution's workingDefinition", () => {
+    const execution = makeValidExecution();
+    execution.workingDefinition.executionContexts = [
+      ...execution.workingDefinition.executionContexts,
+      {
+        ...execution.workingDefinition.executionContexts[0]!,
+        id: "ctx-2",
+        title: "Build",
+      },
+    ];
+    execution.workingDefinition.edges = [
+      { id: "dup", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+      { id: "dup", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+    ] as never;
+
+    const parsed = assertExecutionSupported(execution);
+
+    expect(parsed.workingDefinition.edges.map((edge) => edge.id)).toEqual([
+      "dup",
+      "ctx-1__ctx-2",
+    ]);
+  });
+});

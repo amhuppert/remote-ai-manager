@@ -3012,6 +3012,14 @@ describe("graphWorkflowContextStatusSchema lifecycle constraints", () => {
     const result = graphWorkflowContextStatusSchema.safeParse("waiting");
     expect(result.success).toBe(false);
   });
+
+  // D4 R4: unlike `waiting`, a skip IS persisted — it is a settled routing
+  // decision the engine must not re-derive after a restart.
+  it("accepts 'skipped' as a persisted terminal status", () => {
+    expect(graphWorkflowContextStatusSchema.safeParse("skipped").success).toBe(
+      true,
+    );
+  });
 });
 
 describe("graphWorkflowExecutionSchema lane/join maps", () => {

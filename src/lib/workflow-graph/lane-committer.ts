@@ -5,11 +5,24 @@ import {
   hasUncommittedChanges as defaultHasUncommittedChanges,
 } from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
+import { landingIntentTrailer } from "@/lib/workflow-graph/route-runtime";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionLaneCommitSnapshot,
 } from "@/lib/workflow-graph/schemas";
 const logger = createLogger("graph-workflow-lane-commit");
+
+/**
+ * Append the landing token as a commit trailer (D4 decision D8) so the landing
+ * carries its own replayable evidence: reconciliation can probe the branch for
+ * the token instead of trusting a runner that may not have survived.
+ */
+function withLandingTrailer(
+  message: string,
+  token: string | null | undefined,
+): string {
+  return token ? `${message}\n\n${landingIntentTrailer(token)}` : message;
+}
 
 interface LaneCommitterInput {
   projectPath: string;
@@ -21,6 +34,10 @@ interface LaneCommitterInput {
    *  capture failed/never happened. Baseline for adopting agent-made commits
    *  as the context's snapshot when the commit phase finds a clean worktree. */
   preTurnHeadSha: string | null;
+  /** The dispatch-time landing token (D4 decision D8), embedded as a commit
+   *  trailer so the landing is replayable from the branch alone. Null for a
+   *  context dispatched before intents existed. */
+  landingToken?: string | null;
 }
 
 type LaneCommitterResult =
@@ -108,7 +125,10 @@ export function createLaneCommitter(
         return { status: "skipped" };
       }
 
-      const message = `Graph workflow context ${contextId}`;
+      const message = withLandingTrailer(
+        `Graph workflow context ${contextId}`,
+        input.landingToken,
+      );
       logger.info("graph-workflow.lane_commit.started", {
         projectPath,
         sessionName,

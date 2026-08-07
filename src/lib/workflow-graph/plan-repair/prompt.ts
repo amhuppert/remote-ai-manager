@@ -13,6 +13,7 @@ import type {
   GraphWorkflowValidationAdvisory,
   PlanRepairRound,
 } from "../schemas";
+import type { PlanRepairLoopContext } from "./schemas";
 
 /** Most recent validation verdicts rendered into the prompt. */
 const VALIDATION_HISTORY_LIMIT = 5;
@@ -158,6 +159,48 @@ export interface PlanRepairPromptInput {
   attempt: number;
   validationHistory: PlanRepairValidationVerdict[];
   priorRounds?: PlanRepairRound[];
+  /**
+   * The halted loop, when this round repairs one (R12). Absent for a context
+   * halt — and its absence is what keeps the loop ops out of the vocabulary,
+   * mirroring the validator's fail-closed default.
+   */
+  loop?: PlanRepairLoopContext;
+}
+
+/**
+ * The loop ops, rendered in the same EXACT-shape form as the plan ops: a shape
+ * the agent cannot see is a capability it never uses.
+ *
+ * `raise-loop-max-passes` is withheld on a backstop halt, because there it is
+ * not a remedy — the per-execution backstop is unraisable, and the validator
+ * refuses the op anyway. Offering it would spend the round on a refusal.
+ */
+function loopOperationVocabulary(loop: PlanRepairLoopContext): string[] {
+  return [
+    "",
+    `This halt is a loop budget exhaustion on loop group \`${loop.loopGroupId}\`. Three further operations are available, and they apply to that loop ONLY:`,
+    "```jsonc",
+    ...(loop.scope === "loop"
+      ? [
+          `{"type": "raise-loop-max-passes", "loopGroupId": "${loop.loopGroupId}", "maxPasses": 5, "rationale": "<optional>"}  // raising only; the cap may not exceed the execution's hard pass backstop`,
+        ]
+      : []),
+    `{"type": "amend-loop-predicate", "loopGroupId": "${loop.loopGroupId}", "until": {"schema": {"type": "object", "properties": {}, "required": []}}, "rationale": "<REQUIRED: why the exit bar moves>"}`,
+    `{"type": "edit-loop-template", "loopGroupId": "${loop.loopGroupId}", "operations": [{"type": "update-context", "contextId": "<TEMPLATE context id>", "title": "...", "description": "...", "acceptanceCriteria": "..."}, {"type": "add-task", "contextId": "<TEMPLATE context id>", "title": "...", "instructions": "..."}, {"type": "update-task", "taskId": "<TEMPLATE task id>", "instructions": "..."}, {"type": "remove-task", "taskId": "<TEMPLATE task id>"}, {"type": "reorder-tasks", "contextId": "<TEMPLATE context id>", "orderedTaskIds": ["..."]}]}`,
+    "```",
+    "",
+    ...(loop.scope === "execution"
+      ? [
+          "The budget that refused is the per-execution pass **backstop**, not this loop's own cap. The backstop is a hard constant no operator or repair can raise, so raising `maxPasses` is not available here: the only remedy is to let the running loops conclude, by amending the exit predicate or the body template.",
+          "",
+        ]
+      : []),
+    "Rules these operations answer to:",
+    "- A predicate amendment REQUIRES a rationale and is **never retroactive** — completed passes keep the verdicts they ran under. Amend the predicate when the exit bar itself was wrong, not to wave through work that genuinely did not meet it.",
+    "- Template edits address the BODY TEMPLATE's own context and task ids (the ids in the body template below), never a materialized pass instance like `<loop>__p2__<context>`. They reach the NEXT pass through the normal clone; passes that already ran are never edited.",
+    "- The body template's MEMBERSHIP — which contexts form the body, which is the entry, which is the exit, and the edges between them — is frozen and has no operation. So is every structural change to the graph. Do not attempt one.",
+    "- Raising the cap alone re-runs the same body against the same predicate. If the loop is not converging, say so and decline rather than buying more identical passes.",
+  ];
 }
 
 export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
@@ -203,6 +246,55 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
         [],
         execution.charterAmendments,
       ),
+    );
+  }
+
+  // The loop's own artifacts. Without them the agent is reading a halt about a
+  // predicate it cannot see, on a body it cannot see — the two things every
+  // available repair addresses.
+  const loopGroup =
+    input.loop === undefined
+      ? undefined
+      : execution.workingDefinition.loopGroups?.find(
+          (group) => group.id === input.loop?.loopGroupId,
+        );
+  if (input.loop && loopGroup && "template" in loopGroup) {
+    const passVerdicts = Object.entries(
+      execution.loopStates[loopGroup.id]?.decisions ?? {},
+    )
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .map(
+        ([pass, decision]) =>
+          `- pass ${pass}: ${decision.verdict} (${decision.outcome})`,
+      );
+
+    sections.push(
+      [
+        `## Halted loop: ${loopGroup.id}${loopGroup.title ? ` — ${loopGroup.title}` : ""}`,
+        `Body entry \`${loopGroup.entryContextId}\`, exit \`${loopGroup.exitContextId}\`, cap ${loopGroup.maxPasses} pass(es), template version ${loopGroup.templateVersion}.`,
+        "",
+        "### Exit predicate",
+        "The loop concludes when the exit context's captured output satisfies this predicate. It is evaluated by the engine, deterministically — no agent judges it:",
+        "```json",
+        JSON.stringify(loopGroup.until, null, 2),
+        "```",
+        ...(passVerdicts.length > 0
+          ? ["", "### Recorded pass decisions", ...passVerdicts]
+          : []),
+        "",
+        `### Body template (version ${loopGroup.templateVersion}) — the ids a template edit addresses`,
+        ...loopGroup.template.contexts.map((entry) => {
+          const templateTasks = loopGroup.template.tasks
+            .filter((task) => task.contextId === entry.id)
+            .sort((left, right) => left.order - right.order)
+            .map((task) => `    - ${task.id}: ${task.title}`);
+          return [
+            `- \`${entry.id}\` — ${entry.title}`,
+            `    AC: ${entry.acceptanceCriteria}`,
+            ...templateTasks,
+          ].join("\n");
+        }),
+      ].join("\n"),
     );
   }
 
@@ -352,6 +444,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       '{"type": "reorder-tasks", "contextId": "<id>", "orderedTaskIds": ["<taskId>", "..."]}',
       '{"type": "update-validator-assignment", "contextId": "<id>", "assignmentId": "<id>", "instructions": "...", "authority": "advisory"}  // include only the fields you are changing',
       "```",
+      ...(input.loop ? loopOperationVocabulary(input.loop) : []),
       "",
       'The last operation is the ONLY one that reaches a reviewer, and it narrows: it rewrites what one validator is told to judge, or takes its blocking authority away so its findings become non-blocking advisories. It cannot grant blocking authority (`"authority": "blocking"` is refused), add or remove a reviewer, or change which agent runs one. Use it when a blocking validator is holding the context against a standard the plan never meant it to enforce — not to silence a reviewer whose objection is correct.',
       "",

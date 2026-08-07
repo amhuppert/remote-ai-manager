@@ -154,7 +154,46 @@ describe("createProductionValidationCallerResolver", () => {
       role: "implementer",
     });
     if (resolved.kind !== "graph_lane") return;
-    expect([...resolved.allowedCommands].sort()).toEqual(["test", "typecheck"]);
+    expect(resolved.allowedCommands).toEqual([]);
+  });
+
+  it("authorizes from the frozen command snapshot instead of the current registry", async () => {
+    const base = activeLaneExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-implement" && context.agentValidation
+              ? {
+                  ...context,
+                  agentValidation: {
+                    ...context.agentValidation,
+                    implementer: {
+                      ...context.agentValidation.implementer,
+                      value: { mode: "all", except: [] },
+                      commands: ["typecheck"],
+                    },
+                  },
+                }
+              : context,
+        ),
+      },
+    };
+    const resolver = createProductionValidationCallerResolver(
+      resolverDeps({ session: session(), execution }),
+    );
+
+    const resolved = await resolver.resolveCaller({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      conversationId: "conv-lane",
+    });
+
+    expect(resolved.kind).toBe("graph_lane");
+    if (resolved.kind !== "graph_lane") return;
+    expect(resolved.allowedCommands).toEqual(["typecheck"]);
   });
 
   it("fails closed when the context's lane assignment is inconsistent with execution state", async () => {

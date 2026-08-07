@@ -46,6 +46,91 @@ const EDGE_ARROW_STATUS: Record<EdgeStatus, string> = {
   completed: "fill-green-dim",
 };
 
+/**
+ * A conditional edge (D4 R1) reads as dashed regardless of its lifecycle
+ * status, so the guard is visible before the source has ever run. `cn` is plain
+ * `clsx` — no tailwind-merge — so the dash is chosen here rather than layered
+ * over the status class, which carries a dash of its own for the flowing
+ * animation.
+ */
+const GUARD_DASH = "[stroke-dasharray:3_5]";
+
+/** The verdict tones the chip paints, keyed by the projection's resolution. */
+const GUARD_CHIP_TONE: Record<
+  NonNullable<ContextEdgeData["guard"]>["resolution"],
+  { text: string; fill: string; stroke: string }
+> = {
+  active: {
+    text: "fill-cyan",
+    fill: "fill-[var(--cc-cyan-a08)]",
+    stroke: "stroke-[var(--cyan-glow-strong)]",
+  },
+  inactive: {
+    text: "fill-text-tertiary",
+    fill: "fill-transparent",
+    stroke: "stroke-border-default",
+  },
+  omitted: {
+    text: "fill-text-tertiary",
+    fill: "fill-transparent",
+    stroke: "stroke-border-default",
+  },
+  unresolved: {
+    text: "fill-text-tertiary",
+    fill: "fill-transparent",
+    stroke: "stroke-border-default",
+  },
+  unevaluable: {
+    text: "fill-red",
+    fill: "fill-[var(--cc-red-a08)]",
+    stroke: "stroke-[var(--cc-red-a25)]",
+  },
+};
+
+/**
+ * The guard chip, drawn INSIDE the edge's SVG layer rather than through
+ * `EdgeLabelRenderer`: the label portal only exists inside a mounted React Flow
+ * pane, and the chip must render wherever the edge does.
+ */
+function GuardChip({
+  guard,
+  x,
+  y,
+}: {
+  guard: NonNullable<ContextEdgeData["guard"]>;
+  x: number;
+  y: number;
+}) {
+  const label = guard.kind === "else" ? "else" : "when";
+  const tone = GUARD_CHIP_TONE[guard.resolution];
+  const width = label.length * 7 + 12;
+  return (
+    <g
+      role="img"
+      data-testid="edge-guard-chip"
+      data-resolution={guard.resolution}
+      aria-label={`Guarded edge (${label}) — ${guard.resolution}`}
+    >
+      <rect
+        x={x - width / 2}
+        y={y - 9}
+        width={width}
+        height={18}
+        rx={9}
+        className={cn(tone.fill, tone.stroke)}
+      />
+      <text
+        x={x}
+        y={y + 4}
+        textAnchor="middle"
+        className={cn("font-mono text-[0.62rem]", tone.text)}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
 export default function ContextEdge({
   id,
   sourceX,
@@ -56,7 +141,7 @@ export default function ContextEdge({
   targetPosition,
   data,
 }: EdgeProps<ContextEdgeType>) {
-  const [edgePath] = getBezierPath({
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
@@ -67,6 +152,8 @@ export default function ContextEdge({
 
   const status = getEdgeStatus(data?.sourceStatus, data?.targetStatus);
   const markerId = `arrow-${id}`;
+  const guard = data?.guard;
+  const effectiveSourceId = data?.effectiveSourceId;
 
   return (
     <>
@@ -85,9 +172,31 @@ export default function ContextEdge({
       <path
         id={id}
         d={edgePath}
-        className={cn(EDGE_LINE_BASE, EDGE_LINE_STATUS[status])}
+        {...(guard
+          ? {
+              "data-guard": guard.kind,
+              "data-guard-resolution": guard.resolution,
+            }
+          : {})}
+        className={cn(
+          EDGE_LINE_BASE,
+          EDGE_LINE_STATUS[status],
+          guard && GUARD_DASH,
+        )}
         markerEnd={`url(#${markerId})`}
       />
+      {guard && <GuardChip guard={guard} x={labelX} y={labelY} />}
+      {effectiveSourceId && (
+        <text
+          data-testid="edge-effective-source"
+          x={labelX}
+          y={labelY + (guard ? 22 : 4)}
+          textAnchor="middle"
+          className="fill-text-tertiary font-mono text-[0.6rem]"
+        >
+          via {effectiveSourceId}
+        </text>
+      )}
     </>
   );
 }

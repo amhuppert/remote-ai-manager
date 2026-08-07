@@ -14,6 +14,8 @@ describe("graph workflow runtime edit service", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-plan",
@@ -33,6 +35,8 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-implement",
@@ -52,6 +56,8 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-verify",
@@ -132,6 +138,8 @@ describe("graph workflow runtime edit service", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-plan",
@@ -151,6 +159,8 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-implement",
@@ -170,6 +180,8 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-verify",
@@ -253,7 +265,13 @@ describe("graph workflow runtime edit service", () => {
           executionContexts: base.workingDefinition.executionContexts.map(
             (ctx) =>
               ctx.id === "context-verify"
-                ? { ...ctx, mutability: { allowAgentTaskAdd: true } }
+                ? {
+                    ...ctx,
+                    mutability: {
+                      allowAgentTaskAdd: true,
+                      allowAgentContextAdd: false,
+                    },
+                  }
                 : ctx,
           ),
         },

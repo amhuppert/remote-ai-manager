@@ -195,6 +195,38 @@ describe("WorkflowEventLog collapsing of redundant same-status events", () => {
   });
 });
 
+describe("WorkflowEventLog rendering of a skipped context (D4 R4.3)", () => {
+  it("names the branch as not taken and which edge failed to activate", async () => {
+    const user = userEvent.setup();
+    const { execution, events } = executionWithHistory([
+      {
+        occurredAt: "2026-04-02T08:00:00.000Z",
+        event: {
+          type: "graph-workflow-context-skipped",
+          ...EVENT_BASE,
+          contextId: "context-implement",
+          edgeEvaluations: [
+            { edgeId: "edge-plan-implement", verdict: "inactive" },
+            { edgeId: "edge-design-implement", verdict: "active" },
+          ],
+          skippedAt: "2026-04-02T08:00:00.000Z",
+        },
+      },
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    const row = screen.getByText(/skipped — branch not taken/);
+    expect(row).toBeInTheDocument();
+
+    // The verdict that decided it, not just the outcome.
+    await user.click(row);
+    expect(
+      await screen.findByText(/edge-plan-implement did not activate/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("WorkflowEventLog rendering of lane/join events", () => {
   it("renders a graph-workflow-lane-status event title with lane identity so operators can read lane progress in the activity log", () => {
     const { execution, events } = executionWithHistory([

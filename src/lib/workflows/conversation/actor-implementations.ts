@@ -1555,6 +1555,12 @@ export async function executePromptForMachine(
         ? {
             workflowExecutionId: runtimeState.workflowContext.executionId,
             workflowContextId: runtimeState.workflowContext.contextId,
+            ...(runtimeState.workflowContext.laneCapability !== undefined
+              ? {
+                  workflowLaneCapability:
+                    runtimeState.workflowContext.laneCapability,
+                }
+              : {}),
           }
         : {}),
       ...(externalTurnHandler

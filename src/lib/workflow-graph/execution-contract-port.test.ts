@@ -34,6 +34,7 @@ describe("graph execution contract port", () => {
       ok: true,
       acceptanceCriteriaByContextId: {},
     });
+    expect(contract.deriveCriterionContextCoverage(definition)).toEqual({});
   });
 
   it("delegates to the currently registered contract", () => {
@@ -60,6 +61,9 @@ describe("graph execution contract port", () => {
           acceptanceCriteriaByContextId: { "context-plan": "Derived" },
         };
       },
+      deriveCriterionContextCoverage() {
+        return { "criterion-1": ["context-plan"] };
+      },
     });
 
     expect(contract.validateDefinition(definition)).toMatchObject({
@@ -69,6 +73,9 @@ describe("graph execution contract port", () => {
     expect(contract.deriveContextAcceptanceCriteria(definition)).toEqual({
       ok: true,
       acceptanceCriteriaByContextId: { "context-plan": "Derived" },
+    });
+    expect(contract.deriveCriterionContextCoverage(definition)).toEqual({
+      "criterion-1": ["context-plan"],
     });
   });
 });

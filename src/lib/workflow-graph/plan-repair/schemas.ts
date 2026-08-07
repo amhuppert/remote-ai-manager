@@ -92,6 +92,35 @@ const ALLOWED_PLAN_REPAIR_OP_TYPES = new Set([
 ]);
 
 /**
+ * The three loop repairs R12 admits, at their three grains. Kept OUT of the
+ * general allowlist because they are admitted only on a `loop_limit_reached`
+ * halt, for the loop that halted — see {@link PlanRepairLoopContext}.
+ *
+ * Nothing else about a started loop is reachable from here: membership,
+ * structural graph edits and the per-execution pass backstop have no operation
+ * that names them (the template vocabulary carries content ops only), so those
+ * repairs are refused by the vocabulary rather than by a check this list would
+ * have to remember.
+ */
+const LOOP_CONTROL_OP_TYPES = new Set([
+  "raise-loop-max-passes",
+  "amend-loop-predicate",
+  "edit-loop-template",
+]);
+
+/**
+ * The halted loop a repair round is running for. Absent (the default) means the
+ * halt is not a loop halt, and every loop-control op is refused — fail closed,
+ * so a caller that forgets to thread the trigger's loop through cannot
+ * accidentally admit them.
+ */
+export interface PlanRepairLoopContext {
+  loopGroupId: string;
+  /** Which budget refused — a backstop halt admits no cap raise. */
+  scope: "loop" | "execution";
+}
+
+/**
  * `update-context` fields the repair agent may NOT touch. These parse fine on
  * the shared op schema (they are legitimate live-edit fields for humans), so
  * presence is checked explicitly after the parse.
@@ -121,6 +150,31 @@ export interface PlanRepairOperationIssue {
 export type PlanRepairAdmittedOperation =
   | WorkflowLiveEditOperation
   | ValidatorAssignmentNarrowing;
+
+/**
+ * The two rules a loop-control op answers to beyond its own schema. Returns the
+ * refusal message, or null when the op is admissible.
+ */
+function checkLoopControlOperation(
+  operation: WorkflowLiveEditOperation,
+  loop: PlanRepairLoopContext,
+): string | null {
+  const addressed =
+    "loopGroupId" in operation ? operation.loopGroupId : undefined;
+  if (addressed !== loop.loopGroupId) {
+    return `loop-control operation addresses loop group "${String(addressed)}", but this repair was triggered by a halt on "${loop.loopGroupId}" — a round may only repair the loop that halted`;
+  }
+  // The per-execution pass backstop is unraisable (R10.3). When it is the
+  // budget that refused, a bigger per-loop cap buys nothing: the remedy is a
+  // predicate or template amendment that lets the running loops conclude.
+  if (
+    operation.type === "raise-loop-max-passes" &&
+    loop.scope === "execution"
+  ) {
+    return `raise-loop-max-passes cannot repair a backstop halt: the per-execution pass backstop is unraisable, so amend the exit predicate or the body template instead`;
+  }
+  return null;
+}
 
 export type ValidatePlanRepairOperationsResult =
   | { ok: true; operations: PlanRepairAdmittedOperation[] }
@@ -159,7 +213,8 @@ function toAuthoredCohort(cohort: SeededValidatorCohort): ValidatorCohort {
 
 export function validatePlanRepairOperations(
   raw: unknown,
-  contexts: readonly PlanRepairCohortSite[],
+  contexts: readonly PlanRepairCohortSite[] = [],
+  loop: PlanRepairLoopContext | null = null,
 ): ValidatePlanRepairOperationsResult {
   if (!Array.isArray(raw)) {
     return {
@@ -170,6 +225,10 @@ export function validatePlanRepairOperations(
 
   const issues: PlanRepairOperationIssue[] = [];
   const operations: PlanRepairAdmittedOperation[] = [];
+  const permitted = [
+    ...ALLOWED_PLAN_REPAIR_OP_TYPES,
+    ...(loop ? LOOP_CONTROL_OP_TYPES : []),
+  ];
 
   for (let index = 0; index < raw.length; index += 1) {
     const candidate = raw[index];
@@ -177,11 +236,24 @@ export function validatePlanRepairOperations(
       typeof candidate === "object" && candidate !== null
         ? (candidate as Record<string, unknown>)["type"]
         : undefined;
+    const isLoopControl =
+      typeof type === "string" && LOOP_CONTROL_OP_TYPES.has(type);
 
-    if (typeof type !== "string" || !ALLOWED_PLAN_REPAIR_OP_TYPES.has(type)) {
+    if (
+      typeof type !== "string" ||
+      (!isLoopControl && !ALLOWED_PLAN_REPAIR_OP_TYPES.has(type))
+    ) {
       issues.push({
         index,
-        message: `operation type "${String(type)}" is not permitted for plan repair (allowed: ${[...ALLOWED_PLAN_REPAIR_OP_TYPES].join(", ")})`,
+        message: `operation type "${String(type)}" is not permitted for plan repair (allowed: ${permitted.join(", ")})`,
+      });
+      continue;
+    }
+
+    if (isLoopControl && loop === null) {
+      issues.push({
+        index,
+        message: `operation type "${type}" is admitted only on a loop_limit_reached halt`,
       });
       continue;
     }
@@ -203,6 +275,14 @@ export function validatePlanRepairOperations(
         message: `invalid ${type} operation: ${parsed.error.issues[0]?.message ?? "schema violation"}`,
       });
       continue;
+    }
+
+    if (isLoopControl && loop !== null) {
+      const rejection = checkLoopControlOperation(parsed.data, loop);
+      if (rejection) {
+        issues.push({ index, message: rejection });
+        continue;
+      }
     }
 
     if (parsed.data.type === "update-context") {

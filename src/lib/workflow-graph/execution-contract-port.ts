@@ -1,4 +1,5 @@
 import { getGlobalSingleton } from "@/lib/shared/global-singleton";
+import type { CriterionContextCoverage } from "@/lib/workflow-graph/criterion-coverage";
 import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowGraphValidationError,
@@ -45,6 +46,16 @@ export interface GraphExecutionContract {
   deriveContextAcceptanceCriteria(
     definition: GraphExecutionContractDefinition,
   ): GraphExecutionContractDerivation;
+  /**
+   * Which contexts cover each linked acceptance criterion (D4 R5.2, decision
+   * D11). The engine holds no notion of a criterion, so the criterion-protection
+   * lock on the live-edit frontier reads coverage through this seam; an
+   * execution with no registered consumer — or one that is not spec-linked —
+   * derives an empty map and is never route-locked.
+   */
+  deriveCriterionContextCoverage(
+    definition: GraphExecutionContractDefinition,
+  ): CriterionContextCoverage;
 }
 
 interface GraphExecutionContractPortState {
@@ -87,6 +98,9 @@ export function createRegisteredGraphExecutionContract(): GraphExecutionContract
           acceptanceCriteriaByContextId: {},
         }
       );
+    },
+    deriveCriterionContextCoverage(definition) {
+      return state().contract?.deriveCriterionContextCoverage(definition) ?? {};
     },
   };
 }

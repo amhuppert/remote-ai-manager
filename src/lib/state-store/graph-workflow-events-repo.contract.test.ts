@@ -13,6 +13,7 @@ import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import {
   createGraphWorkflowEventsRepo,
+  GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT,
   type GraphWorkflowEventsRepo,
 } from "./graph-workflow-events-repo";
 import { createSessionsRepo } from "./sessions-repo";
@@ -167,6 +168,93 @@ describe("graph-workflow-events-repo append + read", () => {
       "2026-01-01T00:00:03Z",
       "2026-01-01T00:00:04Z",
     ]);
+  });
+});
+
+describe("graph-workflow-events-repo findPage (D4 decision D9)", () => {
+  function seedFour(): void {
+    repo.appendMany(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, "2026-01-01Z", [
+      contextStatusEvent("2026-01-01T00:00:01Z", "ctx-1"),
+      contextStatusEvent("2026-01-01T00:00:02Z", "ctx-2"),
+      contextStatusEvent("2026-01-01T00:00:03Z", "ctx-3"),
+      contextStatusEvent("2026-01-01T00:00:04Z", "ctx-4"),
+    ]);
+    // A second execution's rows interleave in the shared table; a page must
+    // never leak them.
+    repo.appendMany(PROJECT_PATH, SESSION_NAME, "wf-2", "2026-01-01Z", [
+      contextStatusEvent("2026-01-01T00:00:05Z", "other"),
+    ]);
+  }
+
+  it("walks the whole log forward in bounded pages and reports the cursor", () => {
+    seedFour();
+
+    const first = repo.findPage(EXECUTION_ID, { limit: 2 });
+    expect(first.records.map((row) => row.occurredAt)).toEqual([
+      "2026-01-01T00:00:01Z",
+      "2026-01-01T00:00:02Z",
+    ]);
+    expect(first.nextCursor).toBe(first.records[1]?.id);
+
+    const second = repo.findPage(EXECUTION_ID, {
+      limit: 2,
+      cursor: first.nextCursor,
+    });
+    expect(second.records.map((row) => row.occurredAt)).toEqual([
+      "2026-01-01T00:00:03Z",
+      "2026-01-01T00:00:04Z",
+    ]);
+
+    // Exhausted: the last page reports no cursor, so a reader terminates
+    // without a trailing empty request.
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it("reads backward from the newest row when asked", () => {
+    seedFour();
+
+    const page = repo.findPage(EXECUTION_ID, { limit: 2, direction: "desc" });
+    expect(page.records.map((row) => row.occurredAt)).toEqual([
+      "2026-01-01T00:00:04Z",
+      "2026-01-01T00:00:03Z",
+    ]);
+
+    const next = repo.findPage(EXECUTION_ID, {
+      limit: 2,
+      direction: "desc",
+      cursor: page.nextCursor,
+    });
+    expect(next.records.map((row) => row.occurredAt)).toEqual([
+      "2026-01-01T00:00:02Z",
+      "2026-01-01T00:00:01Z",
+    ]);
+    expect(next.nextCursor).toBeNull();
+  });
+
+  it("bounds the page size and refuses a non-positive one", () => {
+    repo.appendMany(
+      PROJECT_PATH,
+      SESSION_NAME,
+      EXECUTION_ID,
+      "2026-01-01Z",
+      Array.from({ length: GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT + 1 }, (_, i) =>
+        contextStatusEvent("2026-01-01T00:00:01Z", `ctx-${i}`),
+      ),
+    );
+
+    // A caller cannot opt out of the ceiling, so no single request can pull the
+    // whole log into memory.
+    const page = repo.findPage(EXECUTION_ID, { limit: 100_000 });
+    expect(page.records).toHaveLength(GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT);
+    expect(page.nextCursor).not.toBeNull();
+
+    expect(() => repo.findPage(EXECUTION_ID, { limit: 0 })).toThrow();
+  });
+
+  it("returns an empty page for an execution with no events", () => {
+    const page = repo.findPage("wf-unknown", { limit: 10 });
+    expect(page.records).toEqual([]);
+    expect(page.nextCursor).toBeNull();
   });
 });
 
@@ -403,6 +491,39 @@ describe("graph-workflow-events-repo output-schema rejection durability", () => 
   });
 });
 
+/**
+ * A maximal `graph-workflow-graph-expanded` event (D4 R6). The wrapped payload
+ * is a discriminated union, so the durability harness compares `event` as one
+ * whole value — which means a variant only gets coverage when a fixture of that
+ * variant is actually round-tripped. Expansion is the variant whose fields carry
+ * the receipt R6.1/R6.2 promise: the requestId a lane keys its retry on, the
+ * accepted/refused outcome, the three id arrays naming what landed, and the
+ * refusal code. This is the ACCEPTED shape (every id array populated, refusalCode
+ * null is the accepted value); the refused shape is asserted separately below,
+ * because a schema default set to the wrong value on read looks identical to a
+ * refusal that added nothing.
+ */
+function buildMaximalExpansionEvent(): GraphWorkflowExecutionEvent {
+  return graphWorkflowExecutionEventSchema.parse({
+    occurredAt: "2026-02-15T08:09:10Z",
+    event: {
+      type: "graph-workflow-graph-expanded",
+      projectName: "p1",
+      sessionName: SESSION_NAME,
+      executionId: EXECUTION_ID,
+      invokerContextId: "context-plan",
+      requestId: "req-1",
+      outcome: "accepted",
+      addedContextIds: ["context-plan-xdeadbeef-candidate-a"],
+      addedTaskIds: ["context-plan-xdeadbeef-candidate-a-t1"],
+      rejoinContextIds: ["context-verify"],
+      refusalCode: "expansion-rejoin-started",
+      occurredAt: "2026-02-15T08:09:10Z",
+    },
+    preReset: true,
+  });
+}
+
 describe("graph-workflow-events-repo durability contract", () => {
   it("round-trips every persisted event key path through the real repo", async () => {
     await assertRoundTripDurability({
@@ -424,5 +545,61 @@ describe("graph-workflow-events-repo durability contract", () => {
         return rows[0] ?? null;
       },
     });
+  });
+
+  it("round-trips every persisted graph-expansion key path through the real repo", async () => {
+    await assertRoundTripDurability({
+      label: "graph-workflow-events (graph-expanded)",
+      schema: graphWorkflowExecutionEventSchema,
+      buildMaximalFixture: buildMaximalExpansionEvent,
+      persist: (fixture) => {
+        repo.appendMany(
+          PROJECT_PATH,
+          SESSION_NAME,
+          EXECUTION_ID,
+          fixture.occurredAt,
+          [fixture],
+        );
+        return fixture;
+      },
+      reload: () => {
+        const rows = repo.findByExecution(EXECUTION_ID);
+        return rows[0] ?? null;
+      },
+    });
+  });
+
+  it("round-trips a refused expansion receipt with its empty id arrays", () => {
+    const refusal = graphWorkflowExecutionEventSchema.parse({
+      occurredAt: "2026-02-15T08:09:11Z",
+      event: {
+        type: "graph-workflow-graph-expanded",
+        projectName: "p1",
+        sessionName: SESSION_NAME,
+        executionId: EXECUTION_ID,
+        invokerContextId: "context-plan",
+        requestId: "req-2",
+        outcome: "refused",
+        addedContextIds: [],
+        addedTaskIds: [],
+        rejoinContextIds: [],
+        refusalCode: "expansion-non-additive-operation",
+        occurredAt: "2026-02-15T08:09:11Z",
+      },
+      preReset: false,
+    });
+    repo.appendMany(PROJECT_PATH, SESSION_NAME, EXECUTION_ID, "2026-02-15Z", [
+      refusal,
+    ]);
+
+    const reloaded = repo.findByExecution(EXECUTION_ID)[0]?.event;
+    expect(reloaded?.type).toBe("graph-workflow-graph-expanded");
+    if (reloaded?.type !== "graph-workflow-graph-expanded") return;
+    expect(reloaded.outcome).toBe("refused");
+    expect(reloaded.requestId).toBe("req-2");
+    expect(reloaded.refusalCode).toBe("expansion-non-additive-operation");
+    expect(reloaded.addedContextIds).toEqual([]);
+    expect(reloaded.addedTaskIds).toEqual([]);
+    expect(reloaded.rejoinContextIds).toEqual([]);
   });
 });

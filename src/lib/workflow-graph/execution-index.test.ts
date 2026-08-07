@@ -27,7 +27,7 @@ function createContext(id: string, title = id): GraphWorkflowResolvedContext {
     scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },

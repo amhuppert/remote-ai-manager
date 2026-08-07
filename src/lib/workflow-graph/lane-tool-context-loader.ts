@@ -40,7 +40,7 @@ import { createStatusBus } from "@/lib/events/status-bus";
 import { publishScopedStatus } from "@/lib/events/publication";
 import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import { createSessionWorkflowEnvelopeStoreForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { resolveBoundConversationId } from "@/lib/workflow-graph/lane-binding";
 
 /**
  * Production loader for the graph-workflow lane tool context — the single
@@ -51,39 +51,6 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
  */
 
 const logger = createLogger("graph-workflow-lane-tool-context-loader");
-
-/**
- * The conversation an in-flight lane tool call is bound to: the running task's
- * `lastConversationId` where one exists, else any running task's, else the
- * lane's `workflowConversationId`. `null` when nothing in the context is live.
- */
-export function resolveBoundConversationId(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-): string | null {
-  for (const taskState of Object.values(execution.taskStates)) {
-    if (taskState.contextId !== contextId) {
-      continue;
-    }
-    if (taskState.status !== "running") {
-      continue;
-    }
-    if (taskState.lastConversationId) {
-      return taskState.lastConversationId;
-    }
-  }
-
-  const laneByKind = execution.laneStates[contextId];
-  if (laneByKind) {
-    for (const lane of Object.values(laneByKind)) {
-      if (lane.workflowConversationId) {
-        return lane.workflowConversationId;
-      }
-    }
-  }
-
-  return null;
-}
 
 /**
  * The runtime state a halted lane needs to compute reminders (doc 04 §6): the

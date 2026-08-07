@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   MultilineInput,
   runMultilinePrimaryAction,
@@ -25,7 +32,6 @@ import {
   validatorChipLabel,
 } from "@/components/workflow-config/InspectorChips";
 import { cn } from "@/lib/ui/cn";
-import type { ReactNode } from "react";
 
 const wbBtn =
   "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
@@ -86,6 +92,10 @@ const graphNodeBadgeByStatus: Record<string, string> = {
   halted: "bg-[var(--cc-red-a08)] text-red border border-[var(--cc-red-a25)]",
   "awaiting-approval":
     "bg-[var(--cc-amber-a10)] text-amber border border-[var(--cc-amber-a30)]",
+  // A not-taken branch is terminal-with-nothing, not merely unstarted: dashed
+  // and dimmed, so it reads as inert rather than still-to-come (D4 R4).
+  skipped:
+    "bg-transparent text-text-tertiary border border-dashed border-border-default opacity-80",
 };
 
 const taskStatusDotByStatus: Record<string, string> = {
@@ -112,6 +122,16 @@ import CapturedOutputSection, {
 } from "./CapturedOutputSection";
 import { UpstreamInputsList } from "@/components/workflow-config/UpstreamInputsList";
 import { resolveUpstreamInputs } from "@/lib/workflow-graph/context-outputs";
+import {
+  deriveContextLoopDisplay,
+  deriveContextProvenanceDisplay,
+  deriveContextRouteRows,
+  deriveContextSkipDisplay,
+  type ContextLoopDisplay,
+  type ContextProvenanceDisplay,
+  type ContextRouteRow,
+  type ContextSkipDisplay,
+} from "@/components/workflow-graph/derive-graph";
 import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type {
   GraphWorkflowCircuitBreakerEvent,
@@ -275,6 +295,12 @@ function ResolvedSetupStrip({
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
+  /**
+   * The loop-ledger view, injected as a slot (D4 R16.2). The ledger reads the
+   * cursor-paginated event history, which is a data fetch — the container owns
+   * it so this panel stays presentational.
+   */
+  loopLedger?: ReactNode;
   selectedContextId: string | null;
   /**
    * One answer panel per lane of the selected context that is waiting on the
@@ -538,6 +564,8 @@ function getStatusBadgeClass(status?: string): string {
       return "halted";
     case "awaiting_approval":
       return "awaiting-approval";
+    case "skipped":
+      return "skipped";
     default:
       return "pending";
   }
@@ -555,6 +583,8 @@ function getStatusLabel(status?: string): string {
       return "Ready";
     case "awaiting_approval":
       return "Awaiting Approval";
+    case "skipped":
+      return "Skipped";
     default:
       return "Pending";
   }
@@ -1061,11 +1091,217 @@ function ValidationCard({
   );
 }
 
+// ---- D4 routing / loop / expansion read surfaces (R13) ----
+
+// Every one of these renders from the SAME derivations the graph nodes and
+// edges use (`derive-graph.ts`), so the inspector and the canvas cannot report
+// different routing.
+
+const wbRoutingRow =
+  "flex flex-wrap items-center gap-[6px] border-b border-border-dim py-[6px] text-[0.72rem] last:border-b-0";
+
+const routeResolutionTone: Record<
+  ContextRouteRow["resolution"],
+  "neutral" | "cyan" | "amber" | "red"
+> = {
+  active: "cyan",
+  inactive: "neutral",
+  omitted: "neutral",
+  unresolved: "amber",
+  unevaluable: "red",
+};
+
+function RoutingSection({
+  routes,
+  skip,
+}: {
+  routes: ContextRouteRow[];
+  skip: ContextSkipDisplay | null;
+}): React.JSX.Element | null {
+  const hasGuard = routes.some((route) => route.guard !== "none");
+  if (!hasGuard && !skip) return null;
+
+  return (
+    <section className={wbOverviewSection} data-testid="context-routing">
+      <GroupHeader label="Routing" />
+      {skip && (
+        <div
+          data-testid="context-skip-reason"
+          className="mb-sm rounded-sm border border-border-dim bg-bg-raised p-3 text-[0.72rem] text-text-secondary"
+        >
+          <div className="mb-1 font-medium text-text-primary">
+            Branch not taken
+          </div>
+          <div className="text-text-tertiary">
+            Decided {formatTimestamp(skip.at)} — recorded verdicts:
+          </div>
+          <ul className="mt-1 list-none p-0">
+            {skip.edgeEvaluations.map((evaluation) => (
+              <li key={evaluation.edgeId} className="font-mono text-[0.7rem]">
+                {evaluation.edgeId} · {evaluation.verdict}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {routes.map((route) => (
+        <div
+          key={route.edgeId}
+          className={wbRoutingRow}
+          data-testid="context-route-row"
+          data-edge-id={route.edgeId}
+          data-guard={route.guard}
+          data-resolution={route.resolution}
+        >
+          <span className="font-mono text-[0.7rem] text-text-secondary">
+            {route.logicalSourceId}
+          </span>
+          {route.effectiveSourceId !== null &&
+            route.effectiveSourceId !== route.logicalSourceId && (
+              <span className="font-mono text-[0.68rem] text-text-tertiary">
+                via {route.effectiveSourceId}
+              </span>
+            )}
+          {route.guard !== "none" && (
+            <StatusChip tone="violet">
+              {route.guard === "else" ? "else" : "when"}
+            </StatusChip>
+          )}
+          <StatusChip tone={routeResolutionTone[route.resolution]}>
+            {route.resolution}
+          </StatusChip>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function LoopSection({
+  loop,
+}: {
+  loop: ContextLoopDisplay | null;
+}): React.JSX.Element | null {
+  if (!loop) return null;
+  return (
+    <section className={wbOverviewSection} data-testid="context-loop">
+      <GroupHeader label="Loop" meta={loop.loopGroupId} />
+      <div className="flex flex-wrap items-center gap-[6px] text-[0.72rem] text-text-secondary">
+        <StatusChip tone="violet">
+          Pass {loop.pass} of {loop.maxPasses}
+        </StatusChip>
+        <StatusChip tone={loop.activation === "running" ? "cyan" : "neutral"}>
+          {loop.activation}
+        </StatusChip>
+        {loop.templateVersion !== null && (
+          <StatusChip tone="neutral">
+            template v{loop.templateVersion}
+          </StatusChip>
+        )}
+      </div>
+      <div className="mt-1 font-mono text-[0.7rem] text-text-tertiary">
+        cloned from {loop.authoredContextId}
+      </div>
+    </section>
+  );
+}
+
+function ProvenanceSection({
+  provenance,
+}: {
+  provenance: ContextProvenanceDisplay | null;
+}): React.JSX.Element | null {
+  if (!provenance) return null;
+  return (
+    <section className={wbOverviewSection} data-testid="context-provenance">
+      <GroupHeader label="Provenance" />
+      <div className="text-[0.72rem] leading-snug text-text-secondary">
+        <div>
+          Added at runtime by{" "}
+          <span className="font-mono text-text-primary">
+            {provenance.invokerContextId}
+          </span>{" "}
+          on {formatTimestamp(provenance.acceptedAt)}
+        </div>
+        <div className="mt-1 text-text-primary">{provenance.rationale}</div>
+        <div className="mt-1 font-mono text-[0.68rem] text-text-tertiary">
+          request {provenance.requestId} · payload{" "}
+          {provenance.payloadHash.slice(0, 12)}…
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The execution-wide expansion audit (R8/R13): what was accepted, and what was
+ * refused. Both ledgers are durable — a refusal receipt is the only record that
+ * an attempt was made and declined — so the overview reports them together.
+ */
+function ExpansionLedgerSection({
+  receipts,
+}: {
+  receipts: GraphWorkflowExecution["expansionReceipts"];
+}): React.JSX.Element | null {
+  if (receipts.accepted.length === 0 && receipts.refusals.length === 0) {
+    return null;
+  }
+  return (
+    <section className={wbOverviewSection} data-testid="expansion-ledger">
+      <GroupHeader
+        label="Runtime expansions"
+        meta={`${receipts.accepted.length} accepted · ${receipts.refusals.length} refused`}
+      />
+      {receipts.accepted.map((receipt) => (
+        <div
+          key={`accepted-${receipt.requestId}`}
+          className={wbExecEvent}
+          data-testid="expansion-accepted-row"
+        >
+          <div className={wbExecEventHeader}>
+            <span className={wbExecEventText}>{receipt.rationale}</span>
+            <span className={wbExecEventTimestamp}>
+              {formatTimestamp(receipt.acceptedAt)}
+            </span>
+          </div>
+          <div className={cn(wbExecEventDetail, "font-mono")}>
+            {receipt.invokerContextId} → {receipt.addedContextIds.join(", ")}
+            {receipt.addedTaskIds.length > 0
+              ? ` · ${receipt.addedTaskIds.length} tasks`
+              : ""}
+            {receipt.rejoinContextIds.length > 0
+              ? ` · rejoins ${receipt.rejoinContextIds.join(", ")}`
+              : ""}
+          </div>
+        </div>
+      ))}
+      {receipts.refusals.map((receipt) => (
+        <div
+          key={`refused-${receipt.requestId}-${receipt.payloadHash}`}
+          className={wbExecEvent}
+          data-testid="expansion-refusal-row"
+        >
+          <div className={wbExecEventHeader}>
+            <span className={wbExecEventDotBreaker} />
+            <span className={wbExecEventText}>{receipt.refusalCode}</span>
+            <span className={wbExecEventTimestamp}>
+              {formatTimestamp(receipt.refusedAt)}
+            </span>
+          </div>
+          <div className={cn(wbExecEventDetail, "font-mono")}>
+            {receipt.invokerContextId} · request {receipt.requestId}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 // ---- Overview View (no context selected) ----
 
 function OverviewView({
   execution,
   events,
+  loopLedger,
   onSelectContext,
   onOpenAdvisoryOrigin,
   onEditSchema,
@@ -1073,6 +1309,7 @@ function OverviewView({
 }: {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
+  loopLedger?: ReactNode;
   onSelectContext?: (contextId: string) => void;
   /** Opens an indexed advisory's originating context at the round that raised it. */
   onOpenAdvisoryOrigin?: (origin: AdvisoryOrigin) => void;
@@ -1195,6 +1432,12 @@ function OverviewView({
             ))}
           </section>
         )}
+
+        {loopLedger ? (
+          <section className={wbOverviewSection}>{loopLedger}</section>
+        ) : null}
+
+        <ExpansionLedgerSection receipts={execution.expansionReceipts} />
 
         <section className={wbOverviewSection}>
           <GroupHeader label="Events" />
@@ -1462,6 +1705,27 @@ function DetailView({
     () => cohortAssignmentsFor(execution, contextId),
     [execution, contextId],
   );
+  const routeRows = useMemo(
+    () => deriveContextRouteRows(execution, contextId),
+    [execution, contextId],
+  );
+  const skipDisplay = useMemo(
+    () => deriveContextSkipDisplay(execution, contextId),
+    [execution, contextId],
+  );
+  const loopDisplay = useMemo(
+    () =>
+      deriveContextLoopDisplay(
+        execution.workingDefinition,
+        execution,
+        contextId,
+      ),
+    [execution, contextId],
+  );
+  const provenanceDisplay = useMemo(
+    () => deriveContextProvenanceDisplay(execution, contextId),
+    [execution, contextId],
+  );
   const cohortRoundView = useMemo(() => {
     const state = execution.contextStates[contextId];
     return deriveCohortRoundView({
@@ -1690,6 +1954,10 @@ function DetailView({
                 <UpstreamInputsList inputs={upstreamInputs} />
               </div>
             </section>
+
+            <RoutingSection routes={routeRows} skip={skipDisplay} />
+            <LoopSection loop={loopDisplay} />
+            <ProvenanceSection provenance={provenanceDisplay} />
 
             <CapturedOutputSection view={capturedOutputView} />
 
@@ -2141,6 +2409,7 @@ function DetailView({
 export default function ExecutionInspectorPanel({
   execution,
   events,
+  loopLedger,
   selectedContextId,
   userInputPanels,
   onSelectContext,
@@ -2181,6 +2450,7 @@ export default function ExecutionInspectorPanel({
       <OverviewView
         execution={execution}
         events={events}
+        loopLedger={loopLedger}
         onSelectContext={onSelectContext}
         {...(onOpenAdvisoryOrigin !== undefined
           ? { onOpenAdvisoryOrigin }

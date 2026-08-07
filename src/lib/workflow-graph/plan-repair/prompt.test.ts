@@ -190,6 +190,7 @@ describe("buildPlanRepairPrompt", () => {
             seq: 1,
             contextId: "context-implement",
             haltType: "circuit_breaker",
+            loopGroupId: null,
             startedAt: "2026-07-28T00:00:00.000Z",
             settledAt: "2026-07-28T00:05:00.000Z",
             outcome: "repaired",
@@ -528,5 +529,102 @@ describe("toPlanRepairValidationVerdict", () => {
     });
 
     expect(verdict.specialists).toBeUndefined();
+  });
+});
+
+describe("the loop halt briefing (R12.1)", () => {
+  function loopInput(
+    overrides: Partial<PlanRepairPromptInput> = {},
+  ): PlanRepairPromptInput {
+    const base = makeInput();
+    const definition = base.execution.workingDefinition;
+    const worker = definition.executionContexts[0]!;
+    const haltReason = {
+      type: "loop_limit_reached" as const,
+      scope: "loop" as const,
+      loopGroupId: "refine",
+      pass: 3,
+      maxPasses: 3,
+      verdict: "unsatisfied" as const,
+      passCount: 3,
+      totalPassCount: 3,
+      contextId: "refine__p3__judge",
+      message: 'loop "refine" reached its 3-pass budget',
+      summary: null,
+    };
+    const execution: GraphWorkflowExecution = {
+      ...base.execution,
+      haltReason,
+      workingDefinition: {
+        ...definition,
+        loopGroups: [
+          {
+            id: "refine",
+            entryContextId: "worker",
+            exitContextId: "judge",
+            until: {
+              schema: {
+                type: "object",
+                properties: { verdict: { const: "pass" } },
+                required: ["verdict"],
+              },
+            },
+            maxPasses: 3,
+            templateVersion: 2,
+            template: {
+              contexts: [{ ...worker, id: "worker", title: "Worker" }],
+              tasks: [],
+              edges: [],
+            },
+            planRepair: { enabled: true, maxAttemptsPerContext: 2 },
+          },
+        ],
+      },
+    };
+    return {
+      ...base,
+      execution,
+      haltReason,
+      contextId: "refine__p3__judge",
+      loop: { loopGroupId: "refine", scope: "loop" },
+      ...overrides,
+    };
+  }
+
+  it("briefs the loop, its predicate, and the three ops it may use", () => {
+    const prompt = buildPlanRepairPrompt(loopInput());
+
+    // The loop the agent is repairing, and the bar its passes were judged on.
+    expect(prompt).toContain("refine");
+    expect(prompt).toContain("### Exit predicate");
+    expect(prompt).toContain('"verdict"');
+    expect(prompt).toContain("template version 2");
+    // The op vocabulary, in the same EXACT-shape form the plan ops use.
+    expect(prompt).toContain('"type": "raise-loop-max-passes"');
+    expect(prompt).toContain('"type": "amend-loop-predicate"');
+    expect(prompt).toContain('"type": "edit-loop-template"');
+    // The two rules the agent cannot discover from the shapes alone.
+    expect(prompt).toContain("rationale");
+    expect(prompt).toMatch(/never retroactive|not retroactive/i);
+  });
+
+  it("withholds the cap raise on a backstop halt, naming the remedy that works", () => {
+    const base = loopInput();
+    const prompt = buildPlanRepairPrompt({
+      ...base,
+      loop: { loopGroupId: "refine", scope: "execution" },
+    });
+
+    expect(prompt).not.toContain('"type": "raise-loop-max-passes"');
+    expect(prompt).toMatch(/backstop/i);
+    expect(prompt).toContain('"type": "amend-loop-predicate"');
+  });
+
+  it("offers no loop ops on an ordinary context halt", () => {
+    const prompt = buildPlanRepairPrompt(makeInput());
+
+    expect(prompt).not.toContain('"type": "raise-loop-max-passes"');
+    expect(prompt).not.toContain('"type": "amend-loop-predicate"');
+    expect(prompt).not.toContain('"type": "edit-loop-template"');
   });
 });

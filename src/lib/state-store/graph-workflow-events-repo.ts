@@ -33,6 +33,10 @@ export interface GraphWorkflowEventsRepo {
   findRecordsByExecution(executionId: string): GraphWorkflowEventRecord[];
   findRecordById(id: number): GraphWorkflowEventRecord | null;
   findTail(executionId: string, limit: number): GraphWorkflowExecutionEvent[];
+  findPage(
+    executionId: string,
+    query: GraphWorkflowEventPageQuery,
+  ): GraphWorkflowEventPage;
   findLatestForContext(
     executionId: string,
     contextId: string,
@@ -49,6 +53,34 @@ export interface GraphWorkflowEventsRepo {
 export interface GraphWorkflowEventRecord extends GraphWorkflowExecutionEvent {
   id: number;
   executionId: string;
+}
+
+/** Hard ceiling on one page, whatever a caller asks for. */
+export const GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT = 500;
+
+/**
+ * One request against the cursor-paginated reader. The cursor is the `id` of
+ * the last row the caller already has — the auto-increment id IS the per-
+ * execution sequence, because insertion order and append order coincide — so a
+ * page is a keyset range, never an OFFSET scan that would re-read the log's head
+ * on every page.
+ */
+export interface GraphWorkflowEventPageQuery {
+  /** Rows per page, clamped to {@link GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT}. */
+  readonly limit: number;
+  /** Exclusive; null or omitted starts at the log's oldest (or newest) row. */
+  readonly cursor?: number | null;
+  /** `asc` reads oldest→newest (the default); `desc` reads newest→oldest. */
+  readonly direction?: "asc" | "desc";
+}
+
+export interface GraphWorkflowEventPage {
+  readonly records: GraphWorkflowEventRecord[];
+  /**
+   * The cursor for the next request, or null when this page exhausted the log —
+   * so a reader terminates without a trailing empty round trip.
+   */
+  readonly nextCursor: number | null;
 }
 
 interface EventStorageRow {
@@ -239,6 +271,27 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
       ORDER BY id DESC
       LIMIT ?`,
   );
+  // One statement per (direction, has-cursor) combination: a keyset page is a
+  // different WHERE and ORDER BY, and SQLite plans each of these against the
+  // (execution_id, id) primary-key order without a sort.
+  const pageStmts = {
+    asc: db.prepare(
+      `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
+              event_json
+         FROM graph_workflow_events
+        WHERE execution_id = ? AND id > ?
+        ORDER BY id ASC
+        LIMIT ?`,
+    ),
+    desc: db.prepare(
+      `SELECT id, execution_id, occurred_at, event_type, context_id, pre_reset,
+              event_json
+         FROM graph_workflow_events
+        WHERE execution_id = ? AND id < ?
+        ORDER BY id DESC
+        LIMIT ?`,
+    ),
+  } as const;
   const findLatestForContextStmt = db.prepare(
     `SELECT occurred_at, event_type, context_id, pre_reset, event_json
        FROM graph_workflow_events
@@ -314,6 +367,50 @@ export function createGraphWorkflowEventsRepo(db: Db): GraphWorkflowEventsRepo {
       return timed("findTail", { executionId }, () => {
         const rows = findTailStmt.all(executionId, limit) as unknown[];
         return rows.map((row) => rowToDomain(executionId, row)).reverse();
+      });
+    },
+    findPage(executionId, query) {
+      if (!Number.isInteger(query.limit) || query.limit < 1) {
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "graph_workflow_event",
+          identifier: executionId,
+          issues: [
+            {
+              code: "invalid_limit",
+              path: ["limit"],
+              message: "page limit must be a positive integer",
+            },
+          ],
+        });
+      }
+      return timed("findPage", { executionId }, () => {
+        const direction = query.direction ?? "asc";
+        const limit = Math.min(
+          query.limit,
+          GRAPH_WORKFLOW_EVENT_PAGE_MAX_LIMIT,
+        );
+        // An absent cursor means "from the end of the log this direction starts
+        // at"; the sentinels are the open bounds of the id space, so the same
+        // keyset statement serves the first page and every later one.
+        const cursor =
+          query.cursor ?? (direction === "asc" ? 0 : Number.MAX_SAFE_INTEGER);
+        // One row past the page, so exhaustion is observed rather than guessed:
+        // a full page that happens to end on the log's last row still reports
+        // no cursor.
+        const rows = pageStmts[direction].all(
+          executionId,
+          cursor,
+          limit + 1,
+        ) as unknown[];
+        const hasMore = rows.length > limit;
+        const records = rows.slice(0, limit).map(rowToRecord);
+        return {
+          records,
+          nextCursor: hasMore
+            ? (records[records.length - 1]?.id ?? null)
+            : null,
+        };
       });
     },
     findLatestForContext(executionId, contextId, eventType) {

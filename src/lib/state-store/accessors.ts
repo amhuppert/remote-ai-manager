@@ -22,6 +22,10 @@ import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionListItem, SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowEventPage,
+  GraphWorkflowEventPageQuery,
+} from "./graph-workflow-events-repo";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { StateStoreCore } from "./schemas";
 
@@ -619,6 +623,21 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
   }
 
   /**
+   * One cursor-paginated page of a graph-workflow execution's event log
+   * (D4 decision D9). The tail accessor above answers "what happened lately";
+   * this is the reader for COMPLETE history — the loop ledger's full decision
+   * record, including passes re-decided under an amended control revision —
+   * which the bounded tail structurally cannot serve. Keyset-paginated, so
+   * walking a long log costs one index range per page.
+   */
+  async function getGraphWorkflowEventsPage(
+    executionId: string,
+    query: GraphWorkflowEventPageQuery,
+  ): Promise<GraphWorkflowEventPage> {
+    return repos.graphWorkflowEvents.findPage(executionId, query);
+  }
+
+  /**
    * Latest persisted event of `eventType` filed under `contextId` for an
    * execution, or null. Backs the iteration orchestrator's latest-validation
    * lookup. Returns the single most recent row via the context index.
@@ -711,6 +730,7 @@ export function createAccessors(core: StateStoreCore, log: Logger = logger) {
     getArchivedProjects,
     getPinnedProjects,
     getGraphWorkflowEventsTail,
+    getGraphWorkflowEventsPage,
     findLatestGraphWorkflowContextEvent,
     getActiveGraphWorkflowExecution,
     listActiveGraphWorkflowExecutions,

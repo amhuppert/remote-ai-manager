@@ -9,7 +9,12 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import { reachableLanesFrom } from "./lane-readiness";
+import { routeUpstreamContextIds } from "./execution-routes";
+import {
+  landGatedPublishSettlement,
+  reachableLanesFrom,
+} from "./lane-readiness";
+import type { RoutePublishSettlement } from "./route-projection";
 
 /**
  * Stable identifier for the implicit "session" lane that represents the
@@ -105,9 +110,11 @@ export function planContextJoin(
   const { contextId, execution, now, generateJoinId } = input;
   const definition = input.definition ?? execution.workingDefinition;
 
-  const upstreamIds = definition.edges
-    .filter((edge) => edge.targetContextId === contextId)
-    .map((edge) => edge.sourceContextId);
+  // Projection-resolved, not raw edges (decision D1): the lanes that have to
+  // converge are the lanes of the ACTIVE incoming edges' EFFECTIVE sources. A
+  // skipped branch contributes no merge input (R4), so counting its lane would
+  // plan a join over work that is never going to arrive.
+  const upstreamIds = routeUpstreamContextIds(execution, contextId, definition);
 
   const sourceLaneIds = new Set<string>();
   for (const upstreamId of upstreamIds) {
@@ -163,28 +170,58 @@ export function planContextJoin(
  * yet. This is the same predicate the execution loop's completion invariant
  * uses to refuse `completed`, so publish-safety and completion-safety cannot
  * drift apart.
+ *
+ * A route-skipped context is exempt (D4 R4.1): its branch was not taken, so its
+ * tasks are not unfinished work — they are work the routing decided never
+ * happens. Counting them would hold every conditional execution open forever on
+ * a debt nothing can ever pay.
+ *
+ * The exemption is READ OFF the LAND-GATED publish settlement, not off the
+ * persisted status (decision D1): between a guard resolving false and the
+ * settlement pass that persists the skip — across a restart, say — the routing
+ * has already decided, and a status-only reading would strand the run on a
+ * context that never executes. It is land-gated because the reverse error is
+ * just as real: a source whose fan-in merge is pending or failed blocks its
+ * dependents rather than skipping them (R2.5), so exempting them before the
+ * merge resolves would let the run converge around a branch still in play.
  */
 export function findContextsWithUnfinishedTasks(
   execution: GraphWorkflowExecution,
+  publish: RoutePublishSettlement = landGatedPublishSettlement(execution),
 ): GraphWorkflowExecutionContextState[] {
+  const skipped = new Set(publish.skippedContextIds);
   return Object.values(execution.contextStates).filter(
-    (state) => state.completedTaskCount < state.totalTaskCount,
+    (state) =>
+      !skipped.has(state.contextId) &&
+      state.completedTaskCount < state.totalTaskCount,
   );
 }
 
 /**
  * Collect lanes that contain partial or unvalidated context work. This
  * join/publication safety predicate is intentionally broader than the
- * scheduler's lane-busy check: every non-completed context blocks a merge,
+ * scheduler's lane-busy check: every unsettled context blocks a merge,
  * including parked and halted contexts that do not have a live agent turn.
+ *
+ * "Unsettled" is the land-gated publish settlement (decision D1): a context is
+ * settled when it contributed (completed) or when the routing declined it AND
+ * the source of that decision landed. A settled-declined context owes no task,
+ * validator, approval or output debt and contributes no merge input, so it can
+ * never be the reason a lane holds partial work — including in the window
+ * before its skip is persisted.
  */
 function collectLanesWithIncompleteContextWork(
   execution: GraphWorkflowExecution,
+  publish: RoutePublishSettlement,
 ): Set<string> {
+  const settled = new Set([
+    ...publish.contributingContextIds,
+    ...publish.skippedContextIds,
+  ]);
   const laneIds = new Set<string>();
   for (const state of Object.values(execution.contextStates)) {
     if (state.laneId === null) continue;
-    if (state.status === "completed") continue;
+    if (settled.has(state.contextId)) continue;
     laneIds.add(state.laneId);
   }
   return laneIds;
@@ -198,7 +235,10 @@ export function findBusyJoinSourceLaneIds(
   join: GraphWorkflowExecutionJoinState,
   execution: GraphWorkflowExecution,
 ): string[] {
-  const incompleteLaneIds = collectLanesWithIncompleteContextWork(execution);
+  const incompleteLaneIds = collectLanesWithIncompleteContextWork(
+    execution,
+    landGatedPublishSettlement(execution),
+  );
   const seen = new Set<string>();
   const busyLaneIds: string[] = [];
 
@@ -230,13 +270,20 @@ export function findBusyJoinSourceLaneIds(
  * candidate that structurally excludes it (ticket #28 / F25). A stuck context
  * then surfaces through the loop's completion invariant as a halt instead of
  * an incomplete delivery.
+ *
+ * Both refusals read the SAME land-gated publish settlement, derived once here
+ * (D4 R4.1/R2.5, decision D1), so what the publish waits on and what it
+ * excludes cannot disagree.
  */
 export function planFinalPublishJoin(
   input: PlanFinalPublishJoinInput,
 ): GraphWorkflowExecutionJoinState | null {
   const { execution, sessionLaneId, now, generateJoinId } = input;
+  const publish = landGatedPublishSettlement(execution);
 
-  if (findContextsWithUnfinishedTasks(execution).length > 0) return null;
+  if (findContextsWithUnfinishedTasks(execution, publish).length > 0) {
+    return null;
+  }
 
   const consumedLaneIds = new Set<string>();
   for (const join of Object.values(execution.joins ?? {})) {
@@ -251,8 +298,10 @@ export function planFinalPublishJoin(
   // An interrupted parallel wave reset to `ready` still occupies its forked
   // lane; publishing it would land half-finished work and let the loop
   // converge to completion with the context's remaining tasks dropped.
-  const lanesWithIncompleteWork =
-    collectLanesWithIncompleteContextWork(execution);
+  const lanesWithIncompleteWork = collectLanesWithIncompleteContextWork(
+    execution,
+    publish,
+  );
 
   const unpublishedSources: string[] = [];
   for (const lane of Object.values(execution.executionLanes)) {

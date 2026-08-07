@@ -112,6 +112,8 @@ export const mutateSessionWorkflowEnvelopes =
   defaultStore.mutateSessionWorkflowEnvelopes;
 export const getGraphWorkflowEventsTail =
   defaultStore.getGraphWorkflowEventsTail;
+export const getGraphWorkflowEventsPage =
+  defaultStore.getGraphWorkflowEventsPage;
 export const findLatestGraphWorkflowContextEvent =
   defaultStore.findLatestGraphWorkflowContextEvent;
 export const getActiveGraphWorkflowExecution =

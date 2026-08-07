@@ -210,6 +210,13 @@ function laneRouteHost(
         return { kind: "valid" as const };
       },
     },
+    async verifyLaneCapability() {
+      return { kind: "absent" as const };
+    },
+    async expandGraph() {
+      throw new Error("expandGraph is not wired in this fixture");
+    },
+    publishExpansionRefusal() {},
     async resolveProjectPath() {
       return "/repos/cc";
     },

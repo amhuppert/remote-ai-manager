@@ -32,7 +32,7 @@ function makeContext(id: string) {
         reasoningEffort: "medium" as const,
       },
     },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
   };

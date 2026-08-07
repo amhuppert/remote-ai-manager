@@ -201,9 +201,16 @@ function makeExecution(
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    executionStateRevision: 0,
+    structuralRevision: 0,
     charterAmendments: [],
     planRepairRounds: [],
+    loopControlAmendments: [],
     contextOutputs: {},
+    routeControlRevisions: {},
+    routeSettlements: {},
+    expansionReceipts: { accepted: [], refusals: [] },
+    loopStates: {},
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -237,7 +244,7 @@ function makeExecution(
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: true },
+          mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 5,
@@ -285,7 +292,7 @@ function makeExecution(
           scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -308,7 +315,7 @@ function makeExecution(
           scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 2, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -389,6 +396,8 @@ const createUserSchema = z.object({
     activeContextIds: ["ctx-1"],
     contextStates: {
       "ctx-1": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -408,6 +417,8 @@ const createUserSchema = z.object({
         lastMergeError: null,
       },
       "ctx-2": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-2",
@@ -427,6 +438,8 @@ const createUserSchema = z.object({
         lastMergeError: null,
       },
       "ctx-3": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-3",
@@ -539,6 +552,8 @@ function makeHaltedExecution(): GraphWorkflowExecution {
     },
     contextStates: {
       "ctx-1": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -558,6 +573,8 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         lastMergeError: null,
       },
       "ctx-2": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-2",
@@ -577,6 +594,8 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         lastMergeError: null,
       },
       "ctx-3": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-3",

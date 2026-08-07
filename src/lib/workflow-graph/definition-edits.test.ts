@@ -1086,3 +1086,253 @@ describe("applyDefinitionEdits", () => {
     });
   });
 });
+
+describe("applyDefinitionEdits — edge guards and id-addressed edge edits", () => {
+  const PLAN_OUTPUT_SCHEMA = {
+    type: "object",
+    properties: { verdict: { type: "string", enum: ["ship", "hold"] } },
+    required: ["verdict"],
+    additionalProperties: false,
+  };
+  const SHIP_GUARD = {
+    schema: {
+      type: "object",
+      properties: { verdict: { const: "ship" } },
+      required: ["verdict"],
+    },
+  };
+
+  /** The base fixture with `context-plan` declaring an output contract. */
+  function guardableRecord() {
+    const base = createWorkflowDefinition();
+    return createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition({
+        executionContexts: base.executionContexts.map((context) =>
+          context.id === "context-plan"
+            ? { ...context, outputSchema: { ...PLAN_OUTPUT_SCHEMA } }
+            : context,
+        ),
+        edges: [],
+      }),
+    });
+  }
+
+  it("adds a guarded edge and mints its id from the endpoints", () => {
+    const result = applyDefinitionEdits(
+      guardableRecord(),
+      ops({
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+        when: SHIP_GUARD,
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.definition.edges).toEqual([
+      {
+        id: "context-plan__context-implement",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+        when: SHIP_GUARD,
+      },
+    ]);
+  });
+
+  it("refuses a guarded edge whose source declares no outputSchema", () => {
+    const base = createWorkflowDefinition();
+    const record = createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition({ edges: [] }),
+    });
+
+    const result = applyDefinitionEdits(
+      record,
+      ops({
+        type: "add-edge",
+        sourceContextId: base.executionContexts[0]!.id,
+        targetContextId: base.executionContexts[1]!.id,
+        when: SHIP_GUARD,
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "guard-source-without-output-schema",
+    ]);
+  });
+
+  it("sets, replaces, and clears a guard through id-addressed update-edge", () => {
+    const added = applyDefinitionEdits(
+      guardableRecord(),
+      ops({
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      }),
+    );
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+
+    const set = applyDefinitionEdits(
+      added.record,
+      ops({
+        type: "update-edge",
+        edgeId: "context-plan__context-implement",
+        when: SHIP_GUARD,
+      }),
+    );
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(set.record.definition.edges[0]?.when).toEqual(SHIP_GUARD);
+
+    const replaced = applyDefinitionEdits(
+      set.record,
+      ops({
+        type: "update-edge",
+        edgeId: "context-plan__context-implement",
+        when: { else: true },
+      }),
+    );
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+    expect(replaced.record.definition.edges[0]?.when).toEqual({ else: true });
+
+    const cleared = applyDefinitionEdits(
+      replaced.record,
+      ops({
+        type: "update-edge",
+        edgeId: "context-plan__context-implement",
+        when: null,
+      }),
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect("when" in (cleared.record.definition.edges[0] ?? {})).toBe(false);
+  });
+
+  it("refuses update-edge for an unknown edge id", () => {
+    const result = applyDefinitionEdits(
+      guardableRecord(),
+      ops({ type: "update-edge", edgeId: "nope", when: null }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues[0]?.code).toBe("unknown-edge");
+    expect(result.issues[0]?.edgeId).toBe("nope");
+  });
+
+  it("refuses an update-edge that would make the guard unsatisfiable", () => {
+    const added = applyDefinitionEdits(
+      guardableRecord(),
+      ops({
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      }),
+    );
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+
+    const result = applyDefinitionEdits(
+      added.record,
+      ops({
+        type: "update-edge",
+        edgeId: "context-plan__context-implement",
+        when: {
+          schema: {
+            type: "object",
+            properties: { verdict: { const: "shipp" } },
+            required: ["verdict"],
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "incompatible-guard-schema",
+    ]);
+  });
+
+  it("removes an edge addressed by id", () => {
+    const base = createWorkflowDefinition();
+    const record = createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition(),
+    });
+
+    const result = applyDefinitionEdits(
+      record,
+      ops({ type: "remove-edge", edgeId: base.edges[0]!.id }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.record.definition.edges.map((edge) => edge.id)).toEqual([
+      base.edges[1]!.id,
+    ]);
+  });
+
+  it("refuses an ambiguous endpoint-addressed remove-edge, listing the candidates", () => {
+    const base = createWorkflowDefinition();
+    const record = createWorkflowDefinitionRecord({
+      definition: createWorkflowDefinition({
+        edges: [
+          base.edges[0]!,
+          { ...base.edges[0]!, id: "edge-plan-implement-2" },
+        ],
+      }),
+    });
+
+    const result = applyDefinitionEdits(
+      record,
+      ops({
+        type: "remove-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues[0]?.code).toBe("ambiguous-edge-endpoints");
+    expect(result.issues[0]?.message).toContain("edge-plan-implement");
+    expect(result.issues[0]?.message).toContain("edge-plan-implement-2");
+  });
+
+  it("sets and clears a context routing policy", () => {
+    const set = applyDefinitionEdits(
+      guardableRecord(),
+      ops({
+        type: "update-context",
+        contextId: "context-plan",
+        routing: { cardinality: "exactlyOne" },
+      }),
+    );
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(
+      set.record.definition.executionContexts.find(
+        (context) => context.id === "context-plan",
+      )?.routing,
+    ).toEqual({ cardinality: "exactlyOne" });
+
+    const cleared = applyDefinitionEdits(
+      set.record,
+      ops({
+        type: "update-context",
+        contextId: "context-plan",
+        routing: null,
+      }),
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    const context = cleared.record.definition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    expect(context && "routing" in context).toBe(false);
+  });
+});

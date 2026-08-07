@@ -387,6 +387,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         lastMergeError: null,
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
       });
     }
 
@@ -548,6 +550,96 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     ).toEqual(["typecheck", "test", "format"]);
     for (const context of execution.workingDefinition.executionContexts) {
       // The seeded context-validator default is `{mode:"only", commands:[]}`.
+      expect(context.agentValidation?.contextValidator.commands).toEqual([]);
+    }
+  });
+
+  it("freezes agent selectors on loop templates for later pass materialization", async () => {
+    const { repo } = createInMemoryRepo({} as GlobalConfig, {
+      validation: {
+        commands: {
+          typecheck: {
+            command: "scripts/validate/typecheck.sh",
+            cost: 2,
+            scopeArgs: "forbid",
+          },
+          test: {
+            command: "scripts/validate/test.sh",
+            cost: 8,
+            scopeArgs: "paths",
+          },
+          format: {
+            command: "scripts/validate/format.sh",
+            cost: 1,
+            scopeArgs: "forbid",
+          },
+        },
+        preMerge: ["typecheck", "test"],
+      },
+    });
+    const baseline = createWorkflowDefinition({
+      workflowConfig: {
+        agentValidation: {
+          implementer: { mode: "all", except: ["format"] },
+        },
+      },
+    });
+    const definition = createWorkflowDefinition({
+      ...baseline,
+      executionContexts: baseline.executionContexts.map((context) =>
+        context.id === "context-verify"
+          ? {
+              ...context,
+              outputSchema: {
+                type: "object",
+                properties: { approved: { type: "boolean" } },
+                required: ["approved"],
+                additionalProperties: false,
+              },
+            }
+          : context,
+      ),
+      loopGroups: [
+        {
+          id: "refine",
+          bodyContextIds: ["context-implement", "context-verify"],
+          entryContextId: "context-implement",
+          exitContextId: "context-verify",
+          until: {
+            schema: {
+              type: "object",
+              properties: { approved: { const: true } },
+              required: ["approved"],
+            },
+          },
+          maxPasses: 3,
+        },
+      ],
+    });
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-loop",
+      definitionRevision: 1,
+      executionId: "exec-loop",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
+    });
+
+    const templateContexts = Object.fromEntries(
+      execution.workingDefinition.loopGroups?.[0]?.template.contexts.map(
+        (context) => [context.id, context],
+      ) ?? [],
+    );
+    expect(
+      templateContexts["context-implement"]?.agentValidation?.implementer
+        .commands,
+    ).toEqual(["typecheck", "test", "format"]);
+    expect(
+      templateContexts["context-verify"]?.agentValidation?.implementer.commands,
+    ).toEqual(["typecheck", "test"]);
+    for (const context of Object.values(templateContexts)) {
       expect(context.agentValidation?.contextValidator.commands).toEqual([]);
     }
   });
@@ -1219,5 +1311,195 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
     );
 
     expect(next.activeContextIds).toEqual(["context-route-write"]);
+  });
+});
+
+describe("createGraphWorkflowExecutionRepository executionStateRevision fence", () => {
+  function seedActiveExecution(
+    harness: ReturnType<typeof createInMemoryRepo>,
+    overrides: Partial<GraphWorkflowExecution> = {},
+  ): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({
+      id: "execution-1",
+      ...overrides,
+    });
+    const session = makeSession();
+    session.graphWorkflowExecution = execution;
+    harness.sessions.set("/repo:session-1", session);
+    return execution;
+  }
+
+  it("bumps executionStateRevision on every committed mutation, scheduler writes included", async () => {
+    const harness = createInMemoryRepo();
+    const seeded = seedActiveExecution(harness, { executionStateRevision: 4 });
+    expect(seeded.executionStateRevision).toBe(4);
+
+    const first = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({ ...execution, activeContextIds: ["context-plan"] }),
+    );
+    expect(first.executionStateRevision).toBe(5);
+
+    // A scheduler-shaped write that touches no live-edit field still moves the
+    // fence — `liveRevision` alone would miss it, which is the whole point.
+    const second = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({
+        ...execution,
+        laneStates: {},
+      }),
+    );
+    expect(second.executionStateRevision).toBe(6);
+    expect(second.liveRevision).toBe(seeded.liveRevision);
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.executionStateRevision,
+    ).toBe(6);
+  });
+
+  it("owns the counter: a reducer cannot set, freeze, or rewind it", async () => {
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness, { executionStateRevision: 9 });
+
+    const next = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({ ...execution, executionStateRevision: 2 }),
+    );
+
+    expect(next.executionStateRevision).toBe(10);
+  });
+
+  it("leaves the counter untouched when the mutation is rejected", async () => {
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness, { executionStateRevision: 3, loopEpoch: 1 });
+
+    await expect(
+      runWithLoopFence(
+        {
+          projectPath: "/repo",
+          sessionName: "session-1",
+          executionId: "execution-1",
+          loopEpoch: 0,
+        },
+        () =>
+          harness.repo.mutateActive("/repo", "session-1", (execution) => ({
+            ...execution,
+            activeContextIds: ["context-stale-write"],
+          })),
+      ),
+    ).rejects.toThrow(StaleLoopFenceError);
+
+    expect(
+      harness.sessions.get("/repo:session-1")?.graphWorkflowExecution
+        ?.executionStateRevision,
+    ).toBe(3);
+  });
+});
+
+describe("createGraphWorkflowExecutionRepository structuralRevision fence", () => {
+  function seedActiveExecution(
+    harness: ReturnType<typeof createInMemoryRepo>,
+    overrides: Partial<GraphWorkflowExecution> = {},
+  ): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({
+      id: "execution-1",
+      ...overrides,
+    });
+    const session = makeSession();
+    session.graphWorkflowExecution = execution;
+    harness.sessions.set("/repo:session-1", session);
+    return execution;
+  }
+
+  it("bumps on a definition write from a reducer that moves no live-edit field", async () => {
+    // `iteration-orchestrator` appends script-validator remediation tasks to the
+    // working definition inside `mutateActive`, and bumps no `liveRevision`
+    // because a failing pre-merge script is not a live edit. The fence has to
+    // catch it anyway — a staged batch that installs its definition wholesale
+    // would otherwise delete this task and keep its task state.
+    const harness = createInMemoryRepo();
+    const seeded = seedActiveExecution(harness, { structuralRevision: 5 });
+
+    const next = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => {
+        execution.workingDefinition.tasks.push({
+          id: "task-remediation-1",
+          contextId: "context-implement",
+          order: 2,
+          title: "Fix pre-merge validation errors",
+          instructions: "Re-run the pre-merge script and fix what it reports.",
+          source: "user",
+        });
+        return execution;
+      },
+    );
+
+    expect(next.structuralRevision).toBe(6);
+    expect(next.liveRevision).toBe(seeded.liveRevision);
+  });
+
+  it("holds still for a scheduler write that leaves the structural keys alone", async () => {
+    // The counterpart property: if every commit bumped it, every interleaved
+    // scheduler tick would force a needless reprepare.
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness, { structuralRevision: 5 });
+
+    const next = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({
+        ...execution,
+        activeContextIds: ["context-plan"],
+        contextStates: {
+          ...execution.contextStates,
+          "context-plan": {
+            ...execution.contextStates["context-plan"]!,
+            status: "running",
+          },
+        },
+      }),
+    );
+
+    expect(next.structuralRevision).toBe(5);
+    expect(next.executionStateRevision).toBe(1);
+  });
+
+  it("owns the counter: a reducer cannot set, freeze, or rewind it", async () => {
+    const harness = createInMemoryRepo();
+    seedActiveExecution(harness, { structuralRevision: 9 });
+
+    // Claims a bump it did not earn...
+    const unearned = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({ ...execution, structuralRevision: 42 }),
+    );
+    expect(unearned.structuralRevision).toBe(9);
+
+    // ...and hides one it did.
+    const hidden = await harness.repo.mutateActive(
+      "/repo",
+      "session-1",
+      (execution) => ({
+        ...execution,
+        structuralRevision: 9,
+        charterAmendments: [
+          {
+            seq: 1,
+            amendedAt: "2026-08-04T00:00:00.000Z",
+            source: "cli",
+            rationale: "Scope moved after the API review",
+            fieldsChanged: ["mission"],
+            charterHash: "hash-1",
+          },
+        ],
+      }),
+    );
+    expect(hidden.structuralRevision).toBe(10);
   });
 });

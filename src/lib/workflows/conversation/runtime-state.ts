@@ -15,7 +15,10 @@
  *   work and releasing locks
  */
 
-import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import type {
+  ConversationBackendRuntime,
+  WorkflowLaneIdentity,
+} from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import type { ConversationEvent } from "./types";
 
@@ -45,7 +48,7 @@ export interface ConversationRuntimeState {
   tooling?: ConversationToolingOverrides;
 
   /** Graph-workflow lane identity injected by the workflow engine for implementer-lane conversations. Threaded into the session env on backend runtime creation so cctl lane commands resolve their execution/context from env. */
-  workflowContext?: { executionId: string; contextId: string };
+  workflowContext?: WorkflowLaneIdentity;
 
   /** When true, prepareTurnForMachine skips conversation lock acquisition. Used by validator agents whose runtime lifetime is owned by a parent conversation. */
   skipConversationLock?: boolean;

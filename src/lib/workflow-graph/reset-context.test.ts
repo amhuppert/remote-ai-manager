@@ -49,6 +49,8 @@ function buildExecution(
     activeContextIds: ["context-implement"],
     contextStates: {
       "context-plan": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-plan",
@@ -68,6 +70,8 @@ function buildExecution(
         lastMergeError: null,
       },
       "context-implement": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-implement",
@@ -87,6 +91,8 @@ function buildExecution(
         lastMergeError: null,
       },
       "context-verify": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-verify",
@@ -184,6 +190,8 @@ describe("resetExecutionContext", () => {
       lastMergeError: null,
       pendingApproval: null,
       pendingUserInputs: {},
+      skipReason: null,
+      landingIntent: null,
     });
     expect(next.taskStates["task-implement-1"]).toEqual({
       taskId: "task-implement-1",
@@ -364,6 +372,41 @@ describe("resetExecutionContext", () => {
       expect(logSpy.debug).not.toHaveBeenCalled();
       expect(logSpy.info).not.toHaveBeenCalled();
       expect(logSpy.warn).not.toHaveBeenCalled();
+    });
+
+    // D4 R4.2: a skip is irreversible within the execution. Reset is the only
+    // operator-facing way back to `pending`, so it must refuse a skipped
+    // context with the same typed error a completed one gets — and say which
+    // status refused it, because "completed" would be a lie about the branch.
+    it("rejects a skipped context with a typed error naming the skip", () => {
+      const execution = buildExecution();
+      const skipped = {
+        ...execution,
+        contextStates: {
+          ...execution.contextStates,
+          "context-verify": {
+            ...execution.contextStates["context-verify"]!,
+            status: "skipped" as const,
+            skipReason: {
+              edgeEvaluations: [
+                {
+                  edgeId: "edge-implement-verify",
+                  verdict: "inactive" as const,
+                },
+              ],
+              at: "2026-08-04T10:00:00.000Z",
+            },
+          },
+        },
+      };
+
+      expect(() => resetExecutionContext(skipped, "context-verify")).toThrow(
+        ResetExecutionContextError,
+      );
+      expect(() => resetExecutionContext(skipped, "context-verify")).toThrow(
+        /skipped and cannot be reset/,
+      );
+      expect(logSpy.error).not.toHaveBeenCalled();
     });
   });
 

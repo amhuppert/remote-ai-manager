@@ -13,16 +13,24 @@ import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import { validateEdgeGuards } from "./edge-guard-validation";
 import {
   isContextOutputCommittedToLane,
+  isRouteSourceLanded,
   isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
+import {
+  collectLoopBoundaryContextIds,
+  validateLoopGroups,
+} from "./loop-resolver";
 import { validateContextOutputSchemas } from "./output-schema-validation";
 import {
   lintParameterReferences,
   validateParameterDeclarations,
 } from "./parameter-validation";
 import { validatePrerequisites } from "./prerequisite-validation";
+import { activeDependencySourceIds, routeVerdict } from "./route-projection";
+import { projectExecutionRoutes } from "./execution-routes";
 
 type ValidatableDefinition =
   | WorkflowSemanticDefinition
@@ -83,10 +91,20 @@ export function validateWorkflowDefinition(
     ...validateContextOutputSchemas(definition.executionContexts),
     ...validateCohortWriteRestriction(definition.executionContexts, deps),
     ...validateWorkflowTierCohortWriteRestriction(definition, deps),
+    ...validateEdgeGuards(definition.executionContexts, definition.edges),
+    ...validateLoopGroups(definition),
   ];
   const seenContextIds = new Set<string>();
   const seenTaskIds = new Set<string>();
   const contextIds = createContextIdSet(definition);
+  // A resolved loop group's entry and exit live in its body template rather
+  // than in `executionContexts`, yet external edges still address them: the
+  // logical exit stays immutable in the topology while the route projection
+  // resolves which pass instance satisfies each edge (D1). They are edge
+  // endpoints and graph nodes, but never task owners — a body context's tasks
+  // live in the template with it.
+  const loopBoundaryIds = collectLoopBoundaryContextIds(definition);
+  const edgeEndpointIds = new Set([...contextIds, ...loopBoundaryIds]);
   const ordersByContext = new Map<string, Set<number>>();
 
   for (const context of definition.executionContexts) {
@@ -171,13 +189,32 @@ export function validateWorkflowDefinition(
 
   const adjacency = new Map<string, string[]>();
   const indegree = new Map<string, number>();
-  for (const context of definition.executionContexts) {
-    adjacency.set(context.id, []);
-    indegree.set(context.id, 0);
+  for (const contextId of edgeEndpointIds) {
+    adjacency.set(contextId, []);
+    indegree.set(contextId, 0);
   }
 
+  // Edge identity is first-class from D4 on: guards make parallel edges between
+  // the same pair meaningful and every id-addressed edit resolves an edge by id,
+  // so a duplicate would silently make one of them unreachable. Definitions
+  // stored before this rule are repaired at their inflate boundary
+  // (`normalizeRawDefinitionEdgeIds`), never refused here.
+  const seenEdgeIds = new Set<string>();
+  definition.edges.forEach((edge, index) => {
+    if (seenEdgeIds.has(edge.id)) {
+      errors.push({
+        code: "duplicate-edge-id",
+        message: `Edge id "${edge.id}" is used more than once`,
+        edgeId: edge.id,
+        field: `edges[${index}].id`,
+      });
+      return;
+    }
+    seenEdgeIds.add(edge.id);
+  });
+
   for (const edge of definition.edges) {
-    if (!contextIds.has(edge.sourceContextId)) {
+    if (!edgeEndpointIds.has(edge.sourceContextId)) {
       errors.push({
         code: "unknown-edge-source",
         message: `Edge "${edge.id}" references missing source "${edge.sourceContextId}"`,
@@ -187,7 +224,7 @@ export function validateWorkflowDefinition(
       continue;
     }
 
-    if (!contextIds.has(edge.targetContextId)) {
+    if (!edgeEndpointIds.has(edge.targetContextId)) {
       errors.push({
         code: "unknown-edge-target",
         message: `Edge "${edge.id}" references missing target "${edge.targetContextId}"`,
@@ -221,7 +258,7 @@ export function validateWorkflowDefinition(
     }
   }
 
-  if (visited !== definition.executionContexts.length) {
+  if (visited !== edgeEndpointIds.size) {
     errors.push({
       code: "cycle-detected",
       message: "Execution-context dependency graph must be acyclic",
@@ -300,17 +337,27 @@ export function isContextLanded(
   return state.mergeStatus === "merged-success";
 }
 
+/**
+ * The contexts the scheduler may start right now.
+ *
+ * Two independent gates, composed (D4 R2.5). The ROUTE gate is the projection's
+ * verdict: every incoming edge satisfied, where a guard decides a conditional
+ * edge and a skipped source's unconditional edge drops out of the conjunction.
+ * The LAND gate is unchanged and still necessary — a satisfied route says the
+ * branch was taken, not that the source's work is committed and visible from
+ * the downstream's lane — so a source whose fan-in merge is pending or failed
+ * blocks its dependents here rather than releasing them.
+ *
+ * Prerequisites come from `activeDependencySourceIds`, i.e. the EFFECTIVE
+ * sources of the ACTIVE incoming edges (decision D1). Reading
+ * `edge.sourceContextId` directly would wait on branches the routing already
+ * declined and, once loops land, on a declared exit that never runs.
+ */
 export function getEligibleContextIds(
   definition: ValidatableDefinition,
   execution: GraphWorkflowExecution,
 ): string[] {
-  const prerequisites = new Map<string, string[]>();
-  for (const context of definition.executionContexts) {
-    prerequisites.set(context.id, []);
-  }
-  for (const edge of definition.edges) {
-    prerequisites.get(edge.targetContextId)?.push(edge.sourceContextId);
-  }
+  const projection = projectExecutionRoutes(execution, definition);
 
   return definition.executionContexts
     .map((context) => context.id)
@@ -324,13 +371,19 @@ export function getEligibleContextIds(
       // double-provision. The owning pass clears the stamp at finalize.
       if (state.reservedByBatchId != null) return false;
 
-      return (prerequisites.get(contextId) ?? []).every((upstreamId) => {
-        const upstream = execution.contextStates[upstreamId];
-        if (!upstream) return false;
-        if (!isContextOutputCommittedToLane(upstream, execution)) return false;
-        if (state.laneId === null) return true;
-        return isUpstreamVisibleToDownstream(upstreamId, contextId, execution);
-      });
+      if (routeVerdict(projection, contextId).kind !== "eligible") return false;
+
+      return activeDependencySourceIds(projection, contextId).every(
+        (upstreamId) => {
+          if (!isRouteSourceLanded(execution, upstreamId)) return false;
+          if (state.laneId === null) return true;
+          return isUpstreamVisibleToDownstream(
+            upstreamId,
+            contextId,
+            execution,
+          );
+        },
+      );
     });
 }
 

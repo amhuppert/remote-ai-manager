@@ -29,7 +29,7 @@ function makeContext(
         reasoningEffort: "medium",
       },
     },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
     ...overrides,
@@ -116,6 +116,8 @@ export const DependencyBlocked: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -150,6 +152,8 @@ export const Ready: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -180,6 +184,8 @@ export const WaitingForLane: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -210,6 +216,8 @@ export const WaitingForJoin: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -240,6 +248,8 @@ export const Running: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -270,6 +280,8 @@ export const Validating: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -300,6 +312,8 @@ export const Completed: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -330,6 +344,8 @@ export const Published: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -360,6 +376,8 @@ export const AwaitingApproval: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: {
           conversationId: "conv-1",
           requestedAt: "2026-06-10T09:00:00.000Z",
@@ -394,6 +412,8 @@ export const AwaitingUserInput: Story = {
       tasks: makeTasks(2),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {
           implementer: {
@@ -434,6 +454,8 @@ export const BlockedBehindGate: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -468,6 +490,8 @@ export const Halted: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -509,6 +533,8 @@ export const SelectedRunning: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -540,6 +566,8 @@ export const Merging: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "ctx-1",
@@ -699,7 +727,7 @@ export const ValidatorsInheritedClaude: Story = {
         scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
-        mutability: { allowAgentTaskAdd: false },
+        mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -749,7 +777,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
         scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
-        mutability: { allowAgentTaskAdd: false },
+        mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -824,7 +852,7 @@ export const ApprovalGateWithValidators: Story = {
         scriptValidator: { commands: ["pre-merge"] },
         humanApprovalGate: { enabled: true },
         askUserQuestions: { enabled: false },
-        mutability: { allowAgentTaskAdd: false },
+        mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },

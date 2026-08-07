@@ -204,6 +204,23 @@ describe("spec execution contract", () => {
     });
   });
 
+  it("derives criterion coverage from the compiled task metadata (R5.2)", () => {
+    const definition = specDefinition();
+    definition.tasks[1]!.contextId = "context-plan";
+
+    expect(contract.deriveCriterionContextCoverage(definition)).toEqual({
+      "criterion-task-1": ["context-plan"],
+      "criterion-task-2": ["context-plan"],
+      "criterion-task-3": ["context-verify"],
+    });
+  });
+
+  it("derives no criterion coverage for an execution that is not spec-linked", () => {
+    expect(
+      contract.deriveCriterionContextCoverage(createWorkflowDefinition()),
+    ).toEqual({});
+  });
+
   it("derives the contract of an execution-only context added for regrouping", () => {
     const definition = specDefinition();
     definition.executionContexts.push({

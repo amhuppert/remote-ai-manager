@@ -12,6 +12,7 @@ function round(
     seq,
     contextId,
     haltType: "circuit_breaker",
+    loopGroupId: null,
     startedAt: "2026-07-29T00:00:00.000Z",
     settledAt: null,
     outcome: null,

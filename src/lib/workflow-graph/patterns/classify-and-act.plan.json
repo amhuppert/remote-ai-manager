@@ -1,0 +1,179 @@
+{
+  "name": "Triage and act on a bug report",
+  "description": "Classify-And-Act: one triage context banks a severity verdict as structured output, guarded edges route exactly one remediation branch (with an else edge for the severities no branch names), and a report context fans the outcome back in.",
+  "definition": {
+    "charter": {
+      "mission": "Triage one incoming bug report, act on it down exactly one remediation path, and report what was decided and done.",
+      "nonGoals": [
+        "Fixing defects the report does not describe",
+        "Re-triaging after a branch has started"
+      ],
+      "invariants": [
+        {
+          "id": "verdict-is-structured-output",
+          "statement": "The triage verdict reaches the workflow only as the triage context's captured structured output. Prose in the summary, a commit message, or a shared document never selects a branch."
+        },
+        {
+          "id": "one-branch-per-report",
+          "statement": "Exactly one remediation branch acts on a report. A branch that was not selected does no work and leaves no commits behind."
+        },
+        {
+          "id": "report-covers-the-path-taken",
+          "statement": "The report describes the branch that actually ran and names the severity that selected it, so the decision is legible without reading the execution's routing state."
+        }
+      ],
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "bug-report",
+          "label": "The incoming bug report",
+          "type": "document",
+          "locator": ".cc/temp/bug-report.md",
+          "description": "The report under triage: symptom, reproduction steps, affected surface, and any user impact. Governs the severity verdict.",
+          "accessPolicy": "worktree-relative"
+        },
+        {
+          "rank": 2,
+          "id": "engineering-contract",
+          "label": "Repository engineering contract",
+          "type": "document",
+          "locator": "AGENTS.md",
+          "description": "The repository's testing, typing, and architecture rules every remediation branch implements under.",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "executionContexts": [
+      {
+        "id": "ctx-triage",
+        "title": "Triage the report",
+        "description": "Read the report, reproduce it if the steps allow, and classify its severity.",
+        "acceptanceCriteria": "The report has been read and, where the steps allow, reproduced. The captured output declares one severity from the declared set plus a rationale that cites the evidence behind it. No remediation work has been started.",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "severity": {
+              "type": "string",
+              "enum": ["blocker", "defect", "enhancement", "not-a-bug"]
+            },
+            "rationale": { "type": "string", "minLength": 1 }
+          },
+          "required": ["severity", "rationale"]
+        },
+        "routing": { "cardinality": "exactlyOne" }
+      },
+      {
+        "id": "ctx-hotfix",
+        "title": "Hotfix the blocker",
+        "description": "Ship the smallest correct fix for a blocking defect.",
+        "acceptanceCriteria": "A regression test reproduces the reported failure and fails before the fix. The minimal fix makes it pass, and the surrounding suite for the touched module is green.",
+        "iterationPolicy": { "maxIterations": 8 }
+      },
+      {
+        "id": "ctx-repair",
+        "title": "Repair the defect",
+        "description": "Fix the defect on the normal path, root cause first.",
+        "acceptanceCriteria": "The root cause is identified and stated. A failing behavior-level test is added first, the fix makes it pass, and the touched module's tests and typecheck are green.",
+        "iterationPolicy": { "maxIterations": 8 }
+      },
+      {
+        "id": "ctx-backlog",
+        "title": "File it for the backlog",
+        "description": "The fallback branch for every severity no remediation branch names: enhancements and reports that turn out not to be bugs.",
+        "acceptanceCriteria": "A backlog entry records the report, the triage rationale, and the reason no code change was made. No production code is modified.",
+        "iterationPolicy": { "maxIterations": 4 }
+      },
+      {
+        "id": "ctx-report",
+        "title": "Report the outcome",
+        "description": "Summarize the triage verdict and whatever the selected branch did.",
+        "acceptanceCriteria": "The summary names the severity, the branch that ran, and what it changed or deliberately did not change. It describes only the path that actually ran."
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-triage",
+        "contextId": "ctx-triage",
+        "order": 1,
+        "title": "Classify the report's severity",
+        "instructions": "Read the bug report named by the rank-1 source of truth. Reproduce it if the steps allow, and note what you observed. Then classify it as exactly one of: 'blocker' (users are broken now, or data is at risk), 'defect' (wrong behavior on the normal path, with a workaround or limited blast radius), 'enhancement' (the software behaves as designed and the report asks for more), or 'not-a-bug' (the report is a misunderstanding, a duplicate, or not reproducible). Your final output must be the structured verdict: the severity plus a rationale citing the evidence you gathered. Do not start any remediation work — the verdict alone selects which branch runs next."
+      },
+      {
+        "id": "task-hotfix",
+        "contextId": "ctx-hotfix",
+        "order": 1,
+        "title": "Ship the smallest correct fix",
+        "instructions": "The report was triaged as a blocker. Write a regression test that reproduces the reported failure and confirm it fails, then make the smallest change that makes it pass. Do not refactor beyond the fix. Run the touched module's tests and typecheck before completing."
+      },
+      {
+        "id": "task-repair",
+        "contextId": "ctx-repair",
+        "order": 1,
+        "title": "Fix the defect at its root cause",
+        "instructions": "The report was triaged as a defect. Identify the root cause before changing anything and state it in your summary. Add a failing behavior-level test, implement the minimum fix, then run the touched module's tests and typecheck."
+      },
+      {
+        "id": "task-backlog",
+        "contextId": "ctx-backlog",
+        "order": 1,
+        "title": "Record the report for the backlog",
+        "instructions": "The report was triaged as an enhancement, as not-a-bug, or as a severity no remediation branch claims. Record it for the backlog: the report itself, the triage rationale, and the reason no code change was made. Change no production code."
+      },
+      {
+        "id": "task-report",
+        "contextId": "ctx-report",
+        "order": 1,
+        "title": "Summarize the decision and the work",
+        "instructions": "Summarize what happened: the severity the triage context returned, the branch that ran because of it, and what that branch changed or deliberately left alone. The upstream inputs section shows you the branch that ran; branches that were not taken appear there as skipped, and you should not describe work on them."
+      }
+    ],
+    "edges": [
+      {
+        "id": "ctx-triage__ctx-hotfix",
+        "sourceContextId": "ctx-triage",
+        "targetContextId": "ctx-hotfix",
+        "when": {
+          "schema": {
+            "type": "object",
+            "properties": { "severity": { "const": "blocker" } },
+            "required": ["severity"]
+          }
+        }
+      },
+      {
+        "id": "ctx-triage__ctx-repair",
+        "sourceContextId": "ctx-triage",
+        "targetContextId": "ctx-repair",
+        "when": {
+          "schema": {
+            "type": "object",
+            "properties": { "severity": { "const": "defect" } },
+            "required": ["severity"]
+          }
+        }
+      },
+      {
+        "id": "ctx-triage__ctx-backlog",
+        "sourceContextId": "ctx-triage",
+        "targetContextId": "ctx-backlog",
+        "when": { "else": true }
+      },
+      {
+        "id": "ctx-hotfix__ctx-report",
+        "sourceContextId": "ctx-hotfix",
+        "targetContextId": "ctx-report"
+      },
+      {
+        "id": "ctx-repair__ctx-report",
+        "sourceContextId": "ctx-repair",
+        "targetContextId": "ctx-report"
+      },
+      {
+        "id": "ctx-backlog__ctx-report",
+        "sourceContextId": "ctx-backlog",
+        "targetContextId": "ctx-report"
+      }
+    ]
+  },
+  "layout": { "workflowId": "plan", "contextPositions": {} }
+}

@@ -1,5 +1,6 @@
 import { buildInitialContextState } from "@/lib/workflow-graph/execution-state";
 import type {
+  GraphWorkflowContextSkipReason,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
@@ -57,12 +58,19 @@ export interface GraphWorkflowLifecycleSnapshot {
  * mutations may legally write over a just-halted context. `completed` is
  * terminal — reopening a completed context is exactly the zombie-loop
  * corruption this table exists to reject.
+ *
+ * `skipped` is reachable only from the two UNSTARTED statuses (D4 R4): a
+ * context that has started holds a lane, a conversation and work on disk, none
+ * of which a route verdict may discard. It is terminal for the same reason
+ * `completed` is — a skip is a settled routing decision, and resurrecting a
+ * skipped branch mid-execution would strand every downstream frontier that
+ * already resolved against it.
  */
 export const CONTEXT_STATUS_TRANSITIONS: Readonly<
   Record<GraphWorkflowContextStatus, readonly GraphWorkflowContextStatus[]>
 > = {
-  pending: ["ready", "running", "halted"],
-  ready: ["running", "halted"],
+  pending: ["ready", "running", "halted", "skipped"],
+  ready: ["running", "halted", "skipped"],
   running: [
     "ready",
     "completed",
@@ -90,6 +98,7 @@ export const CONTEXT_STATUS_TRANSITIONS: Readonly<
     "awaiting_user_input",
   ],
   completed: [],
+  skipped: [],
 };
 
 export function isLegalContextStatusTransition(
@@ -161,15 +170,43 @@ export function transitionContextStatus(
 }
 
 /**
+ * Settle a context as `skipped` and record WHY, in one write (D4 R4).
+ *
+ * The status move and the reason are inseparable: a `skipped` context with no
+ * recorded verdicts is a routing decision no one can reconstruct, so both land
+ * in the same mutation rather than in two writers that could interleave. The
+ * legality check is the transition table's — a running or completed context is
+ * refused there, and the reason is only written after it accepts.
+ *
+ * Re-deriving a settled skip is a no-op that PRESERVES the first reason: the
+ * scheduler recomputes route verdicts every pass, and the durable record must
+ * describe the moment the branch was actually decided.
+ */
+export function skipContext(
+  draft: GraphWorkflowExecution,
+  contextId: string,
+  reason: GraphWorkflowContextSkipReason,
+  meta: ContextTransitionMeta,
+): void {
+  const contextState = requireContextState(draft, contextId);
+  if (contextState.status === "skipped") {
+    return;
+  }
+  transitionContextStatus(draft, contextId, "skipped", meta);
+  contextState.skipReason = reason;
+}
+
+/**
  * The one sanctioned way to return an existing context to its canonical
  * initial (pending) state. Reset is deliberately absent from the legality
  * table — no runtime writer may move a context back to `pending`; only an
  * operator-initiated reset does, so it is a distinct narrowly-typed operation
- * rather than a transition mode. Its sole legality rule is that `completed`
- * stays terminal: resetting a completed context throws exactly like any
- * reopening transition. Resetting from `running` is legal here (the caller
- * gates on a paused/halted execution, where a context stuck in `running` has
- * no live iteration).
+ * rather than a transition mode. Its legality rule is that the terminal
+ * statuses stay terminal: resetting a `completed` or `skipped` context throws
+ * exactly like any reopening transition — a skip is irreversible within the
+ * execution (D4 R4.2), so reset is not a back door out of it. Resetting from
+ * `running` is legal here (the caller gates on a paused/halted execution,
+ * where a context stuck in `running` has no live iteration).
  *
  * Returns a new contextStates record with the target entry rebuilt from the
  * working definition; the caller spreads it into its next execution snapshot.
@@ -189,7 +226,7 @@ export function resetContextStateToInitial(
     );
   }
   const from = contextState.status;
-  if (from === "completed") {
+  if (from === "completed" || from === "skipped") {
     // Pure critical-section code (see module header): throw with full data, let
     // the seam owner log the illegal reset outside the lock.
     throw new IllegalContextStatusTransitionError(

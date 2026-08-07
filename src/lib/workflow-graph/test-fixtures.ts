@@ -210,6 +210,7 @@ export function createWorkflowDefinition(
         }),
         mutability: {
           allowAgentTaskAdd: true,
+          allowAgentContextAdd: false,
         },
         circuitBreaker: {},
         iterationPolicy: {
@@ -238,6 +239,7 @@ export function createWorkflowDefinition(
         scriptValidator: { commands: [] },
         mutability: {
           allowAgentTaskAdd: false,
+          allowAgentContextAdd: false,
         },
         circuitBreaker: {},
         iterationPolicy: {
@@ -257,6 +259,7 @@ export function createWorkflowDefinition(
         }),
         mutability: {
           allowAgentTaskAdd: false,
+          allowAgentContextAdd: false,
         },
         circuitBreaker: {},
         iterationPolicy: {
@@ -374,7 +377,10 @@ export function createResolvedWorkflowDefinition(
       scriptValidatorSource: ctx.scriptValidator ? "per-node" : "global",
       humanApprovalGate: ctx.humanApprovalGate ?? { enabled: false },
       askUserQuestions: { enabled: false },
-      mutability: ctx.mutability ?? { allowAgentTaskAdd: false },
+      mutability: ctx.mutability ?? {
+        allowAgentTaskAdd: false,
+        allowAgentContextAdd: false,
+      },
       circuitBreaker: ctx.circuitBreaker ?? {},
       iterationPolicy: ctx.iterationPolicy ?? {
         maxIterations: 10,
@@ -417,9 +423,16 @@ export function createWorkflowExecution(
     seedDefinitionId: "workflow-1",
     seedDefinitionRevision: 1,
     liveRevision: 1,
+    executionStateRevision: 0,
+    structuralRevision: 0,
     charterAmendments: [],
     planRepairRounds: [],
+    loopControlAmendments: [],
     contextOutputs: {},
+    routeControlRevisions: {},
+    routeSettlements: {},
+    expansionReceipts: { accepted: [], refusals: [] },
+    loopStates: {},
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -432,6 +445,8 @@ export function createWorkflowExecution(
       "context-plan": {
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
         contextId: "context-plan",
         status: "pending",
         totalTaskCount: 1,
@@ -451,6 +466,8 @@ export function createWorkflowExecution(
       "context-implement": {
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
         contextId: "context-implement",
         status: "pending",
         totalTaskCount: 1,
@@ -470,6 +487,8 @@ export function createWorkflowExecution(
       "context-verify": {
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,

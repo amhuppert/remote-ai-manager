@@ -72,7 +72,7 @@ function fullContext(): GraphWorkflowResolvedContext {
     scriptValidator: { commands: ["pre-merge"] },
     humanApprovalGate: { enabled: true },
     askUserQuestions: { enabled: true },
-    mutability: { allowAgentTaskAdd: true },
+    mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -92,6 +92,8 @@ function fullContext(): GraphWorkflowResolvedContext {
 // the lifecycle classifier reports `started`.
 function startedContextState(): GraphWorkflowExecutionContextState {
   return {
+    skipReason: null,
+    landingIntent: null,
     contextId: "context-impl",
     status: "running",
     totalTaskCount: 4,
@@ -1084,6 +1086,42 @@ describe("ContextConfigTab — edit payload shape", () => {
         type: "update-context",
         contextId: "context-impl",
         iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
+      },
+    ]);
+  });
+
+  /**
+   * The mutability block carries two independent flags but this editor only
+   * surfaces one. A form that rebuilt the block from the flag it renders would
+   * silently erase the lane's runtime expansion authority on the next save
+   * (D4 R7.1) — the round trip is the pin.
+   */
+  it("preserves allowAgentContextAdd when the agent-task-add toggle is saved", () => {
+    const onSaveContextConfig = vi.fn();
+    const context = fullContext();
+    context.mutability = {
+      allowAgentTaskAdd: true,
+      allowAgentContextAdd: true,
+    };
+
+    render(
+      <ContextConfigTab
+        execution={startedExecution(context, startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Allow agent task add"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: true },
       },
     ]);
   });

@@ -4,12 +4,14 @@ import type {
   WorkflowCharter,
 } from "@/lib/workflows/charter-schemas";
 import type {
+  GraphWorkflowContextEdge,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowTaskDefinition,
   WorkflowDefinitionRecord,
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import { mintEdgeId as mintSharedEdgeId } from "./edge-identity";
 import type {
   DefinitionEditOperation,
   DefinitionEditTaskPosition,
@@ -216,6 +218,7 @@ function definitionEditTouchedPaths(
           "description",
           "acceptanceCriteria",
           "outputSchema",
+          "routing",
           "implementer",
           "contextValidator",
           "scriptValidator",
@@ -295,13 +298,13 @@ function definitionEditTouchedPaths(
           ),
         ],
       ];
+    case "update-edge":
+      return [["edges", operation.edgeId, "when"]];
     case "remove-edge": {
-      const edge = definition.edges.find(
-        (entry) =>
-          entry.sourceContextId === operation.sourceContextId &&
-          entry.targetContextId === operation.targetContextId,
-      );
-      return [["edges", edge?.id ?? "unknown"]];
+      const matches = matchRemoveEdgeTargets(definition, operation);
+      return matches.length > 0
+        ? matches.map((edge): DefinitionPath => ["edges", edge.id])
+        : [["edges", "unknown"]];
     }
     case "add-parameter":
       return [["parameters", operation.declaration.name]];
@@ -408,6 +411,9 @@ function applyOperation(
         ...(operation.outputSchema !== undefined
           ? { outputSchema: operation.outputSchema }
           : {}),
+        ...(operation.routing !== undefined
+          ? { routing: operation.routing }
+          : {}),
         ...(operation.implementer !== undefined
           ? { implementer: operation.implementer }
           : {}),
@@ -461,6 +467,7 @@ function applyOperation(
       }
       applyOptionalBlock(context, "description", operation.description);
       applyOptionalBlock(context, "outputSchema", operation.outputSchema);
+      applyOptionalBlock(context, "routing", operation.routing);
       applyOptionalBlock(context, "implementer", operation.implementer);
       applyOptionalBlock(
         context,
@@ -678,24 +685,30 @@ function applyOperation(
         ),
         sourceContextId: operation.sourceContextId,
         targetContextId: operation.targetContextId,
+        ...(operation.when !== undefined ? { when: operation.when } : {}),
       });
       return null;
     }
 
-    case "remove-edge": {
-      const edge = findEdge(
-        definition,
-        operation.sourceContextId,
-        operation.targetContextId,
+    case "update-edge": {
+      const edge = definition.edges.find(
+        (entry) => entry.id === operation.edgeId,
       );
       if (!edge) {
-        return fail(
-          "unknown-edge",
-          `no edge ${operation.sourceContextId} → ${operation.targetContextId}`,
-        );
+        return fail("unknown-edge", `no edge "${operation.edgeId}"`, {
+          edgeId: operation.edgeId,
+        });
       }
+      applyOptionalBlock(edge, "when", operation.when);
+      return null;
+    }
+
+    case "remove-edge": {
+      const resolved = resolveEditedEdge(definition, operation);
+      if (!resolved.ok)
+        return fail(resolved.code, resolved.message, resolved.extra);
       definition.edges = definition.edges.filter(
-        (entry) => entry.id !== edge.id,
+        (entry) => entry.id !== resolved.edge.id,
       );
       return null;
     }
@@ -811,12 +824,79 @@ function mintEdgeId(
   sourceContextId: string,
   targetContextId: string,
 ): string {
-  const base = `${sourceContextId}__${targetContextId}`;
-  const existing = new Set(definition.edges.map((edge) => edge.id));
-  if (!existing.has(base)) return base;
-  let suffix = 2;
-  while (existing.has(`${base}-${suffix}`)) suffix += 1;
-  return `${base}-${suffix}`;
+  return mintSharedEdgeId(
+    new Set(definition.edges.map((edge) => edge.id)),
+    sourceContextId,
+    targetContextId,
+  );
+}
+
+type RemoveEdgeOperation = Extract<
+  DefinitionEditOperation,
+  { type: "remove-edge" }
+>;
+
+/** Every edge an endpoint- or id-addressed `remove-edge` could mean. */
+function matchRemoveEdgeTargets(
+  definition: WorkflowSemanticDefinition,
+  operation: RemoveEdgeOperation,
+): GraphWorkflowContextEdge[] {
+  if (operation.edgeId !== undefined) {
+    return definition.edges.filter((edge) => edge.id === operation.edgeId);
+  }
+  return definition.edges.filter(
+    (edge) =>
+      edge.sourceContextId === operation.sourceContextId &&
+      edge.targetContextId === operation.targetContextId,
+  );
+}
+
+type ResolvedEdgeTarget =
+  | { ok: true; edge: GraphWorkflowContextEdge }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      extra: Partial<DefinitionEditIssue>;
+    };
+
+/**
+ * Resolve the single edge a `remove-edge` addresses. Endpoint addressing stays
+ * supported because it is the only form pre-D4 callers know, but it is
+ * first-match by nature: once a definition carries parallel edges between one
+ * pair, silently removing whichever came first would delete the wrong guard. So
+ * an ambiguous endpoint pair refuses and names the candidate ids, which are the
+ * `edgeId` values the caller retries with (D4 decision D2).
+ */
+function resolveEditedEdge(
+  definition: WorkflowSemanticDefinition,
+  operation: RemoveEdgeOperation,
+): ResolvedEdgeTarget {
+  const matches = matchRemoveEdgeTargets(definition, operation);
+  const described =
+    operation.edgeId !== undefined
+      ? `"${operation.edgeId}"`
+      : `${operation.sourceContextId} → ${operation.targetContextId}`;
+
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      code: "unknown-edge",
+      message: `no edge ${described}`,
+      extra: operation.edgeId !== undefined ? { edgeId: operation.edgeId } : {},
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      ok: false,
+      code: "ambiguous-edge-endpoints",
+      message: `${matches.length} edges match ${described}; address one by edgeId: ${matches
+        .map((edge) => edge.id)
+        .join(", ")}`,
+      extra: {},
+    };
+  }
+  return { ok: true, edge: matches[0]! };
 }
 
 /** Context task ids in current `order`. */

@@ -66,6 +66,106 @@ function makeConversation(
 }
 
 describe("graph workflow implementer runner", () => {
+  it("mints the lane capability at dispatch and threads it into the lane identity", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    }));
+    const mintLaneCapability = vi.fn(() => "cclc1.payload.signature");
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation: vi.fn(async () => makeConversation()),
+      mintLaneCapability,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    // Scoped to all three facts — the route refuses a capability whose
+    // conversation is no longer the context's bound implementer.
+    expect(mintLaneCapability).toHaveBeenCalledWith({
+      executionId: "execution-1",
+      contextId: "context-plan",
+      conversationId: "conversation-1",
+    });
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.anything(),
+      expect.any(String),
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.objectContaining({
+        workflowContext: {
+          executionId: "execution-1",
+          contextId: "context-plan",
+          laneCapability: "cclc1.payload.signature",
+        },
+      }),
+    );
+  });
+
+  it("dispatches without a capability when the server has no signing token", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      compacted: false,
+    }));
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation: vi.fn(async () => makeConversation()),
+      mintLaneCapability: () => null,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    // Fail-closed rather than fail-open: the lane still runs, it simply holds
+    // no credential (exact match — no `laneCapability` key at all), so its
+    // expansion attempts are refused at the route.
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.anything(),
+      expect.any(String),
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.objectContaining({
+        workflowContext: {
+          executionId: "execution-1",
+          contextId: "context-plan",
+        },
+      }),
+    );
+  });
+
   it("executes claude implementer turns through prompt execution", async () => {
     const executePromptStream = vi.fn(async () => ({
       conversationId: "conversation-1",

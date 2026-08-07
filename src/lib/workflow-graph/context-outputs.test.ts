@@ -69,6 +69,27 @@ function makeExecution(options: {
   };
 }
 
+/** Settle `contextId` as skipped, the way the scheduler's skip write leaves it. */
+function withSkippedContext(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): GraphWorkflowExecution {
+  return {
+    ...execution,
+    contextStates: {
+      ...execution.contextStates,
+      [contextId]: {
+        ...execution.contextStates[contextId]!,
+        status: "skipped",
+        skipReason: {
+          edgeEvaluations: [{ edgeId: "edge-in", verdict: "inactive" }],
+          at: "2026-03-27T16:20:00.000Z",
+        },
+      },
+    },
+  };
+}
+
 describe("getContextOutput", () => {
   it("returns the captured output for a context that banked one", () => {
     const execution = makeExecution({
@@ -128,6 +149,32 @@ describe("getContextOutput", () => {
     expect(
       resolveUpstreamInputs(execution, "context-implement")[0]?.output,
     ).toBeNull();
+  });
+
+  // D4 R4: a skipped context owes no output debt. The lookup is layered here
+  // rather than in the raw read because "skipped" is lifecycle, not evidence:
+  // the raw read still answers "was a payload captured", which is what guards
+  // evaluate against.
+  describe("a skipped context (D4 R4)", () => {
+    it("reports skipped instead of pending even when it declared a contract", () => {
+      const execution = withSkippedContext(
+        makeExecution({ schemas: { "context-plan": PLAN_SCHEMA } }),
+        "context-plan",
+      );
+
+      expect(getContextOutput(execution, "context-plan")).toEqual({
+        kind: "skipped",
+      });
+      expect(contextOwesOutput(execution, "context-plan")).toBe(false);
+    });
+
+    it("reports skipped for a free-form context too", () => {
+      const execution = withSkippedContext(makeExecution({}), "context-plan");
+
+      expect(getContextOutput(execution, "context-plan")).toEqual({
+        kind: "skipped",
+      });
+    });
   });
 });
 
@@ -216,7 +263,34 @@ describe("resolveUpstreamInputs", () => {
       declared: false,
       schemaFields: null,
       output: null,
+      skipped: false,
     });
+  });
+
+  // D4 R4.3: the row survives so the downstream prompt can say the branch was
+  // not taken. Dropping it would be indistinguishable from a predecessor still
+  // working, which is exactly the ambiguity the flag removes.
+  it("marks a skipped predecessor as skipped rather than dropping the row", () => {
+    const execution = withSkippedContext(
+      makeExecution({ schemas: { "context-plan": PLAN_SCHEMA } }),
+      "context-plan",
+    );
+
+    const [plan] = resolveUpstreamInputs(execution, "context-implement");
+
+    expect(plan?.skipped).toBe(true);
+    expect(plan?.output).toBeNull();
+    expect(plan?.declared).toBe(true);
+  });
+
+  it("does not mark a predecessor that merely has not produced its output", () => {
+    const execution = makeExecution({
+      schemas: { "context-plan": PLAN_SCHEMA },
+    });
+
+    expect(
+      resolveUpstreamInputs(execution, "context-implement")[0]?.skipped,
+    ).toBe(false);
   });
 
   it("reports a declared bare-object schema as declared, with no field list to show", () => {
@@ -280,6 +354,7 @@ describe("resolveDefinitionUpstreamInputs", () => {
       resolveDefinitionUpstreamInputs(definition, "context-verify"),
     ).toEqual([
       {
+        skipped: false,
         contextId: "context-plan",
         title: "Plan",
         declared: true,
@@ -301,6 +376,7 @@ describe("resolveDefinitionUpstreamInputs", () => {
         output: null,
       },
       {
+        skipped: false,
         contextId: "context-implement",
         title: "Implement",
         declared: false,

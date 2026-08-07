@@ -28,7 +28,7 @@ describe("execution context implementer config with backend support", () => {
               reasoningEffort: "high",
             },
           } as GraphWorkflowExecutionContextDefinition["implementer"],
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 3,

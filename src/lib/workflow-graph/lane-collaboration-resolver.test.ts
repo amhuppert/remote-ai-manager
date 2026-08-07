@@ -36,7 +36,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   askUserQuestions: { enabled: false },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
-  mutability: { allowAgentTaskAdd: false },
+  mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
   collaboration: {
     enabled: false,
@@ -79,7 +79,7 @@ function resolvedContext(
     scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },

@@ -2196,7 +2196,8 @@ function AgentTaskAddBlock({
       description="Let agents add tasks during execution."
       headerSwitch={{
         checked: cascade.value.allowAgentTaskAdd,
-        onCheckedChange: (allowAgentTaskAdd) => onChange({ allowAgentTaskAdd }),
+        onCheckedChange: (allowAgentTaskAdd) =>
+          onChange({ ...cascade.value, allowAgentTaskAdd }),
         ariaLabel,
       }}
       onReset={cascade.source === "context-override" ? onReset : undefined}

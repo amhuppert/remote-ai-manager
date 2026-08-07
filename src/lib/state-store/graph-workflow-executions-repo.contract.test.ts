@@ -10,6 +10,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import { _createTestDb } from "./state-db";
 import {
   createGraphWorkflowExecutionsRepo,
@@ -22,10 +23,22 @@ import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowAgentSessionState,
   GraphWorkflowExecution,
+  GraphWorkflowLandingIntent,
 } from "@/lib/workflow-graph/schemas";
 import { laneStateKey } from "@/lib/workflow-graph/lane-identity";
+import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import {
+  canonicalValuesAtPath,
+  collectValuesAtPath,
+  isEmptyForFixture,
+  resolveExecutionSchemaAtPath,
+  stripD4PersistedFields,
+  D4_PERSISTED_FIELDS,
+  D4_SUPERSEDED_FIELD_NAMES,
+} from "@/lib/shared/testing/d4-persisted-field-inventory";
+import { projectExecutionTierFloor } from "@/lib/workflow-graph/compat/floor";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import {
   validateJsonSchemaSubset,
@@ -330,6 +343,305 @@ describe("graph-workflow-executions-repo durability contract", () => {
   });
 });
 
+describe("D4 persisted-field inventory (decision D12)", () => {
+  // The round-trip harness walks whatever the schema currently declares, so it
+  // stays green when a field is REMOVED — the inventory is what makes removal
+  // visible. Both halves are load-bearing: presence here, durability below.
+  it("resolves every inventory path in the execution schema", () => {
+    const missing = D4_PERSISTED_FIELDS.filter(
+      (field) => resolveExecutionSchemaAtPath(field.path) === null,
+    ).map((field) => field.path);
+    expect(missing).toEqual([]);
+  });
+
+  it("exercises every inventory path in the maximal fixture", () => {
+    const unexercised = D4_PERSISTED_FIELDS.filter((field) =>
+      collectValuesAtPath(maximalExecution(), field.path).every(
+        isEmptyForFixture,
+      ),
+    ).map((field) => field.path);
+    expect(
+      unexercised,
+      "an inventory field the fixture leaves empty is a field the round-trip proves nothing about",
+    ).toEqual([]);
+  });
+
+  // R14.2 against real SQLite through the production DDL. A fresh repo instance
+  // has no parsed-row cache to answer from, so only the stored bytes can satisfy
+  // this — which is the whole point for state that has to outlive a restart.
+  it("round-trips every inventory path through setActive -> getActive", () => {
+    const execution = maximalExecution();
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (reloaded === null) throw new Error("maximal execution must reload");
+
+    for (const field of D4_PERSISTED_FIELDS) {
+      expect(
+        canonicalValuesAtPath(reloaded, field.path),
+        `${field.path} (${field.tier} tier) did not survive the round trip`,
+      ).toEqual(canonicalValuesAtPath(execution, field.path));
+    }
+  });
+
+  // R14.2 names "landingIntent with mode-specific receipts", and the maximal
+  // fixture carries exactly one intent — so on its own it proves durability for
+  // `lane_commit` and nothing else. Each mode records DIFFERENT evidence
+  // (a lane's worktree and adopted head; a join id; a solo commit with neither),
+  // and the landing gate treats an unreconciled intent as blocking, so an intent
+  // that came back from SQLite missing its mode-specific half would strand its
+  // dependents rather than fail loudly.
+  it("round-trips a landing intent for every landing mode", () => {
+    const base = maximalExecution();
+    const intents: Record<string, GraphWorkflowLandingIntent> = {
+      "ctx-1": {
+        mode: "lane_commit",
+        attempt: 2,
+        token: "cc-landing:execution-1:ctx-1:2",
+        laneId: "lane-1",
+        worktreePath: "/tmp/lane-1",
+        baselineSha: "1".repeat(40),
+        headSha: "2".repeat(40),
+        joinId: null,
+        state: "landed",
+        evidence: "adopted-head",
+        recordedAt: "2026-01-02T05:00:00.000Z",
+        settledAt: "2026-01-02T05:30:00.000Z",
+      },
+      "ctx-fan-in": {
+        mode: "fan_in_merge",
+        attempt: 1,
+        token: "cc-landing:execution-1:ctx-fan-in:1",
+        laneId: "lane-2",
+        worktreePath: null,
+        baselineSha: "3".repeat(40),
+        headSha: "4".repeat(40),
+        joinId: "join-1",
+        state: "landed",
+        evidence: "join-merge",
+        recordedAt: "2026-01-02T06:00:00.000Z",
+        settledAt: "2026-01-02T06:30:00.000Z",
+      },
+      "ctx-solo": {
+        mode: "solo_commit",
+        attempt: 1,
+        token: "cc-landing:execution-1:ctx-solo:1",
+        laneId: null,
+        worktreePath: null,
+        baselineSha: "5".repeat(40),
+        headSha: null,
+        joinId: null,
+        state: "pending",
+        evidence: null,
+        recordedAt: "2026-01-02T07:00:00.000Z",
+        settledAt: null,
+      },
+    };
+
+    const execution = graphWorkflowExecutionSchema.parse({
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "ctx-1": {
+          ...base.contextStates["ctx-1"],
+          landingIntent: intents["ctx-1"],
+        },
+        "ctx-fan-in": {
+          contextId: "ctx-fan-in",
+          status: "completed",
+          totalTaskCount: 1,
+          landingIntent: intents["ctx-fan-in"],
+        },
+        "ctx-solo": {
+          contextId: "ctx-solo",
+          status: "running",
+          totalTaskCount: 1,
+          landingIntent: intents["ctx-solo"],
+        },
+      },
+    });
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (reloaded === null) throw new Error("maximal execution must reload");
+
+    for (const [contextId, intent] of Object.entries(intents)) {
+      expect(
+        reloaded.contextStates[contextId]?.landingIntent,
+        `${intent.mode} landing intent did not survive the round trip`,
+      ).toEqual(intent);
+    }
+    // All three modes, not one mode three times.
+    expect(
+      new Set(Object.values(intents).map((intent) => intent.mode)).size,
+    ).toBe(3);
+  });
+
+  // The superseded half of R14.2. Absence is a SCHEMA property, not a
+  // code-search result: a re-added `commitStatus` would become a second,
+  // contradictory answer to "did this context's work land" — the question
+  // landingIntent now owns — and nothing else in the suite would notice.
+  it("declares no superseded field anywhere in the execution schema", () => {
+    const projection = JSON.stringify(
+      z.toJSONSchema(graphWorkflowExecutionSchema, {
+        io: "output",
+        unrepresentable: "any",
+        cycles: "ref",
+      }),
+    );
+    for (const name of D4_SUPERSEDED_FIELD_NAMES) {
+      expect(
+        projection.includes(`"${name}"`),
+        `${name} was superseded by the D4 inventory and must not be persisted`,
+      ).toBe(false);
+    }
+  });
+
+  // The other superseded shape: an append-only decision ARRAY in the blob. The
+  // events table holds the history; the blob holds latest markers only, keyed
+  // so a re-decision replaces rather than appends. A record keyed by pass /
+  // source is what makes that bound structural rather than a convention.
+  it("keeps the decision ledgers as replace-in-place records, not in-blob arrays", () => {
+    for (const path of [
+      "loopStates.*.decisions",
+      "routeSettlements",
+      "routeControlRevisions",
+    ]) {
+      const node = resolveExecutionSchemaAtPath(path);
+      expect(node, `${path} must resolve`).not.toBeNull();
+      expect(
+        node instanceof z.ZodRecord ||
+          (node instanceof z.ZodDefault &&
+            node.def.innerType instanceof z.ZodRecord),
+        `${path} must be a keyed record so a re-decision replaces its entry`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("graph-workflow-executions-repo pre-D4 floor", () => {
+  /**
+   * A row a pre-D4 build wrote: the maximal fixture with EXACTLY the D4
+   * inventory removed, spliced back into the two stored tiers. Written straight
+   * to SQLite because `setActive` parses first and would reject the legacy
+   * shape (`edges[].id` is required) before it ever reached the column.
+   */
+  function seedPreD4Row(): void {
+    // Establish the row (and its FK-valid identity) with a normal write, then
+    // overwrite both tier blobs with the stripped bytes.
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+
+    const preD4 = stripD4PersistedFields(maximalExecution());
+    const pick = (keys: readonly string[]): Record<string, unknown> =>
+      Object.fromEntries(
+        keys.filter((key) => key in preD4).map((key) => [key, preD4[key]]),
+      );
+
+    db.prepare(
+      `UPDATE graph_workflow_executions
+          SET definition_json = ?, runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(
+      JSON.stringify(pick(DEFINITION_TIER_KEYS)),
+      JSON.stringify(pick(RUNTIME_TIER_KEYS)),
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+  }
+
+  // R14.1's dormant floor, proven at the persistence boundary rather than in a
+  // schema unit test: the whole D4 inventory absent from the stored bytes has to
+  // read back as unconditional edges, no loops, expansion disabled, and nothing
+  // recorded — and the edge ids the post-D4 schema requires have to be repaired,
+  // not refused.
+  it("loads a stored row with the whole D4 inventory absent to the dormant floor", () => {
+    seedPreD4Row();
+
+    // A fresh repo instance bypasses the parsed-row cache, so this decodes the
+    // edited bytes rather than returning the in-memory object.
+    const loaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (loaded === null) throw new Error("pre-D4 row must load");
+
+    expect(loaded.workingDefinition.edges.map((edge) => edge.id)).toEqual([
+      "ctx-1__ctx-2",
+    ]);
+    expect(loaded.workingDefinition.loopGroups).toBeUndefined();
+    expect(loaded.contextStates["ctx-1"]?.skipReason).toBeNull();
+    expect(loaded.contextStates["ctx-1"]?.landingIntent).toBeNull();
+    expect(loaded.routeSettlements).toEqual({});
+    expect(loaded.routeControlRevisions).toEqual({});
+    expect(loaded.loopStates).toEqual({});
+    expect(loaded.expansionReceipts).toEqual({ accepted: [], refusals: [] });
+
+    // Read the same way R14.1's observational-equivalence harness reads it, so
+    // "dormant" here means what the compat floor means by it.
+    expect(projectExecutionTierFloor(loaded)).toEqual({
+      edgeActivation: "all-unconditional",
+      loops: "none-declared",
+      expansionAuthority: "disabled-on-every-context",
+      routing: "no-recorded-decisions",
+      skips: "none",
+    });
+  });
+
+  // The floor is a READ-time repair plus schema defaults, which is what makes an
+  // ordered data migration unnecessary — but only if the next write persists the
+  // repaired shape. Otherwise every load re-derives ids that nothing ever
+  // durably agrees on.
+  it("persists the repaired edge ids on the next write, so the repair happens once", () => {
+    seedPreD4Row();
+    const repaired = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    if (repaired === null) throw new Error("pre-D4 row must load");
+
+    createGraphWorkflowExecutionsRepo(db).setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      repaired,
+      "2026-03-02T00:00:00Z",
+    );
+
+    const row = db
+      .prepare(
+        `SELECT definition_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { definition_json: string };
+    const stored = JSON.parse(row.definition_json) as {
+      workingDefinition: { edges: { id?: string }[] };
+    };
+    expect(stored.workingDefinition.edges.map((edge) => edge.id)).toEqual([
+      "ctx-1__ctx-2",
+    ]);
+  });
+});
+
 describe("graph-workflow-executions-repo captured context outputs", () => {
   // R4.1: the captured structured output is durable state, not an in-memory
   // convenience. The real persistence fixture supplies the production DDL and
@@ -430,6 +742,101 @@ describe("graph-workflow-executions-repo captured context outputs", () => {
         `${contextId} captured output must be accepted by its authored schema`,
       ).toEqual({ valid: true });
     }
+  });
+
+  // R8.1: an expansion receipt is the durable audit of a structural mutation an
+  // agent asked for. Proven against real SQLite through the production DDL,
+  // because a JS-object fake cannot show that the permanent acceptance ledger
+  // and the bounded refusal ring survive a restart — and the whole idempotency
+  // contract (replay an acceptance, re-refuse a retained refusal) is a promise
+  // about state that outlives the process that made it.
+  it("round-trips accepted receipts and the refusal ring through real SQLite", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+
+      const execution = maximalExecution();
+      const receipts = execution.expansionReceipts;
+      expect(
+        receipts.accepted.length,
+        "the maximal fixture must carry an acceptance receipt",
+      ).toBeGreaterThan(0);
+      expect(
+        receipts.refusals.length,
+        "the maximal fixture must carry a refusal receipt",
+      ).toBeGreaterThan(0);
+
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+
+      // A repo instance that never saw the write has no parsed-row cache to
+      // answer from — this is the post-restart read.
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+
+      expect(reloaded?.expansionReceipts).toEqual(receipts);
+
+      // Provenance resolves per NODE after the reload, which is the property
+      // R8 names: any expansion-created id answers who added it and why.
+      const accepted = receipts.accepted[0];
+      if (accepted === undefined) throw new Error("fixture receipt missing");
+      const addedContextId = accepted.addedContextIds[0];
+      const addedTaskId = accepted.addedTaskIds[0];
+      if (addedContextId === undefined || addedTaskId === undefined) {
+        throw new Error("fixture receipt must name added ids");
+      }
+      const reloadedReceipts = reloaded?.expansionReceipts;
+      if (reloadedReceipts === undefined) {
+        throw new Error("reloaded receipts missing");
+      }
+      expect(
+        resolveExpansionProvenance(reloadedReceipts, addedContextId),
+      ).toEqual({ nodeKind: "context", receipt: accepted });
+      expect(resolveExpansionProvenance(reloadedReceipts, addedTaskId)).toEqual(
+        { nodeKind: "task", receipt: accepted },
+      );
+      expect(resolveExpansionProvenance(reloadedReceipts, "ctx-1")).toBeNull();
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("admits a pre-feature row with no expansionReceipts via the additive default", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const row = db
+      .prepare(
+        `SELECT runtime_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { runtime_json: string };
+    const runtime = JSON.parse(row.runtime_json) as Record<string, unknown>;
+    expect(
+      runtime.expansionReceipts,
+      "fixture must persist a non-default expansionReceipts record",
+    ).toBeDefined();
+    delete runtime.expansionReceipts;
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(runtime), PROJECT_PATH, SESSION_NAME);
+
+    const loaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(loaded?.expansionReceipts).toEqual({ accepted: [], refusals: [] });
   });
 
   it("admits a pre-feature row with no contextOutputs via the additive default of {}", () => {

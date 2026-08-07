@@ -23,6 +23,7 @@ import {
   charterAmendmentSchema,
   workflowCharterSchema,
 } from "@/lib/workflows/charter-schemas";
+import { EXPANSION_CAPS } from "./expansion-caps";
 import { graphWorkflowCircuitBreakerConditionSchema } from "./config-schemas";
 import {
   graphWorkflowCollaborationContinuationSchema,
@@ -185,6 +186,106 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     contextId: z.string().trim().min(1).nullable().default(null),
     message: z.string(),
     cause: z.enum(["sdk_error", "validation", "io", "unknown"]),
+  }),
+  /**
+   * A source's outgoing conditional branches under- or over-selected against
+   * its declared `routing.cardinality` (D4 R3.1). Resumable: the sanctioned
+   * remedy is a quiescent live edit of the guard set (or of the policy), then
+   * resume — the completed source is never re-run and never edited.
+   */
+  z.object({
+    type: z.literal("routing_cardinality"),
+    contextId: z.string().trim().min(1),
+    policy: z.enum(["atLeastOne", "exactlyOne"]),
+    outcome: z.enum(["under-selection", "over-selection"]),
+    conditionalEdgeIds: z.array(z.string().trim().min(1)).default([]),
+    activatedEdgeIds: z.array(z.string().trim().min(1)).default([]),
+    message: z.string(),
+  }),
+  /**
+   * A completed conditional source whose captured output cannot be read
+   * (pending, none, or orphaned), so its guards cannot be evaluated (D4 R2.4).
+   * Resumable, and deliberately NOT evaluated as false: the remedy is a
+   * quiescent live edit of the unstarted target's incoming edges — amend or
+   * remove the guard — followed by resume.
+   */
+  z.object({
+    type: z.literal("routing_invariant"),
+    contextId: z.string().trim().min(1),
+    reason: z.literal("guard-unevaluable"),
+    edgeIds: z.array(z.string().trim().min(1)).default([]),
+    sourceContextIds: z.array(z.string().trim().min(1)).default([]),
+    message: z.string(),
+  }),
+  /**
+   * An ACTIVE loop whose exit instance resolved `skipped` (D4 R9.6). The exit
+   * produces the verdict a pass settles on, so a skipped exit leaves the loop
+   * with nothing to decide. Refused at accept time by the reconvergence rule,
+   * so reaching this means a live edit opened the branch; resumable, and the
+   * remedy is a quiescent edit of the pass instance's incoming edges.
+   */
+  z.object({
+    type: z.literal("loop_exit_skipped"),
+    loopGroupId: z.string().trim().min(1),
+    pass: z.number().int().min(1),
+    contextId: z.string().trim().min(1),
+    message: z.string(),
+  }),
+  /**
+   * An active loop whose exit landed but whose captured output cannot be read
+   * (D4 R9.6). Deliberately not treated as an unsatisfied verdict: unrolling
+   * another pass on an unreadable exit is exactly the guess R9 forbids.
+   */
+  z.object({
+    type: z.literal("loop_invariant"),
+    loopGroupId: z.string().trim().min(1),
+    pass: z.number().int().min(1),
+    contextId: z.string().trim().min(1),
+    reason: z.literal("exit-output-unevaluable"),
+    message: z.string(),
+  }),
+  /**
+   * A loop that asked for another pass and was refused (D4 R10, locked Q15 —
+   * there is no completion-on-exhaustion mode). Raised only AFTER the predicate
+   * was evaluated, so a satisfying verdict on the last allowed pass concludes
+   * normally (R9.3).
+   *
+   * Two budgets raise it and `scope` says which: `loop` for the group's own
+   * mandatory `maxPasses`, `execution` for the per-execution total-pass backstop
+   * that bounds every loop together. The distinction is what an operator acts
+   * on — a `loop` halt can be repaired by an audited cap amendment, while the
+   * backstop is a constant neither operators nor plan repair can raise.
+   */
+  z.object({
+    type: z.literal("loop_limit_reached"),
+    scope: z.enum(["loop", "execution"]).default("loop"),
+    loopGroupId: z.string().trim().min(1),
+    /**
+     * The pass whose decision was refused another one — the exhausted pass. A
+     * backstop halt raised before a loop ever activated carries `1`, the pass it
+     * could not have, alongside a null verdict and a zero `passCount`.
+     */
+    pass: z.number().int().min(1),
+    maxPasses: z.number().int().min(1),
+    /**
+     * The exit verdict that asked for another pass; null only when the backstop
+     * refused an ACTIVATION, which has no verdict behind it.
+     */
+    verdict: z.enum(["satisfied", "unsatisfied"]).nullable().default(null),
+    /** Passes of THIS loop that exist at the halt. */
+    passCount: z.number().int().min(0).default(0),
+    /** Live pass slots across EVERY loop, weighed against the backstop. */
+    totalPassCount: z.number().int().min(0).default(0),
+    contextId: z.string().trim().min(1),
+    message: z.string(),
+    /**
+     * The plan-repair supervisor's verdict on this halt, once it has spoken
+     * (R12). Same role as the context halts' `summary`: the halt UI explains
+     * why an automated repair declined, failed, or gave up. Deliberately NOT
+     * part of the halt-dedup identity — a repair verdict is bookkeeping about
+     * the halt, never a different halt.
+     */
+    summary: z.string().nullable().default(null),
   }),
   z.object({
     type: z.literal("collaboration_failure"),
@@ -831,6 +932,81 @@ export type GraphWorkflowAdvisoryIndexEntry = z.infer<
 // Graph Workflow Context + Task State
 // ============================================================
 
+/**
+ * One incoming edge's contribution to a skip decision (D4 R4.3). Mirrors
+ * `RouteEdgeEvaluation` in the route projection, which is where the verdicts
+ * are computed; the projection stays structural and browser-safe, so the
+ * persisted spelling lives here and `context-transitions.test.ts` pins the two
+ * shapes together.
+ */
+export const graphWorkflowRouteEdgeEvaluationSchema = z.object({
+  edgeId: z.string().trim().min(1),
+  verdict: z.enum(["active", "inactive", "omitted"]),
+});
+export type GraphWorkflowRouteEdgeEvaluation = z.infer<
+  typeof graphWorkflowRouteEdgeEvaluationSchema
+>;
+
+/**
+ * Why a context was skipped: the COMPLETE verdict set of its incoming edges at
+ * the moment the skip was decided, not just the edges that vetoed it. A fan-in
+ * waits for every route before deciding, so the partial set would not explain
+ * the decision — and this record is what makes the routing reconstructible
+ * from durable state alone.
+ */
+export const graphWorkflowContextSkipReasonSchema = z.object({
+  edgeEvaluations: z.array(graphWorkflowRouteEdgeEvaluationSchema),
+  at: z.string().trim().min(1),
+});
+export type GraphWorkflowContextSkipReason = z.infer<
+  typeof graphWorkflowContextSkipReasonSchema
+>;
+
+/**
+ * How a context's work reaches the lane its dependents read — recorded when the
+ * context is DISPATCHED, not when it finishes (D4 decision D8), so no landing
+ * evidence ever exists only in memory.
+ *
+ * Each mode leaves its own replayable evidence. `lane_commit` and `solo_commit`
+ * embed {@link token} in the commit message, so reconciliation can probe the
+ * branch for the token; a self-authored commit adopted at head-advance is
+ * evidenced instead by the recorded `baselineSha` → `headSha` range.
+ * `fan_in_merge` reconciles against the join record named by `joinId`.
+ *
+ * Route settlement treats only `landed` as satisfied: a `pending` or `failed`
+ * intent BLOCKS the dependents (it never skips them, R2.5), because a merge
+ * that has not resolved is not evidence that a branch was not taken.
+ */
+export const graphWorkflowLandingIntentSchema = z.object({
+  mode: z.enum(["lane_commit", "solo_commit", "fan_in_merge"]),
+  /**
+   * Monotonic per context. A reset-and-redispatch mints a fresh token so a
+   * commit from the previous attempt is never adopted as this attempt's
+   * evidence.
+   */
+  attempt: z.number().int().min(1),
+  token: z.string().trim().min(1),
+  laneId: z.string().trim().min(1).nullable().default(null),
+  worktreePath: z.string().nullable().default(null),
+  /** Lane head at assignment; the low end of the adopted-commit SHA range. */
+  baselineSha: z.string().nullable().default(null),
+  /** The landed head — the high end of that range. Null until settled. */
+  headSha: z.string().nullable().default(null),
+  /** The fan-in join this intent reconciles against, for `fan_in_merge`. */
+  joinId: z.string().trim().min(1).nullable().default(null),
+  state: z.enum(["pending", "landed", "failed"]),
+  /** How the landing was established, for replay/forensics. */
+  evidence: z
+    .enum(["commit", "adopted-head", "no-changes", "join-merge"])
+    .nullable()
+    .default(null),
+  recordedAt: z.string(),
+  settledAt: z.string().nullable().default(null),
+});
+export type GraphWorkflowLandingIntent = z.infer<
+  typeof graphWorkflowLandingIntentSchema
+>;
+
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
   status: graphWorkflowContextStatusSchema,
@@ -888,6 +1064,14 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
    * and rows written before the field existed already make it correctly.
    */
   validationRound: graphWorkflowValidationRoundSchema.nullable().optional(),
+  /** Set only on a `skipped` context; null everywhere else (D4 R4). */
+  skipReason: graphWorkflowContextSkipReasonSchema.nullable().default(null),
+  /**
+   * How this context's work is going to land, recorded at DISPATCH (D4
+   * decision D8). Null on a context that has never been dispatched, and on
+   * every pre-D4 row.
+   */
+  landingIntent: graphWorkflowLandingIntentSchema.nullable().default(null),
   /**
    * The advisory-response phase this context is in, or absent/null when it is in
    * none. Optional for the same reason as `validationRound`: absent and null are
@@ -1056,7 +1240,18 @@ export type GraphWorkflowAgentSessionState = z.infer<
 export const planRepairRoundSchema = z.object({
   seq: z.number().int().min(1),
   contextId: z.string().trim().min(1),
-  haltType: z.enum(["circuit_breaker", "max_iterations"]),
+  haltType: z.enum([
+    "circuit_breaker",
+    "max_iterations",
+    // A loop that exhausted its budget (D4 R12). Attempt accounting for these
+    // rounds keys on `loopGroupId` under the loop's own seed-resolved policy,
+    // not on the context — the halt names a pass instance that will never be
+    // re-run, so counting per context would give every fresh pass a fresh
+    // budget of repairs.
+    "loop_limit_reached",
+  ]),
+  /** The loop a `loop_limit_reached` round repairs; null for context halts. */
+  loopGroupId: z.string().trim().min(1).nullable().default(null),
   startedAt: z.string(),
   settledAt: z.string().nullable().default(null),
   // `superseded` = the halt state changed under the agent (user resumed,
@@ -1072,6 +1267,37 @@ export const planRepairRoundSchema = z.object({
   conversationId: z.string().nullable().default(null),
 });
 export type PlanRepairRound = z.infer<typeof planRepairRoundSchema>;
+
+/**
+ * One accepted loop-control edit (D4 R11.2/R12) — the audit log R12 requires an
+ * exit-predicate amendment to be recorded in.
+ *
+ * Metadata only, like the charter amendment log: the amended predicate, cap and
+ * template live on the working definition, and the per-pass provenance that
+ * makes an amendment provably non-retroactive lives in the loop ledger
+ * (`decisions`, `passTemplateVersions`). What survives ONLY here is the "why"
+ * and the control revision it took effect at.
+ */
+export const loopControlAmendmentSchema = z.object({
+  /** 1-based, append-only across the whole execution. */
+  seq: z.number().int().min(1),
+  loopGroupId: z.string().trim().min(1),
+  kind: z.enum(["raise-max-passes", "amend-predicate", "edit-template"]),
+  /** Mandatory on `amend-predicate` (R11); optional on the other two. */
+  rationale: z.string().min(1).nullable().default(null),
+  /**
+   * The loop's control revision AFTER this edit — what re-decides on resume.
+   * Every kind bumps it (D10), so the log and the revision never disagree.
+   */
+  loopControlRevision: z.number().int().min(0),
+  /** The group's template version after this edit. */
+  templateVersion: z.number().int().min(1),
+  /** The group's pass cap after this edit. */
+  maxPasses: z.number().int().min(1),
+  source: z.enum(["cli", "ui", "plan-repair"]),
+  amendedAt: z.string(),
+});
+export type LoopControlAmendment = z.infer<typeof loopControlAmendmentSchema>;
 
 /**
  * One execution context's captured structured output (D2/D5).
@@ -1094,6 +1320,265 @@ export type GraphWorkflowContextOutput = z.infer<
   typeof graphWorkflowContextOutputSchema
 >;
 
+/**
+ * The CURRENT route decision of one source context (D4 decision D4).
+ *
+ * Bounded on purpose: at most one entry per source, replaced whenever the
+ * dedup key `(sourceContextId, captureIteration, routeControlRevision)` moves.
+ * The full ledger — every resolution, including a pass re-decided under an
+ * amended control revision — lives in the append-only events table, which is
+ * where unbounded history belongs.
+ */
+export const graphWorkflowRouteSettlementSchema = z.object({
+  sourceContextId: z.string().trim().min(1),
+  /**
+   * The iteration of the capture the guards were evaluated against; null for a
+   * source that captured nothing (unconditional edges, or a skipped source).
+   */
+  captureIteration: z.number().int().min(1).nullable().default(null),
+  routeControlRevision: z.number().int().min(0),
+  activatedEdgeIds: z.array(z.string().trim().min(1)).default([]),
+  inactiveEdgeIds: z.array(z.string().trim().min(1)).default([]),
+  omittedEdgeIds: z.array(z.string().trim().min(1)).default([]),
+  settledAt: z.string(),
+});
+export type GraphWorkflowRouteSettlement = z.infer<
+  typeof graphWorkflowRouteSettlementSchema
+>;
+
+/**
+ * The permanent receipt for ONE accepted runtime graph expansion (D4 R8).
+ *
+ * Carries everything R8 names — initiator, rationale, added ids, payload hash —
+ * so the ledger answers both directions of the audit question: what this
+ * request produced, and (through `resolveExpansionProvenance`) which request
+ * produced a given node. Permanent within the cumulative cap: a receipt is
+ * never evicted, which is exactly what makes the cumulative context budget
+ * monotone under removal.
+ */
+export const graphWorkflowExpansionAcceptanceReceiptSchema = z.object({
+  /** The lane's single-use idempotency key, unique per invoking context. */
+  requestId: z.string().trim().min(1).max(200),
+  /** Canonical-JSON SHA-256 of the accepted payload; a replay must match it. */
+  payloadHash: z.string().trim().length(64),
+  /** The invoking context — the initiator, with the conversation that asked. */
+  invokerContextId: z.string().trim().min(1),
+  initiatorConversationId: z.string().trim().min(1),
+  rationale: z.string().trim().min(1).max(4000),
+  addedContextIds: z
+    .array(z.string().trim().min(1))
+    .max(EXPANSION_CAPS.contextsPerRequest),
+  addedTaskIds: z
+    .array(z.string().trim().min(1))
+    .max(EXPANSION_CAPS.tasksPerRequest),
+  rejoinContextIds: z
+    .array(z.string().trim().min(1))
+    .max(EXPANSION_CAPS.edgesPerRequest),
+  /** The revision the acceptance committed at; a replay reports it verbatim. */
+  liveRevision: z.number().int().min(1),
+  acceptedAt: z.string(),
+});
+export type GraphWorkflowExpansionAcceptanceReceipt = z.infer<
+  typeof graphWorkflowExpansionAcceptanceReceiptSchema
+>;
+
+/**
+ * The receipt for ONE refused runtime graph expansion (D4 R8).
+ *
+ * Deliberately thinner than an acceptance: a refusal changed nothing, so the
+ * only durable question it has to answer is "was this exact attempt already
+ * refused, and under which code" — which is what lets a retry be re-refused
+ * identically instead of re-validated. Entries live in a bounded ring, so an
+ * attempt whose record has aged out is honestly re-validated as a new one.
+ */
+export const graphWorkflowExpansionRefusalReceiptSchema = z.object({
+  requestId: z.string().trim().min(1).max(200),
+  payloadHash: z.string().trim().length(64),
+  invokerContextId: z.string().trim().min(1),
+  refusalCode: z.string().trim().min(1).max(120),
+  refusedAt: z.string(),
+});
+export type GraphWorkflowExpansionRefusalReceipt = z.infer<
+  typeof graphWorkflowExpansionRefusalReceiptSchema
+>;
+
+/**
+ * The expansion audit ledgers of one execution (D4 decision D12) — permanent
+ * acceptances bounded by the cumulative context cap, and the most recent
+ * refusals in a fixed-size ring. Both bounds are the enforced caps themselves
+ * (`EXPANSION_CAPS`), so the persisted bound cannot drift from the runtime one.
+ */
+export const graphWorkflowExpansionReceiptsSchema = z.object({
+  accepted: z
+    .array(graphWorkflowExpansionAcceptanceReceiptSchema)
+    .max(EXPANSION_CAPS.contextsPerExecution)
+    .default([]),
+  refusals: z
+    .array(graphWorkflowExpansionRefusalReceiptSchema)
+    .max(EXPANSION_CAPS.refusalRingSize)
+    .default([]),
+});
+export type GraphWorkflowExpansionReceipts = z.infer<
+  typeof graphWorkflowExpansionReceiptsSchema
+>;
+
+// ============================================================
+// Loop settlement state (D4 R9/R16, decisions D7 and D8)
+// ============================================================
+
+/** One top-level property of a declared `outputSchema`. */
+export const graphWorkflowOutputSchemaFieldSchema = z.object({
+  name: z.string(),
+  /** The declared `type`, or null when the declaration omits one. */
+  type: z.string().nullable(),
+  required: z.boolean(),
+  description: z.string().nullable(),
+});
+export type GraphWorkflowOutputSchemaField = z.infer<
+  typeof graphWorkflowOutputSchemaFieldSchema
+>;
+
+/**
+ * One predecessor's contribution to a context's injected inputs.
+ *
+ * Schema-first because a loop pins its boundary inputs as a DURABLE snapshot
+ * (R9): each pass's entry receives the rows the first pass's entry received,
+ * long after the boundary routing edge was consumed and never cloned.
+ */
+export const graphWorkflowUpstreamInputSchema = z.object({
+  contextId: z.string(),
+  title: z.string(),
+  /**
+   * Whether the predecessor declares an `outputSchema` at all.
+   *
+   * Carried separately from `schemaFields` because a valid declaration need not
+   * have a field list: a bare `{"type": "object"}` and a root `oneOf` both
+   * constrain the payload while naming no top-level properties. Reading
+   * "declared" off `schemaFields !== null` would report those contexts as
+   * free-form, which is the opposite of what they are.
+   */
+  declared: z.boolean(),
+  /** The declared top-level fields; null when the declaration names none. */
+  schemaFields: z.array(graphWorkflowOutputSchemaFieldSchema).nullable(),
+  /** null when nothing is banked — free-form, or declared but not yet produced. */
+  output: contextOutputSchemaSchema.nullable(),
+  /**
+   * The predecessor settled `skipped` — its branch was not taken (D4 R4.3).
+   *
+   * Carried instead of dropping the row, because a missing row and a not-taken
+   * branch read identically to a downstream consumer: both are "no payload",
+   * and only one of them is ever going to arrive. Always false on the
+   * definition-tier walk, which has no execution to settle anything.
+   */
+  skipped: z.boolean(),
+});
+export type GraphWorkflowUpstreamInput = z.infer<
+  typeof graphWorkflowUpstreamInputSchema
+>;
+
+/**
+ * One pass's authoritative settlement decision (R16.1) — the single record type
+ * loop settlement exports, and the idempotency marker the transaction keys on.
+ *
+ * Carries the FULL deduplication key: a pass is re-decided only when the loop's
+ * control revision, the exit capture it read, or the body template version
+ * moves. The complete history — including repeated re-decisions of one pass
+ * under amended control revisions — lives in the append-only event log; this
+ * field keeps only the latest per pass so the execution record stays bounded.
+ */
+export const graphWorkflowLoopDecisionRecordSchema = z.object({
+  loopGroupId: z.string().trim().min(1),
+  pass: z.number().int().min(1),
+  loopControlRevision: z.number().int().min(0),
+  templateVersion: z.number().int().min(1),
+  /** The exit pass instance whose banked capture the predicate was read from. */
+  exitContextId: z.string().trim().min(1),
+  /** The capture's iteration; null when the exit banked nothing (halt paths). */
+  exitCaptureIteration: z.number().int().min(1).nullable().default(null),
+  verdict: z.enum(["satisfied", "unsatisfied", "unevaluable", "exit-skipped"]),
+  outcome: z.enum(["concluded", "materialized", "halted"]),
+  /** The pass this decision materialized; null on every other outcome. */
+  nextPass: z.number().int().min(2).nullable().default(null),
+  decidedAt: z.string(),
+});
+export type GraphWorkflowLoopDecisionRecord = z.infer<
+  typeof graphWorkflowLoopDecisionRecordSchema
+>;
+
+/**
+ * One durable pass-slot grant (decision D7). Pass 1 reserves at ACTIVATION —
+ * before any pass-1 instance is eligible — and every later pass reserves inside
+ * its settlement transaction before cloning, so every pass is admitted through
+ * one ordered protocol a restart replays identically.
+ */
+export const graphWorkflowLoopSlotSchema = z.object({
+  pass: z.number().int().min(1),
+  state: z.enum(["reserved", "counted", "released"]),
+  /** 1-based grant order across the whole ledger; replayed on restart. */
+  grantOrder: z.number().int().min(1),
+  grantedAt: z.string(),
+});
+export type GraphWorkflowLoopSlot = z.infer<typeof graphWorkflowLoopSlotSchema>;
+
+/**
+ * The bounded per-loop ledger (R16.1). Current state only: activation, the slot
+ * grants, the pinned boundary snapshot, and the latest decision per pass.
+ */
+export const graphWorkflowLoopStateSchema = z.object({
+  loopGroupId: z.string().trim().min(1),
+  /**
+   * `unstarted` — the external activation path has not resolved.
+   * `running` — pass instances are live; the exit holds its external edges
+   * unresolved so downstream cannot become eligible.
+   * `concluded` — the until predicate was satisfied; external edges resolve to
+   * `concludingExitContextId`.
+   * `skipped` — the activation path was not taken; the loop and its body skip
+   * entirely and the logical exit reads as a skipped source (R9.6).
+   */
+  activation: z.enum(["unstarted", "running", "concluded", "skipped"]),
+  /**
+   * Monotonic control revision, part of every decision record's dedup key.
+   * EVERY accepted loop-control op bumps it (decision D10) — an amendment to
+   * the exit predicate, a raised pass cap, and a body-template content edit
+   * alike — which is what lets a repaired loop re-decide a pass it already
+   * decided.
+   */
+  loopControlRevision: z.number().int().min(0).default(0),
+  /** Passes materialized so far — the ledger's own count, not a graph scan. */
+  passCount: z.number().int().min(0).default(0),
+  slotLedger: z.array(graphWorkflowLoopSlotSchema).default([]),
+  /**
+   * The loop-boundary inputs pinned at activation. The incoming boundary edge
+   * is consumed once by the first pass and never cloned, so this snapshot is
+   * what carries the loop's external inputs into every later pass's entry.
+   */
+  boundaryInputs: z
+    .array(graphWorkflowUpstreamInputSchema)
+    .nullable()
+    .default(null),
+  /** Latest decision per pass, keyed by the pass number as a string. */
+  decisions: z
+    .record(z.string(), graphWorkflowLoopDecisionRecordSchema)
+    .default({}),
+  /**
+   * The body-template version each pass CLONED, keyed by the pass number as a
+   * string (R11.2). Written when the pass is materialized, so it is provenance
+   * rather than a projection: a template amended between two passes leaves the
+   * earlier pass reading the version it actually ran, which is what makes
+   * "template edits are never retroactive" auditable after the fact.
+   */
+  passTemplateVersions: z
+    .record(z.string(), z.number().int().min(1))
+    .default({}),
+  /** The concluding pass's exit instance; null until the loop concludes. */
+  concludingExitContextId: z.string().trim().min(1).nullable().default(null),
+  activatedAt: z.string().nullable().default(null),
+  settledAt: z.string().nullable().default(null),
+});
+export type GraphWorkflowLoopState = z.infer<
+  typeof graphWorkflowLoopStateSchema
+>;
+
 // fan-out point so restarts make the same call. See
 // `src/lib/workflow-graph/lane-plan.ts`.
 const graphWorkflowLanePlanSchema = z.object({
@@ -1113,6 +1598,28 @@ export const graphWorkflowExecutionSchema = z.object({
   // guards catch edit-vs-edit lost updates. Persisted in the runtime tier
   // (`RUNTIME_TIER_KEYS`); rows written before the field existed parse as `1`.
   liveRevision: z.number().int().min(1).default(1),
+  // Repository-owned staging fence (D4, decision D5). A monotonic counter the
+  // execution repository bumps on EVERY committed `mutateActive` — scheduler
+  // ticks, lane writes, and live edits alike — so a slow caller can capture it
+  // with a snapshot outside the lock and detect, inside the lock, that anything
+  // at all committed in between. `liveRevision` cannot serve here: it moves only
+  // on accepted live edits, so a scheduler write between prepare and finalize
+  // would be invisible to it and get erased by a whole-state install. A reducer
+  // never sets this; the repository overwrites whatever it returns. Persisted in
+  // the runtime tier; rows written before the field existed parse as `0`.
+  executionStateRevision: z.number().int().min(0).default(0),
+  // Repository-owned STRUCTURAL fence (D4, decision D5) — the spec's "definition
+  // fingerprint". A monotonic counter the execution repository bumps on a
+  // committed `mutateActive` whose `STRUCTURAL_REVISION_KEYS` actually moved, so
+  // the staging seam can decide in O(1) whether the graph it validated against is
+  // still the graph it would install onto. Derived by comparison rather than
+  // declared by each writer: `liveRevision` moves only on accepted live edits, so
+  // a runtime writer that appends to `workingDefinition` (script-validator
+  // remediation tasks) is invisible to it and would be erased by a wholesale
+  // install. A reducer never sets this; the repository overwrites whatever it
+  // returns. Persisted in the runtime tier; rows written before the field existed
+  // parse as `0`.
+  structuralRevision: z.number().int().min(0).default(0),
   // Append-only metadata log of accepted live `amend-charter` operations
   // (docs/design/cc-cli/07). The current charter content lives in
   // `execution.charter`; this records seq/when/who/why/what-changed per
@@ -1123,6 +1630,12 @@ export const graphWorkflowExecutionSchema = z.object({
   // Persisted in the runtime tier; rows written before the field existed parse
   // as `[]`.
   planRepairRounds: z.array(planRepairRoundSchema).default([]),
+  // Append-only audit log of accepted loop-control edits (D4 R11.2/R12). The
+  // current cap, predicate and template live on the working definition; this
+  // records who moved them, when, and — for the amendment R11 demands one of —
+  // why. Persisted in the runtime tier; rows written before the field existed
+  // parse as `[]`.
+  loopControlAmendments: z.array(loopControlAmendmentSchema).default([]),
   // Loop-generation fence token. Incremented ONLY by `resume()` — every resume
   // starts a new loop generation, and any execution loop still alive from a
   // prior generation (a "zombie" blocked in a long await across the
@@ -1157,6 +1670,43 @@ export const graphWorkflowExecutionSchema = z.object({
   contextOutputs: z
     .record(z.string(), graphWorkflowContextOutputSchema)
     .default({}),
+  // Per-source monotonic route-control revision (D4, decision D2), keyed by
+  // execution-context id. Bumped by the shared mutation seam whenever a source's
+  // outgoing conditional edges or `routing.cardinality` change, and part of the
+  // route-settlement deduplication key so a guard set edited A→B→A still
+  // re-settles. Persisted in the runtime tier; rows written before the field
+  // existed parse as `{}`, which is also the steady state for a workflow whose
+  // edges carry no guards.
+  routeControlRevisions: z
+    .record(z.string(), z.number().int().min(0))
+    .default({}),
+  // Current route decision per SOURCE context (D4, decision D4), keyed by
+  // execution-context id — bounded to one entry per source. Written
+  // exactly-once per `(source, captureIteration, routeControlRevision)` in the
+  // same mutation that publishes the route-resolved event. Persisted in the
+  // runtime tier; rows written before the field existed parse as `{}`, which is
+  // also the steady state for a workflow whose edges carry no guards.
+  routeSettlements: z
+    .record(z.string(), graphWorkflowRouteSettlementSchema)
+    .default({}),
+  // Runtime-expansion audit ledgers (D4, decision D12): permanent acceptance
+  // receipts bounded by the cumulative context cap, plus a 20-entry ring of the
+  // most recent refusals. Both halves are load-bearing rather than
+  // observational — an acceptance receipt is what a repeated (invoker,
+  // requestId, payload hash) replays instead of mutating the graph twice, and a
+  // retained refusal is what re-refuses a retry identically. Persisted in the
+  // runtime tier; rows written before the field existed parse as empty ledgers,
+  // which is also the steady state for an execution no lane ever expanded.
+  expansionReceipts: graphWorkflowExpansionReceiptsSchema.default({
+    accepted: [],
+    refusals: [],
+  }),
+  // Per-loop-group settlement ledger (D4 R9/R16), keyed by loop group id —
+  // bounded to one entry per DECLARED group, so a workflow with no loops keeps
+  // an empty map. Written only by the loop-settlement transaction. Persisted in
+  // the runtime tier; rows written before the field existed parse as `{}`,
+  // which is also the steady state for a loop-free workflow.
+  loopStates: z.record(z.string(), graphWorkflowLoopStateSchema).default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
   // Every `plan` and `out_of_scope` advisory raised anywhere in this execution,
   // projected out of the per-round records so its audience reads one list

@@ -29,18 +29,21 @@ const GLYPH = {
   captured: "◈",
   declared: "◇",
   none: "·",
+  skipped: "⊘",
 } as const;
 
 const GLYPH_TONE = {
   captured: "text-green",
   declared: "text-text-secondary",
   none: "text-text-tertiary",
+  skipped: "text-text-tertiary",
 } as const;
 
 const GLYPH_LABEL = {
   captured: "Output captured",
   declared: "Output schema declared — not yet captured",
   none: "No output schema",
+  skipped: "Skipped — branch not taken",
 } as const;
 
 type RowState = keyof typeof GLYPH;
@@ -49,7 +52,12 @@ type RowState = keyof typeof GLYPH;
 // `schemaFields`: a valid contract can name no top-level fields (a bare object,
 // a root `oneOf`), and greying such a row would call a declared upstream
 // free-form and drop it from the count.
+//
+// `skipped` outranks both (D4 R4.3): a not-taken branch owes nothing, so the
+// hollow "declared, not yet captured" glyph would promise an input that is
+// never coming.
 function rowState(input: GraphWorkflowUpstreamInput): RowState {
+  if (input.skipped) return "skipped";
   if (!input.declared) return "none";
   return input.output === null ? "declared" : "captured";
 }

@@ -171,6 +171,7 @@ export class CodexConversationRuntime
    */
   private readonly workflowExecutionId: string | undefined;
   private readonly workflowContextId: string | undefined;
+  private readonly workflowLaneCapability: string | undefined;
   private readonly deps: CodexConversationRuntimeDeps;
 
   constructor(
@@ -192,6 +193,7 @@ export class CodexConversationRuntime
       input.ccScopeConversationId ?? input.conversationId;
     this.workflowExecutionId = input.workflowExecutionId;
     this.workflowContextId = input.workflowContextId;
+    this.workflowLaneCapability = input.workflowLaneCapability;
     this.modelId = input.modelId;
     this.reasoningEffort = input.reasoningEffort;
     this.outputFormat = input.outputFormat;
@@ -588,6 +590,9 @@ export class CodexConversationRuntime
           : {}),
         ...(this.workflowContextId !== undefined
           ? { workflowContextId: this.workflowContextId }
+          : {}),
+        ...(this.workflowLaneCapability !== undefined
+          ? { workflowLaneCapability: this.workflowLaneCapability }
           : {}),
       }),
     );

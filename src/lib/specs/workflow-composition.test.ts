@@ -56,6 +56,7 @@ describe("spec workflow composition", () => {
           ok: true,
           acceptanceCriteriaByContextId: {},
         }),
+        deriveCriterionContextCoverage: () => ({}),
       },
     });
 

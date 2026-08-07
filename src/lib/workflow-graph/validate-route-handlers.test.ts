@@ -222,6 +222,58 @@ describe("graph-workflow validate route handler", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
+  it("returns the guard enum-coverage warnings alongside ok (R3.2)", async () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      executionContexts: base.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              outputSchema: {
+                type: "object",
+                properties: {
+                  verdict: { type: "string", enum: ["ship", "hold"] },
+                },
+                required: ["verdict"],
+              },
+            }
+          : context,
+      ),
+      edges: base.edges.map((edge) =>
+        edge.sourceContextId === "context-plan"
+          ? {
+              ...edge,
+              when: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "ship" } },
+                  required: ["verdict"],
+                },
+              },
+            }
+          : edge,
+      ),
+    };
+
+    const response = await handlers.POST(
+      makeRequest(makePlan(definition)),
+      makeContext(),
+    );
+
+    expect(response.status).toBe(200);
+    const body: unknown = await response.json();
+    expect(body).toMatchObject({
+      ok: true,
+      warnings: [
+        {
+          path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+          message: expect.stringContaining('"hold"'),
+        },
+      ],
+    });
+  });
+
   it("rejects a missing/invalid token with 401", async () => {
     const response = await handlers.POST(
       makeRequest(makePlan(), "wrong-token"),

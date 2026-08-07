@@ -439,7 +439,15 @@ const PLAIN_PROPERTY_KEY = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
  * that is not a plain identifier. Without this, `properties: { "a.b": … }` and
  * `properties: { a: { properties: { b: … } } }` produce the identical locator
  * `$.properties.a.b`, pointing the author at a node that may not exist.
+ *
+ * Exported as {@link joinSchemaPath} so every walker over one of these
+ * documents — the declaration walk here, and the D4 edge-guard compatibility
+ * walk — locates the same node with the same string.
  */
+export function joinSchemaPath(path: string, key: string): string {
+  return joinPath(path, key);
+}
+
 function joinPath(path: string, key: string): string {
   return PLAIN_PROPERTY_KEY.test(key)
     ? `${path}.${key}`

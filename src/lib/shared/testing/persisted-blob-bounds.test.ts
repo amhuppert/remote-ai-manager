@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  describeCollections,
   findUnboundedCollections,
   reconcileDischarges,
   type UnboundedCollection,
@@ -129,6 +130,49 @@ describe("findUnboundedCollections", () => {
   it("does not flag the root object or typed fields", () => {
     const schema = z.object({ a: z.string(), b: z.number() });
     expect(findUnboundedCollections(schema)).toEqual([]);
+  });
+});
+
+describe("describeCollections", () => {
+  // The census exists because a statically capped field and a field that no
+  // longer exists look identical to `findUnboundedCollections` — both are
+  // simply absent — and a persisted-field inventory has to tell them apart.
+  it("reports a capped array the gate stays silent about", () => {
+    const schema = z.object({
+      growing: z.array(z.string()),
+      capped: z.array(z.string()).max(5),
+    });
+    expect(describeCollections(schema)).toEqual([
+      { path: "growing", kind: "array", bounded: false },
+      { path: "capped", kind: "array", bounded: true },
+    ]);
+    expect(paths(findUnboundedCollections(schema))).toEqual(["growing"]);
+  });
+
+  it("omits a field that is not a collection at all", () => {
+    const schema = z.object({ capped: z.array(z.string()).max(5) });
+    expect(
+      describeCollections(schema.omit({ capped: true })).map(
+        (node) => node.path,
+      ),
+    ).toEqual([]);
+  });
+
+  // A union can reach one path down a capped branch and an uncapped one. The
+  // column holds whatever arrives, so the uncapped reading has to win — a
+  // first-wins dedup would hide the growth behind whichever branch was walked
+  // first.
+  it("keeps the unbounded reading when a union caps one branch only", () => {
+    const schema = z.union([
+      z.object({ kind: z.literal("a"), items: z.array(z.string()).max(3) }),
+      z.object({ kind: z.literal("b"), items: z.array(z.string()) }),
+    ]);
+    expect(describeCollections(schema)).toContainEqual({
+      path: "items",
+      kind: "array",
+      bounded: false,
+    });
+    expect(paths(findUnboundedCollections(schema))).toEqual(["items"]);
   });
 });
 

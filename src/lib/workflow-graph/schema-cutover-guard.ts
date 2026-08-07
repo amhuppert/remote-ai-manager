@@ -2,6 +2,7 @@ import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
+import { normalizeRawDefinitionEdgeIds } from "./edge-identity";
 const UNCONDITIONAL_REMOVED_FIELDS = [
   "contextSoftLimitTokens",
   "contextHardLimitTokens",
@@ -305,7 +306,18 @@ export function assertDefinitionRecordSupported(
       detected.instruction,
     );
   }
+  // The inflate boundary for a stored definition (D4 decision D2): edge ids are
+  // required unique for new authoring, so a document written before that rule is
+  // repaired deterministically here rather than refused. Runs before the parse
+  // because the parse already requires `id`.
+  if (isRecordValue(rawRecord)) {
+    normalizeRawDefinitionEdgeIds(rawRecord.definition);
+  }
   return workflowDefinitionRecordSchema.parse(rawRecord);
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -325,6 +337,9 @@ export function assertExecutionSupported(
       detected.detail,
       detected.instruction,
     );
+  }
+  if (isRecordValue(rawExecution)) {
+    normalizeRawDefinitionEdgeIds(rawExecution.workingDefinition);
   }
   return graphWorkflowExecutionSchema.parse(rawExecution);
 }

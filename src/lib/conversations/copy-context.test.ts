@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { buildSessionContext, buildConversationContext } from "./copy-context";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import {
+  graphWorkflowExecutionSchema,
+  type GraphWorkflowExecution,
+} from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { makeProfileSnapshot } from "@/lib/workflow-graph/test-fixtures";
 // ---------------------------------------------------------------------------
@@ -76,9 +79,16 @@ function makeGraphWorkflowExecution(
     seedDefinitionId: "def-abc",
     seedDefinitionRevision: 3,
     liveRevision: 1,
+    executionStateRevision: 0,
+    structuralRevision: 0,
     charterAmendments: [],
     planRepairRounds: [],
+    loopControlAmendments: [],
     contextOutputs: {},
+    routeControlRevisions: {},
+    routeSettlements: {},
+    expansionReceipts: { accepted: [], refusals: [] },
+    loopStates: {},
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
@@ -109,7 +119,7 @@ function makeGraphWorkflowExecution(
           scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -121,6 +131,7 @@ function makeGraphWorkflowExecution(
           implementer: {
             id: "implementer",
             profile: { tier: "builtin", id: "general-implementer" },
+            profileSnapshot: makeProfileSnapshot(),
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -131,7 +142,7 @@ function makeGraphWorkflowExecution(
           scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
           planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -189,6 +200,8 @@ function makeGraphWorkflowExecution(
         lastMergeError: null,
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -208,6 +221,8 @@ function makeGraphWorkflowExecution(
         lastMergeError: null,
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
       },
     },
     taskStates: {
@@ -271,6 +286,14 @@ function makeGraphWorkflowExecution(
 // ---------------------------------------------------------------------------
 // Tests: buildSessionContext
 // ---------------------------------------------------------------------------
+
+describe("fixture contract", () => {
+  it("builds an execution accepted by the durable execution schema", () => {
+    expect(() =>
+      graphWorkflowExecutionSchema.parse(makeGraphWorkflowExecution()),
+    ).not.toThrow();
+  });
+});
 
 describe("buildSessionContext", () => {
   it("includes basic session fields", () => {

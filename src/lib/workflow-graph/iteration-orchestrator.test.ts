@@ -241,6 +241,8 @@ function createExecutionWithPlanTasks(
     workingDefinition: definition,
     contextStates: {
       "context-plan": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-plan",
@@ -260,6 +262,8 @@ function createExecutionWithPlanTasks(
         lastMergeError: null,
       },
       "context-implement": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-implement",
@@ -279,6 +283,8 @@ function createExecutionWithPlanTasks(
         lastMergeError: null,
       },
       "context-verify": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-verify",
@@ -3007,7 +3013,7 @@ describe("codex implementer continuity", () => {
           scriptValidator: { commands: [] },
           humanApprovalGate: { enabled: false },
           askUserQuestions: { enabled: false },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 5,
@@ -3043,6 +3049,8 @@ describe("codex implementer continuity", () => {
       workingDefinition: definition,
       contextStates: {
         "context-plan": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-plan",

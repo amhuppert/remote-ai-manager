@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "workflowConfig": {},
+  "charter": {
+    "mission": "Pin the pre-D4 halt behaviour when a context exhausts its iteration budget",
+    "sourcesOfTruth": [
+      {
+        "rank": 1,
+        "id": "compat-fixture",
+        "label": "Compatibility fixture",
+        "type": "document",
+        "locator": "src/lib/workflow-graph/compat/README.md",
+        "description": "The pre-D4 behaviour this fixture pins",
+        "accessPolicy": "worktree-relative"
+      }
+    ]
+  },
+  "parameters": [],
+  "prerequisites": [],
+  "executionContexts": [
+    {
+      "id": "ctx-stuck",
+      "title": "Stuck",
+      "description": "A context whose work never finishes",
+      "acceptanceCriteria": "The task is complete",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 2,
+        "continuity": { "enabled": true }
+      }
+    },
+    {
+      "id": "ctx-downstream",
+      "title": "Downstream",
+      "description": "Work that must never start",
+      "acceptanceCriteria": "Downstream work is done",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 2,
+        "continuity": { "enabled": true }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-stuck-1",
+      "contextId": "ctx-stuck",
+      "order": 1,
+      "title": "Never finishes",
+      "instructions": "Work that the fixture agent never completes.",
+      "source": "user"
+    },
+    {
+      "id": "task-downstream-1",
+      "contextId": "ctx-downstream",
+      "order": 1,
+      "title": "Downstream work",
+      "instructions": "Work gated behind the stuck context.",
+      "source": "user"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-stuck-downstream",
+      "sourceContextId": "ctx-stuck",
+      "targetContextId": "ctx-downstream"
+    }
+  ]
+}

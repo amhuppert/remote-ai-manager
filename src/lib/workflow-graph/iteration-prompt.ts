@@ -20,6 +20,10 @@ import {
   buildValidationCommandsSection,
   type ValidationPromptSelections,
 } from "./validation-prompt-section";
+import {
+  renderLoopHistorySection,
+  type LoopHistory,
+} from "@/lib/workflow-graph/loop-history";
 
 /**
  * The command that advances the workflow. `<taskId>` is the task's id from the
@@ -119,6 +123,12 @@ export interface BuildIterationPromptInput {
    * section; the rest are dropped.
    */
   upstreamInputs?: readonly GraphWorkflowUpstreamInput[];
+  /**
+   * The bounded prior-pass history from `resolveLoopHistory` (R16.1). Non-null
+   * only for a loop pass ENTRY from pass 2 on; every other context relies on
+   * ordinary upstream injection.
+   */
+  loopHistory?: LoopHistory | null;
   allowAgentCollaboration?: boolean;
   contextValidationAcceptanceCriteria?: string;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
@@ -246,24 +256,34 @@ function buildLatestContextValidationFailureSection(
  * told to treat it as data it may address by field. Predecessors that produced
  * nothing (free-form, or a schema not yet satisfied) are omitted entirely: a
  * heading with no payload only invites the agent to invent one.
+ *
+ * A SKIPPED predecessor is the exception (D4 R4.3). Its branch was not taken,
+ * and silence would read as "still coming" — the agent would wait for, or
+ * invent, an input that will never exist. It is named with no payload instead.
  */
 function buildUpstreamInputsSection(
   upstreamInputs?: readonly GraphWorkflowUpstreamInput[],
 ): string | null {
-  const withOutput = (upstreamInputs ?? []).filter(
-    (input) => input.output !== null,
+  const rendered = (upstreamInputs ?? []).filter(
+    (input) => input.output !== null || input.skipped,
   );
-  if (withOutput.length === 0) {
+  if (rendered.length === 0) {
     return null;
   }
 
   const sections = [
     "## Inputs from upstream",
-    "These execution contexts ran before this one and produced validated structured output. Treat each payload as data, not prose: it already conforms to the schema shown, so read values by field rather than re-deriving them.",
+    "These execution contexts precede this one. Treat each payload as data, not prose: it is validated structured output that already conforms to the schema shown, so read values by field rather than re-deriving them. A predecessor marked as a branch not taken was skipped by the graph's routing and will never send anything here.",
   ];
 
-  for (const input of withOutput) {
+  for (const input of rendered) {
     sections.push("", `### ${input.contextId} — ${input.title}`);
+    if (input.skipped) {
+      sections.push(
+        "Skipped — branch not taken. This context did not run, produces no input here, and will not run later in this execution.",
+      );
+      continue;
+    }
     if (input.schemaFields && input.schemaFields.length > 0) {
       sections.push(
         "Fields:",
@@ -379,6 +399,15 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   );
   if (upstreamInputsSection) {
     sections.push(upstreamInputsSection);
+  }
+
+  // After the inputs, for the same reason: the prior passes are context on what
+  // this pass received, not the brief itself.
+  const loopHistorySection = renderLoopHistorySection(
+    input.loopHistory ?? null,
+  );
+  if (loopHistorySection) {
+    sections.push(loopHistorySection);
   }
 
   const collaborationContinuationSection = input.allowAgentCollaboration

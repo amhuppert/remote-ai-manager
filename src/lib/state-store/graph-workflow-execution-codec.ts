@@ -2,6 +2,7 @@ import {
   migrateLegacyExecution,
   needsLegacyMigration,
 } from "@/lib/workflow-graph/migrate-legacy-execution";
+import { normalizeRawDefinitionEdgeIds } from "@/lib/workflow-graph/edge-identity";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { getErrorMessage } from "../shared/errors";
@@ -70,6 +71,16 @@ export function decodeGraphWorkflowExecution(
         ],
       };
     }
+  }
+
+  // The inflate boundary for a stored execution (D4 decision D2): edge ids are
+  // required unique for new authoring, so a workingDefinition written before
+  // that rule is repaired deterministically here rather than refused. Runs
+  // before the parse because the parse already requires `id`.
+  if (typeof upgraded === "object" && upgraded !== null) {
+    normalizeRawDefinitionEdgeIds(
+      (upgraded as { workingDefinition?: unknown }).workingDefinition,
+    );
   }
 
   const parseResult = graphWorkflowExecutionSchema

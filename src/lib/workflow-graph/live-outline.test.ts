@@ -672,6 +672,7 @@ describe("projectLiveOutline — section selectors", () => {
     expect(result.context.config.circuitBreaker).toBeDefined();
     expect(result.context.config.mutability).toEqual({
       allowAgentTaskAdd: false,
+      allowAgentContextAdd: false,
     });
     expect(result.context.config.contextValidator).toMatchObject({
       enabled: true,
@@ -1033,5 +1034,344 @@ describe("projectLiveOutline — charter selector (doc 07)", () => {
     expect(amended.ok).toBe(true);
     if (!amended.ok || amended.section !== "outline") return;
     expect(amended.outline.header.charterAmendmentCount).toBe(1);
+  });
+});
+
+// ============================================================
+// D4 read surfaces (R13.2)
+// ============================================================
+
+function outlineOf(execution: GraphWorkflowExecution) {
+  const result = projectLiveOutline(execution, { kind: "outline" });
+  if (!result.ok || result.section !== "outline") {
+    throw new Error("expected outline");
+  }
+  return result.outline;
+}
+
+describe("projectLiveOutline — edge guards (R13.2)", () => {
+  function guardedExecution(): GraphWorkflowExecution {
+    const base = buildExecution();
+    return graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "plan"
+              ? {
+                  ...context,
+                  outputSchema: {
+                    type: "object",
+                    properties: { verdict: { type: "string" } },
+                  },
+                }
+              : context,
+        ),
+        edges: [
+          {
+            id: "e1",
+            sourceContextId: "plan",
+            targetContextId: "impl",
+            when: {
+              schema: { properties: { verdict: { const: "broken" } } },
+            },
+          },
+          { id: "e2", sourceContextId: "impl", targetContextId: "verify" },
+        ],
+      }),
+      contextOutputs: {
+        plan: {
+          value: { verdict: "broken" },
+          capturedAt: "2026-01-01T01:00:00Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+    });
+  }
+
+  it("reports each route's guard kind and resolved verdict", () => {
+    const routes = outlineOf(guardedExecution()).routes;
+
+    expect(routes).toEqual([
+      {
+        id: "e1",
+        source: "plan",
+        effectiveSource: "plan",
+        target: "impl",
+        guard: "schema",
+        resolution: "active",
+      },
+      // An ordinary edge keeps its logical source as the effective one even
+      // while unresolved — only a loop's external edge ever retargets.
+      {
+        id: "e2",
+        source: "impl",
+        effectiveSource: "impl",
+        target: "verify",
+        guard: "none",
+        resolution: "unresolved",
+      },
+    ]);
+  });
+
+  it("reports an unguarded graph's routes with guard none", () => {
+    expect(
+      outlineOf(buildExecution()).routes.every(
+        (route) => route.guard === "none",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("projectLiveOutline — skip states (R13.2)", () => {
+  it("carries the recorded skip verdicts on the context row", () => {
+    const base = buildExecution();
+    const execution = graphWorkflowExecutionSchema.parse({
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        verify: {
+          ...base.contextStates["verify"]!,
+          status: "skipped",
+          skipReason: {
+            at: "2026-01-01T02:00:00Z",
+            edgeEvaluations: [{ edgeId: "e2", verdict: "inactive" }],
+          },
+        },
+      },
+    });
+
+    const row = outlineOf(execution).contexts.find((c) => c.id === "verify");
+    expect(row?.status).toBe("skipped");
+    expect(row?.skip).toEqual({
+      at: "2026-01-01T02:00:00Z",
+      edgeEvaluations: [{ edgeId: "e2", verdict: "inactive" }],
+    });
+  });
+
+  it("leaves skip null on a context that was not skipped", () => {
+    expect(
+      outlineOf(buildExecution()).contexts.every((row) => row.skip === null),
+    ).toBe(true);
+  });
+
+  it("reports a skipped context's declared contract as skipped, never pending", () => {
+    const base = buildExecution();
+    const execution = graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: resolvedWorkflowSemanticDefinitionSchema.parse({
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "verify"
+              ? {
+                  ...context,
+                  outputSchema: { type: "object", properties: {} },
+                }
+              : context,
+        ),
+      }),
+      contextStates: {
+        ...base.contextStates,
+        verify: {
+          ...base.contextStates["verify"]!,
+          status: "skipped",
+          skipReason: {
+            at: "2026-01-01T02:00:00Z",
+            edgeEvaluations: [{ edgeId: "e2", verdict: "inactive" }],
+          },
+        },
+      },
+    });
+
+    const result = projectLiveOutline(execution, { kind: "outputs" });
+    if (!result.ok || result.section !== "outputs") {
+      throw new Error("expected outputs");
+    }
+    expect(
+      result.outputs.find((row) => row.contextId === "verify")?.capture,
+    ).toEqual({ kind: "skipped" });
+  });
+});
+
+describe("projectLiveOutline — loop passes and budgets (R13.2)", () => {
+  function loopExecution(): GraphWorkflowExecution {
+    const base = buildExecution();
+    const [plan, impl, verify] = base.workingDefinition.executionContexts;
+    const definition = resolvedWorkflowSemanticDefinitionSchema.parse({
+      ...base.workingDefinition,
+      executionContexts: [
+        plan,
+        { ...impl, id: "loop-a__p2__impl" },
+        { ...verify, id: "loop-a__p2__verify" },
+      ],
+      tasks: [],
+      edges: [
+        { id: "e1", sourceContextId: "plan", targetContextId: "impl" },
+        { id: "e2", sourceContextId: "verify", targetContextId: "plan" },
+      ],
+      loopGroups: [
+        {
+          id: "loop-a",
+          entryContextId: "impl",
+          exitContextId: "verify",
+          until: { schema: { properties: { done: { const: true } } } },
+          maxPasses: 4,
+          templateVersion: 2,
+          template: { contexts: [impl, verify], tasks: [], edges: [] },
+          planRepair: { enabled: false },
+        },
+      ],
+    });
+    return graphWorkflowExecutionSchema.parse({
+      ...base,
+      workingDefinition: definition,
+      contextStates: {
+        plan: base.contextStates["plan"],
+        "loop-a__p2__impl": {
+          ...base.contextStates["impl"]!,
+          contextId: "loop-a__p2__impl",
+        },
+        "loop-a__p2__verify": {
+          ...base.contextStates["verify"]!,
+          contextId: "loop-a__p2__verify",
+        },
+      },
+      taskStates: {},
+      activeContextIds: [],
+      loopStates: {
+        "loop-a": {
+          loopGroupId: "loop-a",
+          activation: "concluded",
+          loopControlRevision: 1,
+          passCount: 2,
+          slotLedger: [],
+          decisions: {},
+          passTemplateVersions: { "1": 1, "2": 2 },
+          concludingExitContextId: "loop-a__p2__verify",
+          activatedAt: "2026-01-01T00:30:00Z",
+          settledAt: "2026-01-01T03:00:00Z",
+        },
+      },
+    });
+  }
+
+  it("reports each loop's activation, pass counter and budget", () => {
+    expect(outlineOf(loopExecution()).loops).toEqual([
+      {
+        loopGroupId: "loop-a",
+        activation: "concluded",
+        passCount: 2,
+        maxPasses: 4,
+        loopControlRevision: 1,
+        logicalExitContextId: "verify",
+        concludingExitContextId: "loop-a__p2__verify",
+      },
+    ]);
+  });
+
+  it("badges a pass instance's row with its pass, budget and template version", () => {
+    const row = outlineOf(loopExecution()).contexts.find(
+      (c) => c.id === "loop-a__p2__impl",
+    );
+    expect(row?.loop).toEqual({
+      loopGroupId: "loop-a",
+      pass: 2,
+      maxPasses: 4,
+      passCount: 2,
+      activation: "concluded",
+      templateVersion: 2,
+      authoredContextId: "impl",
+    });
+  });
+
+  it("renders the logical exit's outgoing edge with the concluding instance as provenance", () => {
+    const route = outlineOf(loopExecution()).routes.find(
+      (entry) => entry.id === "e2",
+    );
+    expect(route).toMatchObject({
+      source: "verify",
+      effectiveSource: "loop-a__p2__verify",
+    });
+  });
+
+  it("reports no loops for a loop-free execution", () => {
+    expect(outlineOf(buildExecution()).loops).toEqual([]);
+  });
+});
+
+describe("projectLiveOutline — expansion provenance (R13.2)", () => {
+  function expandedExecution(): GraphWorkflowExecution {
+    return graphWorkflowExecutionSchema.parse({
+      ...buildExecution(),
+      expansionReceipts: {
+        accepted: [
+          {
+            requestId: "req-1",
+            payloadHash: "a".repeat(64),
+            invokerContextId: "plan",
+            initiatorConversationId: "conv-1",
+            rationale: "Fan out three candidates",
+            addedContextIds: ["impl"],
+            addedTaskIds: ["impl-api"],
+            rejoinContextIds: ["verify"],
+            liveRevision: 3,
+            acceptedAt: "2026-01-01T01:00:00Z",
+          },
+        ],
+        refusals: [
+          {
+            requestId: "req-2",
+            payloadHash: "b".repeat(64),
+            invokerContextId: "plan",
+            refusalCode: "expansion-context-cap-exceeded",
+            refusedAt: "2026-01-01T01:05:00Z",
+          },
+        ],
+      },
+    });
+  }
+
+  it("reports the acceptance and refusal ledgers", () => {
+    const outline = outlineOf(expandedExecution());
+
+    expect(outline.expansions.accepted).toEqual([
+      {
+        requestId: "req-1",
+        invokerContextId: "plan",
+        rationale: "Fan out three candidates",
+        addedContextIds: ["impl"],
+        addedTaskIds: ["impl-api"],
+        rejoinContextIds: ["verify"],
+        payloadHash: "a".repeat(64),
+        acceptedAt: "2026-01-01T01:00:00Z",
+      },
+    ]);
+    expect(outline.expansions.refusals).toEqual([
+      {
+        requestId: "req-2",
+        invokerContextId: "plan",
+        refusalCode: "expansion-context-cap-exceeded",
+        refusedAt: "2026-01-01T01:05:00Z",
+      },
+    ]);
+  });
+
+  it("names the authorizing request on a runtime-added context row", () => {
+    const rows = outlineOf(expandedExecution()).contexts;
+    expect(rows.find((row) => row.id === "impl")?.provenance).toEqual({
+      requestId: "req-1",
+      invokerContextId: "plan",
+    });
+    expect(rows.find((row) => row.id === "plan")?.provenance).toBeNull();
+  });
+
+  it("reports empty ledgers for an execution that never expanded", () => {
+    expect(outlineOf(buildExecution()).expansions).toEqual({
+      accepted: [],
+      refusals: [],
+    });
   });
 });

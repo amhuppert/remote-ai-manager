@@ -20,10 +20,49 @@ import {
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   contextOutputSchemaSchema,
+  graphWorkflowContextRoutingPolicySchema,
+  graphWorkflowEdgeGuardSchema,
+  graphWorkflowLoopPredicateSchema,
   parameterDeclarationSchema,
   prerequisiteSchema,
   resolvedAgentValidationConfigSchema,
 } from "@/lib/workflow-graph/definition-schemas";
+
+// ============================================================
+// Shared edge-edit shape (D4 R1)
+// ============================================================
+// Both vocabularies address an edge the same way, so the shapes live here once.
+// `remove-edge` keeps its original endpoint form — it is the only addressing an
+// existing caller has — and gains `edgeId`, which is the ONLY unambiguous form
+// once a definition carries parallel edges between one pair. `update-edge` is
+// id-only by construction (D2): there is nothing to update ambiguously.
+
+/** `null` clears the guard (the edge becomes unconditional); absent leaves it. */
+const edgeGuardEditShape = {
+  when: graphWorkflowEdgeGuardSchema.nullable().optional(),
+};
+
+const removeEdgeShape = {
+  edgeId: z.string().trim().min(1).optional(),
+  sourceContextId: z.string().trim().min(1).optional(),
+  targetContextId: z.string().trim().min(1).optional(),
+};
+
+const REMOVE_EDGE_ADDRESSING = {
+  message:
+    "remove-edge requires either edgeId, or both sourceContextId and targetContextId",
+} as const;
+
+function hasRemoveEdgeAddressing(value: {
+  edgeId?: string | undefined;
+  sourceContextId?: string | undefined;
+  targetContextId?: string | undefined;
+}): boolean {
+  if (value.edgeId !== undefined) return true;
+  return (
+    value.sourceContextId !== undefined && value.targetContextId !== undefined
+  );
+}
 
 // ============================================================
 // Workflow Definition Edits (targeted saved-definition edits)
@@ -174,6 +213,7 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       // rather than in the cascade block above, and carries no `null` clear
       // (an absent field on a brand-new context IS the cleared state).
       outputSchema: contextOutputSchemaSchema.optional(),
+      routing: graphWorkflowContextRoutingPolicySchema.optional(),
       ...definitionEditAddContextConfigShape,
     }),
     z.object({
@@ -186,6 +226,9 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       // no meaningful partial merge), `null` drops it and returns the context
       // to free-form output, absent leaves it untouched.
       outputSchema: contextOutputSchemaSchema.nullable().optional(),
+      // Same replace/clear semantics; `null` returns the context to the
+      // `independent` default.
+      routing: graphWorkflowContextRoutingPolicySchema.nullable().optional(),
       ...definitionEditUpdateContextConfigShape,
     }),
     z.object({
@@ -228,12 +271,23 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       type: z.literal("add-edge"),
       sourceContextId: z.string().trim().min(1),
       targetContextId: z.string().trim().min(1),
+      when: graphWorkflowEdgeGuardSchema.optional(),
     }),
-    z.object({
-      type: z.literal("remove-edge"),
-      sourceContextId: z.string().trim().min(1),
-      targetContextId: z.string().trim().min(1),
-    }),
+    z
+      .object({
+        type: z.literal("update-edge"),
+        edgeId: z.string().trim().min(1),
+        ...edgeGuardEditShape,
+      })
+      .refine((value) => value.when !== undefined, {
+        message: "update-edge requires at least one field to change",
+      }),
+    z
+      .object({
+        type: z.literal("remove-edge"),
+        ...removeEdgeShape,
+      })
+      .refine(hasRemoveEdgeAddressing, REMOVE_EDGE_ADDRESSING),
     z.object({
       type: z.literal("add-parameter"),
       declaration: parameterDeclarationSchema,
@@ -309,6 +363,77 @@ const liveEditContextConfigShape = {
   agentValidation: resolvedAgentValidationConfigSchema.optional(),
 };
 
+/**
+ * The content a started loop's versioned body template still admits (R11.2,
+ * R12): context prose, acceptance criteria, and task ops addressed at TEMPLATE
+ * tasks. Deliberately a restricted sub-union rather than the full live-edit
+ * vocabulary — membership (which contexts form the body, which is entry, which
+ * is exit, and the internal edges between them) has no representation here, so
+ * a membership edit is refused by the schema rather than by a check a future op
+ * could forget. Config blocks are likewise absent: a template edit changes what
+ * the body is asked to do, never the controls it runs under.
+ *
+ * Ids address the TEMPLATE (`worker`, `task-worker`), never a minted pass
+ * instance — an edit aimed at a materialized pass is an ordinary context edit
+ * and answers to the ordinary freeze rules.
+ */
+const loopTemplateContentOperationSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("update-context"),
+      contextId: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
+      description: z.string().trim().min(1).nullable().optional(),
+      acceptanceCriteria: z.string().trim().min(1).optional(),
+    })
+    .refine(
+      (value) =>
+        value.title !== undefined ||
+        value.description !== undefined ||
+        value.acceptanceCriteria !== undefined,
+      { message: "update-context requires at least one field to change" },
+    ),
+  z.object({
+    type: z.literal("add-task"),
+    id: z.string().trim().min(1).optional(),
+    contextId: z.string().trim().min(1),
+    title: z.string().trim().min(1),
+    instructions: z.string().trim().min(1),
+    metadata: z.record(z.string(), z.string()).optional(),
+    position: definitionEditTaskPositionSchema.optional(),
+  }),
+  z
+    .object({
+      type: z.literal("update-task"),
+      taskId: z.string().trim().min(1),
+      title: z.string().trim().min(1).optional(),
+      instructions: z.string().trim().min(1).optional(),
+      metadata: z.record(z.string(), z.string()).nullable().optional(),
+    })
+    .refine(
+      (value) =>
+        value.title !== undefined ||
+        value.instructions !== undefined ||
+        value.metadata !== undefined,
+      {
+        message:
+          "update-task requires at least one of title, instructions, or metadata",
+      },
+    ),
+  z.object({
+    type: z.literal("remove-task"),
+    taskId: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("reorder-tasks"),
+    contextId: z.string().trim().min(1),
+    orderedTaskIds: z.array(z.string().trim().min(1)).min(1),
+  }),
+]);
+export type LoopTemplateContentOperation = z.infer<
+  typeof loopTemplateContentOperationSchema
+>;
+
 export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
   // Versioned charter amendment (docs/design/cc-cli/07): partial-merges the
   // shared charter content shape onto the execution's charter, propagates to
@@ -343,6 +468,8 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
       // authored identity field mirrored onto the resolved context, so it is
       // one of the few fields whose live vocabulary matches doc 05 exactly.
       outputSchema: contextOutputSchemaSchema.nullable().optional(),
+      // Likewise an identity field, not a cascade result (D4 R3).
+      routing: graphWorkflowContextRoutingPolicySchema.nullable().optional(),
       ...liveEditContextConfigShape,
     })
     .refine(
@@ -360,6 +487,7 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
     acceptanceCriteria: z.string().trim().min(1),
     description: z.string().trim().min(1).optional(),
     outputSchema: contextOutputSchemaSchema.optional(),
+    routing: graphWorkflowContextRoutingPolicySchema.optional(),
     // Seed the new context's resolved config from this context's resolved config
     // when present, else from resolved global defaults; explicit blocks override.
     // NOT a source for `outputSchema`: copying one context's output contract
@@ -420,11 +548,73 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
     type: z.literal("add-edge"),
     sourceContextId: z.string().trim().min(1),
     targetContextId: z.string().trim().min(1),
+    when: graphWorkflowEdgeGuardSchema.optional(),
+  }),
+  z
+    .object({
+      type: z.literal("update-edge"),
+      edgeId: z.string().trim().min(1),
+      ...edgeGuardEditShape,
+    })
+    .refine((value) => value.when !== undefined, {
+      message: "update-edge requires at least one field to change",
+    }),
+  z
+    .object({
+      type: z.literal("remove-edge"),
+      ...removeEdgeShape,
+    })
+    .refine(hasRemoveEdgeAddressing, REMOVE_EDGE_ADDRESSING),
+  // Unroll one pass of a declared loop group (D4 R9). ENGINE-ONLY: it is
+  // refused unless the caller carries the server-derived loop-settlement
+  // authority, which only the scheduler's settlement transaction sets — no
+  // client-facing entry point can. It lives in this union rather than in a
+  // parallel one so there stays exactly one op vocabulary, one dispatch, and
+  // one place the locked-region and contract gates run.
+  //
+  // Deliberately deep: the op derives the whole batch (context, task and edge
+  // clones plus the prior-exit wiring edge) from the group's versioned body
+  // template, so the reserved id scheme and the clone fidelity D10 requires
+  // cannot drift across callers.
+  z.object({
+    type: z.literal("materialize-loop-pass"),
+    loopGroupId: z.string().trim().min(1),
+    /** The pass to materialize; 2+ — the seed resolver materializes pass 1. */
+    pass: z.number().int().min(2),
+  }),
+  // The three edits R11.2 admits on a STARTED loop. Everything else about a
+  // running loop is frozen, and the freeze is enforced by the vocabulary rather
+  // than by a runtime check wherever it can be: there is no operation that names
+  // a body's membership, its entry or exit, its internal edges, or the
+  // per-execution pass backstop, so those edits are unrepresentable.
+  z.object({
+    type: z.literal("raise-loop-max-passes"),
+    loopGroupId: z.string().trim().min(1),
+    /**
+     * The new cap. Raising is the only direction admitted (the core refuses a
+     * value that does not exceed the current one), and the accept-time ceiling
+     * refuses anything above the unraisable execution backstop.
+     */
+    maxPasses: z.number().int().min(2),
+    /** Optional here — only a predicate amendment demands a rationale (R11). */
+    rationale: z.string().trim().min(1).optional(),
   }),
   z.object({
-    type: z.literal("remove-edge"),
-    sourceContextId: z.string().trim().min(1),
-    targetContextId: z.string().trim().min(1),
+    type: z.literal("amend-loop-predicate"),
+    loopGroupId: z.string().trim().min(1),
+    until: graphWorkflowLoopPredicateSchema,
+    /**
+     * REQUIRED by the schema, so an amendment with no "why" is refused before
+     * any gate runs (R12.2). Recorded verbatim in the loop-control amendment
+     * log; the amendment is never retroactive, so the log is the only place the
+     * reason a completed pass's bar moved survives.
+     */
+    rationale: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("edit-loop-template"),
+    loopGroupId: z.string().trim().min(1),
+    operations: z.array(loopTemplateContentOperationSchema).min(1),
   }),
   // Workflow-scope, like `amend-charter`: rewrites the execution's resolved
   // lane-merge validation snapshot (a CONCRETE value — no cascade at runtime).

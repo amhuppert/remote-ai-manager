@@ -20,6 +20,7 @@ import ExecutionStatusBar, {
   type ExecutionControlAction,
 } from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
+import LoopLedgerPanel from "./LoopLedgerPanel";
 import ExecutionInspectorPanel, {
   type ContextTabRequest,
 } from "./ExecutionInspectorPanel";
@@ -328,6 +329,13 @@ export default function GraphWorkflowPanel({
               <ExecutionInspectorPanel
                 execution={execution}
                 events={events}
+                loopLedger={
+                  <LoopLedgerPanel
+                    projectName={projectName}
+                    sessionName={sessionName}
+                    execution={execution}
+                  />
+                }
                 selectedContextId={selectedContextId}
                 userInputPanels={userInputPanels}
                 onSelectContext={(id) => handleSelectContext(id)}
@@ -419,6 +427,13 @@ export default function GraphWorkflowPanel({
               <ExecutionInspectorPanel
                 execution={execution}
                 events={events}
+                loopLedger={
+                  <LoopLedgerPanel
+                    projectName={projectName}
+                    sessionName={sessionName}
+                    execution={execution}
+                  />
+                }
                 selectedContextId={selectedContextId}
                 userInputPanels={userInputPanels}
                 onSelectContext={(id) => handleSelectContext(id)}

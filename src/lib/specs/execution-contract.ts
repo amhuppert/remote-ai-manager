@@ -3,6 +3,7 @@ import type {
   WorkflowGraphValidationError,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { CriterionContextCoverage } from "@/lib/workflow-graph/criterion-coverage";
 import type {
   GraphExecutionContract,
   GraphExecutionContractDefinition,
@@ -424,11 +425,46 @@ function deriveSpecContextAcceptanceCriteria(
   return { ok: true, acceptanceCriteriaByContextId };
 }
 
+/**
+ * criterion → the contexts whose tasks cover it, for the frontier's
+ * criterion-protection lock (R5.2). Read straight off the compiled task
+ * metadata, which is the same locked provenance the delivery gate proves
+ * against; a definition that is not spec-linked has no criteria and derives
+ * nothing, which is what leaves unlinked executions unlocked.
+ *
+ * Unparseable criterion metadata contributes no coverage rather than refusing:
+ * the frontier is not the place to police compiled provenance (regrouping
+ * already refuses it through {@link deriveSpecContextAcceptanceCriteria}), and a
+ * criterion absent from the map is simply not route-locked.
+ */
+function deriveSpecCriterionContextCoverage(
+  definition: GraphExecutionContractDefinition,
+): CriterionContextCoverage {
+  if (!isSpecExecution(definition)) return {};
+  const coverage: Record<string, string[]> = {};
+  for (const task of definition.tasks) {
+    if (task.metadata?.[metadataKeys.criterionElementIds] === undefined) {
+      continue;
+    }
+    const criterionIds = stringArrayMetadata(
+      task,
+      metadataKeys.criterionElementIds,
+    );
+    if (!criterionIds.ok) continue;
+    for (const criterionId of criterionIds.value) {
+      const covering = (coverage[criterionId] ??= []);
+      if (!covering.includes(task.contextId)) covering.push(task.contextId);
+    }
+  }
+  return coverage;
+}
+
 export function createSpecExecutionContract(): GraphExecutionContract {
   return {
     validateDefinition: validateSpecDependencyEmbedding,
     validateLiveEdit: validateSpecLiveEdit,
     validateTaskCompletion: validateSpecTaskCompletion,
     deriveContextAcceptanceCriteria: deriveSpecContextAcceptanceCriteria,
+    deriveCriterionContextCoverage: deriveSpecCriterionContextCoverage,
   };
 }

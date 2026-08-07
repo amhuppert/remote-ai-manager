@@ -50,6 +50,8 @@ export function buildInitialContextState(
     lastMergeError: null,
     pendingApproval: null,
     pendingUserInputs: {},
+    skipReason: null,
+    landingIntent: null,
   };
 }
 

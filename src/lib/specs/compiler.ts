@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import { findCriteriaWithoutMustRunCoverage } from "@/lib/workflow-graph/criterion-coverage";
 import {
   evidenceKindSchema,
   isMachineValidationEvidenceKind,
@@ -322,6 +323,18 @@ export function compileSpecExecutionPlan(
   });
   const edges = compiledEdges.map(({ edge }) => edge);
 
+  assertCriterionMustRunCoverage({
+    executionContexts,
+    edges,
+    index,
+    selectedCriterionIds: input.scope.selectedCriterionIds,
+    coveringContextIdsByCriterionId: criterionCoverage(
+      contraction.groups,
+      contextIdsByGroupId,
+      taskContracts,
+    ),
+  });
+
   const lockedRegions = [
     {
       paths: ["/approvalRequired", "/origin", "/charter"],
@@ -379,6 +392,108 @@ export function compileSpecExecutionPlan(
     tasks,
     edges,
   };
+}
+
+export interface SpecCriterionCoverageGap {
+  criterionElementId: string;
+  criterionHandle: string;
+  coveringContextIds: string[];
+}
+
+/**
+ * A scope whose criterion is covered only on contexts that a route could skip
+ * (R5.1). Typed and criterion-naming because the caller's remedy is a scope
+ * change — select the task that covers it, or cover it on a context that runs
+ * on every path — not a retry.
+ */
+export class SpecCriterionCoverageError extends Error {
+  readonly code = "spec-criterion-without-must-run-coverage";
+  readonly gaps: readonly SpecCriterionCoverageGap[];
+
+  constructor(gaps: readonly SpecCriterionCoverageGap[]) {
+    super(
+      `Cannot compile the execution scope: ${gaps
+        .map(
+          (gap) =>
+            `${gap.criterionHandle} has no coverage on a context that runs on every path${
+              gap.coveringContextIds.length === 0
+                ? ""
+                : ` (covered only on ${gap.coveringContextIds.join(", ")})`
+            }`,
+        )
+        .join("; ")}.`,
+    );
+    this.name = "SpecCriterionCoverageError";
+    this.gaps = gaps;
+  }
+}
+
+/** Which compiled contexts carry a task covering each criterion. */
+function criterionCoverage(
+  groups: readonly ContractedTaskGroup[],
+  contextIdsByGroupId: ReadonlyMap<string, string>,
+  taskContracts: ReadonlyMap<string, { criteria: readonly IndexedCriterion[] }>,
+): Map<string, string[]> {
+  const coverage = new Map<string, string[]>();
+  for (const group of groups) {
+    const contextId = requiredMapValue(
+      contextIdsByGroupId,
+      group.id,
+      "criterion coverage context",
+    );
+    for (const taskId of group.orderedTaskIds) {
+      const contract = taskContracts.get(taskId);
+      if (contract === undefined) continue;
+      for (const criterion of contract.criteria) {
+        const criterionId = criterion.element.element.id;
+        const covering = coverage.get(criterionId) ?? [];
+        if (!covering.includes(contextId)) covering.push(contextId);
+        coverage.set(criterionId, covering);
+      }
+    }
+  }
+  return coverage;
+}
+
+/**
+ * R5.1: refuse a scope in which some selected criterion has no coverage on any
+ * must-run context. Today's compiler emits only unconditional edges, so every
+ * compiled context is must-run and the check can only fire on a criterion no
+ * selected task covers at all — it passes vacuously, by design, and becomes
+ * load-bearing the moment authoring inputs can express routing. It shares
+ * `findCriteriaWithoutMustRunCoverage` with the runtime frontier lock so both
+ * refusals mean the same thing.
+ */
+function assertCriterionMustRunCoverage(input: {
+  executionContexts: readonly { id: string }[];
+  edges: readonly {
+    id: string;
+    sourceContextId: string;
+    targetContextId: string;
+  }[];
+  index: RevisionIndex;
+  selectedCriterionIds: readonly string[];
+  coveringContextIdsByCriterionId: ReadonlyMap<string, string[]>;
+}): void {
+  const gaps = findCriteriaWithoutMustRunCoverage({
+    executionContexts: input.executionContexts,
+    edges: input.edges,
+    coverageByCriterionId: Object.fromEntries(
+      input.selectedCriterionIds.map((criterionId) => [
+        criterionId,
+        input.coveringContextIdsByCriterionId.get(criterionId) ?? [],
+      ]),
+    ),
+  });
+  if (gaps.length === 0) return;
+  throw new SpecCriterionCoverageError(
+    gaps.map((gap) => ({
+      criterionElementId: gap.criterionId,
+      criterionHandle:
+        input.index.criteria.get(gap.criterionId)?.handle ?? gap.criterionId,
+      coveringContextIds: [...gap.coveringContextIds],
+    })),
+  );
 }
 
 export function specExecutionOriginSourceUri(

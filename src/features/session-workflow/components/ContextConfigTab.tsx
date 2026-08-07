@@ -46,6 +46,7 @@ import {
   type GraphWorkflowIterationPolicy,
   type GraphWorkflowPlanRepairPolicy,
   type GraphWorkflowScriptValidatorConfig,
+  type GraphWorkflowMutabilityPolicy,
 } from "@/lib/workflow-graph/config-schemas";
 import type { ResolvedAgentValidationConfig } from "@/lib/workflow-graph/definition-schemas";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
@@ -170,7 +171,7 @@ interface ConfigDraft {
   scriptValidator: GraphWorkflowScriptValidatorConfig;
   humanApprovalGate: boolean;
   askUserQuestions: boolean;
-  mutability: boolean;
+  mutability: GraphWorkflowMutabilityPolicy;
   iterationPolicy: GraphWorkflowIterationPolicy;
   circuitBreaker: GraphWorkflowCircuitBreakerPolicy;
   planRepair: GraphWorkflowPlanRepairPolicy;
@@ -242,7 +243,7 @@ function toDraft(context: ResolvedContext): ConfigDraft {
     scriptValidator: context.scriptValidator,
     humanApprovalGate: context.humanApprovalGate.enabled,
     askUserQuestions: context.askUserQuestions.enabled,
-    mutability: context.mutability.allowAgentTaskAdd,
+    mutability: context.mutability,
     iterationPolicy: context.iterationPolicy,
     circuitBreaker: context.circuitBreaker,
     planRepair: context.planRepair,
@@ -304,8 +305,10 @@ function diffToUpdateContextOp(
   if (draft.askUserQuestions !== base.askUserQuestions) {
     changes.askUserQuestions = { enabled: draft.askUserQuestions };
   }
-  if (draft.mutability !== base.mutability) {
-    changes.mutability = { allowAgentTaskAdd: draft.mutability };
+  // The whole policy rides the draft, so toggling the task-add switch cannot
+  // silently drop the sibling expansion-authority flag it does not surface.
+  if (!deepEqualJson(draft.mutability, base.mutability)) {
+    changes.mutability = draft.mutability;
   }
   if (!deepEqualJson(draft.iterationPolicy, base.iterationPolicy)) {
     changes.iterationPolicy = draft.iterationPolicy;
@@ -1124,10 +1127,14 @@ export default function ContextConfigTab({
             testId="config-block-mutability"
             label="Agent task add"
             description="Lets agents add tasks to this context during execution."
-            enabled={draft.mutability}
+            enabled={draft.mutability.allowAgentTaskAdd}
             disabled={readOnly}
             ariaLabel="Allow agent task add"
-            onChange={(next) => patch({ mutability: next })}
+            onChange={(next) =>
+              patch({
+                mutability: { ...draft.mutability, allowAgentTaskAdd: next },
+              })
+            }
           />
         </section>
 

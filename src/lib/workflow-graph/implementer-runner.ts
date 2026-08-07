@@ -1,11 +1,15 @@
 import { createLogger } from "@/lib/logging";
+import { mintImplementerLaneCapability as defaultMintImplementerLaneCapability } from "@/lib/agent-gateway/token";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import {
   executePromptStream as defaultExecutePromptStream,
   type PromptStreamResult,
 } from "@/lib/prompt/sdk-driver";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
-import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import type {
+  BackgroundWaitSummary,
+  WorkflowLaneIdentity,
+} from "@/lib/agent-backends/conversation";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -40,7 +44,7 @@ interface ExecutePromptStreamFn {
       effort?: string;
       backend?: AgentBackendId;
       tooling?: { portableMcp?: PortableMcpConfig };
-      workflowContext?: { executionId: string; contextId: string };
+      workflowContext?: WorkflowLaneIdentity;
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks?: boolean;
       askUserQuestionsEnabled?: boolean;
@@ -51,6 +55,16 @@ interface ExecutePromptStreamFn {
 export interface GraphWorkflowImplementerRunnerDeps {
   executePromptStream?: ExecutePromptStreamFn;
   getConversation?: typeof defaultGetConversation;
+  /**
+   * Mint the lane's signed expansion capability. Injected so a test can drive
+   * the dispatch path without an instance token; production binds the gateway's
+   * token-keyed minter, which returns null when startup provisioned no token.
+   */
+  mintLaneCapability?(scope: {
+    executionId: string;
+    contextId: string;
+    conversationId: string;
+  }): string | null;
 }
 
 export interface RunIterationInput {
@@ -87,6 +101,8 @@ export function createGraphWorkflowImplementerRunner(
   const executePromptStream =
     deps.executePromptStream ?? defaultExecutePromptStream;
   const getConversation = deps.getConversation ?? defaultGetConversation;
+  const mintLaneCapability =
+    deps.mintLaneCapability ?? defaultMintImplementerLaneCapability;
 
   async function runIteration(input: RunIterationInput): Promise<{
     conversationId: string;
@@ -105,6 +121,12 @@ export function createGraphWorkflowImplementerRunner(
       reasoningEffort: input.reasoningEffort,
     });
 
+    const laneCapability = mintLaneCapability({
+      executionId: input.executionId,
+      contextId: input.contextId,
+      conversationId: input.conversationId,
+    });
+
     // Intentionally free-form: no `outputFormat` passed in
     // `PromptStreamOptions`. The implementer is a tool-using coding turn that
     // produces code edits, file writes, and a natural-language summary
@@ -115,7 +137,7 @@ export function createGraphWorkflowImplementerRunner(
       backend: AgentBackendId;
       effort: string;
       tooling: { portableMcp: PortableMcpConfig };
-      workflowContext: { executionId: string; contextId: string };
+      workflowContext: WorkflowLaneIdentity;
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks: boolean;
       askUserQuestionsEnabled: boolean;
@@ -127,10 +149,16 @@ export function createGraphWorkflowImplementerRunner(
         portableMcp: input.toolServer as PortableMcpConfig,
       },
       // Lane identity for the session env so `cctl workflow …` resolves its
-      // execution/context from env inside this implementer conversation.
+      // execution/context from env inside this implementer conversation, plus
+      // the signed capability that proves this conversation IS the context's
+      // bound implementer (D4 R7). Minted here, at dispatch, because this is
+      // where all three facts are known at once and where the binding is
+      // established; the expansion route re-checks the claim against current
+      // state before it lets the lane touch the graph.
       workflowContext: {
         executionId: input.executionId,
         contextId: input.contextId,
+        ...(laneCapability !== null ? { laneCapability } : {}),
       },
       // Deterministically opt this implementer turn into holding open for
       // in-flight waitable background tasks. No agent involvement (Req 6.3).

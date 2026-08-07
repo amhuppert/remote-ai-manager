@@ -36,7 +36,7 @@ const submittedDefinition: WorkflowSemanticDefinition = {
           reasoningEffort: "high",
         },
       },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
       iterationPolicy: {
         maxIterations: 2,

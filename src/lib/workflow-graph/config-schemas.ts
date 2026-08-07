@@ -51,6 +51,14 @@ export type GraphWorkflowAgentConfig = z.infer<
 
 export const graphWorkflowMutabilityPolicySchema = z.object({
   allowAgentTaskAdd: z.boolean().default(false),
+  /**
+   * Runtime graph-expansion authority (D4 R7): may this context's running
+   * implementer append new contexts, tasks, and edges through
+   * `cctl workflow graph expand`? Default-off and cascaded exactly like its
+   * sibling, and stamped false on every expansion-generated child so authority
+   * cannot propagate down a generated subgraph.
+   */
+  allowAgentContextAdd: z.boolean().default(false),
 });
 export type GraphWorkflowMutabilityPolicy = z.infer<
   typeof graphWorkflowMutabilityPolicySchema

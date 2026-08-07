@@ -363,6 +363,32 @@ export interface FreezeResolvedSelectionsResult {
   issues: WorkflowGraphValidationError[];
 }
 
+function freezeResolvedContextSelections(
+  context: GraphWorkflowResolvedContext,
+  registeredNames: readonly string[],
+): GraphWorkflowResolvedContext {
+  if (!context.agentValidation) return context;
+  return {
+    ...context,
+    agentValidation: {
+      implementer: {
+        ...context.agentValidation.implementer,
+        commands: expandCommandSelector(
+          context.agentValidation.implementer.value,
+          registeredNames,
+        ).commands,
+      },
+      contextValidator: {
+        ...context.agentValidation.contextValidator,
+        commands: expandCommandSelector(
+          context.agentValidation.contextValidator.value,
+          registeredNames,
+        ).commands,
+      },
+    },
+  };
+}
+
 /**
  * Seed-time freeze (design §6): expand every resolved role selector to an
  * explicit command-name snapshot against the project registry, and validate
@@ -388,27 +414,24 @@ export function freezeResolvedDefinitionSelections(
     issues.push(
       ...collectValidationCommandIssuesForResolvedContext(context, preflight),
     );
-    if (!context.agentValidation) return context;
-    return {
-      ...context,
-      agentValidation: {
-        implementer: {
-          ...context.agentValidation.implementer,
-          commands: expandCommandSelector(
-            context.agentValidation.implementer.value,
-            registeredNames,
-          ).commands,
-        },
-        contextValidator: {
-          ...context.agentValidation.contextValidator,
-          commands: expandCommandSelector(
-            context.agentValidation.contextValidator.value,
-            registeredNames,
-          ).commands,
-        },
-      },
-    };
+    return freezeResolvedContextSelections(context, registeredNames);
   });
+  const loopGroups = definition.loopGroups?.map((group) => ({
+    ...group,
+    template: {
+      ...group.template,
+      contexts: group.template.contexts.map((context) =>
+        freezeResolvedContextSelections(context, registeredNames),
+      ),
+    },
+  }));
 
-  return { definition: { ...definition, executionContexts }, issues };
+  return {
+    definition: {
+      ...definition,
+      executionContexts,
+      ...(loopGroups === undefined ? {} : { loopGroups }),
+    },
+    issues,
+  };
 }

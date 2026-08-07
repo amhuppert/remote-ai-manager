@@ -50,7 +50,31 @@ import {
   type LaneCommitter,
 } from "@/lib/workflow-graph/lane-committer";
 import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
-import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
+import {
+  classifyContextSchedulability,
+  landGatedPublishSettlement,
+} from "@/lib/workflow-graph/lane-readiness";
+import {
+  collectLandingCommitRepairs,
+  collectLandingProbeTargets,
+  settleLandingIntent,
+  settleRoutes,
+  type LandingBranchEvidence,
+  type RouteSettlementOutcome,
+} from "@/lib/workflow-graph/route-runtime";
+import {
+  createLandingEvidenceProber,
+  type LandingEvidenceProber,
+} from "@/lib/workflow-graph/landing-evidence";
+import {
+  finalizeLoopPassMaterialization,
+  prepareLoopPassMaterialization,
+  settleLoops,
+  type LoopMaterializationRequest,
+  type LoopSettlementOutcome,
+} from "@/lib/workflow-graph/loop-settlement";
+import { buildDefaultLiveEditDeps } from "@/lib/workflow-graph/live-edit-apply";
+import type { LiveEditDeps } from "@/lib/workflow-graph/runtime-edits";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import {
   SESSION_LANE_ID,
@@ -178,6 +202,22 @@ export interface GraphWorkflowExecutionLoopDeps {
   laneCommitter: LaneCommitter;
   joinRunner: JoinRunner;
   executionTargetResolver: ExecutionTargetResolver;
+  /**
+   * Reads landing evidence back off the branch for the commit modes (decision
+   * D8). The scheduler probes before each settlement pass so a commit-mode
+   * intent whose settlement did not survive a crash is repaired from replayable
+   * facts rather than from lifecycle bookkeeping. Defaults to the git-backed
+   * prober.
+   */
+  landingEvidenceProber?: LandingEvidenceProber;
+  /**
+   * Builds the live-edit core's deps for loop unrolling (D4 R9). Unrolling
+   * rides `applyLiveExecutionEdits` through the staging seam, and that core is
+   * sync, so its config-derived deps are resolved once per materialization
+   * outside the write queue. Defaults to the same builder the HTTP live-edit
+   * route uses, so an unrolled pass is seeded exactly as a live-added one.
+   */
+  buildLiveEditDeps?(projectPath: string): Promise<LiveEditDeps>;
   getSession(
     projectPath: string,
     sessionName: string,
@@ -515,6 +555,9 @@ export function createGraphWorkflowExecutionLoop(
     deps.getMaxConcurrentQueries ?? defaultGetMaxConcurrentQueries;
   const createJobId = deps.createJobId ?? (() => randomUUID());
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
+  const landingEvidenceProber =
+    deps.landingEvidenceProber ?? createLandingEvidenceProber();
+  const buildLiveEditDeps = deps.buildLiveEditDeps ?? buildDefaultLiveEditDeps;
   const approvalGateService =
     deps.approvalGateService ??
     createApprovalGateService({
@@ -601,6 +644,334 @@ export function createGraphWorkflowExecutionLoop(
         reason,
       });
       execution = result.execution;
+    }
+
+    /**
+     * Settle every route the graph can currently decide, once per scheduling
+     * pass (D4 R2/R3/R4).
+     *
+     * Runs BEFORE scheduling and before the joins, because everything after it
+     * reads the results: a target the routing declined must be `skipped` before
+     * the scheduler can consider it, before a join can plan over its lane, and
+     * before the completion invariant counts its tasks. Reconciliation of
+     * landing intents rides the same mutation, so a crash between a commit and
+     * its intent settlement is repaired on the next tick as well as at resume.
+     *
+     * A routing halt applies nothing and stops the pass — routing on a graph the
+     * engine cannot resolve is exactly the guess R2.4/R3.1 forbid.
+     */
+    async function settleRoutesForPass(): Promise<"settled" | "halted"> {
+      const branchEvidence = await probeLandingEvidence();
+      const settlement: { value: RouteSettlementOutcome | null } = {
+        value: null,
+      };
+      const next = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (current) => {
+          if (current.status !== "running") return current;
+          if (current.pendingHaltReason !== null) return current;
+          // `mutateActive` hands the reducer its own clone, so settling in
+          // place here cannot reach the caller's snapshot.
+          settlement.value = settleRoutes(current, {
+            now: new Date().toISOString(),
+            branchEvidence,
+          });
+          return current;
+        },
+      );
+      adoptExecution(next);
+
+      const outcome = settlement.value;
+      if (!outcome) return "settled";
+
+      for (const contextId of outcome.skippedContextIds) {
+        logger.info("graph-workflow.route.context_skipped", {
+          executionId: execution.id,
+          contextId,
+        });
+        execLogger?.lifecycle("route.context_skipped", { contextId });
+      }
+      for (const sourceContextId of outcome.settledSourceContextIds) {
+        const record = execution.routeSettlements[sourceContextId];
+        logger.info("graph-workflow.route.resolved", {
+          executionId: execution.id,
+          sourceContextId,
+          activatedEdgeIds: record?.activatedEdgeIds ?? [],
+          inactiveEdgeIds: record?.inactiveEdgeIds ?? [],
+          routeControlRevision: record?.routeControlRevision ?? 0,
+        });
+        execLogger?.lifecycle("route.resolved", {
+          contextId: sourceContextId,
+          activatedEdgeIds: record?.activatedEdgeIds ?? [],
+          inactiveEdgeIds: record?.inactiveEdgeIds ?? [],
+        });
+      }
+      for (const contextId of outcome.reconciledContextIds) {
+        execLogger?.lifecycle("landing.reconciled", {
+          contextId,
+          state:
+            execution.contextStates[contextId]?.landingIntent?.state ?? null,
+        });
+      }
+
+      if (!outcome.halt) return "settled";
+
+      logger.error("graph-workflow.route.halted", {
+        executionId: execution.id,
+        haltType: outcome.halt.type,
+        contextId: outcome.halt.contextId,
+      });
+      execLogger?.lifecycle("route.halted", {
+        contextId: outcome.halt.contextId,
+        haltType: outcome.halt.type,
+      });
+      await recordHalt(outcome.halt);
+      return "halted";
+    }
+
+    /**
+     * Commit the work of a context that finished but never reached its commit
+     * phase (D4 R9.4, decision D8).
+     *
+     * Runs AFTER route settlement, so reconciliation has already landed every
+     * intent whose commit DID happen — the branch carries that evidence and a
+     * probe reads it back. What is left is the earlier crash window, where the
+     * process died between the completion mutation and the commit: no trailer,
+     * no lane bookkeeping, nothing for a probe to find. Only a landed intent
+     * satisfies routing, so without this the dependents — and any loop settling
+     * on that context — would block forever on a commit that will never come.
+     *
+     * Runs BEFORE loop settlement so the repaired landing settles in the same
+     * pass, which is what "committed on resume before settlement" means.
+     *
+     * A context still in flight is skipped: its own commit phase is running,
+     * and the window between its completion mutation and that commit is the
+     * NORMAL state, not a crash.
+     */
+    async function repairUnlandedCommitsForPass(): Promise<
+      "settled" | "halted"
+    > {
+      for (const repair of collectLandingCommitRepairs(execution)) {
+        if (inFlight.has(repair.contextId)) continue;
+
+        execLogger?.lifecycle("landing.commit_repaired", {
+          contextId: repair.contextId,
+          mode: repair.mode,
+        });
+        logger.info("graph-workflow.landing.commit_repair_attempted", {
+          executionId: execution.id,
+          contextId: repair.contextId,
+          mode: repair.mode,
+        });
+
+        if (repair.mode === "lane_commit") {
+          await runLaneCommit(
+            repair.contextId,
+            repair.laneId,
+            repair.worktreePath,
+            repair.branchName,
+            repair.baselineSha,
+          );
+        } else {
+          await runSoloCommit(repair.contextId, repair.baselineSha);
+        }
+        // The committers settle their own intent on every terminal path, so the
+        // repair cannot repeat; refresh because they mutate through the manager
+        // without handing the snapshot back.
+        await refreshExecution();
+        if (execution.pendingHaltReason !== null) return "halted";
+      }
+      return "settled";
+    }
+
+    /**
+     * Settle every loop the graph can currently decide, once per scheduling
+     * pass (D4 R9/R16).
+     *
+     * Runs immediately AFTER route settlement and before scheduling: activation
+     * reads the routes and the skips that pass just applied, and everything
+     * downstream of a concluded loop reads the ledger this writes.
+     *
+     * A loop halt stops the pass, exactly as a routing halt does, and a halt
+     * raised by a DECISION applies nothing; the shared-backstop halt keeps only
+     * the grants it had already admitted in definition order (R10.3).
+     * Materializations are decided here and installed through the staging seam,
+     * because unrolling is whole-execution validation work that cannot run
+     * inside the write queue.
+     */
+    async function settleLoopsForPass(): Promise<"settled" | "halted"> {
+      const settlement: { value: LoopSettlementOutcome | null } = {
+        value: null,
+      };
+      const next = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (current) => {
+          if (current.status !== "running") return current;
+          if (current.pendingHaltReason !== null) return current;
+          settlement.value = settleLoops(current, {
+            now: new Date().toISOString(),
+          });
+          return current;
+        },
+      );
+      adoptExecution(next);
+
+      const outcome = settlement.value;
+      if (!outcome) return "settled";
+
+      for (const loopGroupId of outcome.activatedLoopGroupIds) {
+        execLogger?.lifecycle("loop.activated", { loopGroupId });
+      }
+      for (const loopGroupId of outcome.skippedLoopGroupIds) {
+        execLogger?.lifecycle("loop.skipped", { loopGroupId });
+      }
+      for (const loopGroupId of outcome.concludedLoopGroupIds) {
+        logger.info("graph-workflow.loop.concluded", {
+          executionId: execution.id,
+          loopGroupId,
+          passCount: execution.loopStates[loopGroupId]?.passCount ?? 0,
+        });
+        execLogger?.lifecycle("loop.concluded", {
+          loopGroupId,
+          concludingContextId:
+            execution.loopStates[loopGroupId]?.concludingExitContextId ?? null,
+        });
+      }
+
+      // Before the halt, not after it: a decision-raised halt reports no
+      // materializations at all, and the one halt that can — the shared pass
+      // backstop refusing a LATER loop — leaves the grants it already admitted
+      // durable (R10.3). Their unrolls have to install, or the ledger would hold
+      // a reservation for a pass that no resume ever creates.
+      for (const request of outcome.materializations) {
+        await materializeLoopPass(request);
+      }
+
+      if (outcome.halt) {
+        logger.error("graph-workflow.loop.halted", {
+          executionId: execution.id,
+          haltType: outcome.halt.type,
+          loopGroupId: outcome.halt.loopGroupId,
+          pass: outcome.halt.pass,
+        });
+        execLogger?.lifecycle("loop.halted", {
+          loopGroupId: outcome.halt.loopGroupId,
+          haltType: outcome.halt.type,
+        });
+        await recordHalt(outcome.halt);
+        return "halted";
+      }
+
+      return "settled";
+    }
+
+    /**
+     * Install one decided unroll through the prepare/finalize staging seam.
+     *
+     * Prepare runs outside the write queue (whole-execution validation), so the
+     * graph can move underneath it; `reprepare` is not a rejection and simply
+     * asks for a retry against fresher state. A second failure is left to the
+     * next scheduling pass, which re-decides from durable state — the decision
+     * record makes that safe to repeat.
+     *
+     * `liveRevision` moves by exactly one per installed unroll, the same
+     * contract every other accepted mutation of the working definition honors,
+     * so a client editing against a pre-unroll outline is refused rather than
+     * silently applied to a graph that grew.
+     */
+    async function materializeLoopPass(
+      request: LoopMaterializationRequest,
+    ): Promise<void> {
+      const liveEditDeps = await buildLiveEditDeps(input.projectPath);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const prepared = prepareLoopPassMaterialization(
+          execution,
+          request,
+          liveEditDeps,
+        );
+        if (!prepared.ok) {
+          logger.error("graph-workflow.loop.materialize_rejected", {
+            executionId: execution.id,
+            loopGroupId: request.loopGroupId,
+            pass: request.nextPass,
+            code: prepared.code,
+            issues: prepared.issues.map((issue) => issue.code),
+          });
+          return;
+        }
+
+        const install: { value: string | null } = { value: null };
+        const next = await deps.workflowManager.mutateActive(
+          input.projectPath,
+          input.sessionName,
+          (current) => {
+            const installed = finalizeLoopPassMaterialization(
+              current,
+              prepared.prepared,
+              request,
+              { now: new Date().toISOString() },
+            );
+            if (!installed.ok) {
+              install.value = installed.outcome;
+              return current;
+            }
+            install.value = installed.install;
+            return {
+              ...installed.execution,
+              liveRevision: installed.execution.liveRevision + 1,
+            };
+          },
+        );
+        adoptExecution(next);
+
+        if (install.value !== "reprepare") {
+          if (install.value === "spliced" || install.value === "merged") {
+            logger.info("graph-workflow.loop.pass_materialized", {
+              executionId: execution.id,
+              loopGroupId: request.loopGroupId,
+              pass: request.nextPass,
+              install: install.value,
+            });
+            execLogger?.lifecycle("loop.pass_materialized", {
+              loopGroupId: request.loopGroupId,
+              pass: request.nextPass,
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    /**
+     * Read the branch facts the commit modes land on, OUTSIDE the write queue —
+     * git is I/O and reconciliation is pure (decision D8).
+     *
+     * Without this the only commit-mode landings ever proven are the ones the
+     * committer settled in-process, so a crash between a commit and its
+     * settlement would block the dependents until the next restart. The probe
+     * set is the unlanded commit-mode intents of COMPLETED contexts, which is
+     * empty on every pass of a run that is landing normally.
+     *
+     * A prober failure yields no evidence, never an exception: an unproven
+     * landing blocks, which is the same answer the pass would reach anyway.
+     */
+    async function probeLandingEvidence(): Promise<
+      ReadonlyMap<string, LandingBranchEvidence>
+    > {
+      const targets = collectLandingProbeTargets(execution);
+      if (targets.length === 0) return new Map();
+      try {
+        return await landingEvidenceProber.probe(targets);
+      } catch (error) {
+        logger.warn("graph-workflow.landing.probe_failed", {
+          executionId: execution.id,
+          contextIds: targets.map((target) => target.contextId),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return new Map();
+      }
     }
 
     /**
@@ -1419,6 +1790,38 @@ export function createGraphWorkflowExecutionLoop(
       );
     }
 
+    /**
+     * Persist the landing baseline the dispatch could not know.
+     *
+     * The intent itself is recorded when the lane is assigned (decision D8),
+     * but the lane HEAD is resolved out of the write queue — so the baseline
+     * lands here, on the first durable write after the capture and still BEFORE
+     * the context's first turn. It is the low end of the SHA range that
+     * evidences a self-authored commit adopted at head-advance.
+     */
+    async function persistLandingBaseline(
+      contextId: string,
+      baselineSha: string | null,
+    ): Promise<void> {
+      if (baselineSha === null) return;
+      const next = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (current) => {
+          const intent = current.contextStates[contextId]?.landingIntent;
+          if (!intent || intent.state !== "pending") return current;
+          if (intent.baselineSha === baselineSha) return current;
+          const draft = structuredClone(current);
+          draft.contextStates[contextId]!.landingIntent = {
+            ...intent,
+            baselineSha,
+          };
+          return draft;
+        },
+      );
+      adoptExecution(next);
+    }
+
     async function runContextTask(contextId: string): Promise<void> {
       execLogger?.lifecycle("parallel.context_started", {
         contextId,
@@ -1497,6 +1900,7 @@ export function createGraphWorkflowExecutionLoop(
               } catch {
                 preTurnLaneHeadSha = null;
               }
+              await persistLandingBaseline(contextId, preTurnLaneHeadSha);
             }
           } else if (!laneHeadCaptured) {
             // Session isolation: the same self-commit adoption baseline,
@@ -1510,6 +1914,7 @@ export function createGraphWorkflowExecutionLoop(
             } catch {
               preTurnLaneHeadSha = null;
             }
+            await persistLandingBaseline(contextId, preTurnLaneHeadSha);
           }
 
           // A context parked at the approval gate — whether it parked during
@@ -1939,6 +2344,9 @@ export function createGraphWorkflowExecutionLoop(
                 laneId,
                 laneWorktreePath,
                 preTurnHeadSha,
+                landingToken:
+                  execution.contextStates[contextId]?.landingIntent?.token ??
+                  null,
               }),
           );
 
@@ -1964,6 +2372,15 @@ export function createGraphWorkflowExecutionLoop(
                       { reason: "lane_commit.failed" },
                     );
                     cs.lastMergeError = result.errorMessage;
+                    // The intent records the refusal so a resume classifies
+                    // this context as blocked from durable state rather than
+                    // re-deriving it (D4 decision D8); a failed landing blocks
+                    // the dependents, it never skips them (R2.5).
+                    settleLandingIntent(next, contextId, {
+                      state: "failed",
+                      evidence: "commit",
+                      now: new Date().toISOString(),
+                    });
                   }
                 },
               });
@@ -2003,6 +2420,17 @@ export function createGraphWorkflowExecutionLoop(
                   );
                   cs.lastMergeError = null;
                 }
+                // Same mutation as the merge-status move, so the durable
+                // landing record can never lag the evidence it describes. An
+                // adopted result is evidenced by the recorded baseline → head
+                // SHA range rather than by the token, because the implementer
+                // authored that commit itself.
+                settleLandingIntent(next, contextId, {
+                  state: "landed",
+                  evidence: adopted ? "adopted-head" : "commit",
+                  headSha: snapshot.sha,
+                  now: snapshot.committedAt,
+                });
                 return applyLaneCommitSnapshot(next, laneId, snapshot);
               },
             );
@@ -2055,6 +2483,14 @@ export function createGraphWorkflowExecutionLoop(
                   },
                 );
               }
+              // A context that produced nothing still LANDED: its dependents
+              // have everything it was ever going to give them, so leaving the
+              // intent pending would block them on a commit that will not come.
+              settleLandingIntent(next, contextId, {
+                state: "landed",
+                evidence: "no-changes",
+                now: new Date().toISOString(),
+              });
               return next;
             },
           );
@@ -2117,6 +2553,9 @@ export function createGraphWorkflowExecutionLoop(
                 sessionName: input.sessionName,
                 contextId,
                 sessionWorktreePath: session.worktreePath,
+                landingToken:
+                  execution.contextStates[contextId]?.landingIntent?.token ??
+                  null,
               }),
           );
 
@@ -2132,6 +2571,16 @@ export function createGraphWorkflowExecutionLoop(
                 projectPath: input.projectPath,
                 sessionName: input.sessionName,
                 reason,
+                applyAdditionalMutation: (next) => {
+                  // A failed landing is recorded durably so a resume classifies
+                  // this context as blocked rather than re-deriving it; it
+                  // blocks the dependents, never skips them (R2.5).
+                  settleLandingIntent(next, contextId, {
+                    state: "failed",
+                    evidence: "commit",
+                    now: new Date().toISOString(),
+                  });
+                },
               });
             execution = haltResult.execution;
             logger.error("graph-workflow.solo_commit.failed", {
@@ -2207,11 +2656,26 @@ export function createGraphWorkflowExecutionLoop(
                         now: () => new Date().toISOString(),
                       })
                     : e;
-                return applyLaneCommitSnapshot(
-                  withLane,
-                  laneIdForSnapshot,
-                  snapshot,
+                // Cloned before the in-place settle: applyLaneCommitSnapshot
+                // shares `contextStates` with its input, so writing the intent
+                // straight onto its result would reach back into the caller's
+                // snapshot.
+                const next = structuredClone(
+                  applyLaneCommitSnapshot(
+                    withLane,
+                    laneIdForSnapshot,
+                    snapshot,
+                  ),
                 );
+                // Same mutation as the snapshot, so the durable landing record
+                // can never lag the evidence it describes (decision D8).
+                settleLandingIntent(next, contextId, {
+                  state: "landed",
+                  evidence: adopted ? "adopted-head" : "commit",
+                  headSha: snapshot.sha,
+                  now: snapshot.committedAt,
+                });
+                return next;
               },
             );
             if (adopted) {
@@ -2224,6 +2688,24 @@ export function createGraphWorkflowExecutionLoop(
                 sha: snapshotSha,
               });
             }
+          } else {
+            // Nothing to commit and an unmoved HEAD: the context produced no
+            // changes, which is still a LANDING — its dependents have
+            // everything it was ever going to give them, and leaving the intent
+            // unsettled would block them on a commit that will not come.
+            await deps.workflowManager.mutateActive(
+              input.projectPath,
+              input.sessionName,
+              (e) => {
+                const next = structuredClone(e);
+                settleLandingIntent(next, contextId, {
+                  state: "landed",
+                  evidence: "no-changes",
+                  now: new Date().toISOString(),
+                });
+                return next;
+              },
+            );
           }
 
           await deps.workflowManager.mutateActive(
@@ -2768,6 +3250,25 @@ export function createGraphWorkflowExecutionLoop(
           break;
         }
 
+        // Route settlement precedes every scheduling decision this pass makes:
+        // the scheduler, the joins and the completion invariant all read the
+        // skips and settlements it writes.
+        if (
+          (await settleRoutesForPass()) === "halted" ||
+          (await repairUnlandedCommitsForPass()) === "halted" ||
+          (await settleLoopsForPass()) === "halted"
+        ) {
+          if (inFlight.size > 0) {
+            await Promise.race(inFlight.values());
+            continue;
+          }
+          execution = await deps.workflowManager.drainAndHalt({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+          });
+          break;
+        }
+
         if (execution.pendingMergeRetry.length > 0 && inFlight.size === 0) {
           await processPendingMergeRetry();
           if (execution.pendingHaltReason !== null) {
@@ -2962,10 +3463,23 @@ export function createGraphWorkflowExecutionLoop(
           // replaced the contract, or after any path left the context
           // unscheduled — and completing then would report a finished run that
           // silently violates the exactly-one-validated-output guarantee.
+          //
+          // A context the routing declined owes no output at all (R4.1), and
+          // that exemption comes from the same land-gated publish settlement
+          // the task invariant above uses, not from the persisted status
+          // (decision D1) and not from a skip whose source has yet to land.
+          const publishSettlement = landGatedPublishSettlement(execution);
+          const routeDeclinedContextIds = new Set(
+            publishSettlement.skippedContextIds,
+          );
           const contextsOwingOutput =
             execution.workingDefinition.executionContexts
               .map((context) => context.id)
-              .filter((contextId) => contextOwesOutput(execution, contextId));
+              .filter(
+                (contextId) =>
+                  !routeDeclinedContextIds.has(contextId) &&
+                  contextOwesOutput(execution, contextId),
+              );
           if (contextsOwingOutput.length > 0) {
             logger.error("graph-workflow.loop.completion_blocked_owed_output", {
               executionId: execution.id,
@@ -2977,6 +3491,38 @@ export function createGraphWorkflowExecutionLoop(
             await recordHalt({
               type: "recovery_error",
               message: `Refusing to complete: ${contextsOwingOutput.length} execution context(s) declare an output schema with no validated output (${contextsOwingOutput.join(", ")}). The scheduler found no eligible work, which would otherwise report the run as finished while a declared contract went unsatisfied.`,
+            });
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
+          // The same refusal for a loop that has neither concluded nor been
+          // declined (R9), read off the SAME land-gated publish settlement — the
+          // projection owns what is outstanding, and this reads back only the
+          // loop-exit share of it, because the rest legitimately reports a
+          // context whose tasks are done but whose status has not flipped yet.
+          //
+          // Loop settlement runs at the top of THIS iteration, before anything
+          // here, so reaching the completion point with a running loop is not a
+          // timing window: it means the pass could not be settled at all — an
+          // exit whose landing never reconciled, most likely a failed merge
+          // awaiting retry. Completing then would report a finished run whose
+          // loop never reached its exit condition.
+          const unsettledLoopExits =
+            publishSettlement.outstandingLoopExitContextIds;
+          if (unsettledLoopExits.length > 0) {
+            logger.error("graph-workflow.loop.completion_blocked_unsettled", {
+              executionId: execution.id,
+              loopExitContextIds: unsettledLoopExits,
+            });
+            execLogger?.lifecycle("loop.completion_blocked_unsettled", {
+              loopExitContextIds: unsettledLoopExits,
+            });
+            await recordHalt({
+              type: "recovery_error",
+              message: `Refusing to complete: ${unsettledLoopExits.length} loop(s) have not reached their exit condition (exit context(s) ${unsettledLoopExits.join(", ")}). The scheduler found no eligible work and loop settlement could not decide the current pass, which would otherwise report the run as finished mid-loop.`,
             });
             execution = await deps.workflowManager.drainAndHalt({
               projectPath: input.projectPath,

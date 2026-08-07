@@ -1,6 +1,8 @@
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
   GraphWorkflowHaltReason,
+  GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 import { assertNever } from "@/lib/shared/assert-never";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
@@ -49,6 +51,18 @@ const HALT_RESUMABILITY: Record<GraphWorkflowHaltReason["type"], boolean> = {
   worktree_creation_dirty: true,
   execution_loop_failed: true,
   collaboration_failure: true,
+  // Both routing halts are resumable by construction (D4 R2.4/R3.1): their
+  // sanctioned remedy is a quiescent live edit of the guard set on the
+  // unstarted target's incoming edges, followed by resume.
+  routing_cardinality: true,
+  routing_invariant: true,
+  // The three loop halts are resumable too (D4 R9.6/R10): a skipped or
+  // unreadable exit is repaired by a quiescent live edit of the offending pass
+  // instance, and an exhausted budget by an audited amendment to the pass cap
+  // or the exit predicate — both followed by resume.
+  loop_exit_skipped: true,
+  loop_invariant: true,
+  loop_limit_reached: true,
   aborted: false,
   recovery_error: false,
 };
@@ -75,6 +89,61 @@ export function classifyContextLifecycle(
   execution: GraphWorkflowExecution,
   contextId: string,
 ): ContextLifecycle {
+  return classifyContextLifecycleFromPin(
+    execution,
+    contextId,
+    pinContextInitialState(execution, contextId),
+  );
+}
+
+/**
+ * The DEFINITION-derived half of the classification above: a context's canonical
+ * initial state and its tasks'. Deriving it walks the whole task list, so a
+ * caller that has already fenced the definition (the mutation staging seam, which
+ * must re-classify inside the write queue) pins this once outside the lock and
+ * re-classifies against it in O(this context's tasks) — no scan.
+ *
+ * `null` means the context has no definition entry.
+ */
+export interface ContextInitialStatePin {
+  readonly contextState: GraphWorkflowExecutionContextState;
+  readonly taskStates: Readonly<Record<string, GraphWorkflowTaskState>>;
+}
+
+export function pinContextInitialState(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): ContextInitialStatePin | null {
+  const context = execution.workingDefinition.executionContexts.find(
+    (candidate) => candidate.id === contextId,
+  );
+  if (!context) return null;
+
+  const taskStates: Record<string, GraphWorkflowTaskState> = {};
+  for (const task of execution.workingDefinition.tasks) {
+    if (task.contextId === contextId) {
+      taskStates[task.id] = buildInitialTaskState(task);
+    }
+  }
+  return {
+    contextState: buildInitialContextState(
+      context,
+      execution.workingDefinition.tasks,
+    ),
+    taskStates,
+  };
+}
+
+/**
+ * The RUNTIME half: compare the execution's current state against a pin. Same
+ * verdict as {@link classifyContextLifecycle}, which is defined in terms of it —
+ * there is one lifecycle policy, not two.
+ */
+export function classifyContextLifecycleFromPin(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+  pin: ContextInitialStatePin | null,
+): ContextLifecycle {
   const contextState = execution.contextStates[contextId];
 
   // Completed takes precedence over every other signal.
@@ -82,29 +151,19 @@ export function classifyContextLifecycle(
     return "frozen";
   }
 
-  const context = execution.workingDefinition.executionContexts.find(
-    (candidate) => candidate.id === contextId,
-  );
   // A context with no definition entry or no runtime state cannot be PROVEN to
   // sit in its initial state, so it is not editable as `unstarted` (fail-safe).
-  if (!context || !contextState) {
+  if (pin === null || !contextState) {
     return "started";
   }
 
-  const initialContextState = buildInitialContextState(
-    context,
-    execution.workingDefinition.tasks,
-  );
-  const contextTasks = execution.workingDefinition.tasks.filter(
-    (task) => task.contextId === contextId,
-  );
-  const everyTaskInitial = contextTasks.every((task) =>
-    deepEqualJson(execution.taskStates[task.id], buildInitialTaskState(task)),
+  const everyTaskInitial = Object.entries(pin.taskStates).every(
+    ([taskId, initial]) => deepEqualJson(execution.taskStates[taskId], initial),
   );
 
   const isUnstarted =
     !execution.activeContextIds.includes(contextId) &&
-    deepEqualJson(contextState, initialContextState) &&
+    deepEqualJson(contextState, pin.contextState) &&
     everyTaskInitial;
 
   return isUnstarted ? "unstarted" : "started";

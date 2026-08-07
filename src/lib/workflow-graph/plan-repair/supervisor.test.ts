@@ -3,7 +3,8 @@ import {
   createWorkflowExecution,
   makeSeededValidatorAssignment,
 } from "../test-fixtures";
-import type { GraphWorkflowExecution } from "../schemas";
+import { executionFor, workerJudgeDefinition } from "../loop-test-fixtures";
+import type { GraphWorkflowExecution, PlanRepairRound } from "../schemas";
 import type { SeededValidatorAssignment } from "../config-schemas";
 import type { MutateActiveResult } from "../execution-repository";
 import type { LiveEditApplyOutcome } from "../live-edit-apply";
@@ -29,6 +30,34 @@ function haltedExecution(
     },
     ...overrides,
   });
+}
+
+/**
+ * A halted loop execution: the worker+judge body the D4 loop suites share,
+ * seeded through the real resolver so the group carries the seed-resolved
+ * `planRepair` policy the trigger reads (decision D10).
+ */
+function loopHaltedExecution(
+  planRepairRounds: PlanRepairRound[] = [],
+): GraphWorkflowExecution {
+  return {
+    ...executionFor(workerJudgeDefinition()),
+    status: "halted",
+    planRepairRounds,
+    haltReason: {
+      type: "loop_limit_reached",
+      scope: "loop",
+      loopGroupId: "refine",
+      pass: 3,
+      maxPasses: 3,
+      verdict: "unsatisfied",
+      passCount: 3,
+      totalPassCount: 3,
+      contextId: "refine__p3__judge",
+      message: 'loop "refine" reached its 3-pass budget',
+      summary: null,
+    },
+  };
 }
 
 interface HarnessOptions {
@@ -405,6 +434,7 @@ describe("plan-repair supervisor", () => {
             seq: 1,
             contextId: "context-implement",
             haltType: "circuit_breaker",
+            loopGroupId: null,
             startedAt: "2026-07-29T00:00:00.000Z",
             settledAt: "2026-07-29T00:05:00.000Z",
             outcome: "repaired",
@@ -418,6 +448,7 @@ describe("plan-repair supervisor", () => {
             seq: 2,
             contextId: "context-implement",
             haltType: "circuit_breaker",
+            loopGroupId: null,
             startedAt: "2026-07-29T00:10:00.000Z",
             settledAt: null,
             outcome: null,
@@ -447,6 +478,154 @@ describe("plan-repair supervisor", () => {
     ).toContain("exhausted");
     expect(harness.published).toEqual([
       expect.objectContaining({ outcome: "exhausted", attempt: 2 }),
+    ]);
+  });
+
+  it("fires on a loop_limit_reached halt, accounting the round on the loop (R12.1)", async () => {
+    const harness = makeHarness({
+      initial: loopHaltedExecution(),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: true,
+            diagnosis: "the exit bar demanded a field the judge cannot produce",
+            operations: [
+              {
+                type: "amend-loop-predicate",
+                loopGroupId: "refine",
+                until: {
+                  schema: {
+                    type: "object",
+                    properties: { notes: { type: "string" } },
+                    required: ["notes"],
+                  },
+                },
+                rationale: "recorded notes are the real exit condition",
+              },
+            ],
+          },
+          conversationId: "conv-loop-1",
+        },
+      ],
+      applyOutcomes: [appliedOutcome(2)],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toMatchObject({ ran: true, outcome: "repaired" });
+    // The loop-control op reached the shared live-edit core; the supervisor
+    // never applies anything itself.
+    expect(harness.applyRequests).toEqual([
+      { baseLiveRevision: 1, source: "plan-repair", operationCount: 1 },
+    ]);
+    expect(harness.resumeCalls()).toBe(1);
+    // The round is keyed on the LOOP, so the next pass instance does not get a
+    // fresh budget of repairs (decision D10).
+    expect(harness.current()?.planRepairRounds.at(-1)).toMatchObject({
+      haltType: "loop_limit_reached",
+      loopGroupId: "refine",
+      contextId: "refine__p3__judge",
+      outcome: "repaired",
+      resumed: true,
+    });
+    expect(harness.published).toEqual([
+      expect.objectContaining({
+        haltType: "loop_limit_reached",
+        loopGroupId: "refine",
+        outcome: "repaired",
+      }),
+    ]);
+  });
+
+  it("refuses a loop-control op aimed at another loop, and records the refusal on the loop halt", async () => {
+    const harness = makeHarness({
+      initial: loopHaltedExecution(),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: true,
+            diagnosis: "raise the other loop instead",
+            operations: [
+              {
+                type: "raise-loop-max-passes",
+                loopGroupId: "some-other-loop",
+                maxPasses: 9,
+              },
+            ],
+          },
+          conversationId: "conv-loop-1",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toMatchObject({ ran: true, outcome: "failed" });
+    // Nothing reached the live-edit core.
+    expect(harness.applyRequests).toHaveLength(0);
+    expect(harness.resumeCalls()).toBe(0);
+    const halt = harness.current()?.haltReason;
+    expect(halt?.type === "loop_limit_reached" ? halt.summary : null).toContain(
+      "disallowed operations",
+    );
+  });
+
+  it("announces exhaustion on a loop halt once the loop's own attempts are spent", async () => {
+    const harness = makeHarness({
+      initial: loopHaltedExecution([
+        {
+          seq: 1,
+          contextId: "refine__p1__judge",
+          haltType: "loop_limit_reached",
+          loopGroupId: "refine",
+          startedAt: "2026-07-29T00:00:00.000Z",
+          settledAt: "2026-07-29T00:05:00.000Z",
+          outcome: "repaired",
+          planningDefect: true,
+          diagnosis: "raised the cap",
+          operationCount: 1,
+          resumed: true,
+          conversationId: "c1",
+        },
+        {
+          seq: 2,
+          contextId: "refine__p2__judge",
+          haltType: "loop_limit_reached",
+          loopGroupId: "refine",
+          startedAt: "2026-07-29T00:10:00.000Z",
+          settledAt: "2026-07-29T00:15:00.000Z",
+          outcome: "declined",
+          planningDefect: false,
+          diagnosis: "not converging",
+          operationCount: 0,
+          resumed: false,
+          conversationId: "c2",
+        },
+      ]),
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toEqual({
+      ran: false,
+      reason: "context_attempts_exhausted",
+    });
+    expect(harness.agentCalls).toHaveLength(0);
+    const halt = harness.current()?.haltReason;
+    expect(halt?.type === "loop_limit_reached" ? halt.summary : null).toContain(
+      "2 round(s) for this loop",
+    );
+    expect(harness.published).toEqual([
+      expect.objectContaining({
+        outcome: "exhausted",
+        loopGroupId: "refine",
+        attempt: 2,
+      }),
     ]);
   });
 

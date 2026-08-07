@@ -554,6 +554,49 @@ describe("cctl workflow validate", () => {
     ).toBe(true);
   });
 
+  it("prints server warnings above the create hint and keeps exit 0 (R3.2)", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          ok: true,
+          warnings: [
+            {
+              path: "definition.executionContexts[0].outputSchema.properties.verdict.enum",
+              message:
+                'Source context "context-plan" branches on "verdict" but no outgoing edge covers "hold"',
+            },
+          ],
+        }),
+      files,
+    );
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(
+      'warning: definition.executionContexts[0].outputSchema.properties.verdict.enum: Source context "context-plan" branches on "verdict" but no outgoing edge covers "hold"',
+    );
+    expect(result.stdout).toContain("plan is valid");
+  });
+
+  it("carries the warnings into the --json envelope", async () => {
+    const warnings = [
+      { path: "definition.edges", message: "uncovered values" },
+    ];
+    const host = makeHost(() => jsonResponse({ ok: true, warnings }), files);
+    const result = await runCli(
+      ["workflow", "validate", "--file", planFile, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, warnings });
+  });
+
   it("exits 2 and prints one issue per line with JSON paths on a 400", async () => {
     const host = makeHost(
       () =>
@@ -1199,6 +1242,168 @@ describe("cctl workflow task add", () => {
     );
     expect(result.exitCode).toBe(2);
     expect(host.requests).toHaveLength(0);
+  });
+});
+
+describe("cctl workflow graph expand", () => {
+  const payloadFile = "/tmp/expand.json";
+  const payload = {
+    requestId: "req-1",
+    rationale: "Fan out one candidate per approach.",
+    contexts: [
+      {
+        handle: "candidate-a",
+        title: "Candidate A",
+        acceptanceCriteria: "A works",
+      },
+    ],
+    tasks: [
+      {
+        contextHandle: "candidate-a",
+        title: "Build A",
+        instructions: "Build approach A.",
+      },
+    ],
+    edges: [
+      { from: "context-plan", to: "candidate-a" },
+      { from: "candidate-a", to: "context-verify" },
+    ],
+  };
+  const files = { [payloadFile]: JSON.stringify(payload) };
+  const capabilityEnv: CliEnv = {
+    ...laneEnv,
+    CC_WORKFLOW_LANE_CAPABILITY: "cclc1.payload.signature",
+  };
+
+  it("posts the payload to the lane expand endpoint with the capability header", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          ok: true,
+          liveRevision: 4,
+          createdContextIds: ["context-plan-xdeadbeef-candidate-a"],
+          createdTaskIds: ["context-plan-xdeadbeef-candidate-a-t1"],
+          rejoinContextIds: ["context-verify"],
+        }),
+      files,
+    );
+
+    const result = await runCli(
+      ["workflow", "graph", "expand", "--file", payloadFile],
+      capabilityEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const request = host.requests[0];
+    expect(request?.init.method).toBe("POST");
+    expect(new URL(request?.url ?? "").pathname).toBe(
+      "/api/projects/cc/sessions/my-session/graph-workflow/contexts/context-plan/expand",
+    );
+    expect(request?.init.headers?.["x-cc-lane-capability"]).toBe(
+      "cclc1.payload.signature",
+    );
+    expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
+      executionId: "exec-7",
+      request: payload,
+    });
+    expect(result.stdout).toContain("context-plan-xdeadbeef-candidate-a");
+  });
+
+  it("tells the lane a retried request replayed rather than expanded again", async () => {
+    // A lane whose response was lost retries the SAME requestId. The server
+    // answers from the acceptance receipt, and the CLI must not report that as
+    // a second expansion — the ids it lists are already in the graph (R6.3).
+    const host = makeHost(
+      () =>
+        jsonResponse({
+          ok: true,
+          replayed: true,
+          liveRevision: 4,
+          createdContextIds: ["context-plan-xdeadbeef-candidate-a"],
+          createdTaskIds: ["context-plan-xdeadbeef-candidate-a-t1"],
+          rejoinContextIds: ["context-verify"],
+        }),
+      files,
+    );
+
+    const result = await runCli(
+      ["workflow", "graph", "expand", "--file", payloadFile],
+      capabilityEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("already applied");
+    expect(result.stdout).not.toContain("added 1 context(s)");
+    expect(result.stdout).toContain("context-plan-xdeadbeef-candidate-a");
+  });
+
+  it("exits 2 naming the capability variable when the lane has none", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+
+    const result = await runCli(
+      ["workflow", "graph", "expand", "--file", payloadFile],
+      laneEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("CC_WORKFLOW_LANE_CAPABILITY");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("exits 2 without a request when --file is missing", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), files);
+
+    const result = await runCli(
+      ["workflow", "graph", "expand"],
+      capabilityEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("--file");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("exits 2 without a request when the payload file is not a valid expansion", async () => {
+    const host = makeHost(() => jsonResponse({ ok: true }), {
+      [payloadFile]: JSON.stringify({ requestId: "req-1" }),
+    });
+
+    const result = await runCli(
+      ["workflow", "graph", "expand", "--file", payloadFile],
+      capabilityEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("exits 1 printing the server's refusal", async () => {
+    const host = makeHost(
+      () =>
+        jsonResponse(
+          {
+            error:
+              'Context "context-plan" does not allow agent graph expansion',
+            code: "expansion-not-authorized",
+          },
+          403,
+        ),
+      files,
+    );
+
+    const result = await runCli(
+      ["workflow", "graph", "expand", "--file", payloadFile],
+      capabilityEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("does not allow agent graph expansion");
   });
 });
 

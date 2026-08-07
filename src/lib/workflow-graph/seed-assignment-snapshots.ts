@@ -3,12 +3,13 @@
  * execution actually runs.
  *
  * Execution start calls this once, after the config cascade and before any
- * state is built. It resolves EVERY persisted assignment — the implementer,
- * every enabled cohort member, and every dormant assignment inside a disabled
- * cohort — and stores the full snapshot on each. Seeding the dormant ones is
- * the part that makes R4's immutability unconditional: enabling a dormant
- * assignment mid-run is a configuration edit, and if it had to resolve then, a
- * profile edited or deleted after start could still reach the execution.
+ * state is built. It resolves EVERY persisted assignment in both scheduled
+ * contexts and frozen loop templates — the implementer, every enabled cohort
+ * member, and every dormant assignment inside a disabled cohort — and stores
+ * the full snapshot on each. Seeding the dormant ones is the part that makes
+ * R4's immutability unconditional: enabling a dormant assignment mid-run is a
+ * configuration edit, and if it had to resolve then, a profile edited or
+ * deleted after start could still reach the execution.
  *
  * Past this point nothing consults the library. Lanes replay
  * `renderedInstructionBlock` verbatim, so a restart or a composer upgrade
@@ -24,6 +25,7 @@ import type {
   CascadeWorkflowSemanticDefinition,
   GraphWorkflowCascadeContext,
   GraphWorkflowResolvedContext,
+  GraphWorkflowResolvedLoopGroup,
   ResolvedWorkflowSemanticDefinition,
 } from "./definition-schemas";
 import {
@@ -43,21 +45,59 @@ export async function seedAssignmentSnapshots(
   definition: CascadeWorkflowSemanticDefinition,
   deps: SeedAssignmentSnapshotsDeps,
 ): Promise<ResolvedWorkflowSemanticDefinition> {
-  const executionContexts: GraphWorkflowResolvedContext[] = [];
-  for (const context of definition.executionContexts) {
-    executionContexts.push(await seedContext(context, deps));
+  const executionContexts = await seedContexts(
+    definition.executionContexts,
+    deps,
+  );
+  const loopGroups: GraphWorkflowResolvedLoopGroup[] = [];
+  for (const group of definition.loopGroups ?? []) {
+    loopGroups.push({
+      ...group,
+      template: {
+        ...group.template,
+        contexts: await seedContexts(group.template.contexts, deps),
+      },
+    });
   }
+  const templateContexts = loopGroups.flatMap(
+    (group) => group.template.contexts,
+  );
 
   logger.info("workflow-assignment-seeding.seeded", {
     contextCount: executionContexts.length,
-    assignmentCount: executionContexts.reduce(
-      (total, context) =>
-        total + 1 + context.contextValidator.assignments.length,
-      0,
-    ),
+    templateContextCount: templateContexts.length,
+    loopGroupCount: loopGroups.length,
+    assignmentCount:
+      countAssignments(executionContexts) + countAssignments(templateContexts),
   });
 
-  return { ...definition, executionContexts };
+  const { loopGroups: cascadeLoopGroups, ...definitionWithoutLoopGroups } =
+    definition;
+  return {
+    ...definitionWithoutLoopGroups,
+    executionContexts,
+    ...(cascadeLoopGroups === undefined ? {} : { loopGroups }),
+  };
+}
+
+async function seedContexts(
+  contexts: readonly GraphWorkflowCascadeContext[],
+  deps: SeedAssignmentSnapshotsDeps,
+): Promise<GraphWorkflowResolvedContext[]> {
+  const seeded: GraphWorkflowResolvedContext[] = [];
+  for (const context of contexts) {
+    seeded.push(await seedContext(context, deps));
+  }
+  return seeded;
+}
+
+function countAssignments(
+  contexts: readonly GraphWorkflowResolvedContext[],
+): number {
+  return contexts.reduce(
+    (total, context) => total + 1 + context.contextValidator.assignments.length,
+    0,
+  );
 }
 
 async function seedContext(

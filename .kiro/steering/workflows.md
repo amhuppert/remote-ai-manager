@@ -131,6 +131,10 @@ One row per shared concept: where the canonical implementation lives, who actual
 | Agent-profile deletion references | PORT: `AgentProfileReferenceReporter` declared by `agent-profiles/library-service.ts`, implemented by `workflow-graph/profile-reference-reporter.ts` | `library-service.previewDeletion` / `delete`, wired only at `agent-profiles/route-handlers.ts` | supported | — | Domain code in `agent-profiles` never imports `workflow-graph` — the reporter reaches it through the route composition, and an unwired library REFUSES rather than reporting "no holders". The delete dialog holds its confirm button until the preview is on screen (advisory content, mandatory step) |
 | Validator authority (blocking vs advisory) | `workflow-graph/config-schemas.ts` (`validatorAuthoritySchema`, per-assignment, default `advisory`) — read by `role-instructions.ts` (which contract and where the mandate renders), `validator-runner.ts` (which verdict schema is dispatched), `validation-cohort.ts` (`concludeCohort`'s partition), `lane-identity.ts` (fingerprint input) | every graph validation round; `resolve-config.ts` seeds the single blocking acceptance-criteria seat; the shared `workflow-config` assignment editors author it | supported | — | Authority is never inherited or keyed on an assignment id — the ONE blocking seat is an explicit write in `SEEDED_WORKFLOW_DEFAULTS`, so a specialist arrives non-blocking and gains blocking power only by an author's deliberate act. Read the authority section before adding a consumer: an advisory seat's verdict schema has no `issues` field, so "handle both authorities" is a schema selection, never a runtime branch on a shared shape |
 | Dangling-reference fail-closed check | `workflow-graph/assignment-references.ts` (`checkDefinition` + `checkWorkflowDefaults`) | `storage.ts` accept, `validate-route-handlers.ts`, execution start in `execution-repository.ts`, config PUT | supported | — | Validate and execution start must run BOTH checks: a definition inherits staffing from `workflowDefaults` it never mentions, and checking only the definition turns a dangling default into an unlocated resolve failure inside snapshot seeding |
+| Control-flow route projection (D4) | `workflow-graph/route-projection.ts` (`projectRoutes`: edge resolution, context verdicts, `else`, cardinality, must-run, publish settlement), adapted for a live execution by `execution-routes.ts` | scheduler eligibility + land gate, lane readiness, joins, upstream-input resolution, completion/publish quiescence, criterion must-run locks, CLI/UI read surfaces | supported | — | Never add a second guard evaluator or a second route computation — guard documents are evaluated only through `workflows/primitives/output-schema-subset.ts` |
+| Mutation staging seam (D4) | `workflow-graph/runtime-edits.ts` (`prepareLiveExecutionEdits` / `finalizePreparedEdits`) over the repository-owned `executionStateRevision` + `structuralRevision` fences | runtime expansion, loop-pass materialization | supported | `applyLiveExecutionEdits` remains the single-shot path for in-queue writers (CLI/UI/plan-repair) | None — the two are one core; the staged pair exists for writers that must validate outside the write lock |
+| Runtime graph expansion (D4) | `workflow-graph/expansion-service.ts` + `generated-child-config.ts` + `expansion-receipts.ts` + `expansion-caps.ts`, behind the signed lane capability (`agent-gateway/lane-capability.ts`) | `cctl workflow graph expand` lane route only | supported | — | Never mint a second structural exemption: expansion and loop unrolling share `LiveEditOptions.structuralSource`, which no client-reachable entry point can set |
+| Loop settlement (D4) | `workflow-graph/loop-settlement.ts` (activation, definition-ordered slot admission, the ordered decision) + `loop-resolver.ts` (accept-time) + `loop-budgets.ts` + `loop-history.ts` / `loop-ledger.ts` (reads) | every execution loop settlement, after `settleRoutesForPass` | supported | — | One unroll path only — a pass slot is granted exclusively by `settleLoops`'s definition-ordered walk |
 
 ## Testing
 
@@ -208,9 +212,10 @@ for real cascade values (`form-state.test.ts` pins the identity).
     "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "medium" } },
     "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "authority": "blocking", "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } } ] },
     "scriptValidator":  { "commands": [] },
+    "humanApprovalGate": { "enabled": false },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
-    "mutability":       { "allowAgentTaskAdd": false },
+    "mutability":       { "allowAgentTaskAdd": false, "allowAgentContextAdd": false },
     "planRepair":       { "enabled": true, "maxAttemptsPerContext": 2 },
     "askUserQuestions": { "enabled": false },
     "collaboration":    { "enabled": false, "secondAgent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "negotiationRounds": 3, "autonomousResolutionThreshold": "minor" }
@@ -241,19 +246,26 @@ for non-default implementer or validator settings.
 
 ## `workflowDefaults` blocks
 
-Nine blocks, all individually overridable per tier:
+Twelve blocks. Operational context blocks are individually overridable per tier;
+`laneMergeValidation` resolves only from the global and workflow tiers because
+it protects their shared fan-in target. The list is closed by
+`workflowDefaultsSchema` (`src/lib/config/schemas.ts`) and seeded by
+`SEEDED_WORKFLOW_DEFAULTS` — adding a block means touching both, plus this table:
 
 | Block | Purpose |
 |---|---|
 | `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the runtime (backend, model, reasoning) that runs it |
 | `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, authority, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; `authority` (`blocking \| advisory`, default advisory) decides whether the seat can reopen tasks — see the authority section; a disabled cohort keeps its assignments dormant |
 | `scriptValidator` | Deterministic validator that runs its ordered registered command selection. `{ commands: string[] }`; an empty list disables it |
+| `humanApprovalGate` | Whether a context pauses for operator approval before it lands. `{ enabled: boolean }`, default disabled |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
-| `mutability` | E.g. `allowAgentTaskAdd` |
+| `mutability` | `allowAgentTaskAdd` (agent may append tasks to its own context) and `allowAgentContextAdd` (D4 runtime graph expansion — the agent may append new contexts, tasks, and edges via `cctl workflow graph expand`). Both default `false`; both cascade identically |
 | `askUserQuestions` | Whether lane agents may ask the operator questions mid-task via `cctl ask`. `{ enabled: boolean }`, default disabled; one value covers both the implementer and context-validator roles |
 | `planRepair` | Plan-repair agent on retry-exhaustion halts (docs/design/cc-cli/08). `{ enabled, maxAttemptsPerContext, agent? }`; **default enabled**, 2 attempts per context, repair agent defaults to claude/opus/high |
 | `collaboration` | Whether implementer agents may request a second opinion, plus the collaborator agent and negotiation policy. `enabled` defaults to `false`; when disabled, collaboration instructions and continuation results are omitted from agent prompts and the collaboration command is unavailable |
+| `agentValidation` | Registered-command access for implementers and context validators. Each role selector cascades independently, and the nearest supplied selector replaces only that role |
+| `laneMergeValidation` | Validation policy for the shared fan-in target. `{ strategy, commands }`; resolves global → workflow only, never per context |
 
 **An assignment pairs prompt identity with runtime.** `profile` references the
 agent-profile library (`src/lib/agent-profiles/`, see the adoption matrix row)
@@ -279,6 +291,26 @@ effective value is off-catalog the migration refuses, naming the holder and the
 value, and startup stops until the operator states the runtime explicitly.
 Nothing is ledgered, so the fix-and-restart replays the whole cutover.
 
+### Declarations that do NOT cascade
+
+D4's control-flow declarations are semantic identity, not operational config: no
+global or workflow tier contributes one, and each is Zod-optional with **no
+materialized default** — the pre-D4 floor is the field's absence, not a
+materialized "always" value (R14.1). Authoring rules live in the
+`graph-workflow-planning` skill; the runtime contracts are:
+
+| Declaration | Where | Meaning |
+|---|---|---|
+| `outputSchema` | execution context | The supported-subset JSON Schema the context's final agent output is captured against. Guards, loop predicates, and upstream injection all read the capture |
+| `routing.cardinality` | execution context (the guard SOURCE) | `independent` (absent) \| `atLeastOne` \| `exactlyOne` over that source's outgoing conditional edges; a violation raises the resumable `routing_cardinality` halt |
+| `edges[].when` | edge | `{ schema }` (a subset document the source's capture must match) or `{ else: true }` (at most one per source). Absent = unconditional |
+| `loopGroups` | definition | Authored tier carries `bodyContextIds` / `entryContextId` / `exitContextId` / `until` / `maxPasses`; `resolveLoopGroups` rewrites it at seed into the resolved tier's frozen body `template` + `templateVersion` + seed-resolved `planRepair`, materializing pass 1 in the body's place |
+
+`mutability.allowAgentContextAdd` is the one D4 flag that DOES cascade — it is
+operational authority, not graph shape. It resolves `false` on every
+expansion-generated child regardless of inheritance source, so authority cannot
+propagate down a generated subgraph.
+
 ## Plan repair (retry-exhaustion halts)
 
 After any execution-loop settlement, the plan-repair supervisor
@@ -299,6 +331,45 @@ never reset by resume) with a hard per-execution backstop of 5 rounds. Every
 round conclusion emits a `graph-workflow-plan-repair` event (+ outcome push via
 the `planRepair` trigger).
 
+## Structural mutation and the prepare/finalize staging seam
+
+Every structural mutation of a launched execution — operator live edits,
+plan repair, agent expansion, and engine loop unrolling alike — rides
+`applyLiveExecutionEdits` (`workflow-graph/runtime-edits.ts`) inside
+`executionRepository.mutateActive`, under the loop-generation fence. There is no
+second mutation path and no bare repository write. The core re-runs the Kahn
+acyclicity check, the live-edit frontier, and the criterion must-run coverage
+lock on every accepted batch, and bumps `routeControlRevisions` exactly once —
+so a new writer riding the seam gets all four for free and must never bump or
+re-implement them by hand.
+
+Writers that must validate expensively **outside** the write lock use the staged
+pair instead of holding it: `prepareLiveExecutionEdits` (snapshot + full
+validation, no commit) then `finalizePreparedEdits` (install). Two fences make
+that safe, and both are repository-OWNED and repository-DERIVED — `liveRevision`
+can serve as neither, because it is bumped only by accepted live edits:
+
+- **`executionStateRevision`** — bumped by EVERY `mutateActive` commit, scheduler
+  and runtime writes included. It answers "did anything commit while I was
+  preparing?". Unchanged ⇒ `finalizePreparedEdits` splices the prepared whole
+  state. Changed ⇒ it re-applies the prepared OPS payload-locally onto the
+  CURRENT execution with a cheap envelope recheck, carrying the prepare's
+  validation evidence over; a frontier-relevant conflict reports a conflict and
+  the caller re-prepares outside the lock. A concurrent scheduler write can
+  therefore never be erased by an install.
+- **`structuralRevision`** — bumped only when the graph itself moved. It is what
+  forces a re-prepare (rather than a merge) when the topology a batch validated
+  against no longer exists.
+
+Structural edits stay **pause-only for operators**. The one exception is
+`LiveEditOptions.structuralSource` (`"lane-agent-expansion" | "loop-unrolling"`),
+which is server-derived — the runtime-edits HTTP route builds its options from a
+parsed body with no such field, so `cctl workflow live edit` (`source: "cli"`)
+and the inspector (`source: "ui"`) cannot claim it. It covers exactly the two
+APPEND ops, `add-context` and `add-edge`; `remove-context`, `remove-edge`, and
+`update-edge` stay quiescence-gated for every caller including the two exempt
+paths. Never mint a third exemption: expansion and loop unrolling share this one.
+
 ## Ask-user-questions gate (`awaiting_user_input`)
 
 When `askUserQuestions` resolves enabled for a context, its implementer and
@@ -308,7 +379,7 @@ mirrors the human approval gate:
 
 - **Park** — a turn that ends with a question pending parks the context:
   status `awaiting_user_input`, the batch snapshotted into the context state's
-  `pendingUserInput` record. Parking consumes no iteration and no failure
+  `pendingUserInputs` map. Parking consumes no iteration and no failure
   count; sibling contexts keep scheduling; the completion guard refuses to
   finish the execution while any context is parked. Park detection runs after
   **every** agent turn (including between follow-up turns — a follow-up

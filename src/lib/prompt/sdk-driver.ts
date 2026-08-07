@@ -8,7 +8,10 @@
  */
 
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
-import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import type {
+  BackgroundWaitSummary,
+  WorkflowLaneIdentity,
+} from "@/lib/agent-backends/conversation";
 import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -298,7 +301,7 @@ export interface PromptDeps {
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    workflowContext: { executionId: string; contextId: string },
+    workflowContext: WorkflowLaneIdentity,
   ): void;
 
   setSkipConversationLock?(
@@ -482,7 +485,7 @@ export interface PromptStreamOptions {
    * workflow …` resolves its execution/context from env. Every other caller
    * leaves it unset, so non-lane sessions carry neither var.
    */
-  workflowContext?: { executionId: string; contextId: string };
+  workflowContext?: WorkflowLaneIdentity;
   skipConversationLock?: boolean;
   /**
    * Profile for the conversation this call CREATES (no `conversationId` was

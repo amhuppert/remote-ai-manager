@@ -2,7 +2,18 @@ import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
 import path from "node:path";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
+import {
+  collectLandingProbeTargets,
+  reconcileLandingIntents,
+  recordLandingIntent,
+} from "@/lib/workflow-graph/route-runtime";
+import {
+  createLandingEvidenceProber,
+  type LandingEvidenceProber,
+} from "@/lib/workflow-graph/landing-evidence";
 import { StaleLoopFenceError } from "@/lib/workflow-graph/loop-fence";
+import { releaseLoopPassSlotsForContexts } from "@/lib/workflow-graph/loop-budgets";
 import {
   classifyContextSchedulability,
   contextsPresentInLane,
@@ -404,6 +415,12 @@ export interface GraphWorkflowManagerDeps {
     sessionName: string;
     conversationId: string;
   }): void;
+  /**
+   * Read the replayable landing evidence off a context's branch (D4 decision
+   * D8) so restart reconciliation settles commit-mode intents from what the
+   * committer actually left behind. Defaults to the real git-backed prober.
+   */
+  landingEvidenceProber?: LandingEvidenceProber;
 }
 
 export interface ScheduleEligibleContextsInput {
@@ -490,6 +507,17 @@ function getExecutionId(deps: GraphWorkflowManagerDeps): string {
   return deps.createExecutionId?.() ?? randomUUID();
 }
 
+let defaultLandingEvidenceProber: LandingEvidenceProber | null = null;
+
+/** Built once and only when a restart actually finds an unsettled landing. */
+function resolveLandingEvidenceProber(
+  deps: GraphWorkflowManagerDeps,
+): LandingEvidenceProber {
+  if (deps.landingEvidenceProber) return deps.landingEvidenceProber;
+  defaultLandingEvidenceProber ??= createLandingEvidenceProber();
+  return defaultLandingEvidenceProber;
+}
+
 function requireRunningExecution(
   execution: GraphWorkflowExecution,
 ): GraphWorkflowExecution {
@@ -525,16 +553,55 @@ function findUpstreamCompletedOnLane(
   laneId: string,
   execution: GraphWorkflowExecution,
 ): string | null {
+  // Projection-resolved (decision D1), still walked in definition order: the
+  // parent whose lane a contender may inherit is the EFFECTIVE source of an
+  // ACTIVE incoming edge. A declined branch never committed anything on that
+  // lane, so inheriting from it would continue work that does not exist.
   const contenderSet = new Set(contenders);
-  for (const edge of execution.workingDefinition.edges) {
+  for (const edge of projectExecutionRoutes(execution).edges) {
     if (!contenderSet.has(edge.targetContextId)) continue;
-    const upstream = execution.contextStates[edge.sourceContextId];
+    if (edge.resolution.kind !== "active") continue;
+    if (edge.effectiveSourceId === null) continue;
+    const upstream = execution.contextStates[edge.effectiveSourceId];
     if (!upstream) continue;
     if (upstream.laneId !== laneId) continue;
     if (upstream.status !== "completed") continue;
-    return edge.sourceContextId;
+    return edge.effectiveSourceId;
   }
   return null;
+}
+
+/**
+ * Record how a just-dispatched context is going to land (D4 decision D8).
+ *
+ * The mode is read off the placement the dispatch just made, which is the only
+ * point where all three shapes are distinguishable: a lane-bound context
+ * commits on its lane, a session-bound one commits solo, and a legacy
+ * laneId-null worktree context publishes through the fan-in squash merge.
+ *
+ * `baselineSha` stays null here: the lane head is resolved out of the write
+ * queue, so the runner persists it as soon as it captures it — still before the
+ * context's first turn (see `runContextTask`).
+ */
+function recordDispatchLandingIntent(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+  now: string,
+): void {
+  const state = execution.contextStates[contextId];
+  if (!state) return;
+  const mode =
+    state.laneId !== null
+      ? "lane_commit"
+      : state.isolation === "session"
+        ? "solo_commit"
+        : "fan_in_merge";
+  recordLandingIntent(execution, contextId, {
+    mode,
+    laneId: state.laneId,
+    worktreePath: state.worktreePath,
+    now,
+  });
 }
 
 function markActiveContextReady(execution: GraphWorkflowExecution): void {
@@ -1534,7 +1601,17 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       return execution;
     }
 
+    // Probed BEFORE the mutation: reading a branch is I/O and the write queue
+    // is not the place for it. Only unlanded commit-mode intents are worth a
+    // probe, so an execution that never crashed mid-landing costs nothing.
+    const probeTargets = collectLandingProbeTargets(execution);
+    const branchEvidence =
+      probeTargets.length > 0
+        ? await resolveLandingEvidenceProber(deps).probe(probeTargets)
+        : undefined;
+
     const normalizedJoinIds: string[] = [];
+    const reconciledIntentContextIds: string[] = [];
     const normalizedExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
@@ -1549,6 +1626,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             ...resetRunningJoinsToPending(execution, timestamp),
           );
         };
+
+        // A crash between a landing and its intent's settlement leaves the
+        // intent `pending` over work that is already committed — or over a
+        // fan-in merge that failed. Both are decided here from state that
+        // outlived the process (decision D8): the join's own record, and the
+        // branch evidence probed above. The resumed loop classifies from that
+        // durable evidence instead of re-deriving it.
+        reconciledIntentContextIds.push(
+          ...reconcileLandingIntents(current, {
+            now: timestamp,
+            branchEvidence,
+          }),
+        );
 
         if (current.pendingHaltReason !== null) {
           const haltReason = current.pendingHaltReason;
@@ -1583,6 +1673,17 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         return nextExecution;
       },
     );
+
+    if (reconciledIntentContextIds.length > 0) {
+      logger.info("graph-workflow.restart.landing_intents_reconciled", {
+        executionId: normalizedExecution.id,
+        contextIds: reconciledIntentContextIds,
+      });
+      getExecutionLogger(normalizedExecution.id)?.lifecycle(
+        "restart.landing_intents_reconciled",
+        { contextIds: reconciledIntentContextIds },
+      );
+    }
 
     if (normalizedJoinIds.length > 0) {
       const execLogger = getExecutionLogger(normalizedExecution.id);
@@ -1651,6 +1752,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           transitionContextStatus(running, nextContextId, "running", {
             reason: "manager.schedule_next_context.activate",
           });
+          recordDispatchLandingIntent(running, nextContextId, getNow(deps));
           const clearedLanes = Object.keys(running.laneStates);
           running.laneStates = {};
 
@@ -1964,6 +2066,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           contextState.branchName = null;
           contextState.batchId = null;
           contextState.laneId = null;
+          recordDispatchLandingIntent(running, soloContextId, getNow(deps));
 
           const activeIdSet = new Set(running.activeContextIds);
           activeIdSet.add(soloContextId);
@@ -2064,11 +2167,29 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             sessionName,
             (execution) => {
               const running = requireRunningExecution(execution);
+              const releasedContextIds: string[] = [];
               for (const entry of schedulableEntries) {
                 const contextState = running.contextStates[entry.contextId];
                 if (contextState?.reservedByBatchId === batchId) {
                   contextState.reservedByBatchId = null;
+                  releasedContextIds.push(entry.contextId);
                 }
+              }
+              // A batch that never formed also gives back the shared pass slots
+              // of any loop pass it was going to start (decision D7): the
+              // reservation is durable, so keeping it would charge the
+              // execution's 25-pass backstop for a pass no lane exists for. The
+              // retry re-reserves through the same definition-ordered admission
+              // walk, and a released slot is reusable meanwhile.
+              const releasedSlots = releaseLoopPassSlotsForContexts(
+                running,
+                releasedContextIds,
+              );
+              if (releasedSlots.length > 0) {
+                logger.info("graph-workflow.loop.pass_slot_released", {
+                  executionId: running.id,
+                  slots: releasedSlots,
+                });
               }
               return running;
             },
@@ -2362,6 +2483,18 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             contextState.branchName = null;
             contextState.isolation = "session";
             contextState.batchId = null;
+          }
+
+          // Landing intents ride the SAME mutation that assigns the lanes
+          // (decision D8): the placement above is what decides how each context
+          // will land, so recording the intent anywhere later would leave a
+          // window where the only record of it lives in the runner's memory.
+          for (const entry of schedulableEntries) {
+            recordDispatchLandingIntent(
+              running,
+              entry.contextId,
+              provisionTimestamp,
+            );
           }
 
           const activeIdSet = new Set(running.activeContextIds);

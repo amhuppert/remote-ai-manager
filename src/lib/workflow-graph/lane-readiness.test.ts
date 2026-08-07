@@ -658,6 +658,8 @@ describe("classifyContextSchedulability", () => {
           mergeStatus: "merged-success",
         },
         "context-busy": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-busy",
@@ -1134,6 +1136,8 @@ describe("classifyContextSchedulability", () => {
           mergeStatus: "merged-success",
         },
         "context-busy": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-busy",

@@ -2,6 +2,15 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
 } from "@/lib/workflow-graph/schemas";
+import {
+  projectExecutionRoutes,
+  routeUpstreamContextIds,
+} from "@/lib/workflow-graph/execution-routes";
+import {
+  incomingRoutes,
+  type RouteProjection,
+  type RoutePublishSettlement,
+} from "@/lib/workflow-graph/route-projection";
 import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
@@ -91,6 +100,139 @@ export function isUpstreamVisibleToDownstream(
   if (upstream.laneId === downstream.laneId) return true;
 
   return upstreamReachable.has(downstream.laneId);
+}
+
+/**
+ * Has this context's work actually landed where its dependents will read it?
+ *
+ * The composition R2.5 requires, and the reason guard truth is never enough to
+ * schedule: the projection says a route is taken; this says the source's work
+ * is committed and lane-visible. A source whose fan-in merge is pending or
+ * failed answers `false`, which BLOCKS its dependents — it never skips them,
+ * because an unresolved merge is not evidence that a branch was not taken.
+ *
+ * Once a context has recorded a landing intent, that intent IS the landing
+ * record (decision D8) and only a reconciled `landed` satisfies routing.
+ * Neither `pending` nor `failed` does: lifecycle bookkeeping such as a lane's
+ * `includedContextIds` or a `merged-success` status records that the commit
+ * phase was ENTERED, not that it produced a landing, so deferring to it would
+ * route on state no replay can confirm. `reconcileLandingIntents` promotes an
+ * intent from the mode-specific evidence — the join's own record, or the branch
+ * facts a probe reads back — and route settlement reconciles before it decides,
+ * so every skip and settlement marker rides a landed intent.
+ *
+ * A context dispatched before intents existed has none; {@link
+ * isContextOutputCommittedToLane} is the only evidence those runs ever had and
+ * stays authoritative for them.
+ *
+ * A `skipped` source is landed by definition: it holds no lane and owes no
+ * commit, so there is nothing for a dependent to wait on (R4).
+ */
+export function isRouteSourceLanded(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): boolean {
+  const state = execution.contextStates[contextId];
+  if (!state) return false;
+  if (state.status === "skipped") return true;
+  const intent = state.landingIntent;
+  if (intent) return intent.state === "landed";
+  return isContextOutputCommittedToLane(state, execution);
+}
+
+/**
+ * The projection's skip verdicts that have actually SETTLED under the land gate
+ * (R2.5) — the one predicate both the settlement pass and publish quiescence
+ * read, so what the engine applies and what the publish exempts cannot drift.
+ *
+ * A projection skip is a ROUTING decision made over captured outputs alone; the
+ * projection deliberately carries no lane or merge state. A skip becomes real
+ * only once every incoming edge's effective source has landed, because a source
+ * whose fan-in merge is pending or failed BLOCKS its dependents rather than
+ * activating or skipping them — the merge may yet succeed and take the branch.
+ *
+ * Transitive by construction: a recursive fan-in skip settles on the settled
+ * skips upstream of it, so a chain of declined branches is exempt only as far
+ * back as the landing evidence reaches. The fixpoint terminates because every
+ * round either adds a candidate or stops.
+ */
+export function collectLandGatedSkips(
+  execution: GraphWorkflowExecution,
+  projection: RouteProjection,
+): Set<string> {
+  const settled = new Set<string>();
+  const candidates = projection.publish.skippedContextIds;
+  if (candidates.length === 0) return settled;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const contextId of candidates) {
+      if (settled.has(contextId)) continue;
+      const landed = incomingRoutes(projection, contextId).every((edge) => {
+        const sourceId = edge.effectiveSourceId ?? edge.logicalSourceId;
+        return (
+          settled.has(sourceId) || isRouteSourceLanded(execution, sourceId)
+        );
+      });
+      if (!landed) continue;
+      settled.add(contextId);
+      changed = true;
+    }
+  }
+  return settled;
+}
+
+/**
+ * The publish settlement completion and final publish read: the projection's,
+ * with every not-yet-land-gated skip demoted back to outstanding.
+ *
+ * The projection decides what is outstanding — including the logical exit of a
+ * loop that has neither concluded nor been declined. This adds the one thing the
+ * projection deliberately cannot see: lane and merge state. Exempting a declined
+ * context before its source lands would let the run converge — complete, or
+ * publish — around a branch whose fate is still open (R2.5). R4.1's exemptions
+ * apply to a skip that has settled, which includes the window before the
+ * settlement pass persists the status but not the window before the evidence
+ * exists.
+ *
+ * Returns the projection's own settlement unchanged when nothing is skipped,
+ * which is every unconditional graph (the dormant-by-default floor, R14.1).
+ */
+export function landGatedPublishSettlement(
+  execution: GraphWorkflowExecution,
+  projection: RouteProjection = projectExecutionRoutes(execution),
+): RoutePublishSettlement {
+  const publish = projection.publish;
+  if (publish.skippedContextIds.length === 0) return publish;
+
+  const settledSkips = collectLandGatedSkips(execution, projection);
+  if (settledSkips.size === publish.skippedContextIds.length) return publish;
+
+  const definitionOrder = new Map(
+    execution.workingDefinition.executionContexts.map((context, index) => [
+      context.id,
+      index,
+    ]),
+  );
+  // A logical loop exit has no position in the definition order, so it sorts
+  // last rather than to the front — it is not an execution context at all.
+  const position = (contextId: string): number =>
+    definitionOrder.get(contextId) ?? Number.MAX_SAFE_INTEGER;
+  const outstandingContextIds = [
+    ...publish.outstandingContextIds,
+    ...publish.skippedContextIds.filter((id) => !settledSkips.has(id)),
+  ].sort((a, b) => position(a) - position(b));
+
+  return {
+    settled: false,
+    outstandingContextIds,
+    contributingContextIds: publish.contributingContextIds,
+    skippedContextIds: publish.skippedContextIds.filter((id) =>
+      settledSkips.has(id),
+    ),
+    outstandingLoopExitContextIds: publish.outstandingLoopExitContextIds,
+  };
 }
 
 export function reachableLanesFrom(
@@ -224,9 +366,12 @@ export function classifyContextSchedulability(
   const downstream = execution.contextStates[contextId];
   const downstreamPlaced = downstream?.laneId ?? null;
 
-  const upstreamIds = definition.edges
-    .filter((edge) => edge.targetContextId === contextId)
-    .map((edge) => edge.sourceContextId);
+  // Projection-resolved rather than raw edges (decision D1): the lanes this
+  // context must see are the lanes of the ACTIVE incoming edges' EFFECTIVE
+  // sources. A skipped branch holds no lane and contributes no merge input, so
+  // waiting on it would strand the downstream on a join that can never be
+  // planned.
+  const upstreamIds = routeUpstreamContextIds(execution, contextId, definition);
 
   // Phase 1: every upstream must have committed output somewhere. If the
   // downstream has already been pinned to a lane, the upstream must also be
@@ -234,8 +379,7 @@ export function classifyContextSchedulability(
   // placement that makes the upstream visible.
   const unmetUpstreamIds: string[] = [];
   for (const upstreamId of upstreamIds) {
-    const upstream = execution.contextStates[upstreamId];
-    if (!upstream || !isContextOutputCommittedToLane(upstream, execution)) {
+    if (!isRouteSourceLanded(execution, upstreamId)) {
       unmetUpstreamIds.push(upstreamId);
       continue;
     }

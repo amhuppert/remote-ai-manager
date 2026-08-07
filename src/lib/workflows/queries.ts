@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiFetch } from "@/lib/api/fetcher";
 import {
@@ -12,7 +12,12 @@ import {
   workflowDefinitionsResponseSchema,
   workflowDefinitionGetResponseSchema,
 } from "@/lib/workflow-definitions/schemas";
-import { graphWorkflowExecutionEventsResponseSchema } from "@/lib/workflow-graph/event-schemas";
+import {
+  graphWorkflowExecutionEventPageResponseSchema,
+  graphWorkflowExecutionEventsResponseSchema,
+  type GraphWorkflowExecutionEventPageResponse,
+  type GraphWorkflowExecutionEventPageRow,
+} from "@/lib/workflow-graph/event-schemas";
 import {
   graphWorkflowExecutionFullResponseSchema,
   graphWorkflowExecutionHistoryItemSchema,
@@ -127,6 +132,60 @@ export function useGraphWorkflowEventsQuery(
       ).then((r) => r.events),
     enabled: executionId != null,
   });
+}
+
+/** Rows per ledger page — one request covers most executions outright. */
+const GRAPH_WORKFLOW_EVENT_PAGE_SIZE = 200;
+
+/**
+ * COMPLETE event history for an execution, read newest-first through the shared
+ * cursor-paginated reader (D4 decision D9).
+ *
+ * The tail query above answers "what happened lately" and is structurally
+ * incapable of serving history — it returns a bounded window with no cursor. The
+ * loop ledger needs every decision a pass was ever given, including the ones an
+ * amended control revision superseded, so it walks pages instead. Newest-first
+ * because a reader wants the current state of the loop before its origins.
+ */
+export function useGraphWorkflowEventPagesQuery(
+  projectName: string,
+  sessionName: string,
+  executionId: string | null,
+  options: { enabled?: boolean } = {},
+) {
+  return useInfiniteQuery({
+    queryKey: graphWorkflowEventsKeys.pages(
+      projectName,
+      sessionName,
+      executionId ?? "",
+    ),
+    initialPageParam: null as number | null,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({
+        executionId: executionId ?? "",
+        page: "true",
+        direction: "desc",
+        limit: String(GRAPH_WORKFLOW_EVENT_PAGE_SIZE),
+      });
+      if (pageParam !== null) params.set("cursor", String(pageParam));
+      return apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/events?${params.toString()}`,
+        graphWorkflowExecutionEventPageResponseSchema,
+      );
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: executionId != null && options.enabled !== false,
+  });
+}
+
+/**
+ * The loaded window in LOG order (oldest first) — the order every derivation
+ * over the event stream expects, whichever direction the pages were fetched in.
+ */
+export function orderGraphWorkflowEventPages(
+  pages: readonly GraphWorkflowExecutionEventPageResponse[] | undefined,
+): GraphWorkflowExecutionEventPageRow[] {
+  return (pages ?? []).flatMap((page) => page.events).reverse();
 }
 
 /**

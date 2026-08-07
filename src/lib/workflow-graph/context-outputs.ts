@@ -2,10 +2,14 @@
  * Read side of per-context structured outputs (D2, decision D6).
  *
  * One accessor answers "what did this context produce" and one resolver answers
- * "what does this context receive". Prompt injection, the builder/inspector UI,
- * and — later — D4 conditional edges all read through here rather than reaching
- * into `execution.contextOutputs` and `workingDefinition.edges` themselves, so
- * "an output exists" has exactly one definition.
+ * "what does this context receive". Prompt injection and the builder/inspector
+ * UI read through here rather than reaching into `execution.contextOutputs` and
+ * `workingDefinition.edges` themselves, so "an output exists" has exactly one
+ * definition.
+ *
+ * The four-state read itself lives in the import-free `output-lookup.ts`, which
+ * D4's route projection also evaluates edge guards through; this module is its
+ * execution-bound layer.
  *
  * Pure and dependency-free: every input is already on the execution.
  */
@@ -13,44 +17,41 @@
 import type {
   GraphWorkflowContextOutput,
   GraphWorkflowExecution,
+  GraphWorkflowOutputSchemaField,
+  GraphWorkflowUpstreamInput,
 } from "@/lib/workflow-graph/schemas";
-import type { GraphWorkflowResolvedContext } from "@/lib/workflow-graph/definition-schemas";
+import {
+  lookupRawContextOutput,
+  type RawContextOutputLookup,
+} from "@/lib/workflow-graph/output-lookup";
+import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
+import {
+  findLoopBodyMembership,
+  loopInstanceId,
+} from "@/lib/workflow-graph/loop-resolver";
+import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
 
 /**
- * Four states, not two. A context that never declared an `outputSchema` has no
- * output *by design*, which is categorically different from one that owes an
- * output and has not produced it yet; collapsing those would make a downstream
- * reader treat a free-form upstream as a run still in flight.
+ * The four raw states plus the one that only an execution can report: a
+ * `skipped` context (D4 R4). It is layered here rather than in the raw read
+ * because skipping is LIFECYCLE, not evidence — guards still ask the raw read
+ * "was a payload captured", and a skipped source must not answer that question
+ * with a lifecycle state.
  *
- * `orphaned` is the fourth: a payload is banked but the current definition
- * declares no contract for it, because a live edit cleared the schema after the
- * capture. It is deliberately NOT `captured` — the payload satisfies nothing the
- * definition now says, so a "Captured" chip, a filled node glyph, or an injected
- * upstream input would each be a claim about a contract that no longer exists.
- * It is deliberately not `none` either: the payload is still readable evidence
- * (the CLI outline reports it), and dropping it would lose an operator's record
- * of what the context produced.
+ * `skipped` outranks the raw verdict: a skipped context that declared a
+ * contract owes nothing, so reporting `pending` would claim an output debt the
+ * engine's completion invariant no longer holds it to.
  */
 export type GraphWorkflowContextOutputLookup =
-  | {
-      kind: "captured";
-      /** The validated payload — the common case a reader wants. */
-      value: Record<string, unknown>;
-      /** The full record, for capture provenance (when, which iteration, how). */
-      output: GraphWorkflowContextOutput;
-    }
-  | { kind: "pending"; outputSchema: Record<string, unknown> }
-  | { kind: "orphaned"; output: GraphWorkflowContextOutput }
-  | { kind: "none" };
+  | RawContextOutputLookup<GraphWorkflowContextOutput>
+  | { kind: "skipped" };
 
-/** One top-level property of a declared `outputSchema`. */
-export interface GraphWorkflowOutputSchemaField {
-  name: string;
-  /** The declared `type`, or null when the declaration omits one. */
-  type: string | null;
-  required: boolean;
-  description: string | null;
-}
+/**
+ * One top-level property of a declared `outputSchema`. Re-exported from the
+ * persistence schemas because a loop's boundary-input snapshot is durable, and
+ * a hand-written twin of a persisted shape is a drift waiting to happen.
+ */
+export type { GraphWorkflowOutputSchemaField } from "@/lib/workflow-graph/schemas";
 
 /**
  * The SHAPE of a declared `outputSchema` — enough to say a contract exists and
@@ -82,34 +83,12 @@ export interface GraphWorkflowUpstreamGraph {
   edges: ReadonlyArray<{ sourceContextId: string; targetContextId: string }>;
 }
 
-/** One direct predecessor as seen by the context that depends on it. */
-export interface GraphWorkflowUpstreamInput {
-  contextId: string;
-  title: string;
-  /**
-   * Whether the predecessor declares an `outputSchema` at all.
-   *
-   * Carried separately from `schemaFields` because a valid declaration need not
-   * have a field list: a bare `{"type": "object"}` and a root `oneOf` both
-   * constrain the payload while naming no top-level properties. Reading
-   * "declared" off `schemaFields !== null` would report those contexts as
-   * free-form, which is the opposite of what they are.
-   */
-  declared: boolean;
-  /** The declared top-level fields; null when the declaration names none. */
-  schemaFields: GraphWorkflowOutputSchemaField[] | null;
-  /** null when nothing is banked — free-form, or declared but not yet produced. */
-  output: Record<string, unknown> | null;
-}
-
-function findContext(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-): GraphWorkflowResolvedContext | undefined {
-  return execution.workingDefinition.executionContexts.find(
-    (context) => context.id === contextId,
-  );
-}
+/**
+ * One direct predecessor as seen by the context that depends on it. Owned by
+ * the persistence schemas: a loop pins these rows as a durable activation-time
+ * snapshot, so the row shape is a persisted contract (R9).
+ */
+export type { GraphWorkflowUpstreamInput } from "@/lib/workflow-graph/schemas";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -207,31 +186,23 @@ export function summarizeOutputSchemaShape(
 }
 
 /**
- * What `contextId` produced. An unknown context id reports `none` rather than
- * throwing: callers ask about ids drawn from live-edited definitions and edge
- * lists, and a removed context is legitimately "no output", not a programming
- * error.
- *
- * The CURRENT declaration decides: a banked payload with no declaration behind
- * it is `orphaned`, never `captured`. A live edit can clear or replace a
- * context's `outputSchema` after a payload was banked (`runtime-edits.ts`
- * reconciles the row at that choke point), and this accessor is the one
- * definition of "an output exists", so the distinction is made here rather than
- * in each reader.
+ * {@link lookupRawContextOutput} against a running execution's working
+ * definition, with the execution-only `skipped` state layered on top.
  */
 export function getContextOutput(
   execution: GraphWorkflowExecution,
   contextId: string,
 ): GraphWorkflowContextOutputLookup {
-  const outputSchema = findContext(execution, contextId)?.outputSchema;
-  const output = execution.contextOutputs[contextId];
-  if (outputSchema === undefined) {
-    return output ? { kind: "orphaned", output } : { kind: "none" };
+  if (execution.contextStates[contextId]?.status === "skipped") {
+    return { kind: "skipped" };
   }
-  if (output) {
-    return { kind: "captured", value: output.value, output };
-  }
-  return { kind: "pending", outputSchema };
+  return lookupRawContextOutput(
+    {
+      executionContexts: execution.workingDefinition.executionContexts,
+      contextOutputs: execution.contextOutputs,
+    },
+    contextId,
+  );
 }
 
 /**
@@ -283,6 +254,7 @@ export function resolveDefinitionUpstreamInputs(
         ? describeOutputSchemaFields(context.outputSchema)
         : null,
       output: null,
+      skipped: false,
     }));
 }
 
@@ -298,11 +270,74 @@ export function resolveUpstreamInputs(
   execution: GraphWorkflowExecution,
   contextId: string,
 ): GraphWorkflowUpstreamInput[] {
-  return resolveDefinitionUpstreamInputs(
-    execution.workingDefinition,
+  // Rows follow the EFFECTIVE source (decision D1). A loop's external edge is
+  // satisfied by the CONCLUDING pass's exit instance, and the declared exit is
+  // not in `executionContexts` at all once the body has been unrolled — so a
+  // walk over the raw authored source would drop the row entirely rather than
+  // merely read the wrong payload. Order still comes from the context list, so
+  // the sequence a reader sees is the graph order either way.
+  const projection = projectExecutionRoutes(execution);
+  const sourceIds = new Set<string>();
+  for (const edge of incomingRoutes(projection, contextId)) {
+    sourceIds.add(edge.effectiveSourceId ?? edge.logicalSourceId);
+  }
+
+  const rows = resolveDefinitionUpstreamInputs(
+    {
+      executionContexts: execution.workingDefinition.executionContexts,
+      // A synthetic edge per resolved source: the walk's job here is row
+      // identity and order, and the projection has already decided which
+      // instance each edge reads.
+      edges: Array.from(sourceIds, (sourceContextId) => ({
+        sourceContextId,
+        targetContextId: contextId,
+      })),
+    },
     contextId,
   ).map((row) => {
     const lookup = getContextOutput(execution, row.contextId);
-    return lookup.kind === "captured" ? { ...row, output: lookup.value } : row;
+    if (lookup.kind === "captured") {
+      return { ...row, output: lookup.value };
+    }
+    return lookup.kind === "skipped" ? { ...row, skipped: true } : row;
   });
+
+  return [...loopBoundaryInputs(execution, contextId), ...rows];
+}
+
+/**
+ * The loop-boundary snapshot a pass entry receives on top of its ordinary
+ * upstream inputs (R9).
+ *
+ * The incoming boundary edge is retargeted onto pass 1's entry at seed time and
+ * NEVER cloned — it is the loop's activation, consumed once — so from pass 2 on
+ * the entry's only edge is the prior-exit wiring edge. The activation-time
+ * snapshot is what carries the loop's external inputs forward, pinned so every
+ * pass reads the same boundary payloads even if the outside world moved on.
+ *
+ * Pass 1 is deliberately excluded: its boundary edge is still in the graph, so
+ * the ordinary walk already produced these rows and prepending them would
+ * duplicate every one.
+ */
+function loopBoundaryInputs(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): GraphWorkflowUpstreamInput[] {
+  const groups = execution.workingDefinition.loopGroups ?? [];
+  for (const group of groups) {
+    if (!("template" in group)) continue;
+    const state = execution.loopStates[group.id];
+    if (!state?.boundaryInputs) continue;
+    const membership = findLoopBodyMembership(contextId, [group]);
+    if (membership === null || membership.pass === null) continue;
+    if (membership.pass < 2) continue;
+    if (
+      contextId !==
+      loopInstanceId(group.id, membership.pass, group.entryContextId)
+    ) {
+      continue;
+    }
+    return state.boundaryInputs.map((row) => ({ ...row }));
+  }
+  return [];
 }

@@ -11,6 +11,7 @@ import {
 } from "@/lib/workflow-graph/definition-schemas";
 import { PersistenceError } from "../shared/errors";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { decodeGraphWorkflowExecution } from "./graph-workflow-execution-codec";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.graph-workflow-archived-executions");
@@ -138,10 +139,11 @@ type DecodeResult =
 
 /**
  * The one archived-blob read rule, shared by the point lookup and the list:
- * parse with the current schema, and only if that fails try the read-only
- * legacy decode floor. Never writes back — a finished run's record is what it
- * was. Returning a result instead of throwing is what lets the list skip a
- * broken row while the point lookup still fails loudly.
+ * apply the read-only archived assignment floor, then pass the result through
+ * the same legacy and edge-id inflate boundary as an active execution. Never
+ * writes back — a finished run's record is what it was. Returning a result
+ * instead of throwing lets the list skip a broken row while the point lookup
+ * still fails loudly.
  */
 function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
   let parsed: unknown;
@@ -160,20 +162,28 @@ function decodeArchivedBlob(executionId: string, raw: string): DecodeResult {
     };
   }
 
-  const result = graphWorkflowExecutionSchema.safeParse(parsed);
-  if (result.success) return { ok: true, value: result.data };
-
-  const decoded = graphWorkflowExecutionSchema.safeParse(
-    upgradeLegacyArchivedExecutionBlob(parsed),
-  );
-  if (decoded.success) {
+  const upgraded = upgradeLegacyArchivedExecutionBlob(parsed);
+  const decoded = decodeGraphWorkflowExecution(upgraded);
+  if (!decoded.ok) return { ok: false, issues: decoded.issues };
+  if (decoded.value === null) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "null_execution",
+          path: ["execution_json"],
+          message: "archived execution decoded to null",
+        },
+      ],
+    };
+  }
+  if (upgraded !== parsed) {
     logger.info(
       "state-store.graph-workflow-archived-executions.legacy_decode",
       { executionId },
     );
-    return { ok: true, value: decoded.data };
   }
-  return { ok: false, issues: result.error.issues };
+  return { ok: true, value: decoded.value };
 }
 
 function timed<T>(

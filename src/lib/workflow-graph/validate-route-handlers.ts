@@ -187,8 +187,18 @@ export function createGraphWorkflowValidateHandlers(
       );
     }
 
-    log.info("graph-workflow-validate.ok", { projectName, sessionName });
-    return NextResponse.json({ ok: true });
+    log.info("graph-workflow-validate.ok", {
+      projectName,
+      sessionName,
+      warningCount: validation.warnings.length,
+    });
+    // Warnings never change the verdict — the plan is valid — but the author
+    // gets to see them before creating it (R3.2 enum coverage).
+    return NextResponse.json(
+      validation.warnings.length === 0
+        ? { ok: true }
+        : { ok: true, warnings: validation.warnings },
+    );
   }
 
   return { POST: post };

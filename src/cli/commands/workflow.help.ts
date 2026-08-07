@@ -1,3 +1,4 @@
+import { EXPANSION_CAPS } from "@/lib/workflow-graph/expansion-caps";
 import type { CommandHelpEntry } from "../help-types";
 
 /**
@@ -24,6 +25,12 @@ const GRAPH_PLANNING_SKILL = {
 const LANE_NOTE =
   "Lane verb: works only inside a graph-workflow lane conversation, where CC injects CC_WORKFLOW_EXECUTION_ID / CC_WORKFLOW_CONTEXT_ID — you never pass them. Run it outside a lane and it exits 2 naming the missing variable. Every lane verb runs the execution's halt check first: a halted/blocked run exits 1 printing the halt reason — stop and end your turn.";
 
+/**
+ * The expansion ceilings, rendered from the same constant the server enforces so
+ * the help text cannot drift from the refusal an agent will actually hit.
+ */
+const EXPANSION_CAPS_NOTE = `Bounded: per request ${EXPANSION_CAPS.contextsPerRequest} contexts, ${EXPANSION_CAPS.tasksPerRequest} tasks, ${EXPANSION_CAPS.edgesPerRequest} edges, and ${EXPANSION_CAPS.canonicalPayloadBytes / 1024} KB of canonical JSON; cumulatively ${EXPANSION_CAPS.contextsPerAddingContext} generated contexts per adding context and ${EXPANSION_CAPS.contextsPerExecution} per execution. The cumulative budgets are counted from permanent acceptance receipts, so removing a generated context never returns budget.`;
+
 export const workflowHelpEntries: CommandHelpEntry[] = [
   {
     path: ["workflow"],
@@ -47,7 +54,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "check a plan.json without saving anything",
     description:
-      "Check a plan.json against the EXACT create-path rules (the create Zod parse plus graph structural checks: dependency cycles, unknown context refs, prerequisite sanity) plus the agent-profile assignment references it names, without saving. On issues it exits 2 and prints one issue per line with its JSON path (e.g. definition.tasks.2.contextId: …) — fix the file and re-run. Assignment issues read identically whichever check produced them (a malformed id and a dangling profile reference are found by different layers): the path locates the offending field, e.g. definition.executionContexts.2.contextValidator.assignments.1.profile, and the message names the qualified tier:id and the exact use site (context, role, assignment id). Validation is ADVISORY — a profile can be deleted between the check and the save — so `create`, `replace`, and `edit` re-check at accept time and refuse with those same located lines (`edit` exits 1, since the batch was well-formed and the server refused it). Session-scoped. Validate under the scope the plan is destined for: --tier global applies the global-document rule, which refuses project-tier profile references.",
+      "Check a plan.json against the EXACT create-path rules (the create Zod parse plus graph structural checks: dependency cycles, unknown context refs, prerequisite sanity, edge-guard and loop-group validation) plus the agent-profile assignment references it names, without saving. On issues it exits 2 and prints one issue per line with its JSON path (e.g. definition.tasks.2.contextId: …) — fix the file and re-run. A valid plan may still print `warning: <path>: <message>` lines above the create hint and exit 0 — an unrouted enum value in a guard set is legal but usually unintended; answer it with another branch or an `else` edge. Assignment issues read identically whichever check produced them (a malformed id and a dangling profile reference are found by different layers): the path locates the offending field, e.g. definition.executionContexts.2.contextValidator.assignments.1.profile, and the message names the qualified tier:id and the exact use site (context, role, assignment id). Validation is ADVISORY — a profile can be deleted between the check and the save — so `create`, `replace`, and `edit` re-check at accept time and refuse with those same located lines (`edit` exits 1, since the batch was well-formed and the server refused it). Session-scoped. Validate under the scope the plan is destined for: --tier global applies the global-document rule, which refuses project-tier profile references.",
     usage: [
       "cctl workflow validate --file .cc/temp/plan.json [--tier global|project] [--json]",
     ],
@@ -275,7 +282,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     dynamicContext: true,
     summary: "apply targeted, atomic edits to a saved definition",
     description:
-      'Apply an ordered batch of domain operations to a saved definition, addressed by STABLE IDS (never array indices) — cost proportional to the change, not the whole plan. --file is a JSON object { baseRevision, operations[] }; baseRevision is the revision `cctl workflow get` shows (a stale value exits 1 revision_conflict — re-read and retry). Operations apply SEQUENTIALLY (later ops see earlier ones — add a context, then its tasks, then its edges in one batch) and ATOMICALLY (any per-op or post-batch validation error rejects the whole batch; nothing persists). Ops (verbs mirror the runtime task-edit vocabulary): update-workflow, update-charter, update-workflow-config, add/update/remove-context, add/update/remove/move-task, reorder-tasks, add/remove-edge, add/update/remove-parameter, add/remove-prerequisite. Task order is never written by hand — place with position {"at":"start|end"} | {"after":"<id>"} | {"before":"<id>"}. A config/override field set to null CLEARS it (restores cascade inheritance). Malformed ops exit 2; a rejected batch exits 1 with locator-first issues (operations[i]: <code> — <detail>).',
+      'Apply an ordered batch of domain operations to a saved definition, addressed by STABLE IDS (never array indices) — cost proportional to the change, not the whole plan. --file is a JSON object { baseRevision, operations[] }; baseRevision is the revision `cctl workflow get` shows (a stale value exits 1 revision_conflict — re-read and retry). Operations apply SEQUENTIALLY (later ops see earlier ones — add a context, then its tasks, then its edges in one batch) and ATOMICALLY (any per-op or post-batch validation error rejects the whole batch; nothing persists). Ops (verbs mirror the runtime task-edit vocabulary): update-workflow, update-charter, update-workflow-config, add/update/remove-context, add/update/remove/move-task, reorder-tasks, add/update/remove-edge, add/update/remove-parameter, add/remove-prerequisite. An edge may carry an activation guard: `when: { "schema": { … } }` (a supported-subset JSON Schema the source context\'s captured output must match) or `when: { "else": true }` (taken when no conditional sibling from that source activated) — the source must declare an outputSchema, the guard must be compatible with it, and one source admits at most one else edge. update-edge is addressed by edgeId (when: null clears the guard); remove-edge takes edgeId, or an endpoint pair when it matches exactly one edge. Task order is never written by hand — place with position {"at":"start|end"} | {"after":"<id>"} | {"before":"<id>"}. A config/override field set to null CLEARS it (restores cascade inheritance). Malformed ops exit 2; a rejected batch exits 1 with locator-first issues (operations[i]: <code> — <detail>).',
     usage: [
       "cctl workflow edit <id> --file .cc/temp/ops.json [--dry-run] [--tier global|project] [--json]",
     ],
@@ -459,7 +466,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     summary: "act on this session's ACTIVE launched execution",
     description:
       "Read and edit the session's running (or paused/resumably-halted) graph-workflow execution in place — per-context config, task, and safe structural edits — plus pause/resume. Aliases: `workflow execution …` and `workflow exec …` are rewritten to `live`. This edits the LIVE execution's working copy; `workflow edit` edits a SAVED definition and does not touch a running run. The canonical loop is get → pause → edit → resume.",
-    usage: ["cctl workflow live <get|edit|pause|resume>"],
+    usage: ["cctl workflow live <get|ledger|edit|pause|resume>"],
     flags: [],
     examples: [
       {
@@ -559,11 +566,65 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     skills: [GRAPH_PLANNING_SKILL],
   },
   {
+    path: ["workflow", "live", "ledger"],
+    dynamicContext: true,
+    summary: "print the active execution's loop ledger",
+    description:
+      "Print the loop ledger of the ACTIVE execution: one block per declared loop group with its activation (unstarted/running/concluded/skipped), the passes it has materialized against its cap, and its current loop-control revision — then every decision each pass was given, oldest first. Current state comes from the execution's loop markers; the decision HISTORY is walked from the append-only event log through the cursor-paginated reader, so a pass re-decided under an amended control revision shows BOTH records, the older one marked `superseded`. A decision the walk did not reach is marked `from current state` (it came from the markers). Each PAGE of the reader is bounded, the walk is not: by default it reads to the end of the log, so the history is always complete. --max-pages bounds one invocation and the output then prints the exact --cursor to continue from; --cursor starts a walk after that event sequence number. Any walk that stops short says so. An execution with no loop groups says so and reads no events. No active execution exits 2.",
+    usage: [
+      "cctl workflow live ledger [--cursor <seq>] [--max-pages <n>] [--json]",
+    ],
+    flags: [
+      {
+        name: "cursor",
+        kind: "value",
+        valuePlaceholder: "<seq>",
+        description:
+          "start the event walk AFTER this sequence number (the resume cursor a bounded walk prints)",
+      },
+      {
+        name: "max-pages",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description:
+          "read at most n pages of 500 events, then print the cursor to resume from (default: read to the end)",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow live ledger",
+        explanation:
+          "why is this loop still running (or why did it stop) — the verdict and outcome of every pass, with the control revision each was decided under",
+      },
+      {
+        invocation: "cctl workflow live ledger --json",
+        explanation:
+          "the derived ledger as data: one entry per loop with its slot grants and full decision history",
+      },
+      {
+        invocation: "cctl workflow live ledger --max-pages 4 --cursor 2000",
+        explanation:
+          "walk a very long event log in bounded chunks — each run prints the --cursor for the next one",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live get",
+        oneLiner: "the outline the pass instances appear in",
+      },
+      {
+        command: "workflow status",
+        oneLiner: "the per-context progress table for the same execution",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+  },
+  {
     path: ["workflow", "live", "edit"],
     dynamicContext: true,
     summary: "apply live edits to the running execution's working copy",
     description:
-      'Apply an ordered, atomic batch of live edits to the ACTIVE execution\'s working copy, addressed by STABLE IDS. --file is a JSON object { "executionId", "baseLiveRevision", "operations": [ … ] }; the CLI always sends source "cli". baseLiveRevision must equal the header\'s liveRev from `cctl workflow live get` (a stale value exits 1 revision_conflict — re-read and retry). Completed contexts are frozen; not-started contexts are fully editable while running; started contexts need a pause first (pause-to-edit). A code-bearing rejection (execution_mismatch/revision_conflict/not_editable/frozen/requires_pause/invalid_edit) exits 1 with issues one per line and the code on the --json envelope; a malformed file or missing execution exits 2 (deterministic local checks fail before any network call). --dry-run validates and reports without persisting.',
+      'Apply an ordered, atomic batch of live edits to the ACTIVE execution\'s working copy, addressed by STABLE IDS. --file is a JSON object { "executionId", "baseLiveRevision", "operations": [ … ] }; the CLI always sends source "cli". baseLiveRevision must equal the header\'s liveRev from `cctl workflow live get` (a stale value exits 1 revision_conflict — re-read and retry). Completed contexts are frozen; not-started contexts are fully editable while running; started contexts need a pause first (pause-to-edit). Structural ops (add/remove-context, add/update/remove-edge) require a quiescent execution and an unstarted edge target. Edge guards use the same `when` vocabulary as `workflow edit`: add-edge accepts `when`, update-edge is addressed by edgeId (when: null clears it), and remove-edge takes edgeId or an unambiguous endpoint pair. A code-bearing rejection (execution_mismatch/revision_conflict/not_editable/frozen/requires_pause/invalid_edit) exits 1 with issues one per line and the code on the --json envelope; a malformed file or missing execution exits 2 (deterministic local checks fail before any network call). --dry-run validates and reports without persisting.',
     usage: [
       "cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]",
     ],
@@ -585,7 +646,7 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl workflow live edit --file .cc/temp/live-ops.json",
         explanation:
-          'live-ops.json under .cc/temp/: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli", "operations": [ { "type": "update-context", "contextId": "verify", "implementer": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } ] } — take baseLiveRevision from `cctl workflow live get`',
+          'live-ops.json under .cc/temp/: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli", "operations": [ { "type": "update-context", "contextId": "verify", "implementer": { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } } ] } — take baseLiveRevision from `cctl workflow live get`',
       },
       {
         invocation:
@@ -758,6 +819,55 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       {
         command: "workflow task complete",
         oneLiner: "complete the current task to advance",
+      },
+    ],
+  },
+  {
+    path: ["workflow", "graph"],
+    dynamicContext: true,
+    summary: "grow the running graph from inside a lane",
+    description:
+      "Lane verb family for runtime graph expansion: append new execution contexts, their tasks, and the edges wiring them in — without pausing the execution.",
+    usage: ["cctl workflow graph expand --file .cc/temp/expansion.json"],
+    flags: [],
+    examples: [],
+    related: [
+      {
+        command: "workflow task add",
+        oneLiner: "append work to THIS context instead of creating new ones",
+      },
+    ],
+  },
+  {
+    path: ["workflow", "graph", "expand"],
+    dynamicContext: true,
+    summary: "append new contexts, tasks, and edges to the running graph",
+    description: `Append a bounded subgraph to the RUNNING execution. Only allowed when your context enables agent graph expansion; if it does not, it exits 1 with the reason. --file is a JSON object { requestId, rationale, contexts[], tasks[], edges[] }: each context has a kebab-case "handle" (your local name) plus title and acceptanceCriteria; each task names the "contextHandle" it belongs to; each edge's "from" is your own context id or a handle, and its "to" is a handle or a pre-declared downstream context to rejoin. The server mints the real ids and returns them. A context may also carry "configFromContextId" (an EXISTING context to seed its implementer, iterationPolicy, circuitBreaker, and scriptValidator from — never a handle in this same request) and "config" with overrides for those same four blocks; everything else (context validator, approval gate, questions, collaboration, plan repair, mutability) is inherited from YOUR context and cannot be overridden, and a scriptValidator override may only enable it. All-or-nothing — one envelope violation refuses the whole request. ${EXPANSION_CAPS_NOTE} Reuse a requestId only to retry the identical payload: an accepted request replays its receipt (nothing fans out twice), while the SAME id carrying a changed payload is refused. ${LANE_NOTE}`,
+    usage: ["cctl workflow graph expand --file .cc/temp/expansion.json"],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<expansion.json>",
+        description:
+          "JSON object { requestId, rationale, contexts[], tasks[], edges[] }",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl workflow graph expand --file .cc/temp/expansion.json",
+        explanation:
+          "fan out one context per candidate, each rejoining the filter context the planner already declared",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live get",
+        oneLiner: "read the current graph before deciding what to add",
+      },
+      {
+        command: "workflow task complete",
+        oneLiner: "advance your own lane after expanding",
       },
     ],
   },

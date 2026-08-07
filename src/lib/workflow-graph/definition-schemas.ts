@@ -84,6 +84,29 @@ export type WorkflowLockedRegion = z.infer<typeof workflowLockedRegionSchema>;
  */
 export const contextOutputSchemaSchema = z.record(z.string(), z.unknown());
 
+/**
+ * How many of a source context's outgoing conditional edges may activate (D4
+ * R3). `independent` (the meaning of an absent block) admits zero, one, or many;
+ * `atLeastOne` and `exactlyOne` turn under- or over-selection into a typed
+ * resumable routing halt at runtime.
+ *
+ * A property of the source's outgoing edge SET, so it lives on the context — per
+ * edge it would invite contradictory declarations. The FIELD stays optional with
+ * no default on both tiers: materializing `{ cardinality: "independent" }` on
+ * every pre-D4 context would break the dormant-by-default floor (R14.1).
+ *
+ * Exported so every surface that can set it — both context schemas and the
+ * context edit operations in `workflows/edit-schemas.ts` — declares it once.
+ */
+export const graphWorkflowContextRoutingPolicySchema = z.object({
+  cardinality: z
+    .enum(["independent", "atLeastOne", "exactlyOne"])
+    .default("independent"),
+});
+export type GraphWorkflowContextRoutingPolicy = z.infer<
+  typeof graphWorkflowContextRoutingPolicySchema
+>;
+
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -93,6 +116,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   ),
   acceptanceCriteria: z.string().trim().min(1),
   outputSchema: contextOutputSchemaSchema.optional(),
+  routing: graphWorkflowContextRoutingPolicySchema.optional(),
   implementer: agentAssignmentSchema.optional(),
   contextValidator: validatorCohortSchema.optional(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.optional(),
@@ -124,13 +148,85 @@ export type GraphWorkflowTaskDefinition = z.infer<
   typeof graphWorkflowTaskDefinitionSchema
 >;
 
+/**
+ * An edge's source-local activation guard (D4 R1). Either a JSON-Schema-subset
+ * document the source context's captured output must match, or the `else`
+ * marker — the branch taken when no conditional sibling from the same source
+ * activated.
+ *
+ * The document is parse-PERMISSIVE for the same reason `outputSchema` is: the
+ * supported-keyword subset, and the guard's compatibility with the source's
+ * declared output shape, are enforced fail-closed at accept time
+ * (`validateWorkflowDefinition` → `validateEdgeGuards`) so an author gets a
+ * located, actionable refusal instead of an opaque Zod failure.
+ *
+ * Both branches are `.strict()`: a document carrying `schema` AND `else` states
+ * two contradictory activation rules, and the permissive branch would otherwise
+ * absorb it and silently drop the marker.
+ *
+ * The `{ schema }` wrapper (rather than a bare document) leaves room for future
+ * condition kinds without a breaking change.
+ */
+export const graphWorkflowEdgeGuardSchema = z.union([
+  z.object({ schema: z.record(z.string(), z.unknown()) }).strict(),
+  z.object({ else: z.literal(true) }).strict(),
+]);
+export type GraphWorkflowEdgeGuard = z.infer<
+  typeof graphWorkflowEdgeGuardSchema
+>;
+
 export const graphWorkflowContextEdgeSchema = z.object({
   id: z.string().trim().min(1),
   sourceContextId: z.string().trim().min(1),
   targetContextId: z.string().trim().min(1),
+  // Absent = unconditional, which is every pre-D4 edge. Never defaulted: the
+  // dormant floor is the ABSENCE of the field, not a materialized "always" guard
+  // (R14.1 — a pre-D4 definition must parse to observably pre-D4 behaviour).
+  when: graphWorkflowEdgeGuardSchema.optional(),
 });
 export type GraphWorkflowContextEdge = z.infer<
   typeof graphWorkflowContextEdgeSchema
+>;
+
+/**
+ * A loop group's exit predicate (D4 R9): a JSON-Schema-subset document the
+ * EXIT context's captured output must match for the loop to conclude.
+ *
+ * Parse-permissive and `.strict()` for the same reasons as
+ * {@link graphWorkflowEdgeGuardSchema}: the supported-keyword subset and the
+ * static compatibility with the exit's declared `outputSchema` are enforced
+ * fail-closed at accept time so an author gets a located refusal, and the
+ * `{ schema }` wrapper leaves room for future predicate kinds. Unlike an edge
+ * guard there is no `else` branch — a loop concludes or it does not.
+ */
+export const graphWorkflowLoopPredicateSchema = z
+  .object({ schema: z.record(z.string(), z.unknown()) })
+  .strict();
+export type GraphWorkflowLoopPredicate = z.infer<
+  typeof graphWorkflowLoopPredicateSchema
+>;
+
+/**
+ * An AUTHORED loop group (D4 R9, R11). The body is declared by REFERENCE: its
+ * contexts, tasks, and internal edges are ordinary members of the authored
+ * definition, named here by id. The accept-time resolver
+ * (`resolveLoopGroups`) is what turns that reference into the versioned body
+ * template the engine clones per pass.
+ *
+ * `maxPasses` is mandatory (R10): a loop with no declared ceiling has no
+ * exhaustion halt, and there is no completion-on-exhaustion mode.
+ */
+export const graphWorkflowLoopGroupSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1).optional(),
+  bodyContextIds: z.array(z.string().trim().min(1)).min(1),
+  entryContextId: z.string().trim().min(1),
+  exitContextId: z.string().trim().min(1),
+  until: graphWorkflowLoopPredicateSchema,
+  maxPasses: z.number().int().min(1),
+});
+export type GraphWorkflowLoopGroup = z.infer<
+  typeof graphWorkflowLoopGroupSchema
 >;
 
 // ============================================================
@@ -303,6 +399,10 @@ export const workflowSemanticDefinitionSchema = z.object({
     .default([]),
   tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
   edges: z.array(graphWorkflowContextEdgeSchema).default([]),
+  // Absent = no loops, which is every pre-D4 definition. Never defaulted to
+  // `[]` for the same reason `when` is never defaulted: the dormant floor is
+  // the ABSENCE of the field (R14.1).
+  loopGroups: z.array(graphWorkflowLoopGroupSchema).optional(),
 });
 export type WorkflowSemanticDefinition = z.infer<
   typeof workflowSemanticDefinitionSchema
@@ -341,6 +441,8 @@ export const graphWorkflowResolvedContextSchema = z.object({
   // cascade result. Absent on contexts whose author declared none, and on every
   // execution seeded before the field existed.
   outputSchema: contextOutputSchemaSchema.optional(),
+  // Same identity passthrough: no cascade tier contributes a routing policy.
+  routing: graphWorkflowContextRoutingPolicySchema.optional(),
   // Snapshot-bearing, not reference-bearing: by the time a context is in a
   // working definition, execution start has already resolved every assignment
   // — the implementer, every enabled cohort member, and every dormant
@@ -389,6 +491,53 @@ export type GraphWorkflowResolvedContext = z.infer<
   typeof graphWorkflowResolvedContextSchema
 >;
 
+/**
+ * The immutable per-loop body snapshot pass instances are cloned FROM (R11).
+ * Membership (which contexts form the body, which is entry, which is exit)
+ * freezes once the first pass starts; content stays editable at quiescence,
+ * each edit bumping the owning group's `templateVersion`.
+ *
+ * The contexts are RESOLVED contexts: the body is snapshotted after the config
+ * cascade runs, so every pass clones an instance whose operational config is
+ * the one the seed resolved — a later saved-definition edit cannot leak in.
+ */
+export const graphWorkflowLoopBodyTemplateSchema = z.object({
+  contexts: z.array(graphWorkflowResolvedContextSchema).min(1),
+  tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
+  edges: z.array(graphWorkflowContextEdgeSchema).default([]),
+});
+export type GraphWorkflowLoopBodyTemplate = z.infer<
+  typeof graphWorkflowLoopBodyTemplateSchema
+>;
+
+/**
+ * A RESOLVED loop group: the authored declaration after the accept-time
+ * resolver has snapshotted its body into {@link graphWorkflowLoopBodyTemplateSchema}
+ * and removed those contexts from `executionContexts`. `entryContextId` and
+ * `exitContextId` still name the AUTHORED (logical) ids — the exit stays
+ * immutable in the authored topology while the route projection points runtime
+ * consumers at the pass instance that actually satisfies each external edge
+ * (D1).
+ *
+ * `planRepair` is resolved HERE, at seed, rather than read at repair time: the
+ * resolved working definition deliberately drops workflow-tier config, so the
+ * policy has to survive in the artifact the engine actually reads (D10).
+ */
+export const graphWorkflowResolvedLoopGroupSchema = z.object({
+  id: z.string().trim().min(1),
+  title: z.string().trim().min(1).optional(),
+  entryContextId: z.string().trim().min(1),
+  exitContextId: z.string().trim().min(1),
+  until: graphWorkflowLoopPredicateSchema,
+  maxPasses: z.number().int().min(1),
+  template: graphWorkflowLoopBodyTemplateSchema,
+  templateVersion: z.number().int().min(1).default(1),
+  planRepair: graphWorkflowPlanRepairPolicySchema,
+});
+export type GraphWorkflowResolvedLoopGroup = z.infer<
+  typeof graphWorkflowResolvedLoopGroupSchema
+>;
+
 export const resolvedWorkflowSemanticDefinitionSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
   approvalRequired: z.boolean().optional(),
@@ -406,6 +555,9 @@ export const resolvedWorkflowSemanticDefinitionSchema = z.object({
   executionContexts: z.array(graphWorkflowResolvedContextSchema).default([]),
   tasks: z.array(graphWorkflowTaskDefinitionSchema).default([]),
   edges: z.array(graphWorkflowContextEdgeSchema).default([]),
+  // Same dormancy rule as the authored tier: absent means "no loops", and an
+  // execution seeded before D4 must reload with the field still absent.
+  loopGroups: z.array(graphWorkflowResolvedLoopGroupSchema).optional(),
 });
 export type ResolvedWorkflowSemanticDefinition = z.infer<
   typeof resolvedWorkflowSemanticDefinitionSchema
@@ -433,9 +585,31 @@ export type GraphWorkflowCascadeContext = z.infer<
   typeof graphWorkflowCascadeContextSchema
 >;
 
+/**
+ * The pre-seeding loop template. Loop resolution runs after the config cascade,
+ * so both the pass-1 instances and the frozen authored body still carry profile
+ * references until the execution's assignment-seeding boundary resolves them.
+ */
+export const graphWorkflowCascadeLoopBodyTemplateSchema =
+  graphWorkflowLoopBodyTemplateSchema.extend({
+    contexts: z.array(graphWorkflowCascadeContextSchema).min(1),
+  });
+export type GraphWorkflowCascadeLoopBodyTemplate = z.infer<
+  typeof graphWorkflowCascadeLoopBodyTemplateSchema
+>;
+
+export const graphWorkflowCascadeLoopGroupSchema =
+  graphWorkflowResolvedLoopGroupSchema.extend({
+    template: graphWorkflowCascadeLoopBodyTemplateSchema,
+  });
+export type GraphWorkflowCascadeLoopGroup = z.infer<
+  typeof graphWorkflowCascadeLoopGroupSchema
+>;
+
 export const cascadeWorkflowSemanticDefinitionSchema =
   resolvedWorkflowSemanticDefinitionSchema.extend({
     executionContexts: z.array(graphWorkflowCascadeContextSchema).default([]),
+    loopGroups: z.array(graphWorkflowCascadeLoopGroupSchema).optional(),
   });
 export type CascadeWorkflowSemanticDefinition = z.infer<
   typeof cascadeWorkflowSemanticDefinitionSchema
@@ -673,6 +847,12 @@ export const graphWorkflowStatusSchema = z.enum([
 ]);
 export type GraphWorkflowStatus = z.infer<typeof graphWorkflowStatusSchema>;
 
+/**
+ * `skipped` is a terminal settled-with-nothing status (D4 R4): the context's
+ * incoming routes resolved against it, so it holds no lane, owes no task,
+ * validator, approval or output debt, and contributes no merge input. It is
+ * NOT a failure and NOT a pause — nothing leaves it within the execution.
+ */
 export const graphWorkflowContextStatusSchema = z.enum([
   "pending",
   "ready",
@@ -681,6 +861,7 @@ export const graphWorkflowContextStatusSchema = z.enum([
   "halted",
   "awaiting_approval",
   "awaiting_user_input",
+  "skipped",
 ]);
 export type GraphWorkflowContextStatus = z.infer<
   typeof graphWorkflowContextStatusSchema

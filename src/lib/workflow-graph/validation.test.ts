@@ -21,6 +21,27 @@ function requiredStringParam(name: string): ParameterDeclaration {
   return { type: "string", name, label: name, required: true };
 }
 
+const PLAN_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: { verdict: { type: "string", enum: ["ship", "hold"] } },
+  required: ["verdict"],
+  additionalProperties: false,
+};
+
+/** The base fixture with `context-plan` declaring an output contract. */
+function withPlanOutputSchema(
+  definition = createWorkflowDefinition(),
+): ReturnType<typeof createWorkflowDefinition> {
+  return createWorkflowDefinition({
+    ...definition,
+    executionContexts: definition.executionContexts.map((context) =>
+      context.id === "context-plan"
+        ? { ...context, outputSchema: { ...PLAN_OUTPUT_SCHEMA } }
+        : context,
+    ),
+  });
+}
+
 describe("workflow-graph validation", () => {
   it("accepts a valid execution-context DAG", () => {
     const definition = createWorkflowDefinition();
@@ -208,6 +229,94 @@ describe("workflow-graph validation", () => {
     });
 
     expect(getEligibleContextIds(definition, execution)).toEqual([
+      "context-implement",
+    ]);
+  });
+
+  it("holds a guarded target while its completed source's merge is unresolved (D4 R2.5)", () => {
+    const base = createWorkflowDefinition();
+    const definition = {
+      ...base,
+      executionContexts: base.executionContexts.map((context) =>
+        context.id === "context-plan"
+          ? {
+              ...context,
+              outputSchema: {
+                type: "object",
+                properties: { verdict: { type: "string" } },
+                required: ["verdict"],
+              },
+            }
+          : context,
+      ),
+      edges: base.edges.map((edge) =>
+        edge.id === "edge-plan-implement"
+          ? {
+              ...edge,
+              when: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "go" } },
+                  required: ["verdict"],
+                },
+              },
+            }
+          : edge,
+      ),
+    };
+    const baseExecution = createWorkflowExecution({
+      workingDefinition: {
+        ...createWorkflowExecution().workingDefinition,
+        executionContexts: definition.executionContexts.map((context) => ({
+          ...createWorkflowExecution().workingDefinition.executionContexts.find(
+            (resolved) => resolved.id === context.id,
+          )!,
+          ...(context.outputSchema
+            ? { outputSchema: context.outputSchema }
+            : {}),
+        })),
+        edges: definition.edges,
+      },
+      contextOutputs: {
+        "context-plan": {
+          value: { verdict: "go" },
+          capturedAt: "2026-08-04T10:00:00.000Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+    });
+    const blocked = createWorkflowExecution({
+      ...baseExecution,
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          isolation: "worktree",
+          mergeStatus: "pending",
+        },
+      },
+    });
+
+    // The guard is TRUE — the branch was taken — but the source's work has not
+    // landed, so the target must not be scheduled and must not be skipped.
+    expect(getEligibleContextIds(blocked.workingDefinition, blocked)).toEqual(
+      [],
+    );
+
+    const merged = createWorkflowExecution({
+      ...blocked,
+      contextStates: {
+        ...blocked.contextStates,
+        "context-plan": {
+          ...blocked.contextStates["context-plan"]!,
+          mergeStatus: "merged-success",
+        },
+      },
+    });
+    expect(getEligibleContextIds(merged.workingDefinition, merged)).toEqual([
       "context-implement",
     ]);
   });
@@ -1143,6 +1252,26 @@ describe("validateResolvedWorkflow", () => {
     ).toEqual([]);
   });
 
+  it("refuses duplicate edge ids", () => {
+    const base = createWorkflowDefinition();
+    const definition = createWorkflowDefinition({
+      edges: base.edges.map((edge) => ({ ...edge, id: "same" })),
+    });
+
+    const result = validateWorkflowDefinition(definition);
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.filter((error) => error.code === "duplicate-edge-id"),
+    ).toEqual([
+      {
+        code: "duplicate-edge-id",
+        message: expect.stringContaining("same"),
+        edgeId: "same",
+        field: "edges[1].id",
+      },
+    ]);
+  });
+
   it("passes a validator whose model supports the configured effort", () => {
     const base = createResolvedWorkflowDefinition();
     const resolved = createResolvedWorkflowDefinition({
@@ -1175,5 +1304,147 @@ describe("validateResolvedWorkflow", () => {
 
     const result = validateResolvedWorkflow(resolved);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("workflow-graph validation — edge activation guards", () => {
+  it("accepts a guarded edge whose source declares a compatible outputSchema", () => {
+    const definition = withPlanOutputSchema();
+    const guarded = createWorkflowDefinition({
+      ...definition,
+      edges: definition.edges.map((edge) =>
+        edge.id === "edge-plan-implement"
+          ? {
+              ...edge,
+              when: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "ship" } },
+                  required: ["verdict"],
+                },
+              },
+            }
+          : edge,
+      ),
+    });
+
+    expect(validateWorkflowDefinition(guarded)).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("refuses a guarded edge whose source declares no outputSchema", () => {
+    const base = createWorkflowDefinition();
+    const definition = createWorkflowDefinition({
+      edges: base.edges.map((edge) =>
+        edge.id === "edge-plan-implement"
+          ? { ...edge, when: { schema: { type: "object" } } }
+          : edge,
+      ),
+    });
+
+    const result = validateWorkflowDefinition(definition);
+    expect(result.ok).toBe(false);
+    expect(
+      result.errors.map((error) => ({
+        code: error.code,
+        edgeId: error.edgeId,
+        field: error.field,
+      })),
+    ).toEqual([
+      {
+        code: "guard-source-without-output-schema",
+        edgeId: "edge-plan-implement",
+        field: "edges[0].when",
+      },
+    ]);
+  });
+
+  it("refuses a guard document outside the supported schema subset", () => {
+    const definition = withPlanOutputSchema();
+    const guarded = createWorkflowDefinition({
+      ...definition,
+      edges: definition.edges.map((edge) =>
+        edge.id === "edge-plan-implement"
+          ? {
+              ...edge,
+              when: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { type: "string", format: "email" } },
+                },
+              },
+            }
+          : edge,
+      ),
+    });
+
+    const result = validateWorkflowDefinition(guarded);
+    expect(result.ok).toBe(false);
+    expect(result.errors[0]?.code).toBe("unsupported-guard-schema");
+    expect(result.errors[0]?.field).toBe(
+      "edges[0].when.schema.properties.verdict.format",
+    );
+  });
+
+  it("refuses a second else edge on one source", () => {
+    const definition = withPlanOutputSchema();
+    const guarded = createWorkflowDefinition({
+      ...definition,
+      edges: [
+        {
+          id: "else-a",
+          sourceContextId: "context-plan",
+          targetContextId: "context-implement",
+          when: { else: true },
+        },
+        {
+          id: "else-b",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+          when: { else: true },
+        },
+      ],
+    });
+
+    const result = validateWorkflowDefinition(guarded);
+    expect(result.ok).toBe(false);
+    expect(result.errors.map((error) => error.code)).toEqual([
+      "duplicate-else-edge",
+    ]);
+    expect(result.errors[0]?.edgeId).toBe("else-b");
+  });
+
+  it("refuses the same guard defects on the resolved (live) tier", () => {
+    const base = createResolvedWorkflowDefinition();
+    const resolved = createResolvedWorkflowDefinition({
+      edges: base.edges.map((edge) =>
+        edge.id === "edge-plan-implement"
+          ? { ...edge, when: { schema: { type: "object" } } }
+          : edge,
+      ),
+    });
+
+    const result = validateWorkflowDefinition(resolved);
+    expect(result.ok).toBe(false);
+    expect(result.errors.map((error) => error.code)).toEqual([
+      "guard-source-without-output-schema",
+    ]);
+  });
+
+  it("carries guard refusals through the composite authoring gate", () => {
+    const base = createWorkflowDefinition();
+    const definition = createWorkflowDefinition({
+      edges: base.edges.map((edge) =>
+        edge.id === "edge-plan-implement"
+          ? { ...edge, when: { else: true } }
+          : edge,
+      ),
+    });
+
+    expect(
+      validateAuthoredDefinition(definition).errors.map((error) => error.code),
+    ).toEqual(["guard-source-without-output-schema"]);
   });
 });

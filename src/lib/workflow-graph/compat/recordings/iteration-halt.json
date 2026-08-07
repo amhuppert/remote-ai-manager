@@ -1,0 +1,174 @@
+{
+  "scenario": "iteration-halt",
+  "terminalStatus": "halted",
+  "haltReason": "max_iterations",
+  "scheduling": [
+    {
+      "decision": "eligible",
+      "contextIds": [
+        "ctx-stuck"
+      ]
+    },
+    {
+      "decision": "eligible",
+      "contextIds": []
+    },
+    {
+      "decision": "scheduled",
+      "outcome": "parallel",
+      "contextIds": [
+        "ctx-stuck"
+      ]
+    },
+    {
+      "decision": "dispatched",
+      "contextId": "ctx-stuck",
+      "iteration": 1
+    },
+    {
+      "decision": "dispatched",
+      "contextId": "ctx-stuck",
+      "iteration": 2
+    },
+    {
+      "decision": "eligible",
+      "contextIds": [
+        "ctx-stuck"
+      ]
+    }
+  ],
+  "statusTransitions": [
+    {
+      "contextId": "ctx-downstream",
+      "from": null,
+      "to": "pending"
+    },
+    {
+      "contextId": "ctx-stuck",
+      "from": null,
+      "to": "pending"
+    },
+    {
+      "contextId": "ctx-stuck",
+      "from": "pending",
+      "to": "ready"
+    },
+    {
+      "contextId": "ctx-stuck",
+      "from": "ready",
+      "to": "running"
+    },
+    {
+      "contextId": "ctx-stuck",
+      "from": "running",
+      "to": "ready"
+    }
+  ],
+  "events": [
+    {
+      "kind": "graph-workflow-charter-registered",
+      "subject": "compat-definition",
+      "detail": null
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-stuck",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-downstream",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-stuck-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-downstream-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-shared-documents-updated",
+      "subject": null,
+      "detail": "1"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-stuck",
+      "detail": "ready"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-batch-scheduled",
+      "subject": "batch-1",
+      "detail": "ctx-stuck"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-stuck",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-stuck",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-stuck",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-stuck-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-stuck",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-pending-halt-reason",
+      "subject": null,
+      "detail": "max_iterations"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "halted"
+    },
+    {
+      "kind": "graph-workflow-pending-halt-reason",
+      "subject": null,
+      "detail": null
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-stuck",
+      "detail": "ready"
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+{
+  "name": "Generate-And-Filter",
+  "description": "A generator surveys the brief, fans out one candidate execution context per approach at runtime, and a pre-declared filter picks the winner from every candidate's structured output.",
+  "definition": {
+    "schemaVersion": 1,
+    "workflowConfig": {},
+    "charter": {
+      "mission": "Choose one implementation approach by building every plausible candidate independently and selecting the winner on evidence, not on argument. The generator decides HOW MANY candidates the problem deserves at runtime; the filter is authored up front so the fan-out always converges somewhere the planner chose.",
+      "conventions": [
+        "Each candidate is a self-contained attempt at the brief: it may read shared context, but it never reads or edits another candidate's work.",
+        "A candidate reports its own score honestly, including a low one. The filter is the judge; a candidate that inflates its score only makes the filter's job harder."
+      ],
+      "nonGoals": [
+        "Merging two candidates into a hybrid — the filter picks one and says why.",
+        "Expanding a second time from a candidate: expansion authority stops at the generator, so the fan-out is one level deep by construction."
+      ],
+      "invariants": [
+        {
+          "id": "candidates-are-independent",
+          "statement": "No candidate context reads, edits, or depends on another candidate's output. Each is an independent attempt at the same brief, so the filter compares like with like."
+        },
+        {
+          "id": "every-candidate-rejoins-the-filter",
+          "statement": "Every context the generator creates carries an edge into context-filter. A candidate with no path to the filter is work nobody will read."
+        }
+      ],
+      "sourcesOfTruth": [
+        {
+          "rank": 1,
+          "id": "candidate-brief",
+          "label": "Candidate brief",
+          "type": "document",
+          "locator": ".cc/temp/candidate-brief.md",
+          "description": "The problem statement every candidate implements and the filter judges against: what has to be true of a solution, and what the tradeoff axes are.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        },
+        {
+          "rank": 2,
+          "id": "repo-contract",
+          "label": "Repository engineering contract",
+          "type": "document",
+          "locator": "AGENTS.md",
+          "description": "The engineering contract every candidate's implementation has to satisfy — typing, testing, and architecture boundaries.",
+          "appliesTo": "all execution contexts",
+          "accessPolicy": "worktree-relative"
+        }
+      ]
+    },
+    "parameters": [],
+    "prerequisites": [],
+    "executionContexts": [
+      {
+        "id": "context-generate",
+        "title": "Survey the brief and fan out candidates",
+        "description": "Read the candidate brief, decide which distinct approaches are worth building, and create one execution context per approach.",
+        "acceptanceCriteria": "The brief has been read and a set of genuinely distinct approaches chosen, with a one-line reason for each. One execution context per approach exists in the running graph, each carrying its own build task and an edge into context-filter. The captured output names the approaches and the requestId the expansion was submitted under.",
+        "outputSchema": {
+          "type": "object",
+          "description": "What the generator decided, so the filter and the audit trail can both read it.",
+          "properties": {
+            "approaches": {
+              "type": "array",
+              "description": "The approaches fanned out, in the order the candidates were created.",
+              "items": { "type": "string" },
+              "minItems": 1
+            },
+            "expansionRequestId": {
+              "type": "string",
+              "description": "The single-use idempotency key the expansion was submitted under.",
+              "minLength": 1
+            }
+          },
+          "required": ["approaches", "expansionRequestId"],
+          "additionalProperties": false
+        },
+        "mutability": {
+          "allowAgentTaskAdd": false,
+          "allowAgentContextAdd": true
+        }
+      },
+      {
+        "id": "context-filter",
+        "title": "Filter to the winning candidate",
+        "description": "Compare every candidate's reported result against the brief and pick exactly one winner.",
+        "acceptanceCriteria": "Every candidate that ran has been considered — none silently dropped — and exactly one is chosen, with a rationale that cites the brief's tradeoff axes rather than restating the scores. The captured output names the winning context id.",
+        "outputSchema": {
+          "type": "object",
+          "description": "The filter's verdict.",
+          "properties": {
+            "chosenContextId": {
+              "type": "string",
+              "description": "The execution context id of the winning candidate.",
+              "minLength": 1
+            },
+            "rationale": {
+              "type": "string",
+              "description": "Why this candidate wins, in the brief's own terms.",
+              "minLength": 1
+            }
+          },
+          "required": ["chosenContextId", "rationale"],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-generate-1",
+        "contextId": "context-generate",
+        "order": 1,
+        "title": "Choose the approaches and expand the graph",
+        "instructions": "Read the candidate brief named as rank 1 in the charter. Decide which distinct approaches are worth building — usually two to four; the per-request ceiling is five. Two approaches that differ only in naming are one approach.\n\nThen create one execution context per approach in a SINGLE expansion. Write the payload to `.cc/temp/expand.json`:\n\n```json\n{\n  \"requestId\": \"expand-candidates-1\",\n  \"rationale\": \"<why this fan-out, in one sentence>\",\n  \"contexts\": [\n    {\n      \"handle\": \"candidate-<short-approach-name>\",\n      \"title\": \"Candidate: <approach>\",\n      \"acceptanceCriteria\": \"<what has to be true for this candidate to count as built>\",\n      \"outputSchema\": {\n        \"type\": \"object\",\n        \"properties\": {\n          \"approach\": { \"type\": \"string\" },\n          \"score\": { \"type\": \"number\", \"minimum\": 0, \"maximum\": 10 }\n        },\n        \"required\": [\"approach\", \"score\"],\n        \"additionalProperties\": false\n      }\n    }\n  ],\n  \"tasks\": [\n    {\n      \"contextHandle\": \"candidate-<short-approach-name>\",\n      \"title\": \"Build the <approach> candidate\",\n      \"instructions\": \"<self-contained instructions: what to build, and to score it out of 10 against the brief's axes>\"\n    }\n  ],\n  \"edges\": [\n    { \"from\": \"context-generate\", \"to\": \"candidate-<short-approach-name>\" },\n    { \"from\": \"candidate-<short-approach-name>\", \"to\": \"context-filter\" }\n  ]\n}\n```\n\nEvery candidate needs BOTH edges: one from `context-generate` so it becomes eligible when you finish, and one into `context-filter` so the fan-out converges. A candidate with no edge into the filter is refused as unreachable work.\n\nSubmit it with `cctl workflow graph expand --file .cc/temp/expand.json`. The request id is single-use: if the command fails with a conflict, re-run it VERBATIM — an accepted expansion replays from its receipt and never fans out twice. If it is refused, fix what the refusal names and submit under a NEW request id.\n\nThe candidates inherit this context's gates but not its expansion authority, so the fan-out is one level deep. Do not add candidates in a second batch: one expansion is one proposition about the shape of the graph.\n\nFinally, complete this task with a summary naming the approaches you chose and the request id you used."
+      },
+      {
+        "id": "task-filter-1",
+        "contextId": "context-filter",
+        "order": 1,
+        "title": "Pick the winning candidate",
+        "instructions": "Every candidate's result is in the \"Inputs from upstream\" section of this prompt as validated structured output — read `approach` and `score` by field rather than re-deriving them, and read the generator's own output for the approach list it intended.\n\nCompare each candidate against the brief's tradeoff axes, not against each other's scores: a candidate that scored itself generously is still only as good as what it built. Consider every candidate that ran; if one looks unfinished, say so rather than dropping it silently.\n\nChoose exactly one winner and complete this task with a summary naming the winning context id and why it wins in the brief's terms."
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-generate-filter",
+        "sourceContextId": "context-generate",
+        "targetContextId": "context-filter"
+      }
+    ]
+  },
+  "layout": {
+    "workflowId": "generate-and-filter",
+    "contextPositions": {
+      "context-generate": { "x": 0, "y": 0 },
+      "context-filter": { "x": 520, "y": 0 }
+    },
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

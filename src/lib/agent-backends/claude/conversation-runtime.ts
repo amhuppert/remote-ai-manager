@@ -878,6 +878,9 @@ const claudeConversationBackendFactory = {
         ...(input.workflowContextId !== undefined
           ? { workflowContextId: input.workflowContextId }
           : {}),
+        ...(input.workflowLaneCapability !== undefined
+          ? { workflowLaneCapability: input.workflowLaneCapability }
+          : {}),
       }) as Record<string, string>,
       maxTurns: undefined,
       plugins: managedSkills.plugins,

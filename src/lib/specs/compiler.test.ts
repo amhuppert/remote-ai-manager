@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
 import { applyDefinitionEdits } from "@/lib/workflow-graph/definition-edits";
 import { validateWorkflowDefinition } from "@/lib/workflow-graph/validation";
+import { projectMustRunContextIds } from "@/lib/workflow-graph/route-projection";
 import type { SpecRevisionSnapshot } from "./schemas";
 import type { ExecutionScope } from "./scope-validation";
 import {
   compileSpecExecutionPlan,
   readCompiledContextContract,
   readCompiledOriginMap,
+  SpecCriterionCoverageError,
 } from "./compiler";
 
 const timestamp = "2026-07-18T12:00:00.000Z";
@@ -801,3 +803,66 @@ function setTaskPayload(
   }
   element.version.payload = { ...element.version.payload, ...changes };
 }
+
+describe("compileSpecExecutionPlan — must-run criterion coverage (R5.1)", () => {
+  function compile(overrides: Partial<ExecutionScope> = {}) {
+    return compileSpecExecutionPlan({
+      spec: { id: "spec-native-sdd", slug: "native-sdd", name: "Native SDD" },
+      revisionSnapshot: snapshot,
+      scope: { ...scope, ...overrides },
+      scopeHash: "scope-hash-coverage",
+      approvalRequired: false,
+    });
+  }
+
+  it("passes vacuously: every context of an unconditional compiled plan is must-run", () => {
+    const definition = compile();
+
+    expect([...projectMustRunContextIds(definition)].sort()).toEqual(
+      definition.executionContexts.map(({ id }) => id).sort(),
+    );
+    expect(definition.edges.every((edge) => edge.when === undefined)).toBe(
+      true,
+    );
+  });
+
+  it("refuses a scope whose criterion has no coverage on any must-run context", () => {
+    expect(() =>
+      compile({
+        selectedTaskIds: ["task-1"],
+        selectedCriterionIds: ["criterion-1", "criterion-2"],
+      }),
+    ).toThrow(SpecCriterionCoverageError);
+
+    try {
+      compile({
+        selectedTaskIds: ["task-1"],
+        selectedCriterionIds: ["criterion-1", "criterion-2"],
+      });
+      expect.unreachable("compile should have refused the scope");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SpecCriterionCoverageError);
+      const refusal = error as SpecCriterionCoverageError;
+      expect(refusal.gaps).toEqual([
+        {
+          criterionElementId: "criterion-2",
+          criterionHandle: "native-sdd/R1.2",
+          coveringContextIds: [],
+        },
+      ]);
+      expect(refusal.message).toContain("native-sdd/R1.2");
+    }
+  });
+
+  it("accepts the same scope once the criterion gains coverage on a must-run context", () => {
+    const definition = compile({
+      selectedTaskIds: ["task-1", "task-2"],
+      selectedCriterionIds: ["criterion-1", "criterion-2"],
+    });
+
+    expect(definition.executionContexts.map(({ id }) => id)).toEqual([
+      "context-task-1",
+      "context-task-2",
+    ]);
+  });
+});

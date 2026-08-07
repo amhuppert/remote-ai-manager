@@ -1,0 +1,641 @@
+{
+  "id": "compat-execution",
+  "seedDefinitionId": "compat-definition",
+  "seedDefinitionRevision": 1,
+  "liveRevision": 1,
+  "charterAmendments": [],
+  "planRepairRounds": [],
+  "loopEpoch": 0,
+  "boundInputs": {},
+  "launchedTier": "project",
+  "definitionApproval": null,
+  "workingDefinition": {
+    "schemaVersion": 1,
+    "executionContexts": [
+      {
+        "id": "ctx-plan",
+        "title": "Plan",
+        "description": "Decide the approach",
+        "acceptanceCriteria": "A plan exists",
+        "implementer": {
+          "id": "implementer",
+          "profile": {
+            "tier": "builtin",
+            "id": "general-implementer"
+          },
+          "agent": {
+            "backend": "claude",
+            "model": "sonnet",
+            "reasoningEffort": "medium"
+          },
+          "profileSnapshot": {
+            "tier": "builtin",
+            "id": "general-implementer",
+            "name": "General Implementer",
+            "revision": 1,
+            "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "instructions": "Fixture profile instructions.",
+            "renderedInstructionBlock": "# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\nFixture profile instructions.\n<<<CC_AGENT_PROFILE_END>>>",
+            "resolvedInstructionHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "contextValidator": {
+          "enabled": true,
+          "assignments": [
+            {
+              "id": "general",
+              "profile": {
+                "tier": "builtin",
+                "id": "general-reviewer"
+              },
+              "strategy": "conversation",
+              "agent": {
+                "backend": "claude",
+                "model": "sonnet",
+                "reasoningEffort": "medium"
+              },
+              "continuity": {
+                "enabled": true
+              },
+              "profileSnapshot": {
+                "tier": "builtin",
+                "id": "general-reviewer",
+                "name": "General Reviewer",
+                "revision": 1,
+                "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "instructions": "Fixture profile instructions.",
+                "renderedInstructionBlock": "# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\nFixture profile instructions.\n<<<CC_AGENT_PROFILE_END>>>",
+                "resolvedInstructionHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            }
+          ]
+        },
+        "scriptValidator": {
+          "commands": []
+        },
+        "scriptValidatorSource": "global",
+        "humanApprovalGate": {
+          "enabled": false
+        },
+        "askUserQuestions": {
+          "enabled": false
+        },
+        "mutability": {
+          "allowAgentTaskAdd": false
+        },
+        "circuitBreaker": {
+          "consecutiveFailureThreshold": 3
+        },
+        "iterationPolicy": {
+          "maxIterations": 4,
+          "continuity": {
+            "enabled": true
+          }
+        },
+        "planRepair": {
+          "enabled": true,
+          "maxAttemptsPerContext": 2
+        },
+        "collaboration": {
+          "enabled": {
+            "value": false,
+            "source": "global"
+          },
+          "secondAgent": {
+            "value": {
+              "backend": "claude",
+              "model": "sonnet",
+              "reasoningEffort": "medium"
+            },
+            "source": "global"
+          },
+          "negotiationRounds": {
+            "value": 3,
+            "source": "global"
+          },
+          "autonomousResolutionThreshold": {
+            "value": "minor",
+            "source": "global"
+          }
+        },
+        "agentValidation": {
+          "implementer": {
+            "value": {
+              "mode": "all",
+              "except": []
+            },
+            "source": "global",
+            "commands": []
+          },
+          "contextValidator": {
+            "value": {
+              "mode": "only",
+              "commands": []
+            },
+            "source": "global",
+            "commands": []
+          }
+        },
+        "charter": {
+          "mission": "Pin the pre-D4 scheduling, status, and event behaviour of a linear chain",
+          "sourcesOfTruth": [
+            {
+              "rank": 1,
+              "id": "compat-fixture",
+              "label": "Compatibility fixture",
+              "type": "document",
+              "locator": "src/lib/workflow-graph/compat/README.md",
+              "description": "The pre-D4 behaviour this fixture pins",
+              "accessPolicy": "worktree-relative"
+            }
+          ]
+        }
+      },
+      {
+        "id": "ctx-build",
+        "title": "Build",
+        "description": "Implement the approach",
+        "acceptanceCriteria": "The feature works",
+        "implementer": {
+          "id": "implementer",
+          "profile": {
+            "tier": "builtin",
+            "id": "general-implementer"
+          },
+          "agent": {
+            "backend": "claude",
+            "model": "sonnet",
+            "reasoningEffort": "medium"
+          },
+          "profileSnapshot": {
+            "tier": "builtin",
+            "id": "general-implementer",
+            "name": "General Implementer",
+            "revision": 1,
+            "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "instructions": "Fixture profile instructions.",
+            "renderedInstructionBlock": "# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\nFixture profile instructions.\n<<<CC_AGENT_PROFILE_END>>>",
+            "resolvedInstructionHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "contextValidator": {
+          "enabled": true,
+          "assignments": [
+            {
+              "id": "general",
+              "profile": {
+                "tier": "builtin",
+                "id": "general-reviewer"
+              },
+              "strategy": "conversation",
+              "agent": {
+                "backend": "claude",
+                "model": "sonnet",
+                "reasoningEffort": "medium"
+              },
+              "continuity": {
+                "enabled": true
+              },
+              "profileSnapshot": {
+                "tier": "builtin",
+                "id": "general-reviewer",
+                "name": "General Reviewer",
+                "revision": 1,
+                "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "instructions": "Fixture profile instructions.",
+                "renderedInstructionBlock": "# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\nFixture profile instructions.\n<<<CC_AGENT_PROFILE_END>>>",
+                "resolvedInstructionHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            }
+          ]
+        },
+        "scriptValidator": {
+          "commands": []
+        },
+        "scriptValidatorSource": "global",
+        "humanApprovalGate": {
+          "enabled": false
+        },
+        "askUserQuestions": {
+          "enabled": false
+        },
+        "mutability": {
+          "allowAgentTaskAdd": false
+        },
+        "circuitBreaker": {
+          "consecutiveFailureThreshold": 3
+        },
+        "iterationPolicy": {
+          "maxIterations": 4,
+          "continuity": {
+            "enabled": true
+          }
+        },
+        "planRepair": {
+          "enabled": true,
+          "maxAttemptsPerContext": 2
+        },
+        "collaboration": {
+          "enabled": {
+            "value": false,
+            "source": "global"
+          },
+          "secondAgent": {
+            "value": {
+              "backend": "claude",
+              "model": "sonnet",
+              "reasoningEffort": "medium"
+            },
+            "source": "global"
+          },
+          "negotiationRounds": {
+            "value": 3,
+            "source": "global"
+          },
+          "autonomousResolutionThreshold": {
+            "value": "minor",
+            "source": "global"
+          }
+        },
+        "agentValidation": {
+          "implementer": {
+            "value": {
+              "mode": "all",
+              "except": []
+            },
+            "source": "global",
+            "commands": []
+          },
+          "contextValidator": {
+            "value": {
+              "mode": "only",
+              "commands": []
+            },
+            "source": "global",
+            "commands": []
+          }
+        },
+        "charter": {
+          "mission": "Pin the pre-D4 scheduling, status, and event behaviour of a linear chain",
+          "sourcesOfTruth": [
+            {
+              "rank": 1,
+              "id": "compat-fixture",
+              "label": "Compatibility fixture",
+              "type": "document",
+              "locator": "src/lib/workflow-graph/compat/README.md",
+              "description": "The pre-D4 behaviour this fixture pins",
+              "accessPolicy": "worktree-relative"
+            }
+          ]
+        }
+      },
+      {
+        "id": "ctx-verify",
+        "title": "Verify",
+        "description": "Check the result",
+        "acceptanceCriteria": "Verification passes",
+        "implementer": {
+          "id": "implementer",
+          "profile": {
+            "tier": "builtin",
+            "id": "general-implementer"
+          },
+          "agent": {
+            "backend": "claude",
+            "model": "sonnet",
+            "reasoningEffort": "medium"
+          },
+          "profileSnapshot": {
+            "tier": "builtin",
+            "id": "general-implementer",
+            "name": "General Implementer",
+            "revision": 1,
+            "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "instructions": "Fixture profile instructions.",
+            "renderedInstructionBlock": "# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\nFixture profile instructions.\n<<<CC_AGENT_PROFILE_END>>>",
+            "resolvedInstructionHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        },
+        "contextValidator": {
+          "enabled": true,
+          "assignments": [
+            {
+              "id": "general",
+              "profile": {
+                "tier": "builtin",
+                "id": "general-reviewer"
+              },
+              "strategy": "conversation",
+              "agent": {
+                "backend": "claude",
+                "model": "sonnet",
+                "reasoningEffort": "medium"
+              },
+              "continuity": {
+                "enabled": true
+              },
+              "profileSnapshot": {
+                "tier": "builtin",
+                "id": "general-reviewer",
+                "name": "General Reviewer",
+                "revision": 1,
+                "sourceContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "instructions": "Fixture profile instructions.",
+                "renderedInstructionBlock": "# Agent profile (subordinate specialization lens)\n<<<CC_AGENT_PROFILE_BEGIN>>>\nFixture profile instructions.\n<<<CC_AGENT_PROFILE_END>>>",
+                "resolvedInstructionHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            }
+          ]
+        },
+        "scriptValidator": {
+          "commands": []
+        },
+        "scriptValidatorSource": "global",
+        "humanApprovalGate": {
+          "enabled": false
+        },
+        "askUserQuestions": {
+          "enabled": false
+        },
+        "mutability": {
+          "allowAgentTaskAdd": false
+        },
+        "circuitBreaker": {
+          "consecutiveFailureThreshold": 3
+        },
+        "iterationPolicy": {
+          "maxIterations": 4,
+          "continuity": {
+            "enabled": true
+          }
+        },
+        "planRepair": {
+          "enabled": true,
+          "maxAttemptsPerContext": 2
+        },
+        "collaboration": {
+          "enabled": {
+            "value": false,
+            "source": "global"
+          },
+          "secondAgent": {
+            "value": {
+              "backend": "claude",
+              "model": "sonnet",
+              "reasoningEffort": "medium"
+            },
+            "source": "global"
+          },
+          "negotiationRounds": {
+            "value": 3,
+            "source": "global"
+          },
+          "autonomousResolutionThreshold": {
+            "value": "minor",
+            "source": "global"
+          }
+        },
+        "agentValidation": {
+          "implementer": {
+            "value": {
+              "mode": "all",
+              "except": []
+            },
+            "source": "global",
+            "commands": []
+          },
+          "contextValidator": {
+            "value": {
+              "mode": "only",
+              "commands": []
+            },
+            "source": "global",
+            "commands": []
+          }
+        },
+        "charter": {
+          "mission": "Pin the pre-D4 scheduling, status, and event behaviour of a linear chain",
+          "sourcesOfTruth": [
+            {
+              "rank": 1,
+              "id": "compat-fixture",
+              "label": "Compatibility fixture",
+              "type": "document",
+              "locator": "src/lib/workflow-graph/compat/README.md",
+              "description": "The pre-D4 behaviour this fixture pins",
+              "accessPolicy": "worktree-relative"
+            }
+          ]
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "task-plan-1",
+        "contextId": "ctx-plan",
+        "order": 1,
+        "title": "Draft the plan",
+        "instructions": "Write down the approach.",
+        "source": "user"
+      },
+      {
+        "id": "task-build-1",
+        "contextId": "ctx-build",
+        "order": 1,
+        "title": "Write the code",
+        "instructions": "Implement the approach.",
+        "source": "user"
+      },
+      {
+        "id": "task-build-2",
+        "contextId": "ctx-build",
+        "order": 2,
+        "title": "Write the tests",
+        "instructions": "Cover the implementation.",
+        "source": "user"
+      },
+      {
+        "id": "task-verify-1",
+        "contextId": "ctx-verify",
+        "order": 1,
+        "title": "Run the checks",
+        "instructions": "Verify the behaviour.",
+        "source": "user"
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-plan-build",
+        "sourceContextId": "ctx-plan",
+        "targetContextId": "ctx-build"
+      },
+      {
+        "id": "edge-build-verify",
+        "sourceContextId": "ctx-build",
+        "targetContextId": "ctx-verify"
+      }
+    ]
+  },
+  "charter": {
+    "mission": "Pin the pre-D4 scheduling, status, and event behaviour of a linear chain",
+    "sourcesOfTruth": [
+      {
+        "rank": 1,
+        "id": "compat-fixture",
+        "label": "Compatibility fixture",
+        "type": "document",
+        "locator": "src/lib/workflow-graph/compat/README.md",
+        "description": "The pre-D4 behaviour this fixture pins",
+        "accessPolicy": "worktree-relative"
+      }
+    ]
+  },
+  "status": "pending",
+  "activeContextIds": [],
+  "contextStates": {
+    "ctx-plan": {
+      "contextId": "ctx-plan",
+      "status": "pending",
+      "totalTaskCount": 1,
+      "completedTaskCount": 0,
+      "iterationCount": 0,
+      "consecutiveFailureCount": 0,
+      "worktreePath": null,
+      "branchName": null,
+      "isolation": "session",
+      "batchId": null,
+      "laneId": null,
+      "joinId": null,
+      "mergeStatus": "not-applicable",
+      "cleanupStatus": "not-applicable",
+      "lastMergeError": null,
+      "pendingApproval": null,
+      "pendingUserInputs": {}
+    },
+    "ctx-build": {
+      "contextId": "ctx-build",
+      "status": "pending",
+      "totalTaskCount": 2,
+      "completedTaskCount": 0,
+      "iterationCount": 0,
+      "consecutiveFailureCount": 0,
+      "worktreePath": null,
+      "branchName": null,
+      "isolation": "session",
+      "batchId": null,
+      "laneId": null,
+      "joinId": null,
+      "mergeStatus": "not-applicable",
+      "cleanupStatus": "not-applicable",
+      "lastMergeError": null,
+      "pendingApproval": null,
+      "pendingUserInputs": {}
+    },
+    "ctx-verify": {
+      "contextId": "ctx-verify",
+      "status": "pending",
+      "totalTaskCount": 1,
+      "completedTaskCount": 0,
+      "iterationCount": 0,
+      "consecutiveFailureCount": 0,
+      "worktreePath": null,
+      "branchName": null,
+      "isolation": "session",
+      "batchId": null,
+      "laneId": null,
+      "joinId": null,
+      "mergeStatus": "not-applicable",
+      "cleanupStatus": "not-applicable",
+      "lastMergeError": null,
+      "pendingApproval": null,
+      "pendingUserInputs": {}
+    }
+  },
+  "taskStates": {
+    "task-plan-1": {
+      "taskId": "task-plan-1",
+      "contextId": "ctx-plan",
+      "order": 1,
+      "status": "pending",
+      "summary": null,
+      "startedAt": null,
+      "completedAt": null,
+      "lastConversationId": null,
+      "failureMessage": null,
+      "failureHistory": []
+    },
+    "task-build-1": {
+      "taskId": "task-build-1",
+      "contextId": "ctx-build",
+      "order": 1,
+      "status": "pending",
+      "summary": null,
+      "startedAt": null,
+      "completedAt": null,
+      "lastConversationId": null,
+      "failureMessage": null,
+      "failureHistory": []
+    },
+    "task-build-2": {
+      "taskId": "task-build-2",
+      "contextId": "ctx-build",
+      "order": 2,
+      "status": "pending",
+      "summary": null,
+      "startedAt": null,
+      "completedAt": null,
+      "lastConversationId": null,
+      "failureMessage": null,
+      "failureHistory": []
+    },
+    "task-verify-1": {
+      "taskId": "task-verify-1",
+      "contextId": "ctx-verify",
+      "order": 1,
+      "status": "pending",
+      "summary": null,
+      "startedAt": null,
+      "completedAt": null,
+      "lastConversationId": null,
+      "failureMessage": null,
+      "failureHistory": []
+    }
+  },
+  "contextOutputs": {},
+  "sharedDocuments": [
+    {
+      "id": "doc-charter-cf576399-f7ca-499b-a1d7-45c6fd15b98f",
+      "relativePath": ".cc/graph-workflow-docs/charter.md",
+      "description": "The workflow charter: the workflow-global source-of-truth precedence hierarchy and mission/conventions/non-goals narrative that governs this run.",
+      "readWhen": "Read before resolving any source conflict — the ranked hierarchy decides which source prevails.",
+      "kind": "charter",
+      "createdAt": "2026-08-04T04:56:28.421Z",
+      "updatedAt": "2026-08-04T04:56:28.421Z",
+      "lastUpdatedByConversationId": null
+    }
+  ],
+  "laneStates": {},
+  "executionLanes": {},
+  "joins": {},
+  "lanePlan": {
+    "continuationMap": {
+      "ctx-plan": "ctx-build",
+      "ctx-build": "ctx-verify"
+    },
+    "longestDownstreamPath": {
+      "ctx-verify": 0,
+      "ctx-build": 1,
+      "ctx-plan": 2
+    }
+  },
+  "machineSnapshot": null,
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "completedAt": null,
+  "haltReason": null,
+  "pendingHaltReason": null,
+  "secondaryHaltReasons": [],
+  "pendingCollaborations": {},
+  "collaborationContinuations": {},
+  "pendingMergeRetry": []
+}

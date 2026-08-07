@@ -38,7 +38,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
     scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -177,6 +177,115 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
       ...overrides,
     };
   }
+
+  /**
+   * R6.5 — the running-time structural exception is exactly two SERVER-DERIVED
+   * paths (lane-agent expansion and engine loop unrolling). This endpoint is
+   * the one both client surfaces use: `cctl workflow live edit` sends
+   * `source: "cli"` and the execution inspector sends `source: "ui"`. Neither
+   * may reshape a running graph, so the whole structural vocabulary is pinned
+   * against both.
+   */
+  describe("structural edits stay pause-only for the CLI and UI surfaces", () => {
+    const STRUCTURAL_OPS = [
+      {
+        label: "add-context",
+        operation: {
+          type: "add-context",
+          id: "context-new",
+          title: "New",
+          acceptanceCriteria: "Something is done",
+        },
+      },
+      {
+        label: "remove-context",
+        operation: { type: "remove-context", contextId: "context-verify" },
+      },
+      {
+        label: "add-edge",
+        operation: {
+          type: "add-edge",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+        },
+      },
+      {
+        label: "remove-edge",
+        operation: { type: "remove-edge", edgeId: "edge-implement-verify" },
+      },
+    ] as const;
+
+    for (const source of ["cli", "ui"] as const) {
+      for (const { label, operation } of STRUCTURAL_OPS) {
+        it(`refuses ${label} from the ${source} surface while the execution runs`, async () => {
+          await seedExecution(
+            createWorkflowExecution({
+              status: "running",
+              activeContextIds: ["context-plan"],
+            }),
+          );
+
+          const response = await handlers.POST(
+            makeRequest("POST", {
+              executionId: "execution-1",
+              baseLiveRevision: 1,
+              source,
+              operations: [operation],
+            }),
+            routeParams,
+          );
+
+          expect(response.status).toBe(400);
+          expect(await response.json()).toMatchObject({
+            code: "requires_pause",
+          });
+          // Fail-closed: no graph change, no revision bump, no audit row.
+          const reloaded = await reload();
+          expect(reloaded?.liveRevision).toBe(1);
+          expect(
+            reloaded?.workingDefinition.executionContexts.map(
+              (context) => context.id,
+            ),
+          ).toEqual(["context-plan", "context-implement", "context-verify"]);
+          expect(liveEditEventRows()).toHaveLength(0);
+        });
+      }
+    }
+
+    it("accepts the same structural edit once the execution is paused", async () => {
+      await seedExecution(createWorkflowExecution({ status: "paused" }));
+
+      const response = await handlers.POST(
+        makeRequest("POST", {
+          executionId: "execution-1",
+          baseLiveRevision: 1,
+          source: "cli",
+          operations: [
+            {
+              type: "add-context",
+              id: "context-new",
+              title: "New",
+              acceptanceCriteria: "Something is done",
+            },
+            {
+              type: "add-edge",
+              sourceContextId: "context-verify",
+              targetContextId: "context-new",
+            },
+          ],
+        }),
+        routeParams,
+      );
+
+      expect(response.status).toBe(200);
+      const reloaded = await reload();
+      expect(
+        reloaded?.workingDefinition.executionContexts.map(
+          (context) => context.id,
+        ),
+      ).toContain("context-new");
+    });
+  });
 
   it("rejects a malformed body with a codeless 400 and issues", async () => {
     await seedExecution(createWorkflowExecution({ status: "paused" }));

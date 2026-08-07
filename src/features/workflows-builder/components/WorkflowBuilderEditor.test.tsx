@@ -110,7 +110,7 @@ describe("WorkflowBuilderEditor", () => {
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
             maxIterations: 4,

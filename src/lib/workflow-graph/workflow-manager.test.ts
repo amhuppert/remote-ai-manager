@@ -772,6 +772,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -791,6 +793,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-implement",
@@ -810,6 +814,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-verify",
@@ -1062,6 +1068,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-a", "context-b"],
         contextStates: {
           "context-a": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-a",
@@ -1081,6 +1089,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-b": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-b",
@@ -1100,6 +1110,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-c": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-c",
@@ -1683,6 +1695,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -1702,6 +1716,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-implement",
@@ -1721,6 +1737,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-verify",
@@ -1902,6 +1920,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -1921,6 +1941,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-implement",
@@ -1940,6 +1962,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-verify",
@@ -2031,6 +2055,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -2050,6 +2076,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-implement",
@@ -2069,6 +2097,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-verify",
@@ -2167,6 +2197,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -2242,6 +2274,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -2310,6 +2344,8 @@ describe("graph workflow manager", () => {
 
   it("leaves awaiting_approval contexts and their pending record untouched when normalizing after restart", async () => {
     const parkedContextState = {
+      skipReason: null,
+      landingIntent: null,
       pendingApproval: {
         conversationId: "conversation-1",
         requestedAt: "2026-03-27T15:01:00.000Z",
@@ -2387,6 +2423,149 @@ describe("graph workflow manager", () => {
     );
   });
 
+  describe("landing-intent reconciliation at restart (D4 decision D8)", () => {
+    const CRASHED_LANE_CONTEXT = {
+      skipReason: null,
+      pendingApproval: null,
+      pendingUserInputs: {},
+      contextId: "context-plan",
+      status: "completed" as const,
+      totalTaskCount: 1,
+      completedTaskCount: 1,
+      iterationCount: 1,
+      consecutiveFailureCount: 0,
+      worktreePath: "/repo/.worktrees/lane-a",
+      branchName: "csm/lane-a",
+      isolation: "worktree" as const,
+      batchId: null,
+      laneId: "lane-a",
+      joinId: null,
+      mergeStatus: "merged-success" as const,
+      cleanupStatus: "not-applicable" as const,
+      lastMergeError: null,
+      landingIntent: {
+        mode: "lane_commit" as const,
+        attempt: 1,
+        token: "cc-landing:execution-1:context-plan:1",
+        laneId: "lane-a",
+        worktreePath: "/repo/.worktrees/lane-a",
+        baselineSha: "aaa",
+        headSha: null,
+        joinId: null,
+        state: "pending" as const,
+        evidence: null,
+        recordedAt: "2026-03-27T15:00:00.000Z",
+        settledAt: null,
+      },
+    };
+
+    function crashedLaneRepository() {
+      return createRepository(
+        createWorkflowExecution({
+          status: "running",
+          activeContextIds: [],
+          executionLanes: {
+            "lane-a": {
+              laneId: "lane-a",
+              kind: "worktree",
+              status: "active",
+              branchName: "csm/lane-a",
+              worktreePath: "/repo/.worktrees/lane-a",
+              includedContextIds: ["context-plan"],
+              lastCommittingContextId: "context-plan",
+              commitSnapshots: [],
+              createdAt: "2026-03-27T15:00:00.000Z",
+              updatedAt: "2026-03-27T15:00:00.000Z",
+            },
+          },
+          contextStates: {
+            "context-plan": structuredClone(CRASHED_LANE_CONTEXT),
+          },
+          taskStates: {
+            "task-plan-1": {
+              taskId: "task-plan-1",
+              contextId: "context-plan",
+              order: 1,
+              status: "completed",
+              summary: "Done",
+              startedAt: "2026-03-27T15:00:00.000Z",
+              completedAt: "2026-03-27T15:00:30.000Z",
+              lastConversationId: "conversation-1",
+              failureMessage: null,
+              failureHistory: [],
+            },
+          },
+        }),
+      );
+    }
+
+    it("settles a crashed lane commit against the branch evidence the committer left", async () => {
+      const probed: string[] = [];
+      const manager = createGraphWorkflowManager({
+        executionRepository: crashedLaneRepository(),
+        async loadDefinition() {
+          return null;
+        },
+        isExecutionLoopActive() {
+          return false;
+        },
+        landingEvidenceProber: {
+          async probe(targets) {
+            probed.push(...targets.map((target) => target.contextId));
+            return new Map(
+              targets.map((target) => [
+                target.contextId,
+                {
+                  headSha: "ccc",
+                  tokenCommitSha: "ccc",
+                  baselineReachable: true,
+                },
+              ]),
+            );
+          },
+        },
+      });
+
+      const recovered = await manager.normalizeAfterRestart(
+        "/repo",
+        "session-1",
+      );
+
+      expect(probed).toEqual(["context-plan"]);
+      expect(
+        recovered?.contextStates["context-plan"]?.landingIntent,
+      ).toMatchObject({ state: "landed", evidence: "commit", headSha: "ccc" });
+    });
+
+    it("leaves the intent pending when the branch carries no landing evidence", async () => {
+      const manager = createGraphWorkflowManager({
+        executionRepository: crashedLaneRepository(),
+        async loadDefinition() {
+          return null;
+        },
+        isExecutionLoopActive() {
+          return false;
+        },
+        landingEvidenceProber: {
+          async probe() {
+            return new Map();
+          },
+        },
+      });
+
+      const recovered = await manager.normalizeAfterRestart(
+        "/repo",
+        "session-1",
+      );
+
+      // The lane's includedContextIds says the commit phase ran, not that it
+      // produced a landing: without the replay this stays unsettled.
+      expect(
+        recovered?.contextStates["context-plan"]?.landingIntent?.state,
+      ).toBe("pending");
+    });
+  });
+
   it("transitions a running execution with pendingHaltReason directly to halted (drain resumed after crash)", async () => {
     const haltReason: GraphWorkflowHaltReason = {
       type: "circuit_breaker",
@@ -2402,6 +2581,8 @@ describe("graph workflow manager", () => {
         pendingHaltReason: haltReason,
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -3684,6 +3865,8 @@ describe("graph workflow manager", () => {
         haltReason: { type: "aborted", cause: null, summary: null },
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -3803,6 +3986,8 @@ describe("graph workflow manager", () => {
       },
       contextStates: {
         "context-plan": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-plan",
@@ -3822,6 +4007,8 @@ describe("graph workflow manager", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-implement",
@@ -3841,6 +4028,8 @@ describe("graph workflow manager", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-verify",
@@ -3882,6 +4071,8 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-implement"],
         contextStates: {
           "context-plan": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-plan",
@@ -3901,6 +4092,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-implement",
@@ -3920,6 +4113,8 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            skipReason: null,
+            landingIntent: null,
             pendingApproval: null,
             pendingUserInputs: {},
             contextId: "context-verify",
@@ -4082,6 +4277,8 @@ describe("graph workflow manager", () => {
         lastMergeError: null,
         pendingApproval: null,
         pendingUserInputs: {},
+        skipReason: null,
+        landingIntent: null,
       });
       expect(execution.taskStates["task-implement-1"]).toEqual({
         taskId: "task-implement-1",
@@ -4592,6 +4789,8 @@ describe("graph workflow manager", () => {
           activeContextIds: [],
           contextStates: {
             "context-plan": {
+              skipReason: null,
+              landingIntent: null,
               pendingApproval: null,
               pendingUserInputs: {},
               contextId: "context-plan",
@@ -4611,6 +4810,8 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "context-implement": {
+              skipReason: null,
+              landingIntent: null,
               pendingApproval: null,
               pendingUserInputs: {},
               contextId: "context-implement",
@@ -4630,6 +4831,8 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "context-verify": {
+              skipReason: null,
+              landingIntent: null,
               pendingApproval: null,
               pendingUserInputs: {},
               contextId: "context-verify",
@@ -5731,7 +5934,10 @@ describe("graph workflow manager", () => {
             scriptValidator: { commands: [] },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
-            mutability: { allowAgentTaskAdd: false },
+            mutability: {
+              allowAgentTaskAdd: false,
+              allowAgentContextAdd: false,
+            },
             circuitBreaker: {},
             iterationPolicy: {
               maxIterations: 4,
@@ -5757,7 +5963,10 @@ describe("graph workflow manager", () => {
             scriptValidator: { commands: [] },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
-            mutability: { allowAgentTaskAdd: false },
+            mutability: {
+              allowAgentTaskAdd: false,
+              allowAgentContextAdd: false,
+            },
             circuitBreaker: {},
             iterationPolicy: {
               maxIterations: 4,
@@ -5783,7 +5992,10 @@ describe("graph workflow manager", () => {
             scriptValidator: { commands: [] },
             humanApprovalGate: { enabled: false },
             askUserQuestions: { enabled: false },
-            mutability: { allowAgentTaskAdd: false },
+            mutability: {
+              allowAgentTaskAdd: false,
+              allowAgentContextAdd: false,
+            },
             circuitBreaker: {},
             iterationPolicy: {
               maxIterations: 4,
@@ -5838,6 +6050,8 @@ describe("graph workflow manager", () => {
           activeContextIds: [],
           contextStates: {
             "context-plan": {
+              skipReason: null,
+              landingIntent: null,
               pendingApproval: null,
               pendingUserInputs: {},
               contextId: "context-plan",
@@ -5857,6 +6071,8 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "..escape": {
+              skipReason: null,
+              landingIntent: null,
               pendingApproval: null,
               pendingUserInputs: {},
               contextId: "..escape",
@@ -5876,6 +6092,8 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "context-other": {
+              skipReason: null,
+              landingIntent: null,
               pendingApproval: null,
               pendingUserInputs: {},
               contextId: "context-other",
@@ -7043,7 +7261,10 @@ describe("graph workflow manager", () => {
 
       // Simulate runLaneCommit: context-plan finishes, lane records its
       // committed contribution. No session merge happens — the lane retains
-      // the work for the next consumer.
+      // the work for the next consumer. The landing intent settles in the SAME
+      // mutation as the merge status (decision D8), because the lane's
+      // `includedContextIds` records that the commit phase was entered, not
+      // that it produced a landing.
       const afterPlan = first.execution;
       await repository.update("/repo", "session-1", {
         ...afterPlan,
@@ -7055,6 +7276,13 @@ describe("graph workflow manager", () => {
             mergeStatus: "merged-success",
             completedTaskCount: 1,
             iterationCount: 1,
+            landingIntent: {
+              ...afterPlan.contextStates["context-plan"]!.landingIntent!,
+              state: "landed",
+              evidence: "commit",
+              headSha: "plan-head",
+              settledAt: "2026-01-01T00:00:00.000Z",
+            },
           },
         },
         executionLanes: {
@@ -7103,6 +7331,13 @@ describe("graph workflow manager", () => {
             mergeStatus: "merged-success",
             completedTaskCount: 1,
             iterationCount: 1,
+            landingIntent: {
+              ...afterImpl.contextStates["context-implement"]!.landingIntent!,
+              state: "landed",
+              evidence: "commit",
+              headSha: "implement-head",
+              settledAt: "2026-01-01T00:00:00.000Z",
+            },
           },
         },
         executionLanes: {
@@ -8226,7 +8461,10 @@ describe("graph workflow manager", () => {
                     reasoningEffort: "medium",
                   },
                 },
-                mutability: { allowAgentTaskAdd: false },
+                mutability: {
+                  allowAgentTaskAdd: false,
+                  allowAgentContextAdd: false,
+                },
                 circuitBreaker: {},
                 iterationPolicy: {
                   maxIterations: 2,
@@ -8263,7 +8501,10 @@ describe("graph workflow manager", () => {
                     },
                   ],
                 },
-                mutability: { allowAgentTaskAdd: false },
+                mutability: {
+                  allowAgentTaskAdd: false,
+                  allowAgentContextAdd: false,
+                },
                 circuitBreaker: {},
                 iterationPolicy: {
                   maxIterations: 2,

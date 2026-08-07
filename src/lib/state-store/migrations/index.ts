@@ -14,6 +14,7 @@ import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
 import { validationCostExceedsLimitStatus } from "./0012-validation-cost-exceeds-limit-status";
 import { scriptValidatorCommands } from "./0013-script-validator-commands";
 import { validationRunSessionName } from "./0014-validation-run-session-name";
+import { mintGraphWorkflowEdgeIds } from "./0015-mint-graph-workflow-edge-ids";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -37,6 +38,7 @@ export const migrations: readonly StateMigration[] = [
   validationCostExceedsLimitStatus,
   scriptValidatorCommands,
   validationRunSessionName,
+  mintGraphWorkflowEdgeIds,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

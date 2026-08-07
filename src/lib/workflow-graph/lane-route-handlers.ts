@@ -24,7 +24,12 @@ import {
   resolveProjectOr404,
 } from "@/lib/shared/route-resolution";
 import { z } from "zod";
-import { createAgentAuth, type AgentAuth } from "@/lib/agent-gateway/token";
+import {
+  createAgentAuth,
+  createLaneCapabilityVerifier,
+  type AgentAuth,
+} from "@/lib/agent-gateway/token";
+import type { LaneCapabilityVerification } from "@/lib/agent-gateway/lane-capability";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { createLogger, withTracing } from "@/lib/logging";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
@@ -42,6 +47,15 @@ import {
   createRequestCollaborationHandler,
   type GraphWorkflowToolServerContext,
 } from "./lane-tool-service";
+import {
+  classifyExpansionPayloadRefusal,
+  createDefaultExpansionService,
+  graphExpansionRequestSchema,
+  publishExpansionRefusal,
+  type ExpansionRefusalNotice,
+  type GraphExpansionInput,
+  type GraphExpansionOutcome,
+} from "./expansion-production";
 
 const log = createLogger("graph-workflow-lane-route");
 
@@ -49,6 +63,8 @@ const ADD_TASK_DISABLED_MESSAGE =
   "This execution context does not allow agent-added tasks (mutability.allowAgentTaskAdd is disabled).";
 const COLLABORATION_DISABLED_MESSAGE =
   "This execution context does not allow agent-initiated collaboration requests.";
+const EXPANSION_CAPABILITY_MESSAGE =
+  "Graph expansion requires a valid implementer-lane capability for this execution context.";
 
 const executionIdField = z.string().trim().min(1);
 const trimmedRequired = z.string().trim().min(1);
@@ -71,6 +87,10 @@ const collaborationBodySchema = z.object({
   executionId: executionIdField,
   brief: trimmedRequired,
 });
+const expandBodySchema = z.object({
+  executionId: executionIdField,
+  request: graphExpansionRequestSchema,
+});
 
 const collaborationStartedSchema = z.object({
   status: z.literal("started"),
@@ -79,6 +99,22 @@ const collaborationStartedSchema = z.object({
 
 export interface LaneRouteDeps {
   auth: AgentAuth;
+  /**
+   * Classify the signed lane capability the request presents (D4 R7). Separate
+   * from `auth` because it answers a different question: the bearer token says
+   * "a cctl on this machine", this says "the implementer bound to THIS context".
+   */
+  verifyLaneCapability(request: Request): Promise<LaneCapabilityVerification>;
+  expandGraph(input: GraphExpansionInput): Promise<GraphExpansionOutcome>;
+  /**
+   * Emit the typed refusal event for an expansion the ROUTE refuses before the
+   * service is reached (R6.2). The service publishes its own refusals; these are
+   * the ones it never sees — an unauthorized lane, and a payload that failed the
+   * strict schema (which is how a smuggled remove/update/move/reorder op is
+   * refused). Without this the two violations R6.2 names most explicitly would be
+   * the only ones missing from the audit stream.
+   */
+  publishExpansionRefusal(notice: ExpansionRefusalNotice): void;
   resolveProjectPath(name: string): Promise<string | null>;
   loadLaneToolContext(
     projectPath: string,
@@ -109,8 +145,43 @@ async function readJsonBody(request: Request): Promise<unknown | undefined> {
   }
 }
 
+function ownString(value: unknown, key: string): string {
+  if (typeof value !== "object" || value === null) return "";
+  if (!Object.prototype.hasOwnProperty.call(value, key)) return "";
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : "";
+}
+
+/**
+ * Recover the (execution, request) pair from an expansion body that has NOT been
+ * validated — a refusal event still owes its reader which attempt was refused.
+ * Own properties only, and an empty string where the body named nothing: an
+ * unparseable payload genuinely has no request id, and inventing one would make
+ * the audit stream lie about an idempotency key.
+ */
+function readExpansionIdentity(body: unknown): {
+  executionId: string;
+  requestId: string;
+} {
+  const requestField =
+    typeof body === "object" &&
+    body !== null &&
+    Object.prototype.hasOwnProperty.call(body, "request")
+      ? (body as Record<string, unknown>)["request"]
+      : undefined;
+  return {
+    executionId: ownString(body, "executionId"),
+    requestId: ownString(requestField, "requestId"),
+  };
+}
+
 type PreparedContext =
-  | { ok: true; context: GraphWorkflowToolServerContext }
+  | {
+      ok: true;
+      context: GraphWorkflowToolServerContext;
+      /** The resolved project path, so a handler needing it skips a second resolve. */
+      projectPath: string;
+    }
   | { ok: false; response: Response };
 
 /**
@@ -190,7 +261,7 @@ async function prepareContext(
     };
   }
 
-  return { ok: true, context };
+  return { ok: true, context, projectPath };
 }
 
 export function createLaneRouteHandlers(deps: LaneRouteDeps) {
@@ -458,16 +529,176 @@ export function createLaneRouteHandlers(deps: LaneRouteDeps) {
     });
   }
 
+  /**
+   * POST …/contexts/[contextId]/expand — runtime graph expansion (D4 R6/R7).
+   *
+   * The only lane verb with a SECOND credential. The bearer token says a cctl on
+   * this machine is calling; the signed capability says which lane, and the
+   * service re-checks that claim against the context's current implementer
+   * conversation inside the serialized mutation. Both are required.
+   *
+   * It is also the only lane verb whose refusals are themselves events (R6.2):
+   * an unauthorized lane and a payload smuggling a non-additive op are refused
+   * here, before the service exists to publish for them, so this handler owns
+   * their `graph-workflow-graph-expanded` rows.
+   */
+  async function expandGraph(
+    request: Request,
+    { params }: { params: Promise<Record<string, string>> },
+  ): Promise<Response> {
+    const denied = await deps.auth.requireToken(request);
+    if (denied) return denied;
+
+    const { name, session, contextId } = await params;
+
+    // Read the body BEFORE the credential gates: a refusal event is only worth
+    // reading if it names which request was refused, and the requestId lives in
+    // the payload. The body is untrusted either way — nothing below acts on it
+    // until it has passed both the capability check and the strict schema.
+    const body = await readJsonBody(request);
+    const identity = readExpansionIdentity(body);
+
+    /**
+     * Refuse, with the typed event (R6.2). Resolving the project here rather
+     * than up front keeps the happy path's ordering — and its 403-before-404
+     * disclosure boundary — exactly as it was; a project that will not resolve
+     * simply has nowhere to file the event.
+     */
+    async function refuse(
+      refusalCode: string,
+      response: Response,
+    ): Promise<Response> {
+      const projectPath = await deps.resolveProjectPath(name ?? "");
+      if (projectPath !== null) {
+        deps.publishExpansionRefusal({
+          projectPath,
+          sessionName: session ?? "",
+          executionId: identity.executionId,
+          invokerContextId: contextId ?? "",
+          requestId: identity.requestId,
+          refusalCode,
+        });
+      }
+      return response;
+    }
+
+    const capability = await deps.verifyLaneCapability(request);
+    if (capability.kind !== "valid") {
+      log.warn("graph-workflow-lane.expansion_capability_rejected", {
+        contextId,
+        reason:
+          capability.kind === "absent"
+            ? "absent"
+            : `invalid:${capability.reason}`,
+      });
+      return refuse(
+        capability.kind === "absent"
+          ? "expansion-capability-absent"
+          : "expansion-capability-invalid",
+        jsonError(EXPANSION_CAPABILITY_MESSAGE, 403),
+      );
+    }
+
+    const parsed = expandBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return refuse(
+        classifyExpansionPayloadRefusal(body),
+        invalidBody(parsed.error),
+      );
+    }
+
+    // The capability is scoped to one execution context, so a lane cannot
+    // present a valid credential and then act on a different one.
+    if (
+      capability.scope.executionId !== parsed.data.executionId ||
+      capability.scope.contextId !== (contextId ?? "")
+    ) {
+      log.warn("graph-workflow-lane.expansion_capability_out_of_scope", {
+        contextId,
+        scopedContextId: capability.scope.contextId,
+      });
+      return refuse(
+        "expansion-capability-out-of-scope",
+        jsonError(EXPANSION_CAPABILITY_MESSAGE, 403),
+      );
+    }
+
+    // The shared preamble: stale-lane guard, context existence, and the
+    // pre-dispatch halt check a halted run must not expand through.
+    const prepared = await prepareContext(
+      deps,
+      "task-add",
+      name ?? "",
+      session ?? "",
+      parsed.data.executionId,
+      contextId ?? "",
+    );
+    if (!prepared.ok) return prepared.response;
+
+    const outcome = await deps.expandGraph({
+      projectPath: prepared.projectPath,
+      sessionName: session ?? "",
+      executionId: parsed.data.executionId,
+      contextId: contextId ?? "",
+      conversationId: capability.scope.conversationId,
+      request: parsed.data.request,
+    });
+
+    if (!outcome.ok) {
+      // Not a 404: the preamble above already proved this execution and context
+      // exist. Reaching here means the active execution changed out from under
+      // the request between the two reads, which is a conflict — the same way
+      // the sibling lane verbs surface a mid-request state change.
+      if (outcome.kind === "no_active_execution") {
+        return jsonError(
+          "The active graph workflow execution changed while the expansion was in flight; re-read the live outline and retry",
+          409,
+        );
+      }
+      return NextResponse.json(
+        {
+          error: outcome.issues[0]?.message ?? "graph expansion was refused",
+          code: outcome.issues[0]?.code ?? "expansion-refused",
+          issues: outcome.issues,
+        },
+        { status: outcome.kind === "forbidden" ? 403 : 409 },
+      );
+    }
+
+    log.info("graph-workflow-lane.graph_expanded", {
+      contextId,
+      requestId: parsed.data.request.requestId,
+      replayed: outcome.replayed,
+      addedContextCount: outcome.createdContextIds.length,
+      addedTaskCount: outcome.createdTaskIds.length,
+    });
+    return NextResponse.json({
+      ok: true,
+      // A replay answered from the permanent acceptance receipt: the ids below
+      // are already in the graph. Surfaced so a lane retrying after a lost
+      // response is not told it just added them again (R6.3).
+      replayed: outcome.replayed,
+      liveRevision: outcome.liveRevision,
+      createdContextIds: outcome.createdContextIds,
+      createdTaskIds: outcome.createdTaskIds,
+      rejoinContextIds: outcome.rejoinContextIds,
+    });
+  }
+
   return {
     completeTask,
     addTask,
     upsertSharedDocument,
     requestCollaboration,
+    expandGraph,
   };
 }
 
 const defaultDeps: LaneRouteDeps = {
   auth: createAgentAuth(),
+  verifyLaneCapability: createLaneCapabilityVerifier(),
+  expandGraph: (input) => createDefaultExpansionService().expand(input),
+  publishExpansionRefusal,
   resolveProjectPath,
   loadLaneToolContext: loadGraphWorkflowLaneToolContext,
 };
@@ -486,3 +717,5 @@ export const UPSERT_SHARED_DOCUMENT = withTracing(
 export const REQUEST_COLLABORATION = withTracing(
   defaultHandlers.requestCollaboration,
 );
+/** POST …/graph-workflow/contexts/[contextId]/expand */
+export const EXPAND_GRAPH = withTracing(defaultHandlers.expandGraph);

@@ -4,6 +4,7 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
+import { graphWorkflowExecutionContextStateSchema } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowContextStatus,
   GraphWorkflowExecutionContextDefinition,
@@ -68,6 +69,8 @@ function makeExecution(
     contextStates: {},
     taskStates: {},
     contextOutputs: {},
+    expansionReceipts: { accepted: [], refusals: [] },
+    loopStates: {},
     sharedDocuments: [],
     machineSnapshot: null,
     history: [],
@@ -101,7 +104,7 @@ describe("deriveNodes", () => {
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
@@ -137,7 +140,7 @@ describe("deriveNodes", () => {
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
@@ -154,7 +157,7 @@ describe("deriveNodes", () => {
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
@@ -189,7 +192,7 @@ describe("deriveNodes", () => {
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
@@ -251,7 +254,7 @@ describe("deriveNodes", () => {
               reasoningEffort: "medium",
             },
           },
-          mutability: { allowAgentTaskAdd: false },
+          mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         },
@@ -269,6 +272,8 @@ describe("deriveNodes", () => {
     });
 
     const ctxState: GraphWorkflowExecutionContextState = {
+      skipReason: null,
+      landingIntent: null,
       pendingApproval: null,
       pendingUserInputs: {},
       contextId: "ctx-1",
@@ -329,7 +334,7 @@ describe("deriveNodes wait state attachment", () => {
           reasoningEffort: "medium" as const,
         },
       },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
     };
@@ -355,6 +360,8 @@ describe("deriveNodes wait state attachment", () => {
       lastMergeError: null,
       pendingApproval: null,
       pendingUserInputs: {},
+      skipReason: null,
+      landingIntent: null,
       ...overrides,
     };
   }
@@ -482,6 +489,8 @@ describe("getContextDisplayPhase", () => {
       lastMergeError: null,
       pendingApproval: null,
       pendingUserInputs: {},
+      skipReason: null,
+      landingIntent: null,
       ...overrides,
     };
   }
@@ -639,7 +648,7 @@ describe("getDisplayValidators", () => {
       scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
       planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -663,7 +672,7 @@ describe("getDisplayValidators", () => {
           reasoningEffort: "medium",
         },
       },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
       ...overrides,
@@ -914,7 +923,7 @@ describe("getDisplayApprovalGate", () => {
       scriptValidator: { commands: [] },
       humanApprovalGate: { enabled: false },
       askUserQuestions: { enabled: false },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
       planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -945,7 +954,7 @@ describe("getDisplayApprovalGate", () => {
           reasoningEffort: "medium",
         },
       },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
     };
@@ -1090,6 +1099,8 @@ describe("deriveEdges", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "ctx-1",
@@ -1109,6 +1120,8 @@ describe("deriveEdges", () => {
           lastMergeError: null,
         },
         "ctx-2": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "ctx-2",
@@ -1143,5 +1156,277 @@ describe("deriveEdges", () => {
     const edges = deriveEdges(def);
     expect(edges[0]!.data!.sourceStatus).toBeUndefined();
     expect(edges[0]!.data!.targetStatus).toBeUndefined();
+  });
+});
+
+// ============================================================
+// D4 read surfaces (R13.1)
+// ============================================================
+
+function makeD4Definition(
+  overrides: Partial<ResolvedWorkflowSemanticDefinition> = {},
+): ResolvedWorkflowSemanticDefinition {
+  return createResolvedWorkflowDefinition({
+    executionContexts: [],
+    tasks: [],
+    edges: [],
+    ...overrides,
+  });
+}
+
+function makeD4Context(
+  id: string,
+  overrides: Partial<GraphWorkflowResolvedContext> = {},
+): GraphWorkflowResolvedContext {
+  const defaults = createResolvedWorkflowDefinition().executionContexts[0]!;
+  return {
+    ...defaults,
+    id,
+    title: id,
+    acceptanceCriteria: "TBD",
+    ...overrides,
+  };
+}
+
+function makeD4ContextState(
+  contextId: string,
+  overrides: Partial<GraphWorkflowExecutionContextState> = {},
+): GraphWorkflowExecutionContextState {
+  return graphWorkflowExecutionContextStateSchema.parse({
+    contextId,
+    status: "pending",
+    totalTaskCount: 1,
+    ...overrides,
+  });
+}
+
+describe("deriveEdges — conditional guards (R13.1)", () => {
+  const guardedDefinition = makeD4Definition({
+    executionContexts: [
+      makeD4Context("classify", {
+        outputSchema: {
+          type: "object",
+          properties: { verdict: { type: "string" } },
+        },
+      }),
+      makeD4Context("fix"),
+      makeD4Context("ship"),
+    ],
+    edges: [
+      {
+        id: "e-fix",
+        sourceContextId: "classify",
+        targetContextId: "fix",
+        when: { schema: { properties: { verdict: { const: "broken" } } } },
+      },
+      { id: "e-ship", sourceContextId: "classify", targetContextId: "ship" },
+    ],
+  });
+
+  it("reports the guard kind and resolution of a guarded edge", () => {
+    const execution = makeExecution({
+      workingDefinition: guardedDefinition,
+      contextStates: {
+        classify: makeD4ContextState("classify", { status: "completed" }),
+      },
+      contextOutputs: {
+        classify: {
+          value: { verdict: "broken" },
+          capturedAt: "2026-01-01T00:00:00.000Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+    });
+
+    const edges = deriveEdges(guardedDefinition, execution);
+
+    expect(edges[0]!.data!.guard).toEqual({
+      kind: "schema",
+      resolution: "active",
+    });
+    // An unconditional edge carries no guard at all — absence is how the edge
+    // knows to draw a solid line with no chip.
+    expect(edges[1]!.data!.guard).toBeUndefined();
+  });
+
+  it("reports an inactive guard when the captured verdict selects elsewhere", () => {
+    const execution = makeExecution({
+      workingDefinition: guardedDefinition,
+      contextStates: {
+        classify: makeD4ContextState("classify", { status: "completed" }),
+      },
+      contextOutputs: {
+        classify: {
+          value: { verdict: "fine" },
+          capturedAt: "2026-01-01T00:00:00.000Z",
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+    });
+
+    expect(deriveEdges(guardedDefinition, execution)[0]!.data!.guard).toEqual({
+      kind: "schema",
+      resolution: "inactive",
+    });
+  });
+
+  it("leaves guard data off every edge in builder mode", () => {
+    const edges = deriveEdges(guardedDefinition);
+    expect(edges[0]!.data!.guard).toBeUndefined();
+  });
+});
+
+describe("deriveNodes — skipped contexts (R13.1)", () => {
+  it("attaches the recorded skip reason of a skipped context", () => {
+    const definition = makeD4Definition({
+      executionContexts: [makeD4Context("fix")],
+      edges: [
+        { id: "e-fix", sourceContextId: "classify", targetContextId: "fix" },
+      ],
+    });
+    const execution = makeExecution({
+      workingDefinition: definition,
+      contextStates: {
+        fix: makeD4ContextState("fix", {
+          status: "skipped",
+          skipReason: {
+            at: "2026-01-01T00:00:00.000Z",
+            edgeEvaluations: [
+              { edgeId: "e-fix", verdict: "inactive" },
+              { edgeId: "e-other", verdict: "omitted" },
+            ],
+          },
+        }),
+      },
+    });
+
+    const node = deriveNodes(definition, makeLayout(), execution)[0]!;
+
+    expect(node.data.skip).toEqual({
+      at: "2026-01-01T00:00:00.000Z",
+      edgeEvaluations: [
+        { edgeId: "e-fix", verdict: "inactive" },
+        { edgeId: "e-other", verdict: "omitted" },
+      ],
+      decidingEdgeIds: ["e-fix"],
+    });
+  });
+
+  it("attaches no skip data to a context that is merely pending", () => {
+    const definition = makeD4Definition({
+      executionContexts: [makeD4Context("fix")],
+    });
+    const execution = makeExecution({
+      workingDefinition: definition,
+      contextStates: { fix: makeD4ContextState("fix") },
+    });
+
+    expect(
+      deriveNodes(definition, makeLayout(), execution)[0]!.data.skip,
+    ).toBeUndefined();
+  });
+});
+
+describe("deriveNodes — loop pass membership (R13.1)", () => {
+  const loopDefinition = makeD4Definition({
+    executionContexts: [
+      makeD4Context("loop-a__p2__work"),
+      makeD4Context("outside"),
+    ],
+    loopGroups: [
+      {
+        id: "loop-a",
+        entryContextId: "work",
+        exitContextId: "judge",
+        until: { schema: { properties: { done: { const: true } } } },
+        maxPasses: 5,
+        templateVersion: 3,
+        template: {
+          contexts: [makeD4Context("work"), makeD4Context("judge")],
+          tasks: [],
+          edges: [],
+        },
+        planRepair: { enabled: false, maxAttemptsPerContext: 0 },
+      },
+    ],
+  });
+
+  it("attaches loop group, pass, budget and activation to a pass instance", () => {
+    const execution = makeExecution({
+      workingDefinition: loopDefinition,
+      loopStates: {
+        "loop-a": {
+          loopGroupId: "loop-a",
+          activation: "running",
+          loopControlRevision: 0,
+          passCount: 2,
+          slotLedger: [],
+          boundaryInputs: null,
+          decisions: {},
+          passTemplateVersions: { "1": 1, "2": 3 },
+          concludingExitContextId: null,
+          activatedAt: "2026-01-01T00:00:00.000Z",
+          settledAt: null,
+        },
+      },
+    });
+
+    const nodes = deriveNodes(loopDefinition, makeLayout(), execution);
+
+    expect(nodes[0]!.data.loop).toEqual({
+      loopGroupId: "loop-a",
+      pass: 2,
+      maxPasses: 5,
+      passCount: 2,
+      activation: "running",
+      templateVersion: 3,
+      authoredContextId: "work",
+    });
+    // A context outside every declared loop stays unbadged.
+    expect(nodes[1]!.data.loop).toBeUndefined();
+  });
+});
+
+describe("deriveNodes — runtime expansion provenance (R13.1)", () => {
+  it("attaches the authorizing receipt to a runtime-added context", () => {
+    const definition = makeD4Definition({
+      executionContexts: [
+        makeD4Context("generated-1"),
+        makeD4Context("authored"),
+      ],
+    });
+    const execution = makeExecution({
+      workingDefinition: definition,
+      expansionReceipts: {
+        accepted: [
+          {
+            requestId: "req-1",
+            payloadHash: "a".repeat(64),
+            invokerContextId: "generator",
+            initiatorConversationId: "conv-1",
+            rationale: "Fan out three candidate designs",
+            addedContextIds: ["generated-1"],
+            addedTaskIds: [],
+            rejoinContextIds: ["filter"],
+            liveRevision: 4,
+            acceptedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        refusals: [],
+      },
+    });
+
+    const nodes = deriveNodes(definition, makeLayout(), execution);
+
+    expect(nodes[0]!.data.provenance).toEqual({
+      requestId: "req-1",
+      invokerContextId: "generator",
+      rationale: "Fan out three candidate designs",
+      payloadHash: "a".repeat(64),
+      acceptedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(nodes[1]!.data.provenance).toBeUndefined();
   });
 });

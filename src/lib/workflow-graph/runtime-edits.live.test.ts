@@ -3,6 +3,7 @@ import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
 import {
   applyLiveExecutionEdits,
   type LiveEditDeps,
+  type LiveEditOptions,
   type ResolvedContextConfig,
 } from "./runtime-edits";
 import type {
@@ -12,6 +13,17 @@ import type {
 import { workflowLiveEditOperationSchema } from "@/lib/workflows/edit-schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
+import { DEFAULT_PLAN_REPAIR_POLICY } from "@/lib/workflow-graph/config-schemas";
+import type {
+  GraphWorkflowResolvedContext,
+  GraphWorkflowTaskDefinition,
+  ResolvedWorkflowSemanticDefinition,
+} from "@/lib/workflow-graph/definition-schemas";
+import {
+  buildInitialContextStates,
+  buildInitialTaskStates,
+} from "./execution-state";
+import { resolveLoopGroups } from "./loop-resolver";
 
 const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   implementer: {
@@ -24,7 +36,7 @@ const RESOLVED_DEFAULTS: ResolvedContextConfig = {
   scriptValidator: { commands: [] },
   humanApprovalGate: { enabled: false },
   askUserQuestions: { enabled: false },
-  mutability: { allowAgentTaskAdd: false },
+  mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -425,7 +437,7 @@ describe("applyLiveExecutionEdits — task + context ops", () => {
           },
         },
         scriptValidator: { commands: [] },
-        mutability: { allowAgentTaskAdd: true },
+        mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
       },
     ]);
 
@@ -2057,4 +2069,1224 @@ describe("applyLiveExecutionEdits — outputSchema on the live tier (R1.1, R1.2)
       expect(frozen).toEqual(before);
     },
   );
+});
+
+describe("applyLiveExecutionEdits — edge guards and route-control revisions (R1.1, D2)", () => {
+  const PLAN_OUTPUT_SCHEMA = {
+    type: "object",
+    properties: { verdict: { type: "string", enum: ["ship", "hold"] } },
+    required: ["verdict"],
+    additionalProperties: false,
+  };
+  const SHIP_GUARD = {
+    schema: {
+      type: "object",
+      properties: { verdict: { const: "ship" } },
+      required: ["verdict"],
+    },
+  };
+
+  function liveOps(...raw: unknown[]): WorkflowLiveEditOperation[] {
+    return raw.map((entry) => workflowLiveEditOperationSchema.parse(entry));
+  }
+
+  /** A quiescent execution whose `context-plan` declares an output contract. */
+  function guardableExecution(
+    overrides: Partial<GraphWorkflowExecution> = {},
+  ): GraphWorkflowExecution {
+    const base = createWorkflowExecution({ status: "paused" });
+    return createWorkflowExecution({
+      status: "paused",
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan"
+              ? { ...context, outputSchema: { ...PLAN_OUTPUT_SCHEMA } }
+              : context,
+        ),
+      },
+      ...overrides,
+    });
+  }
+
+  function edgesOf(result: ReturnType<typeof apply>) {
+    if (!result.ok) throw new Error("expected the live edit batch to succeed");
+    return result.execution.workingDefinition.edges;
+  }
+
+  it("adds a guarded edge and bumps its source's route-control revision", () => {
+    const result = apply(
+      guardableExecution(),
+      liveOps({
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-verify",
+        when: SHIP_GUARD,
+      }),
+    );
+
+    expect(
+      edgesOf(result).find((edge) => edge.id === "context-plan__context-verify")
+        ?.when,
+    ).toEqual(SHIP_GUARD);
+    if (!result.ok) return;
+    expect(result.execution.routeControlRevisions).toEqual({
+      "context-plan": 1,
+    });
+  });
+
+  it("leaves route-control revisions untouched for an unconditional add-edge", () => {
+    const result = apply(
+      guardableExecution(),
+      liveOps({
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-verify",
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.execution.routeControlRevisions).toEqual({});
+  });
+
+  it("refuses a guarded add-edge whose source declares no outputSchema", () => {
+    const result = apply(
+      createWorkflowExecution({ status: "paused" }),
+      liveOps({
+        type: "add-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-verify",
+        when: SHIP_GUARD,
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "guard-source-without-output-schema",
+    ]);
+  });
+
+  it("sets and clears a guard through id-addressed update-edge, bumping each time", () => {
+    const set = apply(
+      guardableExecution(),
+      liveOps({
+        type: "update-edge",
+        edgeId: "edge-plan-implement",
+        when: SHIP_GUARD,
+      }),
+    );
+    expect(edgesOf(set)[0]?.when).toEqual(SHIP_GUARD);
+    if (!set.ok) return;
+    expect(set.execution.routeControlRevisions).toEqual({ "context-plan": 1 });
+
+    const cleared = apply(
+      set.execution,
+      liveOps({
+        type: "update-edge",
+        edgeId: "edge-plan-implement",
+        when: null,
+      }),
+    );
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.execution.workingDefinition.edges[0]).not.toHaveProperty(
+      "when",
+    );
+    expect(cleared.execution.routeControlRevisions).toEqual({
+      "context-plan": 2,
+    });
+  });
+
+  it("refuses an update-edge whose guard cannot match the source's output", () => {
+    const result = apply(
+      guardableExecution(),
+      liveOps({
+        type: "update-edge",
+        edgeId: "edge-plan-implement",
+        when: {
+          schema: {
+            type: "object",
+            properties: { verdict: { const: "shipp" } },
+            required: ["verdict"],
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "incompatible-guard-schema",
+    ]);
+  });
+
+  it("refuses an update-edge for an unknown edge id", () => {
+    const result = apply(
+      guardableExecution(),
+      liveOps({ type: "update-edge", edgeId: "nope", when: null }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues[0]).toMatchObject({
+      code: "unknown-edge",
+      edgeId: "nope",
+      operationIndex: 0,
+    });
+  });
+
+  it("refuses an update-edge on an edge into a started context", () => {
+    const base = guardableExecution();
+    const execution = guardableExecution({
+      contextStates: {
+        ...base.contextStates,
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "running",
+          iterationCount: 1,
+        },
+      },
+    });
+
+    const result = apply(
+      execution,
+      liveOps({
+        type: "update-edge",
+        edgeId: "edge-plan-implement",
+        when: SHIP_GUARD,
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("frozen");
+    expect(result.issues[0]?.code).toBe("protected-incoming-edge");
+  });
+
+  it("refuses an update-edge while the execution is running", () => {
+    const result = apply(
+      guardableExecution({ status: "running" }),
+      liveOps({
+        type: "update-edge",
+        edgeId: "edge-plan-implement",
+        when: SHIP_GUARD,
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("requires_pause");
+  });
+
+  it("removes an edge addressed by id", () => {
+    const result = apply(
+      guardableExecution(),
+      liveOps({ type: "remove-edge", edgeId: "edge-plan-implement" }),
+    );
+
+    expect(edgesOf(result).map((edge) => edge.id)).toEqual([
+      "edge-implement-verify",
+    ]);
+  });
+
+  it("refuses an ambiguous endpoint-addressed remove-edge, listing the candidates", () => {
+    const base = guardableExecution();
+    const execution = guardableExecution({
+      workingDefinition: {
+        ...base.workingDefinition,
+        edges: [
+          ...base.workingDefinition.edges,
+          {
+            id: "edge-plan-implement-2",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+        ],
+      },
+    });
+
+    const result = apply(
+      execution,
+      liveOps({
+        type: "remove-edge",
+        sourceContextId: "context-plan",
+        targetContextId: "context-implement",
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues[0]?.code).toBe("ambiguous-edge-endpoints");
+    expect(result.issues[0]?.message).toContain("edge-plan-implement");
+    expect(result.issues[0]?.message).toContain("edge-plan-implement-2");
+  });
+
+  it("bumps when a live update-context changes the routing cardinality", () => {
+    const result = apply(
+      guardableExecution(),
+      liveOps({
+        type: "update-context",
+        contextId: "context-plan",
+        routing: { cardinality: "exactlyOne" },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.execution.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-plan",
+      )?.routing,
+    ).toEqual({ cardinality: "exactlyOne" });
+    expect(result.execution.routeControlRevisions).toEqual({
+      "context-plan": 1,
+    });
+  });
+
+  /**
+   * The closed bump set of decision D2, walked over the WHOLE live-edit
+   * vocabulary: an op absent from this table fails the coverage assertion, so a
+   * new op cannot join the vocabulary without a decision about routing.
+   */
+  it("bumps for exactly the closed trigger set across the live-edit vocabulary", () => {
+    const guarded = () => {
+      const base = guardableExecution();
+      return guardableExecution({
+        workingDefinition: {
+          ...base.workingDefinition,
+          edges: base.workingDefinition.edges.map((edge) =>
+            edge.id === "edge-plan-implement"
+              ? { ...edge, when: SHIP_GUARD }
+              : edge,
+          ),
+        },
+      });
+    };
+
+    const scenarios: {
+      opType: WorkflowLiveEditOperation["type"];
+      operation: unknown;
+      execution: () => GraphWorkflowExecution;
+      bumps: boolean;
+      /** Server-derived authority, for the engine-only ops. */
+      options?: LiveEditOptions;
+    }[] = [
+      {
+        opType: "amend-charter",
+        operation: {
+          type: "amend-charter",
+          rationale: "sharpen the mission",
+          mission: "A sharper mission statement",
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "update-lane-merge-validation",
+        operation: {
+          type: "update-lane-merge-validation",
+          laneMergeValidation: {
+            strategy: "final-only",
+            commands: { mode: "project" },
+          },
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "update-context",
+        operation: {
+          type: "update-context",
+          contextId: "context-plan",
+          routing: { cardinality: "atLeastOne" },
+        },
+        execution: guarded,
+        bumps: true,
+      },
+      {
+        opType: "add-context",
+        operation: {
+          type: "add-context",
+          id: "context-extra",
+          title: "Extra",
+          acceptanceCriteria: "Extra work is done.",
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "remove-context",
+        operation: {
+          type: "remove-context",
+          contextId: "context-verify",
+          deleteTasks: true,
+        },
+        execution: () => {
+          // `context-verify` is the target of a guarded edge, so removing it
+          // removes one of `context-plan`'s outgoing conditional edges.
+          const base = guarded();
+          return guardableExecution({
+            workingDefinition: {
+              ...base.workingDefinition,
+              edges: [
+                {
+                  id: "edge-plan-verify",
+                  sourceContextId: "context-plan",
+                  targetContextId: "context-verify",
+                  when: SHIP_GUARD,
+                },
+              ],
+            },
+          });
+        },
+        bumps: true,
+      },
+      {
+        opType: "add-task",
+        operation: {
+          type: "add-task",
+          contextId: "context-verify",
+          title: "Extra check",
+          instructions: "Run the extra check.",
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "update-task",
+        operation: {
+          type: "update-task",
+          taskId: "task-verify-1",
+          title: "Renamed",
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "remove-task",
+        operation: { type: "remove-task", taskId: "task-verify-1" },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "move-task",
+        operation: {
+          type: "move-task",
+          taskId: "task-verify-1",
+          targetContextId: "context-implement",
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "reorder-tasks",
+        operation: {
+          type: "reorder-tasks",
+          contextId: "context-verify",
+          orderedTaskIds: ["task-verify-1"],
+        },
+        execution: guarded,
+        bumps: false,
+      },
+      {
+        opType: "add-edge",
+        operation: {
+          type: "add-edge",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+          when: SHIP_GUARD,
+        },
+        execution: guarded,
+        bumps: true,
+      },
+      {
+        opType: "update-edge",
+        operation: {
+          type: "update-edge",
+          edgeId: "edge-plan-implement",
+          when: null,
+        },
+        execution: guarded,
+        bumps: true,
+      },
+      {
+        opType: "remove-edge",
+        operation: { type: "remove-edge", edgeId: "edge-plan-implement" },
+        execution: guarded,
+        bumps: true,
+      },
+      {
+        // A loop-pass clone introduces only BRAND-NEW sources, and a context
+        // that did not exist before starts at the implicit floor: there is no
+        // earlier settlement of its routes for a bump to invalidate.
+        opType: "materialize-loop-pass",
+        operation: {
+          type: "materialize-loop-pass",
+          loopGroupId: "refine",
+          pass: 2,
+        },
+        execution: loopBearingExecution,
+        bumps: false,
+        options: { engineLoopSettlement: true },
+      },
+      // The three loop-control edits (R11.2) change what the settlement
+      // transaction will DECIDE, never which edges a source activates — the
+      // loop's boundary edges are unconditional — so none of them bumps.
+      {
+        opType: "raise-loop-max-passes",
+        operation: {
+          type: "raise-loop-max-passes",
+          loopGroupId: "refine",
+          maxPasses: 7,
+        },
+        execution: () => loopBearingExecution({ status: "paused" }),
+        bumps: false,
+      },
+      {
+        opType: "amend-loop-predicate",
+        operation: {
+          type: "amend-loop-predicate",
+          loopGroupId: "refine",
+          until: {
+            schema: {
+              type: "object",
+              properties: { verdict: { type: "string" } },
+              required: ["verdict"],
+            },
+          },
+          rationale: "the const bar cannot be met without a spec change",
+        },
+        // Halted on the budget it exhausted, not merely paused: a predicate
+        // amendment answers a recorded verdict (R11), and a halt is only
+        // editable at all when it is a resumable one.
+        execution: () =>
+          loopBearingExecution({
+            status: "halted",
+            haltReason: {
+              type: "loop_limit_reached",
+              scope: "loop",
+              loopGroupId: "refine",
+              pass: 5,
+              maxPasses: 5,
+              verdict: "unsatisfied",
+              passCount: 5,
+              totalPassCount: 5,
+              contextId: "refine__p5__judge",
+              message: "budget reached",
+              summary: null,
+            },
+          }),
+        bumps: false,
+      },
+      {
+        opType: "edit-loop-template",
+        operation: {
+          type: "edit-loop-template",
+          loopGroupId: "refine",
+          operations: [
+            {
+              type: "update-context",
+              contextId: "worker",
+              acceptanceCriteria: "Ship the narrower slice",
+            },
+          ],
+        },
+        execution: () => loopBearingExecution({ status: "paused" }),
+        bumps: false,
+      },
+    ];
+
+    const vocabulary = workflowLiveEditOperationSchema.options
+      .map((option) => option.shape.type.value)
+      .sort();
+    expect(
+      scenarios.map((scenario) => scenario.opType).sort(),
+      "every live-edit op must declare whether it can bump a route-control revision",
+    ).toEqual(vocabulary);
+
+    const bumped: string[] = [];
+    for (const scenario of scenarios) {
+      const result = applyLiveExecutionEdits(
+        scenario.execution(),
+        { operations: liveOps(scenario.operation), source: "cli" },
+        makeDeps(),
+        scenario.options,
+      );
+      if (!result.ok) {
+        throw new Error(
+          `${scenario.opType} scenario was rejected: ${JSON.stringify(result.issues)}`,
+        );
+      }
+      const changed = Object.keys(result.execution.routeControlRevisions);
+      expect(changed.length > 0, `${scenario.opType} bump expectation`).toBe(
+        scenario.bumps,
+      );
+      if (changed.length > 0) bumped.push(scenario.opType);
+    }
+
+    expect(bumped.sort()).toEqual([
+      "add-edge",
+      "remove-context",
+      "remove-edge",
+      "update-context",
+      "update-edge",
+    ]);
+  });
+});
+
+/**
+ * R6.5 — the running-time structural exception, at the seam that grants it.
+ * `structuralSource` is server-derived: no client-reachable entry point sets it
+ * (the runtime-edits route builds its options from the parsed HTTP body, which
+ * has no such field), so this pins WHAT the exemption covers rather than who
+ * may claim it — the route-level half is pinned in
+ * `runtime-edit-route-handlers.test.ts`.
+ */
+describe("applyLiveExecutionEdits — the server-derived structural exception (R6.5)", () => {
+  function runningExecution(): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+    const planState = execution.contextStates["context-plan"];
+    if (planState) planState.status = "running";
+    return execution;
+  }
+
+  const ADD_CONTEXT = {
+    type: "add-context" as const,
+    id: "context-new",
+    title: "New",
+    acceptanceCriteria: "Something is done",
+  };
+  const ADD_EDGE = {
+    type: "add-edge" as const,
+    sourceContextId: "context-plan",
+    targetContextId: "context-verify",
+  };
+
+  it("refuses append ops on a running execution when no server-derived source claims them", () => {
+    for (const operation of [ADD_CONTEXT, ADD_EDGE]) {
+      const result = apply(runningExecution(), [operation]);
+      expect(result.ok, operation.type).toBe(false);
+      if (result.ok) return;
+      expect(result.code).toBe("requires_pause");
+    }
+  });
+
+  it("lets both server-derived paths append to a running graph", () => {
+    for (const structuralSource of [
+      "lane-agent-expansion",
+      "loop-unrolling",
+    ] as const) {
+      const result = applyLiveExecutionEdits(
+        runningExecution(),
+        { operations: [ADD_CONTEXT, ADD_EDGE] },
+        makeDeps(),
+        { structuralSource },
+      );
+      expect(result.ok, structuralSource).toBe(true);
+    }
+  });
+
+  it("keeps the destructive structural ops pause-only even for a server-derived path", () => {
+    const destructive = [
+      { type: "remove-context" as const, contextId: "context-verify" },
+      { type: "remove-edge" as const, edgeId: "edge-implement-verify" },
+      {
+        type: "update-edge" as const,
+        edgeId: "edge-implement-verify",
+        when: null,
+      },
+    ];
+
+    for (const operation of destructive) {
+      const execution = runningExecution();
+      const before = structuredClone(execution);
+      const result = applyLiveExecutionEdits(
+        execution,
+        { operations: [operation] },
+        makeDeps(),
+        { structuralSource: "lane-agent-expansion" },
+      );
+
+      expect(result.ok, operation.type).toBe(false);
+      if (result.ok) return;
+      expect(result.code, operation.type).toBe("requires_pause");
+      expect(execution).toEqual(before);
+    }
+  });
+});
+
+describe("applyLiveExecutionEdits — expansion loop refusals (R11.1)", () => {
+  it("refuses an agent request that declares loop groups alongside its operations", () => {
+    const execution = loopBearingExecution();
+    const before = structuredClone(execution);
+    // A structurally-read smuggle: the payload carries a `loopGroups` key the
+    // operation vocabulary has no room for, so without the refusal it would be
+    // silently dropped rather than rejected.
+    const request = {
+      operations: [
+        {
+          type: "add-context" as const,
+          id: "candidate-1",
+          title: "Candidate 1",
+          acceptanceCriteria: "The candidate is drafted.",
+        },
+      ],
+      loopGroups: [
+        {
+          id: "smuggled",
+          bodyContextIds: ["candidate-1"],
+          entryContextId: "candidate-1",
+          exitContextId: "candidate-1",
+          until: { schema: { type: "object" } },
+          maxPasses: 3,
+        },
+      ],
+    };
+
+    const result = applyLiveExecutionEdits(execution, request, makeDeps(), {
+      laneAgentContextId: "seed",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "loop-declaration-in-expansion",
+    ]);
+    expect(execution).toEqual(before);
+  });
+
+  it("refuses an agent expansion initiated from inside an active loop body", () => {
+    const execution = loopBearingExecution();
+    const before = structuredClone(execution);
+
+    const result = applyLiveExecutionEdits(
+      execution,
+      {
+        operations: [
+          {
+            type: "add-context",
+            id: "candidate-1",
+            title: "Candidate 1",
+            acceptanceCriteria: "The candidate is drafted.",
+          },
+          {
+            type: "add-edge",
+            sourceContextId: "refine__p1__worker",
+            targetContextId: "candidate-1",
+          },
+        ],
+      },
+      makeDeps(),
+      { laneAgentContextId: "refine__p1__worker" },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues[0]).toMatchObject({
+      code: "expansion-from-active-loop-body",
+      contextId: "refine__p1__worker",
+    });
+    expect(execution).toEqual(before);
+  });
+
+  it("admits an expansion from a body whose loop has CONCLUDED", () => {
+    // The refusal reads the real `loopStates` ledger, not "every declared group
+    // is running": once the loop concludes, its instances are ordinary settled
+    // contexts and there is no later pass for an appended node to vanish from.
+    const execution = loopBearingExecution({
+      status: "paused",
+      loopStates: {
+        refine: {
+          loopGroupId: "refine",
+          activation: "concluded",
+          loopControlRevision: 0,
+          passCount: 1,
+          slotLedger: [
+            {
+              pass: 1,
+              state: "counted",
+              grantOrder: 1,
+              grantedAt: "2026-08-04T00:00:00.000Z",
+            },
+          ],
+          boundaryInputs: null,
+          decisions: {},
+          passTemplateVersions: { "1": 1 },
+          concludingExitContextId: "refine__p1__judge",
+          activatedAt: "2026-08-04T00:00:00.000Z",
+          settledAt: "2026-08-04T00:10:00.000Z",
+        },
+      },
+    });
+
+    const result = applyLiveExecutionEdits(
+      execution,
+      {
+        operations: [
+          {
+            type: "add-context",
+            id: "candidate-1",
+            title: "Candidate 1",
+            acceptanceCriteria: "The candidate is drafted.",
+          },
+          {
+            type: "add-edge",
+            sourceContextId: "refine__p1__worker",
+            targetContextId: "candidate-1",
+          },
+        ],
+      },
+      makeDeps(),
+      { laneAgentContextId: "refine__p1__worker" },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("admits an agent expansion initiated from a context outside every loop body", () => {
+    const execution = loopBearingExecution({ status: "paused" });
+
+    const result = applyLiveExecutionEdits(
+      execution,
+      {
+        operations: [
+          {
+            type: "add-context",
+            id: "candidate-1",
+            title: "Candidate 1",
+            acceptanceCriteria: "The candidate is drafted.",
+          },
+        ],
+      },
+      makeDeps(),
+      { laneAgentContextId: "seed" },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("admits a lane-agent task add from inside a loop body — a task add is not an expansion", () => {
+    const execution = loopBearingExecution();
+
+    const result = applyLiveExecutionEdits(
+      execution,
+      {
+        operations: [
+          {
+            type: "add-task",
+            id: "task-extra",
+            contextId: "refine__p1__worker",
+            title: "Extra step",
+            instructions: "Do the extra step.",
+          },
+        ],
+      },
+      makeDeps(),
+      { laneAgentContextId: "refine__p1__worker" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.execution.workingDefinition.tasks.map((task) => task.id),
+    ).toContain("task-extra");
+  });
+
+  it("leaves operator structural edits on a loop-bearing execution alone", () => {
+    const execution = loopBearingExecution({ status: "paused" });
+
+    const result = applyLiveExecutionEdits(
+      execution,
+      {
+        operations: [
+          {
+            type: "add-context",
+            id: "context-review",
+            title: "Review",
+            acceptanceCriteria: "The change is reviewed.",
+          },
+        ],
+        source: "cli",
+      },
+      makeDeps(),
+    );
+
+    expect(result.ok).toBe(true);
+  });
+});
+
+// The judge (loop exit) verdict the `until` predicate is written against.
+const JUDGE_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+  required: ["verdict"],
+  additionalProperties: false,
+};
+
+function loopResolvedContext(
+  id: string,
+  overrides: Partial<GraphWorkflowResolvedContext> = {},
+): GraphWorkflowResolvedContext {
+  return {
+    id,
+    title: id,
+    acceptanceCriteria: `${id} is done`,
+    ...RESOLVED_DEFAULTS,
+    ...overrides,
+  };
+}
+
+function loopTask(id: string, contextId: string): GraphWorkflowTaskDefinition {
+  return {
+    id,
+    contextId,
+    order: 1,
+    title: id,
+    instructions: `Do ${id}`,
+    source: "user",
+  };
+}
+
+/**
+ * `seed → [worker → judge]* → publish`, resolved the way a launch resolves it:
+ * the body lives in the group's versioned template and pass 1 is materialized,
+ * so `refine__p1__worker` is a real context an agent could try to expand from.
+ */
+function loopBearingExecution(
+  overrides: Partial<GraphWorkflowExecution> = {},
+): GraphWorkflowExecution {
+  const resolution = resolveLoopGroups({
+    loopGroups: [
+      {
+        id: "refine",
+        bodyContextIds: ["worker", "judge"],
+        entryContextId: "worker",
+        exitContextId: "judge",
+        until: {
+          schema: {
+            type: "object",
+            properties: { verdict: { const: "pass" } },
+            required: ["verdict"],
+          },
+        },
+        maxPasses: 5,
+      },
+    ],
+    executionContexts: [
+      loopResolvedContext("seed"),
+      loopResolvedContext("worker", {
+        mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
+      }),
+      loopResolvedContext("judge", { outputSchema: JUDGE_OUTPUT_SCHEMA }),
+      loopResolvedContext("publish"),
+    ],
+    tasks: [
+      loopTask("task-seed", "seed"),
+      loopTask("task-worker", "worker"),
+      loopTask("task-judge", "judge"),
+      loopTask("task-publish", "publish"),
+    ],
+    edges: [
+      {
+        id: "seed__worker",
+        sourceContextId: "seed",
+        targetContextId: "worker",
+      },
+      {
+        id: "worker__judge",
+        sourceContextId: "worker",
+        targetContextId: "judge",
+      },
+      {
+        id: "judge__publish",
+        sourceContextId: "judge",
+        targetContextId: "publish",
+      },
+    ],
+    resolvePlanRepair: () => DEFAULT_PLAN_REPAIR_POLICY,
+  });
+
+  const workingDefinition: ResolvedWorkflowSemanticDefinition = {
+    schemaVersion: 1,
+    laneMergeValidation: {
+      strategy: "final-only",
+      commands: { mode: "project" },
+    },
+    executionContexts: resolution.executionContexts,
+    tasks: resolution.tasks,
+    edges: resolution.edges,
+    loopGroups: resolution.loopGroups,
+  };
+
+  // The loop has been entered: the seed landed and pass 1's entry is running.
+  const contextStates = buildInitialContextStates(workingDefinition);
+  const taskStates = buildInitialTaskStates(workingDefinition);
+  contextStates["seed"] = {
+    ...contextStates["seed"]!,
+    status: "completed",
+    completedTaskCount: 1,
+  };
+  taskStates["task-seed"] = {
+    ...taskStates["task-seed"]!,
+    status: "completed",
+  };
+  contextStates["refine__p1__worker"] = {
+    ...contextStates["refine__p1__worker"]!,
+    status: "running",
+  };
+
+  return createWorkflowExecution({
+    status: "running",
+    workingDefinition,
+    contextStates,
+    taskStates,
+    activeContextIds: ["refine__p1__worker"],
+    ...overrides,
+  });
+}
+
+describe("applyLiveExecutionEdits — criterion must-run coverage at the frontier (R5.2)", () => {
+  const PLAN_OUTPUT_SCHEMA = {
+    type: "object",
+    properties: { verdict: { type: "string", enum: ["ship", "hold"] } },
+    required: ["verdict"],
+  };
+  const SHIP_GUARD = {
+    schema: {
+      type: "object",
+      properties: { verdict: { const: "ship" } },
+      required: ["verdict"],
+    },
+  };
+
+  /**
+   * A quiescent execution whose `task-verify-1` is the only task covering
+   * `criterion-1`, so `context-verify` is that criterion's only coverage.
+   */
+  function coveredExecution(
+    specLinked: boolean,
+    options: { alreadyGuarded?: boolean } = {},
+  ): GraphWorkflowExecution {
+    const base = createWorkflowExecution({ status: "paused" });
+    return createWorkflowExecution({
+      status: "paused",
+      workingDefinition: {
+        ...base.workingDefinition,
+        ...(specLinked
+          ? {
+              origin: {
+                sourceUri:
+                  "spec-execution://spec-native-sdd/revisions/revision-1?scope=scope-1",
+              },
+            }
+          : {}),
+        // `alreadyGuarded` seeds an execution that ARRIVED with the coverage gap
+        // (the state a guarded ancestor leaves behind), so the frontier is asked
+        // about the post-batch graph rather than about what this batch changed.
+        edges: base.workingDefinition.edges.map((edge) =>
+          options.alreadyGuarded === true && edge.id === "edge-plan-implement"
+            ? { ...edge, when: SHIP_GUARD }
+            : edge,
+        ),
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan"
+              ? { ...context, outputSchema: { ...PLAN_OUTPUT_SCHEMA } }
+              : context,
+        ),
+        tasks: base.workingDefinition.tasks.map((task) =>
+          task.id === "task-verify-1"
+            ? {
+                ...task,
+                metadata: {
+                  specTaskElementId: "task-3",
+                  specTaskHandle: "T3",
+                  specDependsOnTaskElementIds: "[]",
+                  specCriterionElementIds: JSON.stringify(["criterion-1"]),
+                  specCriterionBriefs: JSON.stringify({
+                    "criterion-1": "Validate T3.",
+                  }),
+                },
+              }
+            : task,
+        ),
+      },
+    });
+  }
+
+  const guardPlanEdge: WorkflowLiveEditOperation[] = [
+    {
+      type: "update-edge",
+      edgeId: "edge-plan-implement",
+      when: SHIP_GUARD,
+    },
+  ];
+
+  it("refuses a spec-linked edit that leaves a criterion covered only behind a conditional ancestor", () => {
+    const execution = coveredExecution(true);
+    const before = structuredClone(execution);
+
+    const result = apply(
+      execution,
+      guardPlanEdge,
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "criterion-must-run-coverage-lost",
+        message: expect.stringContaining("criterion-1"),
+      }),
+    ]);
+    expect(result.issues[0]?.message).toContain("context-verify");
+    expect(execution).toEqual(before);
+  });
+
+  it("accepts the same edit in an execution that is not spec-linked", () => {
+    const result = apply(
+      coveredExecution(false),
+      guardPlanEdge,
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.execution.workingDefinition.edges.find(
+        (edge) => edge.id === "edge-plan-implement",
+      )?.when,
+    ).toEqual(SHIP_GUARD);
+  });
+
+  it("accepts a spec-linked edit that routes a new branch without touching the covering context", () => {
+    const result = apply(
+      coveredExecution(true),
+      [
+        {
+          type: "add-context",
+          id: "context-audit",
+          title: "Audit",
+          acceptanceCriteria: "The ship branch is audited.",
+        },
+        {
+          type: "add-edge",
+          sourceContextId: "context-plan",
+          targetContextId: "context-audit",
+          when: SHIP_GUARD,
+        },
+      ],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.execution.workingDefinition.edges.map((edge) => edge.id),
+    ).toContain("context-plan__context-audit");
+  });
+
+  it("refuses a spec-linked edit that removes the last covering context outright", () => {
+    const execution = coveredExecution(true);
+
+    const result = apply(
+      execution,
+      [
+        { type: "remove-task", taskId: "task-verify-1" },
+        { type: "remove-context", contextId: "context-verify" },
+      ],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "criterion-must-run-coverage-lost",
+    ]);
+  });
+
+  it("refuses any spec-linked edit that leaves a pre-existing coverage gap in place", () => {
+    const execution = coveredExecution(true, { alreadyGuarded: true });
+
+    const result = apply(
+      execution,
+      [
+        {
+          type: "update-context",
+          contextId: "context-verify",
+          description: "Reworded while the criterion is already unprotected",
+        },
+      ],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "criterion-must-run-coverage-lost",
+    ]);
+  });
+
+  it("refuses removing the remaining skippable covering context of an already-gapped criterion", () => {
+    const execution = coveredExecution(true, { alreadyGuarded: true });
+
+    const result = apply(
+      execution,
+      [
+        { type: "remove-task", taskId: "task-verify-1" },
+        { type: "remove-context", contextId: "context-verify" },
+      ],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "criterion-must-run-coverage-lost",
+    ]);
+  });
+
+  it("accepts the repairing edit that restores must-run coverage", () => {
+    const result = apply(
+      coveredExecution(true, { alreadyGuarded: true }),
+      [{ type: "update-edge", edgeId: "edge-plan-implement", when: null }],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.execution.workingDefinition.edges.find(
+        (edge) => edge.id === "edge-plan-implement",
+      ),
+    ).not.toHaveProperty("when");
+  });
+
+  it("accepts the same already-gapped execution's edits when it is not spec-linked", () => {
+    const result = apply(
+      coveredExecution(false, { alreadyGuarded: true }),
+      [
+        {
+          type: "update-context",
+          contextId: "context-verify",
+          description: "Unlinked executions are never route-locked",
+        },
+      ],
+      makeDeps({ executionContract: createSpecExecutionContract() }),
+    );
+
+    expect(result.ok).toBe(true);
+  });
 });

@@ -26,6 +26,15 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+import {
+  canonicalValuesAtPath,
+  collectValuesAtPath,
+  isEmptyForFixture,
+  D4_PERSISTED_FIELDS,
+  stripD4PersistedFields,
+} from "@/lib/shared/testing/d4-persisted-field-inventory";
+import { projectExecutionTierFloor } from "@/lib/workflow-graph/compat/floor";
 import {
   validateJsonSchemaSubset,
   validateOutputSchemaDeclaration,
@@ -199,6 +208,104 @@ describe("graph-workflow-archived-executions-repo insert + read", () => {
   });
 });
 
+describe("graph-workflow-archived-executions-repo pre-D4 floor", () => {
+  /**
+   * Write an archived row STRAIGHT to SQLite, bypassing `insert` (which parses
+   * against the current schema and would reject the legacy shape before it ever
+   * reached the column). This is the only way to model a row that a pre-D4
+   * build wrote and a post-D4 build has to read.
+   */
+  function insertRawArchivedRow(executionId: string, execution: unknown): void {
+    db.prepare(
+      `INSERT INTO graph_workflow_archived_executions (
+         project_path, session_name, execution_id, archived_at,
+         status, started_at, completed_at, execution_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      PROJECT_PATH,
+      SESSION_NAME,
+      executionId,
+      "2026-01-02T01:00:00Z",
+      "completed",
+      "2026-01-01T00:00:00Z",
+      "2026-01-02T00:00:00Z",
+      JSON.stringify(execution),
+    );
+  }
+
+  /**
+   * An execution archived before D4 existed: the maximal fixture with EXACTLY
+   * the D4 persisted-field inventory removed, so edges carry no `id` (the field
+   * became required in D4 decision D2) and no D4 field is present anywhere.
+   */
+  function preD4ArchivedExecution(): Record<string, unknown> {
+    return stripD4PersistedFields(buildMaximalGraphWorkflowExecution());
+  }
+
+  // R14.1/R14.2: an execution archived before D4 has to stay readable, and the
+  // archive is the ONLY read path that never rewrites its row — so whatever
+  // repairs the active tier on inflate has to reach this blob too, or D4 made
+  // every pre-D4 archived execution permanently unreadable.
+  it("reads a pre-D4 archived row, repairing its edge ids at the inflate boundary", () => {
+    const preD4 = preD4ArchivedExecution();
+    insertRawArchivedRow("wf-pre-d4", preD4);
+
+    const loaded = repo.findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "wf-pre-d4",
+    );
+
+    expect(loaded).not.toBeNull();
+    // Deterministic minting from the endpoints: the same stored bytes yield the
+    // same ids on every read, so an id-addressed reference taken from one read
+    // still resolves on the next.
+    expect(loaded?.workingDefinition.edges.map((edge) => edge.id)).toEqual([
+      "ctx-1__ctx-2",
+    ]);
+  });
+
+  // The dormant floor R14.1 promises, proven on the archive tier: absent D4
+  // fields parse to unconditional edges, no loops, and no recorded routing.
+  it("parses a pre-D4 archived row to the dormant D4 floor", () => {
+    insertRawArchivedRow("wf-pre-d4", preD4ArchivedExecution());
+
+    const loaded = repo.findByExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "wf-pre-d4",
+    );
+    if (loaded === null) throw new Error("pre-D4 archived row must load");
+
+    expect(
+      loaded.workingDefinition.edges.every((edge) => edge.when === undefined),
+      "an absent guard must stay absent, not materialize as an always-true one",
+    ).toBe(true);
+    expect(
+      loaded.workingDefinition.executionContexts.every(
+        (context) => context.routing === undefined,
+      ),
+    ).toBe(true);
+    expect(loaded.workingDefinition.loopGroups).toBeUndefined();
+    expect(loaded.contextStates["ctx-1"]?.skipReason).toBeNull();
+    expect(loaded.contextStates["ctx-1"]?.landingIntent).toBeNull();
+    expect(loaded.routeSettlements).toEqual({});
+    expect(loaded.routeControlRevisions).toEqual({});
+    expect(loaded.loopStates).toEqual({});
+    expect(loaded.expansionReceipts).toEqual({ accepted: [], refusals: [] });
+
+    // The same reading the compat floor probes take, so "dormant" here means
+    // what R14.1's observational-equivalence harness means by it.
+    expect(projectExecutionTierFloor(loaded)).toEqual({
+      edgeActivation: "all-unconditional",
+      loops: "none-declared",
+      expansionAuthority: "disabled-on-every-context",
+      routing: "no-recorded-decisions",
+      skips: "none",
+    });
+  });
+});
+
 describe("graph-workflow-archived-executions-repo cascading-FK invariant", () => {
   it("deleting a session cascades to its archived executions", () => {
     const sessionsRepo = createSessionsRepo(db);
@@ -227,6 +334,156 @@ describe("graph-workflow-archived-executions-repo cascading-FK invariant", () =>
 });
 
 /**
+ * The one fully-populated resolved execution context the harness descends
+ * into. Shared by the scheduled graph and by the loop body template, so a
+ * field added to a resolved context is proven durable on both paths from a
+ * single literal.
+ */
+function maximalResolvedContext(): Record<string, unknown> {
+  return {
+    id: "ctx-1",
+    title: "Implement the thing",
+    description: "Detailed description of the context",
+    acceptanceCriteria: "All tests pass and the build is green",
+    origin: {
+      sourceUri: "spec://native-sdd/contexts/ctx-1",
+      label: "Implementation context",
+    },
+    implementer: {
+      id: "implementer",
+      profile: { tier: "builtin", id: "general-implementer" },
+      focus: "the persistence layer",
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "high",
+      },
+      profileSnapshot: {
+        tier: "builtin",
+        id: "general-implementer",
+        name: "General Implementer",
+        revision: 4,
+        sourceContentHash: `sha256:${"1".repeat(64)}`,
+        instructions: "Maximal implementer instructions.",
+        renderedInstructionBlock:
+          "MAXIMAL IMPLEMENTER RENDERED BLOCK\nwith the use-site focus inside it",
+        resolvedInstructionHash: `sha256:${"2".repeat(64)}`,
+      },
+    },
+    contextValidator: {
+      enabled: false,
+      assignments: [
+        {
+          id: "security",
+          profile: { tier: "project", id: "security-reviewer" },
+          focus: "auth boundaries",
+          strategy: "conversation",
+          authority: "blocking",
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+          continuity: { enabled: false, contextLimitTokens: 120_000 },
+          profileSnapshot: {
+            tier: "project",
+            id: "security-reviewer",
+            name: "Security Reviewer",
+            revision: 9,
+            sourceContentHash: `sha256:${"3".repeat(64)}`,
+            instructions: "Maximal validator instructions.",
+            renderedInstructionBlock:
+              "MAXIMAL VALIDATOR RENDERED BLOCK\nwith the use-site focus inside it",
+            resolvedInstructionHash: `sha256:${"4".repeat(64)}`,
+          },
+        },
+      ],
+    },
+    scriptValidator: { commands: ["typecheck", "test"] },
+    scriptValidatorSource: "workflow",
+    humanApprovalGate: { enabled: true },
+    askUserQuestions: { enabled: true },
+    mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
+    circuitBreaker: { consecutiveFailureThreshold: 5 },
+    iterationPolicy: {
+      maxIterations: 7,
+      continuity: { enabled: false, contextLimitTokens: 90_000 },
+    },
+    planRepair: {
+      enabled: false,
+      maxAttemptsPerContext: 3,
+      agent: {
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "high",
+      },
+    },
+    // Source of the guarded edge below, so its cardinality policy is the
+    // one D4 routing actually evaluates.
+    routing: { cardinality: "exactlyOne" },
+    // `taskValidation` is a removed CC config field name reused here as an
+    // ordinary output property: the cutover guard scans by field name, so
+    // this pins the outputSchema subtree as opaque to it across archival.
+    // Also the contract the archived contextOutputs entry below satisfies:
+    // D5 admits only accepted candidates, so an archived output its own
+    // context's schema would reject models an impossible state.
+    outputSchema: {
+      type: "object",
+      properties: {
+        verdict: { type: "string", enum: ["pass", "fail"] },
+        taskValidation: { type: "string" },
+        score: { type: "number", minimum: 0, maximum: 1 },
+        followUp: { type: ["string", "null"] },
+        findings: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              severity: { type: "string", enum: ["low", "high"] },
+              file: { type: "string" },
+              line: { type: "integer" },
+              tags: { type: "array", items: { type: "string" } },
+            },
+            required: ["id", "severity"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["verdict"],
+      additionalProperties: false,
+    },
+    collaboration: {
+      enabled: { value: true, source: "per-node" },
+      secondAgent: {
+        value: {
+          backend: "codex",
+          model: "gpt-5.4",
+          reasoningEffort: "high",
+        },
+        source: "per-node",
+      },
+      negotiationRounds: { value: 5, source: "workflow" },
+      autonomousResolutionThreshold: { value: "major", source: "global" },
+    },
+    agentValidation: {
+      implementer: {
+        value: { mode: "all", except: ["format"] },
+        source: "workflow",
+        commands: ["typecheck", "test"],
+      },
+      contextValidator: {
+        value: { mode: "only", commands: ["test"] },
+        source: "per-node",
+        commands: ["test"],
+      },
+    },
+    charter: makeTestCharter(),
+  };
+}
+
+/**
  * Reuses the maximal execution fixture pattern: every introspectable persisted
  * key path of `graphWorkflowExecutionSchema` set to a distinctive non-default
  * value, so the durability harness proves the control-state blob survives the
@@ -238,6 +495,8 @@ function buildMaximalExecution(): unknown {
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
     liveRevision: 4,
+    executionStateRevision: 17,
+    structuralRevision: 9,
     charterAmendments: [
       {
         seq: 1,
@@ -250,10 +509,27 @@ function buildMaximalExecution(): unknown {
       },
     ],
     planRepairRounds: [
+      // The LOOP repair round leads: the durability guard inspects element [0],
+      // and `loopGroupId` is only non-null on a loop round (D4 R12).
       {
         seq: 1,
+        contextId: "loop-refine__p2__ctx-1",
+        haltType: "loop_limit_reached",
+        loopGroupId: "loop-refine",
+        startedAt: "2026-01-02T02:40:00.000Z",
+        settledAt: "2026-01-02T02:55:00.000Z",
+        outcome: "repaired",
+        planningDefect: true,
+        diagnosis: "the exit predicate demanded a field the judge cannot emit",
+        operationCount: 2,
+        resumed: true,
+        conversationId: "conv-plan-repair-2",
+      },
+      {
+        seq: 2,
         contextId: "ctx-1",
         haltType: "circuit_breaker",
+        loopGroupId: null,
         startedAt: "2026-01-02T03:10:00.000Z",
         settledAt: "2026-01-02T03:20:00.000Z",
         outcome: "repaired",
@@ -262,6 +538,31 @@ function buildMaximalExecution(): unknown {
         operationCount: 3,
         resumed: true,
         conversationId: "conv-plan-repair-1",
+      },
+    ],
+    loopControlAmendments: [
+      {
+        seq: 1,
+        loopGroupId: "loop-refine",
+        kind: "amend-predicate",
+        rationale:
+          "the judge cannot emit `approved` without a spec change; recorded\nnotes are the real exit condition",
+        loopControlRevision: 1,
+        templateVersion: 1,
+        maxPasses: 4,
+        source: "plan-repair",
+        amendedAt: "2026-01-02T02:45:00.000Z",
+      },
+      {
+        seq: 2,
+        loopGroupId: "loop-refine",
+        kind: "raise-max-passes",
+        rationale: null,
+        loopControlRevision: 2,
+        templateVersion: 2,
+        maxPasses: 4,
+        source: "cli",
+        amendedAt: "2026-01-02T02:50:00.000Z",
       },
     ],
     loopEpoch: 2,
@@ -361,7 +662,7 @@ function buildMaximalExecution(): unknown {
           scriptValidatorSource: "workflow",
           humanApprovalGate: { enabled: true },
           askUserQuestions: { enabled: true },
-          mutability: { allowAgentTaskAdd: true },
+          mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
           circuitBreaker: { consecutiveFailureThreshold: 5 },
           iterationPolicy: {
             maxIterations: 7,
@@ -382,6 +683,7 @@ function buildMaximalExecution(): unknown {
           // Also the contract the archived contextOutputs entry below satisfies:
           // D5 admits only accepted candidates, so an archived output its own
           // context's schema would reject models an impossible state.
+          routing: { cardinality: "exactlyOne" },
           outputSchema: {
             type: "object",
             properties: {
@@ -450,7 +752,80 @@ function buildMaximalExecution(): unknown {
         },
       ],
       edges: [
-        { id: "edge-1", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
+        {
+          id: "edge-1",
+          sourceContextId: "ctx-1",
+          targetContextId: "ctx-2",
+          // A D4 activation guard over ctx-1's declared output above: subset-
+          // valid and statically compatible with it.
+          when: {
+            schema: {
+              type: "object",
+              properties: { verdict: { const: "pass" } },
+              required: ["verdict"],
+            },
+          },
+        },
+      ],
+      // A resolved loop group: its body has already been lifted out of
+      // `executionContexts` into the versioned template, which is why the
+      // template's contexts, tasks, and edges appear nowhere above.
+      loopGroups: [
+        {
+          id: "loop-1",
+          title: "Refine until the judge passes",
+          entryContextId: "ctx-loop-worker",
+          exitContextId: "ctx-loop-judge",
+          until: {
+            schema: {
+              type: "object",
+              properties: { verdict: { const: "pass" } },
+              required: ["verdict"],
+            },
+          },
+          maxPasses: 4,
+          template: {
+            contexts: [
+              { ...maximalResolvedContext(), id: "ctx-loop-judge" },
+              { ...maximalResolvedContext(), id: "ctx-loop-worker" },
+            ],
+            tasks: [
+              {
+                id: "loop-task-1",
+                contextId: "ctx-loop-judge",
+                order: 1,
+                title: "Judge the revision",
+                instructions: "Record a verdict for this pass",
+                metadata: { area: "review" },
+                source: "agent",
+              },
+            ],
+            edges: [
+              {
+                id: "loop-edge-1",
+                sourceContextId: "ctx-loop-worker",
+                targetContextId: "ctx-loop-judge",
+                when: {
+                  schema: {
+                    type: "object",
+                    properties: { verdict: { const: "fail" } },
+                    required: ["verdict"],
+                  },
+                },
+              },
+            ],
+          },
+          templateVersion: 3,
+          planRepair: {
+            enabled: false,
+            maxAttemptsPerContext: 5,
+            agent: {
+              backend: "codex",
+              model: "gpt-5.4",
+              reasoningEffort: "low",
+            },
+          },
+        },
       ],
     },
     charter: makeTestCharter(),
@@ -613,6 +988,32 @@ function buildMaximalExecution(): unknown {
           outcome: "failed",
           startedAt: "2026-01-01T00:03:00.000Z",
         },
+        // The D4 skip record, superimposed on the same maximal entry: the whole
+        // incoming-edge verdict set, not only the edges that vetoed the context.
+        skipReason: {
+          edgeEvaluations: [
+            { edgeId: "edge-1", verdict: "inactive" },
+            { edgeId: "edge-2", verdict: "active" },
+            { edgeId: "edge-3", verdict: "omitted" },
+          ],
+          at: "2026-01-02T06:00:00.000Z",
+        },
+        // The D4 landing intent in its adopted-commit shape, which carries both
+        // ends of the recorded SHA range.
+        landingIntent: {
+          mode: "lane_commit",
+          attempt: 2,
+          token: "cc-landing:execution-1:ctx-1:2",
+          laneId: "lane-1",
+          worktreePath: "/tmp/lane-1",
+          baselineSha: "1111111111111111111111111111111111111111",
+          headSha: "2222222222222222222222222222222222222222",
+          joinId: "join-1",
+          state: "landed",
+          evidence: "adopted-head",
+          recordedAt: "2026-01-02T05:00:00.000Z",
+          settledAt: "2026-01-02T05:30:00.000Z",
+        },
         // The advisory-response phase, archived under the same superimposition
         // rule as the records above: every persisted key path, not a reachable
         // combination of them.
@@ -640,6 +1041,122 @@ function buildMaximalExecution(): unknown {
             timestamp: "2026-01-02T00:30:00Z",
           },
         ],
+      },
+    },
+    routeControlRevisions: { "ctx-1": 3 },
+    routeSettlements: {
+      "ctx-1": {
+        sourceContextId: "ctx-1",
+        captureIteration: 2,
+        routeControlRevision: 3,
+        activatedEdgeIds: ["edge-2"],
+        inactiveEdgeIds: ["edge-1"],
+        omittedEdgeIds: ["edge-3"],
+        settledAt: "2026-01-02T06:00:00.000Z",
+      },
+    },
+    // Both D4 expansion ledgers carrying content, so an archive that dropped
+    // either half is visible: an archived execution is the only remaining
+    // record of what a lane grew at runtime and why.
+    expansionReceipts: {
+      accepted: [
+        {
+          requestId: "expansion-req-1",
+          payloadHash:
+            "3f2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+          invokerContextId: "ctx-1",
+          initiatorConversationId: "conv-lane-1",
+          rationale: "fan out one candidate per approach",
+          addedContextIds: ["ctx-1-xdeadbeef-candidate-a"],
+          addedTaskIds: ["ctx-1-xdeadbeef-candidate-a-t1"],
+          rejoinContextIds: ["ctx-2"],
+          liveRevision: 4,
+          acceptedAt: "2026-01-02T06:30:00.000Z",
+        },
+      ],
+      refusals: [
+        {
+          requestId: "expansion-req-2",
+          payloadHash:
+            "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
+          invokerContextId: "ctx-1",
+          refusalCode: "expansion-cap-contexts-per-request",
+          refusedAt: "2026-01-02T06:45:00.000Z",
+        },
+      ],
+    },
+    // A loop mid-flight, so an archive that dropped the ledger, flattened the
+    // slot states or lost the pinned boundary snapshot fails here (R9/R16.1).
+    loopStates: {
+      "loop-refine": {
+        loopGroupId: "loop-refine",
+        activation: "concluded",
+        loopControlRevision: 1,
+        passCount: 2,
+        slotLedger: [
+          {
+            pass: 1,
+            state: "counted",
+            grantOrder: 1,
+            grantedAt: "2026-01-02T05:00:00.000Z",
+          },
+          {
+            pass: 2,
+            state: "counted",
+            grantOrder: 2,
+            grantedAt: "2026-01-02T06:30:00.000Z",
+          },
+        ],
+        boundaryInputs: [
+          {
+            contextId: "ctx-1",
+            title: "First context",
+            declared: true,
+            schemaFields: [
+              {
+                name: "verdict",
+                type: "string",
+                required: true,
+                description: "the classifier verdict",
+              },
+            ],
+            output: { verdict: "pass", findings: [{ id: "f-1" }] },
+            skipped: false,
+          },
+        ],
+        decisions: {
+          "1": {
+            loopGroupId: "loop-refine",
+            pass: 1,
+            loopControlRevision: 1,
+            templateVersion: 1,
+            exitContextId: "loop-refine__p1__ctx-1",
+            exitCaptureIteration: 2,
+            verdict: "unsatisfied",
+            outcome: "materialized",
+            nextPass: 2,
+            decidedAt: "2026-01-02T06:30:00.000Z",
+          },
+          "2": {
+            loopGroupId: "loop-refine",
+            pass: 2,
+            loopControlRevision: 1,
+            templateVersion: 1,
+            exitContextId: "loop-refine__p2__ctx-1",
+            exitCaptureIteration: 1,
+            verdict: "satisfied",
+            outcome: "concluded",
+            nextPass: null,
+            decidedAt: "2026-01-02T07:30:00.000Z",
+          },
+        },
+        // Two passes that cloned DIFFERENT template versions (R11.2), so a
+        // round trip that collapsed the record loses the provenance that makes
+        // a template amendment provably non-retroactive.
+        passTemplateVersions: { "1": 1, "2": 2 },
+        concludingExitContextId: "loop-refine__p2__ctx-1",
+        activatedAt: "2026-01-02T05:00:00.000Z",
+        settledAt: "2026-01-02T07:30:00.000Z",
       },
     },
     contextOutputs: {
@@ -997,6 +1514,45 @@ describe("graph-workflow-archived-executions-repo durability contract", () => {
       assignmentFingerprint: `sha256:${"e".repeat(64)}|task|true|60000|codex|gpt-5.4|high`,
       sessionRef: { backend: "codex", ref: "thread-security-validator" },
     });
+  });
+
+  // R14.2's archive half. The active tier proves the same inventory against
+  // graph_workflow_executions; this proves it against the archive's OWN maximal
+  // fixture, which is a separate literal in this file — so a D4 field added to
+  // one fixture and forgotten in the other is a failure rather than a silent
+  // asymmetry. Archival is where an execution's routing and loop evidence has to
+  // survive longest: the row is written once and never rewritten, so anything
+  // this boundary drops is gone for good.
+  it("exercises every D4 inventory path in the archived maximal fixture", () => {
+    const fixture = graphWorkflowExecutionSchema.parse(buildMaximalExecution());
+    const unexercised = D4_PERSISTED_FIELDS.filter((field) =>
+      collectValuesAtPath(fixture, field.path).every(isEmptyForFixture),
+    ).map((field) => field.path);
+    expect(
+      unexercised,
+      "an inventory field the archive fixture leaves empty is a field the archive round-trip proves nothing about",
+    ).toEqual([]);
+  });
+
+  it("round-trips every D4 inventory path through insert -> findByExecution", () => {
+    const execution = graphWorkflowExecutionSchema.parse(
+      buildMaximalExecution(),
+    );
+    repo.insert(makeRow({ executionId: execution.id, execution }));
+
+    // A fresh repo instance, so the reload is decoded from the stored bytes
+    // rather than answered from anything the writing instance kept.
+    const reloaded = createGraphWorkflowArchivedExecutionsRepo(
+      db,
+    ).findByExecution(PROJECT_PATH, SESSION_NAME, execution.id);
+    if (reloaded === null) throw new Error("archived execution must reload");
+
+    for (const field of D4_PERSISTED_FIELDS) {
+      expect(
+        canonicalValuesAtPath(reloaded, field.path),
+        `${field.path} (${field.tier} tier) did not survive the archive round trip`,
+      ).toEqual(canonicalValuesAtPath(execution, field.path));
+    }
   });
 
   // This file keeps its own copy of the maximal execution, so it needs the same

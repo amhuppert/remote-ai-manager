@@ -1,0 +1,394 @@
+{
+  "scenario": "validator-reopen",
+  "terminalStatus": "completed",
+  "haltReason": null,
+  "scheduling": [
+    {
+      "decision": "eligible",
+      "contextIds": [
+        "ctx-plan"
+      ]
+    },
+    {
+      "decision": "eligible",
+      "contextIds": []
+    },
+    {
+      "decision": "scheduled",
+      "outcome": "parallel",
+      "contextIds": [
+        "ctx-plan"
+      ]
+    },
+    {
+      "decision": "dispatched",
+      "contextId": "ctx-plan",
+      "iteration": 1
+    },
+    {
+      "decision": "eligible",
+      "contextIds": [
+        "ctx-build"
+      ]
+    },
+    {
+      "decision": "eligible",
+      "contextIds": []
+    },
+    {
+      "decision": "scheduled",
+      "outcome": "parallel",
+      "contextIds": [
+        "ctx-build"
+      ]
+    },
+    {
+      "decision": "dispatched",
+      "contextId": "ctx-build",
+      "iteration": 1
+    },
+    {
+      "decision": "dispatched",
+      "contextId": "ctx-build",
+      "iteration": 2
+    },
+    {
+      "decision": "scheduled",
+      "outcome": "none",
+      "contextIds": []
+    },
+    {
+      "decision": "join",
+      "joinKind": "final_publish",
+      "contextId": null,
+      "sourceLaneIds": [
+        "ctx-plan"
+      ],
+      "targetLaneId": "__session__"
+    },
+    {
+      "decision": "scheduled",
+      "outcome": "none",
+      "contextIds": []
+    }
+  ],
+  "statusTransitions": [
+    {
+      "contextId": "ctx-build",
+      "from": null,
+      "to": "pending"
+    },
+    {
+      "contextId": "ctx-plan",
+      "from": null,
+      "to": "pending"
+    },
+    {
+      "contextId": "ctx-plan",
+      "from": "pending",
+      "to": "ready"
+    },
+    {
+      "contextId": "ctx-plan",
+      "from": "ready",
+      "to": "running"
+    },
+    {
+      "contextId": "ctx-plan",
+      "from": "running",
+      "to": "completed"
+    },
+    {
+      "contextId": "ctx-build",
+      "from": "pending",
+      "to": "ready"
+    },
+    {
+      "contextId": "ctx-build",
+      "from": "ready",
+      "to": "running"
+    },
+    {
+      "contextId": "ctx-build",
+      "from": "running",
+      "to": "completed"
+    }
+  ],
+  "events": [
+    {
+      "kind": "graph-workflow-charter-registered",
+      "subject": "compat-definition",
+      "detail": null
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-plan",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-plan-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-2",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-shared-documents-updated",
+      "subject": null,
+      "detail": "1"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-plan",
+      "detail": "ready"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-batch-scheduled",
+      "subject": "batch-1",
+      "detail": "ctx-plan"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-plan",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-plan",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-plan",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-plan-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-plan",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-plan-1",
+      "detail": "completed"
+    },
+    {
+      "kind": "graph-workflow-validation-specialist-result",
+      "subject": "ctx-plan",
+      "detail": "1:general:pass"
+    },
+    {
+      "kind": "graph-workflow-validation-result",
+      "subject": "ctx-plan",
+      "detail": "pass"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-plan",
+      "detail": "completed"
+    },
+    {
+      "kind": "graph-workflow-merge-status",
+      "subject": "ctx-plan",
+      "detail": "merged-success"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-plan",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "ready"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-batch-scheduled",
+      "subject": "batch-2",
+      "detail": "ctx-build"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-1",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-2",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-1",
+      "detail": "completed"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-2",
+      "detail": "completed"
+    },
+    {
+      "kind": "graph-workflow-validation-specialist-result",
+      "subject": "ctx-build",
+      "detail": "1:general:fail"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-2",
+      "detail": "pending"
+    },
+    {
+      "kind": "graph-workflow-validation-result",
+      "subject": "ctx-build",
+      "detail": "fail"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-task-status",
+      "subject": "task-build-2",
+      "detail": "completed"
+    },
+    {
+      "kind": "graph-workflow-validation-specialist-result",
+      "subject": "ctx-build",
+      "detail": "2:general:pass"
+    },
+    {
+      "kind": "graph-workflow-validation-result",
+      "subject": "ctx-build",
+      "detail": "pass"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-context-status",
+      "subject": "ctx-build",
+      "detail": "completed"
+    },
+    {
+      "kind": "graph-workflow-merge-status",
+      "subject": "ctx-build",
+      "detail": "merged-success"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-plan",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
+      "subject": "__session__",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-join-status",
+      "subject": "loop-job-1",
+      "detail": "final_publish:running"
+    },
+    {
+      "kind": "graph-workflow-join-status",
+      "subject": "loop-job-1",
+      "detail": "final_publish:running"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-join-status",
+      "subject": "loop-job-1",
+      "detail": "final_publish:succeeded"
+    },
+    {
+      "kind": "graph-workflow-status",
+      "subject": null,
+      "detail": "completed"
+    }
+  ]
+}

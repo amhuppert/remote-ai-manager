@@ -20,6 +20,7 @@ import type {
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import { resolveLoopGroups } from "./loop-resolver";
 export type ResolvedWorkflowConfig = WorkflowDefaults;
 
 /**
@@ -75,6 +76,7 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   },
   mutability: {
     allowAgentTaskAdd: false,
+    allowAgentContextAdd: false,
   },
   planRepair: DEFAULT_PLAN_REPAIR_POLICY,
   collaboration: {
@@ -270,6 +272,9 @@ export function resolveContext(
     ...(context.outputSchema !== undefined
       ? { outputSchema: context.outputSchema }
       : {}),
+    // Same identity passthrough: the routing policy describes this context's own
+    // outgoing edge set, so no cascade tier can meaningfully supply one.
+    ...(context.routing !== undefined ? { routing: context.routing } : {}),
     implementer,
     contextValidator,
     scriptValidator,
@@ -308,6 +313,23 @@ export function resolveWorkflowDefinition(
   const workflowConfig = definition.workflowConfig ?? {};
   const resolvedWorkflowConfig = resolveWorkflowConfig(global, definition);
 
+  // Loop bodies resolve like any other context FIRST, then move into their
+  // group's template: a pass instance must clone the config the seed resolved,
+  // and the cascade has no loop-aware tier to run afterwards (D10).
+  const loops = resolveLoopGroups({
+    loopGroups: definition.loopGroups ?? [],
+    // The charter is workflow-global semantic content, attached identically to
+    // every resolved context by passthrough — never routed through the
+    // operational config cascade and with no per-context override (1.5, 4.5).
+    executionContexts: definition.executionContexts.map((context) => ({
+      ...resolveContext(defaults, workflowConfig, context),
+      charter: definition.charter,
+    })),
+    tasks: definition.tasks,
+    edges: definition.edges,
+    resolvePlanRepair: () => workflowConfig.planRepair ?? defaults.planRepair,
+  });
+
   return {
     schemaVersion: definition.schemaVersion,
     ...(definition.approvalRequired !== undefined
@@ -320,15 +342,12 @@ export function resolveWorkflowDefinition(
     // Canonical global → workflow resolution, snapshotted at its only tier so
     // merge submissions read the execution's own record.
     laneMergeValidation: resolvedWorkflowConfig.laneMergeValidation,
-    // The charter is workflow-global semantic content, attached identically to
-    // every resolved context by passthrough — never routed through the
-    // operational config cascade and with no per-context override (1.5, 4.5).
-    executionContexts: definition.executionContexts.map((context) => ({
-      ...resolveContext(defaults, workflowConfig, context),
-      charter: definition.charter,
-    })),
-    tasks: definition.tasks,
-    edges: definition.edges,
+    executionContexts: loops.executionContexts,
+    tasks: loops.tasks,
+    edges: loops.edges,
+    // Absent, not `[]`, when nothing declares a loop — the dormant floor is the
+    // field's absence (R14.1).
+    ...(loops.loopGroups.length > 0 ? { loopGroups: loops.loopGroups } : {}),
   };
 }
 

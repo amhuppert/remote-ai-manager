@@ -19,6 +19,7 @@ import {
   graphWorkflowExecutionJoinKindSchema,
   graphWorkflowExecutionJoinStatusSchema,
   graphWorkflowHaltReasonSchema,
+  graphWorkflowRouteEdgeEvaluationSchema,
   graphWorkflowValidationAdvisorySchema,
   graphWorkflowValidationReviewArtifactSchema,
   graphWorkflowValidationSessionRefSchema,
@@ -124,6 +125,48 @@ export const graphWorkflowContextStatusEventSchema = z.object({
 });
 export type GraphWorkflowContextStatusEvent = z.infer<
   typeof graphWorkflowContextStatusEventSchema
+>;
+
+/**
+ * A context settled `skipped` (D4 R4.3). Separate from the generic status
+ * event because a skip is a routing DECISION: it carries the complete set of
+ * incoming-edge verdicts that produced it, which is what makes the routing
+ * reconstructible from the durable event stream alone.
+ */
+export const graphWorkflowContextSkippedEventSchema = z.object({
+  type: z.literal("graph-workflow-context-skipped"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  edgeEvaluations: z.array(graphWorkflowRouteEdgeEvaluationSchema),
+  skippedAt: z.string(),
+});
+export type GraphWorkflowContextSkippedEvent = z.infer<
+  typeof graphWorkflowContextSkippedEventSchema
+>;
+
+/**
+ * One source context's routes resolved (D4 R2, decision D4). The blob keeps
+ * only the current settlement per source; this append-only event is the ledger
+ * — a source re-decided under an amended route-control revision emits again,
+ * which is exactly the history the bounded blob cannot hold.
+ */
+export const graphWorkflowRouteResolvedEventSchema = z.object({
+  type: z.literal("graph-workflow-route-resolved"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  sourceContextId: z.string(),
+  captureIteration: z.number().int().min(1).nullable(),
+  routeControlRevision: z.number().int().min(0),
+  activatedEdgeIds: z.array(z.string()),
+  inactiveEdgeIds: z.array(z.string()),
+  omittedEdgeIds: z.array(z.string()),
+  settledAt: z.string(),
+});
+export type GraphWorkflowRouteResolvedEvent = z.infer<
+  typeof graphWorkflowRouteResolvedEventSchema
 >;
 
 export const graphWorkflowTaskStatusEventSchema = z.object({
@@ -593,6 +636,32 @@ export type GraphWorkflowLiveEditAppliedEvent = z.infer<
   typeof graphWorkflowLiveEditAppliedEventSchema
 >;
 
+/**
+ * One runtime graph-expansion attempt (D4 R6/R8). Both outcomes ride ONE kind
+ * so the audit trail reads as a single ledger of what each lane asked for: an
+ * acceptance names what it added, a refusal names the code it was refused
+ * under. `requestId` is the lane's own idempotency key, carried so a retry is
+ * traceable to its original attempt.
+ */
+export const graphWorkflowGraphExpandedEventSchema = z.object({
+  type: z.literal("graph-workflow-graph-expanded"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  invokerContextId: z.string(),
+  requestId: z.string(),
+  outcome: z.enum(["accepted", "refused"]),
+  addedContextIds: z.array(z.string()).default([]),
+  addedTaskIds: z.array(z.string()).default([]),
+  rejoinContextIds: z.array(z.string()).default([]),
+  /** The single refusal code the batch was refused under; null on acceptance. */
+  refusalCode: z.string().nullable().default(null),
+  occurredAt: z.string(),
+});
+export type GraphWorkflowGraphExpandedEvent = z.infer<
+  typeof graphWorkflowGraphExpandedEventSchema
+>;
+
 // One plan-repair round conclusion (docs/design/cc-cli/08) — emitted when a
 // round settles (or repair is exhausted for the halt, outcome `exhausted`,
 // which is event-only and never a round-log outcome). The audit trail for the
@@ -603,7 +672,14 @@ export const graphWorkflowPlanRepairEventSchema = z.object({
   sessionName: z.string(),
   executionId: z.string(),
   contextId: z.string(),
-  haltType: z.enum(["circuit_breaker", "max_iterations"]),
+  haltType: z.enum([
+    "circuit_breaker",
+    "max_iterations",
+    // D4 R12: a loop that exhausted a pass budget is repairable too.
+    "loop_limit_reached",
+  ]),
+  /** The loop a `loop_limit_reached` round repaired; null for context halts. */
+  loopGroupId: z.string().nullable().default(null),
   attempt: z.number().int().min(0),
   outcome: z.enum([
     "repaired",
@@ -622,9 +698,40 @@ export type GraphWorkflowPlanRepairEvent = z.infer<
   typeof graphWorkflowPlanRepairEventSchema
 >;
 
+/**
+ * One loop pass's settlement decision (D4 R16, decision D9). The blob keeps only
+ * the LATEST record per pass, so this append-only event is the ledger: a pass
+ * re-decided under an amended `loopControlRevision` emits again, which is
+ * exactly the history the bounded marker cannot hold. Carries the full
+ * deduplication key so a reader can tell a re-decision from a first decision
+ * without consulting the blob.
+ */
+export const graphWorkflowLoopDecisionEventSchema = z.object({
+  type: z.literal("graph-workflow-loop-decision"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  loopGroupId: z.string(),
+  pass: z.number().int().min(1),
+  loopControlRevision: z.number().int().min(0),
+  templateVersion: z.number().int().min(1),
+  exitContextId: z.string(),
+  exitCaptureIteration: z.number().int().min(1).nullable(),
+  verdict: z.enum(["satisfied", "unsatisfied", "unevaluable", "exit-skipped"]),
+  outcome: z.enum(["concluded", "materialized", "halted"]),
+  nextPass: z.number().int().min(2).nullable(),
+  decidedAt: z.string(),
+});
+export type GraphWorkflowLoopDecisionEvent = z.infer<
+  typeof graphWorkflowLoopDecisionEventSchema
+>;
+
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
+  graphWorkflowContextSkippedEventSchema,
+  graphWorkflowRouteResolvedEventSchema,
+  graphWorkflowLoopDecisionEventSchema,
   graphWorkflowTaskStatusEventSchema,
   graphWorkflowValidationResultEventSchema,
   graphWorkflowValidationSpecialistResultEventSchema,
@@ -644,6 +751,7 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowCharterRegisteredEventSchema,
   graphWorkflowCharterUpdatedEventSchema,
   graphWorkflowLiveEditAppliedEventSchema,
+  graphWorkflowGraphExpandedEventSchema,
   graphWorkflowPlanRepairEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
@@ -660,6 +768,28 @@ export type GraphWorkflowExecutionEvent = z.infer<
 export const graphWorkflowExecutionEventsResponseSchema = z.object({
   events: z.array(graphWorkflowExecutionEventSchema),
 });
+
+/**
+ * One row of the cursor-paginated reader (D4 decision D9). `seq` is the row's
+ * durable ordering key and the value a caller sends back as `cursor`, so the
+ * page and its continuation share one vocabulary.
+ */
+export const graphWorkflowExecutionEventPageRowSchema =
+  graphWorkflowExecutionEventSchema.extend({
+    seq: z.number().int().min(1),
+  });
+export type GraphWorkflowExecutionEventPageRow = z.infer<
+  typeof graphWorkflowExecutionEventPageRowSchema
+>;
+
+export const graphWorkflowExecutionEventPageResponseSchema = z.object({
+  events: z.array(graphWorkflowExecutionEventPageRowSchema),
+  /** Null when the page exhausted the log in the requested direction. */
+  nextCursor: z.number().int().min(1).nullable(),
+});
+export type GraphWorkflowExecutionEventPageResponse = z.infer<
+  typeof graphWorkflowExecutionEventPageResponseSchema
+>;
 export type GraphWorkflowExecutionEventsResponse = z.infer<
   typeof graphWorkflowExecutionEventsResponseSchema
 >;

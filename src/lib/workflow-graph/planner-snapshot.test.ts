@@ -40,7 +40,7 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
           reasoningEffort: "high",
         },
       },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
       iterationPolicy: {
         maxIterations: 2,
@@ -62,7 +62,7 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
           reasoningEffort: "medium",
         },
       },
-      mutability: { allowAgentTaskAdd: false },
+      mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
       circuitBreaker: {},
       iterationPolicy: {
         maxIterations: 4,
@@ -230,6 +230,7 @@ describe("planner workflow generation — fixture snapshot", () => {
                 "maxIterations": 2,
               },
               "mutability": {
+                "allowAgentContextAdd": false,
                 "allowAgentTaskAdd": false,
               },
               "title": "Plan",
@@ -258,6 +259,7 @@ describe("planner workflow generation — fixture snapshot", () => {
                 "maxIterations": 4,
               },
               "mutability": {
+                "allowAgentContextAdd": false,
                 "allowAgentTaskAdd": false,
               },
               "title": "Implement",

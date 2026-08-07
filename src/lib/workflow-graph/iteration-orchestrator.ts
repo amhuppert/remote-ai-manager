@@ -47,6 +47,7 @@ import {
   type LatestContextValidationFailureFeedback,
 } from "./iteration-prompt";
 import { contextOwesOutput, resolveUpstreamInputs } from "./context-outputs";
+import { resolveLoopHistory } from "./loop-history";
 import {
   createGraphWorkflowValidationService,
   type CohortSpecialistVerdict,
@@ -4631,6 +4632,10 @@ export function createGraphWorkflowIterationOrchestrator(
                 seededExecution,
                 input.contextId,
               ),
+              // Prior passes of this loop (R16.1) — null for every context that
+              // is not a pass ENTRY, so ordinary upstream injection stays the
+              // only channel for same-pass body contexts.
+              loopHistory: resolveLoopHistory(seededExecution, input.contextId),
             });
 
       // Log the prompt sent to the agent

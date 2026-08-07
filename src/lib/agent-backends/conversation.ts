@@ -270,6 +270,12 @@ export interface ConversationBackendCreateInput {
   workflowExecutionId?: string;
   workflowContextId?: string;
   /**
+   * The signed implementer-lane capability (D4 R7), minted at dispatch and
+   * exported as CC_WORKFLOW_LANE_CAPABILITY. Present only for lanes whose
+   * dispatch could mint one; a lane without it simply cannot expand the graph.
+   */
+  workflowLaneCapability?: string;
+  /**
    * Optional callback invoked by the backend runtime when SDK messages arrive
    * between caller-initiated turns — e.g. Claude Code's background-task
    * auto-continuation. Emits `external_turn_started`, the interpreted
@@ -304,4 +310,18 @@ export interface ConversationBackendFactory {
     modelId?: string;
     reasoningEffort?: string;
   }): void;
+}
+
+/**
+ * The graph-workflow lane identity a conversation runs under: which execution
+ * and context it implements, plus the signed capability that proves it is THAT
+ * context's bound implementer (D4 R7). Carried as one value from the implementer
+ * runner through the conversation actor to the session-env builder, so the three
+ * fields cannot drift apart on the way.
+ */
+export interface WorkflowLaneIdentity {
+  executionId: string;
+  contextId: string;
+  /** Absent when the server had no instance token to sign with. */
+  laneCapability?: string;
 }

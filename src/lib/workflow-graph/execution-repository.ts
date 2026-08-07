@@ -38,6 +38,7 @@ import {
   type AgentProfileLibraryService,
 } from "@/lib/agent-profiles/library-service";
 import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
+import { nextStructuralRevision } from "./structural-revision";
 import {
   GraphWorkflowValidationError,
   validateResolvedWorkflow,
@@ -589,11 +590,20 @@ export function createGraphWorkflowExecutionRepository(
   }
 
   /**
-   * Derive the seam return from a reducer's result: parse the next execution,
-   * compute the prev→next diff delivery, and merge it with any pure delivery
-   * DATA (events + pushes) the reducer supplied directly. Pure — the result is
-   * inert data the seam commits and the repository delivers post-commit; no
-   * side effect happens here.
+   * Derive the seam return from a reducer's result: stamp the repository-owned
+   * staging fence, parse the next execution, compute the prev→next diff
+   * delivery, and merge it with any pure delivery DATA (events + pushes) the
+   * reducer supplied directly. Pure — the result is inert data the seam commits
+   * and the repository delivers post-commit; no side effect happens here.
+   *
+   * Both staging fences are stamped HERE rather than by any caller, which is what
+   * makes them fences: a reducer cannot hold one still to hide its own write from
+   * a staged finalize (D4, decision D5). `executionStateRevision` advances on
+   * every committed mutation, including the scheduler and lane writes that touch
+   * no live-edit field; `structuralRevision` advances whenever the graph tier
+   * moved, whoever moved it and whether or not they knew the fence exists. A
+   * rejected reducer never reaches this point, so a refused mutation leaves both
+   * counters where they were.
    */
   function deriveMutateResult(
     projectPath: string,
@@ -608,7 +618,15 @@ export function createGraphWorkflowExecutionRepository(
     const next = isMutateActiveResult(result) ? result.execution : result;
     const extraEvents = isMutateActiveResult(result) ? result.events : [];
     const extraPushes = isMutateActiveResult(result) ? result.pushes : [];
-    const parsed = graphWorkflowExecutionSchema.parse(next);
+    // Parse first: `structuralRevision` compares the committed shape against the
+    // committed shape, so schema defaulting and coercion must already have run on
+    // both sides or an unchanged tier can read as changed.
+    const committed = graphWorkflowExecutionSchema.parse(next);
+    const parsed: GraphWorkflowExecution = {
+      ...committed,
+      executionStateRevision: current.executionStateRevision + 1,
+      structuralRevision: nextStructuralRevision(current, committed),
+    };
     const diffDelivery = eventPublisher.publishExecutionUpdate({
       projectPath,
       sessionName,

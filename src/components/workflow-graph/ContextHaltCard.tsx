@@ -377,6 +377,78 @@ export function formatGraphWorkflowHaltReason(
             ? "Provide direction to the implementer, then resume."
             : "Review the collaboration log and resume when ready.",
       };
+    case "routing_cardinality":
+      return {
+        headline:
+          reason.outcome === "over-selection"
+            ? `${reason.contextId} activated ${reason.activatedEdgeIds.length} branches — "${reason.policy}" allows one`
+            : `${reason.contextId} activated no branch — "${reason.policy}" requires at least one`,
+        detail: (
+          <>
+            <p>{reason.message}</p>
+            <pre className={haltPreClass}>
+              {`conditional edges: ${reason.conditionalEdgeIds.join(", ") || "—"}\nactivated: ${
+                reason.activatedEdgeIds.join(", ") || "—"
+              }`}
+            </pre>
+          </>
+        ),
+        action:
+          "Edit the guards on this context's outgoing edges (or its cardinality policy) while the execution is quiescent, then resume.",
+        tone: "attention",
+      };
+    case "routing_invariant":
+      return {
+        headline: `${reason.contextId} cannot be routed — a guard has no output to read`,
+        detail: (
+          <>
+            <p>{reason.message}</p>
+            <pre className={haltPreClass}>
+              {`edges: ${reason.edgeIds.join(", ") || "—"}\nsources: ${
+                reason.sourceContextIds.join(", ") || "—"
+              }`}
+            </pre>
+          </>
+        ),
+        action:
+          "Amend or remove the guard on this context's incoming edges while the execution is quiescent, then resume. The completed source is never edited.",
+        tone: "attention",
+      };
+    case "loop_exit_skipped":
+      return {
+        headline: `Loop "${reason.loopGroupId}" pass ${reason.pass} lost its exit — ${reason.contextId} was skipped`,
+        detail: <p>{reason.message}</p>,
+        action:
+          "Restore a route to the pass's exit context with a quiescent live edit, then resume. Every branch inside a loop body must reconverge at the exit.",
+        tone: "attention",
+      };
+    case "loop_invariant":
+      return {
+        headline: `Loop "${reason.loopGroupId}" pass ${reason.pass} cannot be settled — ${reason.contextId} banked no readable output`,
+        detail: <p>{reason.message}</p>,
+        action:
+          "The until predicate is evaluated against the exit's captured output; restore the capture (or amend the exit's output contract) while quiescent, then resume.",
+        tone: "attention",
+      };
+    case "loop_limit_reached":
+      // The two scopes have different remedies, so they must not read alike: a
+      // loop's own cap is raisable by an audited repair, the execution-wide
+      // backstop is a constant.
+      return reason.scope === "execution"
+        ? {
+            headline: `Loop "${reason.loopGroupId}" hit the execution pass backstop after ${reason.totalPassCount} total pass(es)`,
+            detail: <p>{reason.message}</p>,
+            action:
+              "The backstop bounds every loop together and cannot be raised. Amend the exit predicates so the running loops conclude, or continue the remaining work in a new execution, then resume.",
+            tone: "attention",
+          }
+        : {
+            headline: `Loop "${reason.loopGroupId}" exhausted its budget after ${reason.maxPasses} pass(es)`,
+            detail: <p>{reason.message}</p>,
+            action:
+              "Raise the pass cap or amend the exit predicate while the execution is quiescent, then resume. Completed passes are never re-run.",
+            tone: "attention",
+          };
   }
 }
 

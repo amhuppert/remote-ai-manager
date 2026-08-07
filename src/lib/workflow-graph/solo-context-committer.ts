@@ -4,6 +4,7 @@ import {
   hasUncommittedChanges as defaultHasUncommittedChanges,
 } from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
+import { landingIntentTrailer } from "@/lib/workflow-graph/route-runtime";
 
 const logger = createLogger("graph-workflow-solo-commit");
 
@@ -12,6 +13,10 @@ interface SoloContextCommitterInput {
   sessionName: string;
   contextId: string;
   sessionWorktreePath: string;
+  /** The dispatch-time landing token (D4 decision D8), embedded as a commit
+   *  trailer so the landing is replayable from the branch alone. Null for a
+   *  context dispatched before intents existed. */
+  landingToken?: string | null;
 }
 
 type SoloContextCommitterResult =
@@ -54,7 +59,9 @@ export function createSoloContextCommitter(
         return { status: "skipped" };
       }
 
-      const message = `Graph workflow context ${contextId}`;
+      const message = input.landingToken
+        ? `Graph workflow context ${contextId}\n\n${landingIntentTrailer(input.landingToken)}`
+        : `Graph workflow context ${contextId}`;
       logger.info("graph-workflow.solo_commit.started", {
         projectPath,
         sessionName,

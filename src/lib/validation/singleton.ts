@@ -74,11 +74,9 @@ function findLaneForConversation(
 }
 
 /**
- * Resolve a lane's policy from the execution's seed-time snapshot. The
- * snapshot persists the resolved selector; expansion runs against the
- * current registry names, which for `mode:"only"` is seed-stable and for
- * `mode:"all"` deliberately tracks the registry until seed-time expansion
- * (cascade work) persists explicit name lists on the execution.
+ * Expand a selector for executions persisted before explicit command
+ * snapshots were introduced. Current executions authorize from the snapshot
+ * itself so registry edits cannot broaden their running lanes.
  */
 function expandLanePolicy(
   selector: GraphWorkflowCommandSelector,
@@ -234,12 +232,15 @@ export function createProductionValidationCallerResolver(
       const repoValidation = await deps.readRepoValidation(ref.projectPath);
       const registryNames = Object.keys(repoValidation?.commands ?? {});
       const snapshot = context.agentValidation;
-      const selector =
+      const rolePolicy =
         lane.lane === "implementer"
-          ? (snapshot?.implementer.value ??
-            DEFAULT_AGENT_VALIDATION_CONFIG.implementer)
-          : (snapshot?.contextValidator.value ??
-            DEFAULT_AGENT_VALIDATION_CONFIG.contextValidator);
+          ? snapshot?.implementer
+          : snapshot?.contextValidator;
+      const selector =
+        rolePolicy?.value ??
+        (lane.lane === "implementer"
+          ? DEFAULT_AGENT_VALIDATION_CONFIG.implementer
+          : DEFAULT_AGENT_VALIDATION_CONFIG.contextValidator);
       const scriptGateCommands = context.scriptValidator.commands ?? [];
 
       return {
@@ -251,7 +252,8 @@ export function createProductionValidationCallerResolver(
         executionId: execution.id,
         contextId: lane.contextId,
         role: lane.lane,
-        allowedCommands: expandLanePolicy(selector, registryNames),
+        allowedCommands:
+          rolePolicy?.commands ?? expandLanePolicy(selector, registryNames),
         scriptGateCommands,
       };
     },

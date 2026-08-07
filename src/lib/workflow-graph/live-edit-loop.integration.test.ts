@@ -53,7 +53,7 @@ const TEST_LIVE_EDIT_DEPS: LiveEditDeps = {
     scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },

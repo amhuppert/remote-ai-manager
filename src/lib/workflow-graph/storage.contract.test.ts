@@ -153,7 +153,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         continuity: { enabled: false, contextLimitTokens: 80_000 },
       },
       circuitBreaker: { consecutiveFailureThreshold: 4 },
-      mutability: { allowAgentTaskAdd: true },
+      mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
       planRepair: {
         enabled: false,
         maxAttemptsPerContext: 3,
@@ -274,7 +274,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           ],
         },
         scriptValidator: { commands: ["typecheck"] },
-        mutability: { allowAgentTaskAdd: true },
+        mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: true },
         circuitBreaker: { consecutiveFailureThreshold: 5 },
         iterationPolicy: {
           maxIterations: 7,
@@ -318,6 +318,9 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
           required: ["verdict"],
           additionalProperties: false,
         },
+        // Source of the guarded edge below, so its cardinality policy is the one
+        // D4 routing actually evaluates.
+        routing: { cardinality: "exactlyOne" },
       },
       // A second context exists only as the edge target so the single
       // representative edge can connect two distinct contexts (a self-loop
@@ -327,6 +330,25 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         id: "ctx-2",
         title: "Downstream context",
         acceptanceCriteria: "Downstream criteria satisfied",
+      },
+      // A worker + independent-judge loop body. Both contexts stay minimal
+      // apart from the judge's outputSchema, which the loop's `until` predicate
+      // below is validated against at accept time.
+      {
+        id: "ctx-loop-worker",
+        title: "Loop worker",
+        acceptanceCriteria: "Worker produced a revision",
+      },
+      {
+        id: "ctx-loop-judge",
+        title: "Loop judge",
+        acceptanceCriteria: "Judge recorded a verdict",
+        outputSchema: {
+          type: "object",
+          properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
+          required: ["verdict"],
+          additionalProperties: false,
+        },
       },
     ],
     tasks: [
@@ -345,6 +367,46 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         id: "edge-1",
         sourceContextId: "ctx-1",
         targetContextId: "ctx-2",
+        // A D4 activation guard over `ctx-1`'s declared output above: subset-
+        // valid and statically compatible with it, so this fixture is a shape
+        // the accept-time gate admits rather than merely one Zod parses.
+        when: {
+          schema: {
+            type: "object",
+            properties: { verdict: { const: "pass" } },
+            required: ["verdict"],
+          },
+        },
+      },
+      {
+        id: "edge-2",
+        sourceContextId: "ctx-2",
+        targetContextId: "ctx-loop-worker",
+      },
+      {
+        id: "edge-3",
+        sourceContextId: "ctx-loop-worker",
+        targetContextId: "ctx-loop-judge",
+      },
+    ],
+    loopGroups: [
+      {
+        id: "loop-1",
+        title: "Refine until the judge passes",
+        bodyContextIds: ["ctx-loop-worker", "ctx-loop-judge"],
+        entryContextId: "ctx-loop-worker",
+        exitContextId: "ctx-loop-judge",
+        // Subset-valid and statically compatible with the judge's declared
+        // output above, so this is a shape the accept-time gate admits rather
+        // than merely one Zod parses.
+        until: {
+          schema: {
+            type: "object",
+            properties: { verdict: { const: "pass" } },
+            required: ["verdict"],
+          },
+        },
+        maxPasses: 3,
       },
     ],
   };

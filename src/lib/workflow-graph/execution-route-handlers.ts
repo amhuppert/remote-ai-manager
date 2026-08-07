@@ -29,6 +29,7 @@ import {
   findLatestGraphWorkflowContextEvent,
   listActiveGraphWorkflowExecutions,
   listArchivedGraphWorkflowExecutions,
+  getGraphWorkflowEventsPage,
   getGraphWorkflowEventsTail,
 } from "@/lib/state-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
@@ -45,6 +46,10 @@ import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowMergeStatusValue,
 } from "@/lib/workflow-graph/event-schemas";
+import type {
+  GraphWorkflowEventPage,
+  GraphWorkflowEventPageQuery,
+} from "@/lib/state-store/graph-workflow-events-repo";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinKind,
@@ -793,6 +798,15 @@ export interface GraphWorkflowExecutionRouteDeps {
     limit: number,
   ): Promise<GraphWorkflowExecutionEvent[]>;
   /**
+   * Read one cursor-paginated page of an execution's event log — the reader the
+   * loop-ledger surfaces walk for COMPLETE history, which the bounded tail
+   * cannot serve. Defaults to the real `graph_workflow_events` repo.
+   */
+  getEventsPage?(
+    executionId: string,
+    query: GraphWorkflowEventPageQuery,
+  ): Promise<GraphWorkflowEventPage>;
+  /**
    * Stop dev servers running in a terminal execution's lane worktrees before it
    * is cleared/archived. Backstop for the case where halt/abort/merge cleanup
    * did not stop them. Defaults to the real worktree-scoped cleanup.
@@ -860,6 +874,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     listArchivedGraphWorkflowExecutions(projectPath, sessionName),
   getEventsTail: (executionId, limit) =>
     getGraphWorkflowEventsTail(executionId, limit),
+  getEventsPage: (executionId, query) =>
+    getGraphWorkflowEventsPage(executionId, query),
   stopExecutionLaneDevServers: (input) =>
     defaultStopExecutionLaneDevServers(input),
 };
@@ -1127,7 +1143,9 @@ function respondToManagerError(error: unknown): Response {
     message.startsWith("Reset only allowed") ||
     message.startsWith("Resetting a validator assignment is only allowed") ||
     message.includes("is not configured on execution context") ||
-    message.includes("is completed and cannot be reset")
+    // Terminal-status refusals from resetExecutionContext: completed, and
+    // (D4 R4.2) skipped.
+    message.includes("and cannot be reset")
   ) {
     return NextResponse.json({ error: message } satisfies ApiError, {
       status: 409,
@@ -1607,8 +1625,13 @@ export function createGraphWorkflowExecutionRouteHandlers(
     );
     const executionId =
       url.searchParams.get("executionId") ?? activeExecution?.id ?? null;
+    // `page` opts into the cursor-paginated ledger contract; without it the
+    // route answers exactly as it always has, so no existing consumer moves.
+    const paginated = url.searchParams.get("page") === "true";
     if (!executionId) {
-      return NextResponse.json({ events: [] });
+      return NextResponse.json(
+        paginated ? { events: [], nextCursor: null } : { events: [] },
+      );
     }
 
     const limitParam = url.searchParams.get("limit");
@@ -1617,6 +1640,29 @@ export function createGraphWorkflowExecutionRouteHandlers(
       Number.isInteger(parsedLimit) && parsedLimit > 0
         ? Math.min(parsedLimit, GRAPH_WORKFLOW_EVENTS_MAX_LIMIT)
         : GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT;
+
+    if (paginated) {
+      const cursorParam = Number(url.searchParams.get("cursor"));
+      const getEventsPage = deps.getEventsPage ?? getGraphWorkflowEventsPage;
+      const page = await getEventsPage(executionId, {
+        limit,
+        cursor:
+          Number.isInteger(cursorParam) && cursorParam > 0 ? cursorParam : null,
+        direction:
+          url.searchParams.get("direction") === "desc" ? "desc" : "asc",
+      });
+      return NextResponse.json({
+        // `seq` is the wire name for the row's durable ordering key: it is what
+        // the caller sends back as `cursor`, so the pair is one vocabulary.
+        events: page.records.map((record) => ({
+          seq: record.id,
+          occurredAt: record.occurredAt,
+          event: record.event,
+          preReset: record.preReset,
+        })),
+        nextCursor: page.nextCursor,
+      });
+    }
 
     const getEventsTail = deps.getEventsTail ?? getGraphWorkflowEventsTail;
     const events = await getEventsTail(executionId, limit);

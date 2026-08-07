@@ -524,6 +524,9 @@ describe("graph workflow execution route handlers", () => {
       deriveContextAcceptanceCriteria() {
         return { ok: true, acceptanceCriteriaByContextId: {} };
       },
+      deriveCriterionContextCoverage() {
+        return {};
+      },
     });
 
     await expect(
@@ -2968,7 +2971,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
-        mutability: { allowAgentTaskAdd: false },
+        mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -2993,6 +2996,8 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
     workingDefinition: definition,
     contextStates: {
       "context-codex": {
+        skipReason: null,
+        landingIntent: null,
         pendingApproval: null,
         pendingUserInputs: {},
         contextId: "context-codex",
@@ -3411,5 +3416,181 @@ describe("buildLaneIterationToolServer (Phase 3 lane MCP detachment)", () => {
     // nothing, so a lane spawn cannot re-introduce an in-process CC server.
     const server = buildLaneIterationToolServer().server as PortableMcpConfig;
     expect(server.servers.length).toBe(0);
+  });
+});
+
+describe("graph workflow events route — paginated ledger mode (D4 R16.2)", () => {
+  const PROJECT_PATH = "/repo";
+  const SESSION_NAME = "session-1";
+  const EXECUTION_ID = "execution-1";
+  const EVENTS_URL =
+    "/api/projects/repo/sessions/session-1/graph-workflow/events";
+
+  let fixture: PersistenceFixture;
+
+  beforeEach(() => {
+    fixture = createPersistenceFixture();
+    fixture.seedProject(PROJECT_PATH);
+    fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+  });
+
+  afterEach(() => {
+    fixture.close();
+  });
+
+  function unusedDep(name: string) {
+    return async (): Promise<never> => {
+      throw new Error(`${name} should not be called by EVENTS`);
+    };
+  }
+
+  /**
+   * The route over the REAL page reader: the events land through the same
+   * mutation seam production uses, so the cursor the route hands back is the
+   * repository's own keyset cursor rather than a shape invented at the edge.
+   */
+  function buildHandlers() {
+    return createGraphWorkflowExecutionRouteHandlers({
+      resolveProjectPath: async (name) =>
+        name === "repo" ? PROJECT_PATH : null,
+      getSession: fixture.store.getSession,
+      getActiveExecution: async () => null,
+      getEventsTail: fixture.store.getGraphWorkflowEventsTail,
+      getEventsPage: fixture.store.getGraphWorkflowEventsPage,
+      normalizeExecutionAfterRestart: unusedDep(
+        "normalizeExecutionAfterRestart",
+      ),
+      startExecution: unusedDep("startExecution"),
+      pauseExecution: unusedDep("pauseExecution"),
+      resumeExecution: unusedDep("resumeExecution"),
+      abortExecution: unusedDep("abortExecution"),
+      resetExecutionContext: unusedDep("resetExecutionContext"),
+      resetExecutionContextAssignment: unusedDep(
+        "resetExecutionContextAssignment",
+      ),
+      archiveExecution: unusedDep("archiveExecution"),
+      kickOffExecutionLoop: unusedDep("kickOffExecutionLoop"),
+      recordPendingHaltReason: unusedDep("recordPendingHaltReason"),
+      drainAndHalt: unusedDep("drainAndHalt"),
+      recordApprovalDecision: unusedDep("recordApprovalDecision"),
+      recordDefinitionApproval: unusedDep("recordDefinitionApproval"),
+      markRunning: unusedDep("markRunning"),
+      awaitingDefinitionApproval: unusedDep("awaitingDefinitionApproval"),
+      admitDefinitionApproval: unusedDep("admitDefinitionApproval"),
+      executionAborted: unusedDep("executionAborted"),
+      stopExecutionLaneDevServers: unusedDep("stopExecutionLaneDevServers"),
+      listArchivedExecutions: unusedDep("listArchivedExecutions"),
+    });
+  }
+
+  async function seedEvents(count: number): Promise<void> {
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.seedEvents",
+      () => ({
+        execution: createWorkflowExecution({ status: "running" }),
+        events: Array.from({ length: count }, (_, index) => ({
+          occurredAt: `2026-08-04T00:00:0${index}.000Z`,
+          preReset: false,
+          event: {
+            type: "graph-workflow-context-status" as const,
+            projectName: "repo",
+            sessionName: SESSION_NAME,
+            executionId: EXECUTION_ID,
+            contextId: `ctx-${index}`,
+            status: "running" as const,
+            remainingTaskCount: 1,
+            iterationCount: 1,
+          },
+        })),
+      }),
+    );
+  }
+
+  function get(url: string) {
+    return buildHandlers().EVENTS(
+      makeRequest(url, "GET"),
+      makeContext({ name: "repo", session: SESSION_NAME }),
+    );
+  }
+
+  it("walks the full log through the cursor the previous page returned", async () => {
+    await seedEvents(5);
+
+    const first = await get(
+      `${EVENTS_URL}?executionId=${EXECUTION_ID}&page=true&limit=2`,
+    );
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    expect(
+      firstBody.events.map((row: { seq: number }) => row.seq),
+    ).toHaveLength(2);
+    expect(firstBody.nextCursor).toBe(firstBody.events[1].seq);
+    expect(firstBody.events[0].event.contextId).toBe("ctx-0");
+
+    const seen: string[] = firstBody.events.map(
+      (row: { event: { contextId: string } }) => row.event.contextId,
+    );
+    let cursor: number | null = firstBody.nextCursor;
+    while (cursor !== null) {
+      const next = await get(
+        `${EVENTS_URL}?executionId=${EXECUTION_ID}&page=true&limit=2&cursor=${cursor}`,
+      );
+      const body = await next.json();
+      seen.push(
+        ...body.events.map(
+          (row: { event: { contextId: string } }) => row.event.contextId,
+        ),
+      );
+      cursor = body.nextCursor;
+    }
+
+    expect(seen).toEqual(["ctx-0", "ctx-1", "ctx-2", "ctx-3", "ctx-4"]);
+  });
+
+  it("reads newest-first when asked, and leaves the tail mode untouched", async () => {
+    await seedEvents(3);
+
+    const desc = await get(
+      `${EVENTS_URL}?executionId=${EXECUTION_ID}&page=true&limit=2&direction=desc`,
+    );
+    const descBody = await desc.json();
+    expect(
+      descBody.events.map(
+        (row: { event: { contextId: string } }) => row.event.contextId,
+      ),
+    ).toEqual(["ctx-2", "ctx-1"]);
+
+    // No `page` param: the historical tail contract, with no cursor field and
+    // no `seq` on the rows.
+    const tail = await get(`${EVENTS_URL}?executionId=${EXECUTION_ID}`);
+    const tailBody = await tail.json();
+    expect(tailBody.nextCursor).toBeUndefined();
+    expect(tailBody.events).toHaveLength(3);
+    expect(tailBody.events[0].seq).toBeUndefined();
+  });
+
+  it("falls back to the default page size when the limit is unusable", async () => {
+    await seedEvents(3);
+
+    for (const limit of ["0", "-4", "abc"]) {
+      const response = await get(
+        `${EVENTS_URL}?executionId=${EXECUTION_ID}&page=true&limit=${limit}`,
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        nextCursor: null,
+      });
+    }
+  });
+
+  it("returns an empty page when the session has no execution", async () => {
+    const response = await get(`${EVENTS_URL}?page=true`);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      events: [],
+      nextCursor: null,
+    });
   });
 });

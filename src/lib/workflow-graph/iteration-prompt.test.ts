@@ -90,7 +90,7 @@ function makeContext(
     scriptValidator: { commands: [] },
     humanApprovalGate: { enabled: false },
     askUserQuestions: { enabled: false },
-    mutability: { allowAgentTaskAdd: true },
+    mutability: { allowAgentTaskAdd: true, allowAgentContextAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -893,6 +893,7 @@ describe("buildIterationPrompt", () => {
 
   describe("upstream structured inputs (D2 R5.1)", () => {
     const planInput: GraphWorkflowUpstreamInput = {
+      skipped: false,
       contextId: "context-plan",
       title: "Plan",
       declared: true,
@@ -949,6 +950,7 @@ describe("buildIterationPrompt", () => {
 
     it("renders no section when no upstream produced an output", () => {
       const pendingUpstream: GraphWorkflowUpstreamInput = {
+        skipped: false,
         contextId: "context-plan",
         title: "Plan",
         declared: true,
@@ -956,6 +958,7 @@ describe("buildIterationPrompt", () => {
         output: null,
       };
       const freeFormUpstream: GraphWorkflowUpstreamInput = {
+        skipped: false,
         contextId: "context-design",
         title: "Design",
         declared: false,
@@ -991,6 +994,7 @@ describe("buildIterationPrompt", () => {
         allowAgentTaskAdd: false,
         upstreamInputs: [
           {
+            skipped: false,
             contextId: "context-design",
             title: "Design",
             declared: false,
@@ -1003,6 +1007,50 @@ describe("buildIterationPrompt", () => {
 
       expect(prompt).toContain("### context-plan — Plan");
       expect(prompt).not.toContain("### context-design — Design");
+    });
+
+    // D4 R4.3: a skipped predecessor is NOT the same absence as one that
+    // produced nothing. Dropping it silently leaves the agent to assume the
+    // branch is still coming; naming it as not taken is the whole point.
+    describe("skipped predecessors (D4 R4.3)", () => {
+      const skippedUpstream: GraphWorkflowUpstreamInput = {
+        contextId: "context-design",
+        title: "Design",
+        declared: true,
+        schemaFields: planInput.schemaFields,
+        output: null,
+        skipped: true,
+      };
+
+      it("labels a skipped upstream as a branch not taken instead of omitting it", () => {
+        const prompt = buildIterationPrompt({
+          context: makeContext(),
+          tasks: [makeTask()],
+          taskStates: {},
+          sharedDocuments: [],
+          allowAgentTaskAdd: false,
+          upstreamInputs: [skippedUpstream, planInput],
+        });
+
+        expect(prompt).toContain("### context-design — Design");
+        expect(prompt).toContain("branch not taken");
+        // No payload block for a branch that never ran.
+        expect(prompt.split("```json")).toHaveLength(2);
+      });
+
+      it("renders the section for a skipped upstream even when nothing was captured", () => {
+        const prompt = buildIterationPrompt({
+          context: makeContext(),
+          tasks: [makeTask()],
+          taskStates: {},
+          sharedDocuments: [],
+          allowAgentTaskAdd: false,
+          upstreamInputs: [skippedUpstream],
+        });
+
+        expect(prompt).toContain("## Inputs from upstream");
+        expect(prompt).toContain("branch not taken");
+      });
     });
   });
 });

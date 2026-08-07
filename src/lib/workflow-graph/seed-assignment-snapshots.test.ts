@@ -9,9 +9,15 @@ import {
   type AgentProfileLibraryService,
 } from "@/lib/agent-profiles/library-service";
 import { createAgentProfileStorage } from "@/lib/agent-profiles/storage";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { seedAssignmentSnapshots } from "./seed-assignment-snapshots";
-import type { CascadeWorkflowSemanticDefinition } from "./definition-schemas";
+import {
+  resolvedWorkflowSemanticDefinitionSchema,
+  type CascadeWorkflowSemanticDefinition,
+  type WorkflowSemanticDefinition,
+} from "./definition-schemas";
+import { resolveWorkflowDefinition } from "./resolve-config";
 
 const PROJECT_PATH = "/seed-snapshots-project";
 
@@ -95,7 +101,10 @@ function cascade(
         scriptValidator: { commands: [] },
         humanApprovalGate: { enabled: false },
         askUserQuestions: { enabled: false },
-        mutability: { allowAgentTaskAdd: false },
+        mutability: {
+          allowAgentTaskAdd: false,
+          allowAgentContextAdd: false,
+        },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
         planRepair: { enabled: true, maxAttemptsPerContext: 2 },
@@ -151,6 +160,87 @@ describe("seedAssignmentSnapshots (R4)", () => {
     expect(
       cohort?.assignments[0]?.profileSnapshot.renderedInstructionBlock,
     ).toContain("Review against this repository's conventions.");
+  });
+
+  it("recursively snapshots assignments in loop instances and their frozen template", async () => {
+    const authored: WorkflowSemanticDefinition = {
+      schemaVersion: 1,
+      workflowConfig: {},
+      charter: makeTestCharter(),
+      parameters: [],
+      prerequisites: [],
+      executionContexts: [
+        {
+          id: "worker",
+          title: "Worker",
+          acceptanceCriteria: "The worker emits a verdict",
+          outputSchema: {
+            type: "object",
+            properties: { verdict: { type: "string" } },
+            required: ["verdict"],
+          },
+          implementer: {
+            id: "implementer",
+            profile: { tier: "builtin", id: "general-implementer" },
+            focus: "iterate on the loop body",
+            agent: CLAUDE_AGENT,
+          },
+          contextValidator: {
+            enabled: false,
+            assignments: [
+              validator("dormant", {
+                tier: "project",
+                id: "repo-reviewer",
+              }),
+            ],
+          },
+        },
+      ],
+      tasks: [],
+      edges: [],
+      loopGroups: [
+        {
+          id: "refine",
+          bodyContextIds: ["worker"],
+          entryContextId: "worker",
+          exitContextId: "worker",
+          until: {
+            schema: {
+              type: "object",
+              properties: { verdict: { const: "pass" } },
+              required: ["verdict"],
+            },
+          },
+          maxPasses: 3,
+        },
+      ],
+    };
+    const cascaded = resolveWorkflowDefinition({} as GlobalConfig, authored);
+
+    const seeded = await seedAssignmentSnapshots(cascaded, {
+      library,
+      projectPath: PROJECT_PATH,
+    });
+
+    const instance = seeded.executionContexts[0];
+    const template = seeded.loopGroups?.[0]?.template.contexts[0];
+    expect(instance?.id).toBe("refine__p1__worker");
+    expect(instance?.implementer.profileSnapshot.id).toBe(
+      "general-implementer",
+    );
+    expect(instance?.contextValidator.assignments[0]?.profileSnapshot.id).toBe(
+      "repo-reviewer",
+    );
+    expect(template?.id).toBe("worker");
+    expect(template?.implementer.profileSnapshot).toMatchObject({
+      id: "general-implementer",
+    });
+    expect(
+      template?.contextValidator.assignments[0]?.profileSnapshot,
+    ).toMatchObject({ id: "repo-reviewer" });
+    expect(resolvedWorkflowSemanticDefinitionSchema.parse(seeded)).toEqual(
+      seeded,
+    );
   });
 
   it("renders each assignment's focus into its own snapshot block and hash", async () => {

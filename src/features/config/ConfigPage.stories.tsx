@@ -174,7 +174,7 @@ const fullyConfiguredConfig: GlobalConfig = {
       continuity: { enabled: true },
     },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
-    mutability: { allowAgentTaskAdd: false },
+    mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
     planRepair: { enabled: true, maxAttemptsPerContext: 2 },
     collaboration: {
       enabled: false,

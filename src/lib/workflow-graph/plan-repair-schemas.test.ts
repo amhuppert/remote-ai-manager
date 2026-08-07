@@ -56,7 +56,7 @@ describe("planRepairRoundSchema", () => {
     expect(parsed.conversationId).toBeNull();
   });
 
-  it("parses a settled repaired round losslessly", () => {
+  it("parses a settled repaired round losslessly, defaulting loopGroupId for pre-D4 rows", () => {
     const round = {
       seq: 2,
       contextId: "ctx-1",
@@ -69,6 +69,29 @@ describe("planRepairRoundSchema", () => {
       operationCount: 3,
       resumed: true,
       conversationId: "conv-repair-1",
+    };
+    // A row written before D4 carries no `loopGroupId`; it reads back as a
+    // context-halt round, which is exactly what it was.
+    expect(planRepairRoundSchema.parse(round)).toEqual({
+      ...round,
+      loopGroupId: null,
+    });
+  });
+
+  it("round-trips a loop repair round with its loop group", () => {
+    const round = {
+      seq: 3,
+      contextId: "refine__p3__judge",
+      haltType: "loop_limit_reached",
+      loopGroupId: "refine",
+      startedAt: "2026-08-04T00:00:00.000Z",
+      settledAt: "2026-08-04T00:05:00.000Z",
+      outcome: "repaired",
+      planningDefect: true,
+      diagnosis: "the exit predicate was unsatisfiable",
+      operationCount: 1,
+      resumed: true,
+      conversationId: "conv-repair-loop",
     };
     expect(planRepairRoundSchema.parse(round)).toEqual(round);
   });

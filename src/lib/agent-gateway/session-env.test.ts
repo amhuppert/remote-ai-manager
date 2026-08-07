@@ -132,6 +132,35 @@ describe("buildSessionEnvContract", () => {
     expect(env["CC_WORKFLOW_CONTEXT_ID"]).toBe("context-plan");
   });
 
+  it("injects the signed lane capability alongside the lane identity", () => {
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: {},
+      serverUrl: "http://127.0.0.1:3000",
+      apiToken: "tok",
+      workflowExecutionId: "exec-9",
+      workflowContextId: "context-plan",
+      workflowLaneCapability: "cclc1.payload.signature",
+    });
+
+    expect(env["CC_WORKFLOW_LANE_CAPABILITY"]).toBe("cclc1.payload.signature");
+  });
+
+  it("neutralizes an ambient lane capability when this lane has none", () => {
+    // A lane with no capability must not inherit an outer lane's: the whole
+    // point of the credential is that it names ONE bound conversation.
+    const env = buildSessionEnvContract({
+      ...IDENTITY,
+      baseEnv: { CC_WORKFLOW_LANE_CAPABILITY: "cclc1.outer.signature" },
+      serverUrl: "http://127.0.0.1:3000",
+      apiToken: "tok",
+      workflowExecutionId: "exec-9",
+      workflowContextId: "context-plan",
+    });
+
+    expect(env["CC_WORKFLOW_LANE_CAPABILITY"]).toBe("");
+  });
+
   it("omits both lane identity vars for a non-lane session", () => {
     const env = buildSessionEnvContract({
       ...IDENTITY,

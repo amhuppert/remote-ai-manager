@@ -1,4 +1,6 @@
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
+import { incomingRoutes } from "@/lib/workflow-graph/route-projection";
 import type {
   CascadeWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
@@ -32,7 +34,9 @@ export type ContextWaitState =
   | { kind: "merging"; targetBranch: string | null }
   | { kind: "completed" }
   | { kind: "halted" }
-  | { kind: "published" };
+  | { kind: "published" }
+  /** Terminal: an incoming route resolved false, so this branch never runs. */
+  | { kind: "skipped" };
 
 export function deriveContextWaitState(input: {
   contextId: string;
@@ -42,6 +46,13 @@ export function deriveContextWaitState(input: {
   const { contextId, definition, execution } = input;
   const ctxState = execution.contextStates[contextId];
   if (!ctxState) return undefined;
+
+  // Terminal and settled with nothing (D4 R4) — checked before the wait ladder
+  // below, which would otherwise report a skipped context as Ready or blocked
+  // on upstreams it will never consume.
+  if (ctxState.status === "skipped") {
+    return { kind: "skipped" };
+  }
 
   if (ctxState.status === "halted") {
     return { kind: "halted" };
@@ -124,12 +135,18 @@ function getUnmetDependencyIds(
   definition: WaitStateDefinition,
   execution: GraphWorkflowExecution,
 ): string[] {
-  const upstreamIds = definition.edges
-    .filter((edge) => edge.targetContextId === contextId)
-    .map((edge) => edge.sourceContextId);
-
-  return upstreamIds.filter((upstreamId) => {
-    const upstream = execution.contextStates[upstreamId];
-    return !upstream || upstream.status !== "completed";
-  });
+  // Projection-resolved (decision D1). Reading the raw authored sources would
+  // show a context as blocked by a branch the routing already declined — the
+  // node would say "waiting for X" about work that is never going to run.
+  // Unresolved edges keep their logical source, which is what a not-yet-decided
+  // dependency should read as.
+  const projection = projectExecutionRoutes(execution, definition);
+  return incomingRoutes(projection, contextId)
+    .filter((edge) => edge.resolution.kind !== "omitted")
+    .map((edge) => edge.effectiveSourceId ?? edge.logicalSourceId)
+    .filter((upstreamId, index, ids) => ids.indexOf(upstreamId) === index)
+    .filter((upstreamId) => {
+      const upstream = execution.contextStates[upstreamId];
+      return !upstream || upstream.status !== "completed";
+    });
 }

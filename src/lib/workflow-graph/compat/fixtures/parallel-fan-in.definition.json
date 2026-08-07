@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 1,
+  "workflowConfig": {},
+  "charter": {
+    "mission": "Pin the pre-D4 lane, join, and publication behaviour of a fan-out/fan-in graph",
+    "sourcesOfTruth": [
+      {
+        "rank": 1,
+        "id": "compat-fixture",
+        "label": "Compatibility fixture",
+        "type": "document",
+        "locator": "src/lib/workflow-graph/compat/README.md",
+        "description": "The pre-D4 behaviour this fixture pins",
+        "accessPolicy": "worktree-relative"
+      }
+    ]
+  },
+  "parameters": [],
+  "prerequisites": [],
+  "executionContexts": [
+    {
+      "id": "ctx-root",
+      "title": "Root",
+      "description": "Produce the shared base",
+      "acceptanceCriteria": "The base exists",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    },
+    {
+      "id": "ctx-left",
+      "title": "Left branch",
+      "description": "One half of the fan-out",
+      "acceptanceCriteria": "The left half is done",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    },
+    {
+      "id": "ctx-right",
+      "title": "Right branch",
+      "description": "The other half of the fan-out",
+      "acceptanceCriteria": "The right half is done",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    },
+    {
+      "id": "ctx-converge",
+      "title": "Converge",
+      "description": "Fan the branches back in",
+      "acceptanceCriteria": "Both halves are integrated",
+      "implementer": {
+        "id": "implementer",
+        "profile": { "tier": "builtin", "id": "general-implementer" },
+        "agent": {
+          "backend": "claude",
+          "model": "sonnet",
+          "reasoningEffort": "medium"
+        }
+      },
+      "mutability": { "allowAgentTaskAdd": false },
+      "circuitBreaker": { "consecutiveFailureThreshold": 3 },
+      "iterationPolicy": {
+        "maxIterations": 4,
+        "continuity": { "enabled": true }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-root-1",
+      "contextId": "ctx-root",
+      "order": 1,
+      "title": "Build the base",
+      "instructions": "Produce the shared base.",
+      "source": "user"
+    },
+    {
+      "id": "task-left-1",
+      "contextId": "ctx-left",
+      "order": 1,
+      "title": "Build the left half",
+      "instructions": "Implement the left branch.",
+      "source": "user"
+    },
+    {
+      "id": "task-right-1",
+      "contextId": "ctx-right",
+      "order": 1,
+      "title": "Build the right half",
+      "instructions": "Implement the right branch.",
+      "source": "user"
+    },
+    {
+      "id": "task-converge-1",
+      "contextId": "ctx-converge",
+      "order": 1,
+      "title": "Integrate",
+      "instructions": "Integrate both branches.",
+      "source": "user"
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-root-left",
+      "sourceContextId": "ctx-root",
+      "targetContextId": "ctx-left"
+    },
+    {
+      "id": "edge-root-right",
+      "sourceContextId": "ctx-root",
+      "targetContextId": "ctx-right"
+    },
+    {
+      "id": "edge-left-converge",
+      "sourceContextId": "ctx-left",
+      "targetContextId": "ctx-converge"
+    },
+    {
+      "id": "edge-right-converge",
+      "sourceContextId": "ctx-right",
+      "targetContextId": "ctx-converge"
+    }
+  ]
+}

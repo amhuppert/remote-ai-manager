@@ -8,6 +8,11 @@ import {
   graphWorkflowLiveEditAppliedEventSchema,
 } from "@/lib/workflow-graph/event-schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowLoopDecisionRecord,
+  GraphWorkflowRouteSettlement,
+} from "@/lib/workflow-graph/schemas";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
@@ -44,6 +49,8 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-plan",
@@ -63,6 +70,8 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-implement",
@@ -82,6 +91,8 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-verify",
@@ -528,6 +539,8 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-plan",
@@ -547,6 +560,8 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-implement",
@@ -566,6 +581,8 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          skipReason: null,
+          landingIntent: null,
           pendingApproval: null,
           pendingUserInputs: {},
           contextId: "context-verify",
@@ -1875,6 +1892,7 @@ describe("graph workflow execution event publisher", () => {
       executionId: "execution-7",
       contextId: "implement",
       haltType: "circuit_breaker",
+      loopGroupId: null,
       attempt: 1,
       outcome: "repaired",
       planningDefect: true,
@@ -1915,6 +1933,7 @@ describe("graph workflow execution event publisher", () => {
       executionId: "execution-7",
       contextId: "implement",
       haltType: "max_iterations",
+      loopGroupId: null,
       attempt: 1,
       outcome: "superseded",
       planningDefect: true,
@@ -1927,6 +1946,373 @@ describe("graph workflow execution event publisher", () => {
     expect(delivery.events).toHaveLength(1);
     expect(delivery.events[0]?.event.type).toBe("graph-workflow-plan-repair");
     expect(delivery.pushes).toEqual([]);
+  });
+});
+
+/**
+ * D4 R4.3: a skip is a routing DECISION, so the record of it has to carry the
+ * verdicts that produced it. The generic context-status event says only that
+ * the context reached `skipped`; the dedicated event is what makes the decision
+ * reconstructible from durable events alone.
+ */
+describe("context-skipped events (D4 R4.3)", () => {
+  function skippedExecution(): {
+    previousExecution: GraphWorkflowExecution;
+    nextExecution: GraphWorkflowExecution;
+  } {
+    const previousExecution = createWorkflowExecution({ status: "running" });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      contextStates: {
+        ...previousExecution.contextStates,
+        "context-implement": {
+          ...previousExecution.contextStates["context-implement"]!,
+          status: "skipped",
+          skipReason: {
+            edgeEvaluations: [
+              { edgeId: "edge-plan-implement", verdict: "inactive" },
+              { edgeId: "edge-design-implement", verdict: "omitted" },
+            ],
+            at: "2026-03-28T10:00:00.000Z",
+          },
+        },
+      },
+    });
+    return { previousExecution, nextExecution };
+  }
+
+  it("emits a context-skipped event carrying the evaluated guard verdicts", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+    const { previousExecution, nextExecution } = skippedExecution();
+
+    const rows = deriveDelivering(
+      publisher,
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution,
+        nextExecution,
+      }),
+    );
+
+    const skipped = rows.find(
+      (row) => row.event.type === "graph-workflow-context-skipped",
+    );
+    expect(skipped?.event).toMatchObject({
+      type: "graph-workflow-context-skipped",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: nextExecution.id,
+      contextId: "context-implement",
+      edgeEvaluations: [
+        { edgeId: "edge-plan-implement", verdict: "inactive" },
+        { edgeId: "edge-design-implement", verdict: "omitted" },
+      ],
+      skippedAt: "2026-03-28T10:00:00.000Z",
+    });
+    expect(broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "graph-workflow-context-skipped" }),
+    );
+  });
+
+  it("emits it once — a later commit that touches the settled context does not re-fire it", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+    const { previousExecution, nextExecution } = skippedExecution();
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const followUp = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: nextExecution,
+      nextExecution: createWorkflowExecution({
+        ...nextExecution,
+        status: "completed",
+      }),
+    });
+
+    expect(
+      followUp.events.filter(
+        (row) => row.event.type === "graph-workflow-context-skipped",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("route-resolved events (D4 decision D4)", () => {
+  const SETTLEMENT: GraphWorkflowRouteSettlement = {
+    sourceContextId: "context-plan",
+    captureIteration: 1,
+    routeControlRevision: 0,
+    activatedEdgeIds: ["edge-plan-implement"],
+    inactiveEdgeIds: ["edge-plan-verify"],
+    omittedEdgeIds: [],
+    settledAt: "2026-03-28T10:00:00.000Z",
+  };
+
+  function settledExecution(
+    overrides: Partial<GraphWorkflowRouteSettlement> = {},
+  ): GraphWorkflowExecution {
+    return createWorkflowExecution({
+      status: "running",
+      routeSettlements: {
+        "context-plan": { ...SETTLEMENT, ...overrides },
+      },
+    });
+  }
+
+  it("derives the ledger entry from the settlement marker", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const delivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: createWorkflowExecution({ status: "running" }),
+      nextExecution: settledExecution(),
+    });
+
+    expect(
+      delivery.events.find(
+        (row) => row.event.type === "graph-workflow-route-resolved",
+      )?.event,
+    ).toMatchObject({
+      type: "graph-workflow-route-resolved",
+      projectName: "repo",
+      sessionName: "session-1",
+      sourceContextId: "context-plan",
+      captureIteration: 1,
+      routeControlRevision: 0,
+      activatedEdgeIds: ["edge-plan-implement"],
+      inactiveEdgeIds: ["edge-plan-verify"],
+    });
+  });
+
+  it("does not re-fire while the dedup key is unchanged", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+    const settled = settledExecution();
+
+    const followUp = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: settled,
+      // A later commit touching the same execution, settlement untouched.
+      nextExecution: createWorkflowExecution({
+        ...settled,
+        activeContextIds: ["context-implement"],
+      }),
+    });
+
+    expect(
+      followUp.events.filter(
+        (row) => row.event.type === "graph-workflow-route-resolved",
+      ),
+    ).toEqual([]);
+  });
+
+  it("fires again when the same capture is re-decided under a bumped route-control revision", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    // The blob keeps ONE marker per source, so the amended re-decision would be
+    // invisible if the ledger did not live in the event stream.
+    const followUp = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: settledExecution(),
+      nextExecution: settledExecution({
+        routeControlRevision: 1,
+        activatedEdgeIds: ["edge-plan-verify"],
+        inactiveEdgeIds: ["edge-plan-implement"],
+      }),
+    });
+
+    expect(
+      followUp.events.find(
+        (row) => row.event.type === "graph-workflow-route-resolved",
+      )?.event,
+    ).toMatchObject({
+      routeControlRevision: 1,
+      activatedEdgeIds: ["edge-plan-verify"],
+    });
+  });
+});
+
+describe("loop-decision events (D4 R16.2, decision D9)", () => {
+  const DECISION: GraphWorkflowLoopDecisionRecord = {
+    loopGroupId: "refine",
+    pass: 1,
+    loopControlRevision: 0,
+    templateVersion: 1,
+    exitContextId: "refine__p1__judge",
+    exitCaptureIteration: 1,
+    verdict: "unsatisfied",
+    outcome: "materialized",
+    nextPass: 2,
+    decidedAt: "2026-03-28T10:00:00.000Z",
+  };
+
+  function decidedExecution(
+    ...decisions: GraphWorkflowLoopDecisionRecord[]
+  ): GraphWorkflowExecution {
+    return createWorkflowExecution({
+      status: "running",
+      loopStates: {
+        refine: {
+          loopGroupId: "refine",
+          activation: "running",
+          loopControlRevision:
+            decisions[decisions.length - 1]?.loopControlRevision ?? 0,
+          passCount: decisions.length + 1,
+          slotLedger: [],
+          boundaryInputs: null,
+          decisions: Object.fromEntries(
+            decisions.map((decision) => [String(decision.pass), decision]),
+          ),
+          passTemplateVersions: {},
+          concludingExitContextId: null,
+          activatedAt: "2026-03-28T10:00:00.000Z",
+          settledAt: "2026-03-28T10:00:00.000Z",
+        },
+      },
+    });
+  }
+
+  it("derives the ledger entry from the loop's decision marker", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+
+    const delivery = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: createWorkflowExecution({ status: "running" }),
+      nextExecution: decidedExecution(DECISION),
+    });
+
+    expect(
+      delivery.events.find(
+        (row) => row.event.type === "graph-workflow-loop-decision",
+      )?.event,
+    ).toMatchObject({
+      type: "graph-workflow-loop-decision",
+      projectName: "repo",
+      sessionName: "session-1",
+      loopGroupId: "refine",
+      pass: 1,
+      loopControlRevision: 0,
+      templateVersion: 1,
+      exitContextId: "refine__p1__judge",
+      exitCaptureIteration: 1,
+      verdict: "unsatisfied",
+      outcome: "materialized",
+      nextPass: 2,
+    });
+  });
+
+  it("does not re-fire while the decision's dedup key is unchanged", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T10:00:00.000Z",
+    });
+    const decided = decidedExecution(DECISION);
+
+    const followUp = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: decided,
+      nextExecution: createWorkflowExecution({
+        ...decided,
+        activeContextIds: ["refine__p2__worker"],
+      }),
+    });
+
+    expect(
+      followUp.events.filter(
+        (row) => row.event.type === "graph-workflow-loop-decision",
+      ),
+    ).toEqual([]);
+  });
+
+  it("fires again when a pass is re-decided under a bumped loop-control revision", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T11:00:00.000Z",
+    });
+
+    // The blob keeps ONE record per pass, so an amended re-decision of pass 1
+    // would be invisible if the ledger did not live in the event stream.
+    const followUp = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: decidedExecution(DECISION),
+      nextExecution: decidedExecution({
+        ...DECISION,
+        loopControlRevision: 1,
+        verdict: "satisfied",
+        outcome: "concluded",
+        nextPass: null,
+      }),
+    });
+
+    expect(
+      followUp.events.filter(
+        (row) => row.event.type === "graph-workflow-loop-decision",
+      ),
+    ).toHaveLength(1);
+    expect(
+      followUp.events.find(
+        (row) => row.event.type === "graph-workflow-loop-decision",
+      )?.event,
+    ).toMatchObject({
+      pass: 1,
+      loopControlRevision: 1,
+      verdict: "satisfied",
+      outcome: "concluded",
+    });
+  });
+
+  it("emits one row per newly decided pass, in pass order", () => {
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      now: () => "2026-03-28T12:00:00.000Z",
+    });
+
+    const followUp = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: decidedExecution(DECISION),
+      nextExecution: decidedExecution(DECISION, {
+        ...DECISION,
+        pass: 2,
+        exitContextId: "refine__p2__judge",
+        verdict: "satisfied",
+        outcome: "concluded",
+        nextPass: null,
+      }),
+    });
+
+    expect(
+      followUp.events
+        .filter((row) => row.event.type === "graph-workflow-loop-decision")
+        .map((row) =>
+          row.event.type === "graph-workflow-loop-decision"
+            ? row.event.pass
+            : null,
+        ),
+    ).toEqual([2]);
   });
 });
 

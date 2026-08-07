@@ -63,6 +63,7 @@ const GLOBAL_CB: GraphWorkflowCircuitBreakerPolicy = {
 
 const GLOBAL_MUTABILITY: GraphWorkflowMutabilityPolicy = {
   allowAgentTaskAdd: false,
+  allowAgentContextAdd: false,
 };
 
 const GLOBAL_SCRIPT_VALIDATOR: GraphWorkflowScriptValidatorConfig = {
@@ -661,6 +662,24 @@ describe("outputSchema identity passthrough (D2 R1)", () => {
 
     expect(resolved.executionContexts[0]?.outputSchema).toEqual(OUTPUT_SCHEMA);
     expect(resolved.executionContexts[1]?.outputSchema).toBeUndefined();
+  });
+});
+
+describe("routing identity passthrough (D4 R3)", () => {
+  it("mirrors an authored routing policy onto the resolved context verbatim", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      {},
+      makeContext({ routing: { cardinality: "exactlyOne" } }),
+    );
+
+    expect(resolved.routing).toEqual({ cardinality: "exactlyOne" });
+  });
+
+  it("omits routing entirely when the author declared none — no cascade tier supplies a default", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect("routing" in resolved).toBe(false);
   });
 });
 

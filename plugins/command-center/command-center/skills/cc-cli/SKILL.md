@@ -299,15 +299,19 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl workflow templates` — list saved workflow templates across both tiers
   - `cctl workflow templates [--tier global|project] [--json]`
 - `cctl workflow live` — act on this session's ACTIVE launched execution
-  - `cctl workflow live <get|edit|pause|resume>`
+  - `cctl workflow live <get|ledger|edit|pause|resume>`
 - `cctl workflow task` — advance a running lane — complete or add tasks
   - `cctl workflow task <complete|add>`
+- `cctl workflow graph` — grow the running graph from inside a lane
+  - `cctl workflow graph expand --file .cc/temp/expansion.json`
 - `cctl workflow shared-doc` — share a document with other lanes
   - `cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json`
 - `cctl workflow collab` — request a second opinion from another agent
   - `cctl workflow collab request --brief "<question with context>"`
 - `cctl workflow live get` — print the live outline of the active execution
   - `cctl workflow live get [--context <ctx> | --task <task> | --config <ctx> | --charter | --outputs | --full] [--json]`
+- `cctl workflow live ledger` — print the active execution's loop ledger
+  - `cctl workflow live ledger [--cursor <seq>] [--max-pages <n>] [--json]`
 - `cctl workflow live edit` — apply live edits to the running execution's working copy
   - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
 - `cctl workflow live pause` — pause the active execution to unlock started contexts
@@ -318,6 +322,8 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow task complete <taskId> --summary "<what changed, how verified>"`
 - `cctl workflow task add` — append a newly-discovered task to this lane
   - `cctl workflow task add --title "<name>" --instructions "<self-contained steps>" [--slug <slug>]`
+- `cctl workflow graph expand` — append new contexts, tasks, and edges to the running graph
+  - `cctl workflow graph expand --file .cc/temp/expansion.json`
 - `cctl workflow shared-doc upsert` — register or update a shared document for other lanes
   - `cctl workflow shared-doc upsert <relativePath> --file .cc/temp/doc.json`
 - `cctl workflow collab request` — ask another agent to weigh in on an ambiguous decision
@@ -1004,7 +1010,9 @@ cctl workflow live pause
 cctl workflow live edit --file .cc/temp/live-ops.json
 # live-ops.json: { "executionId": "exec-7", "baseLiveRevision": 4, "source": "cli",
 #   "operations": [ { "type": "update-context", "contextId": "verify",
-#     "implementer": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } ] }
+#     "implementer": { "id": "implementer",
+#       "profile": { "tier": "builtin", "id": "general-implementer" },
+#       "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "high" } } } ] }
 cctl workflow live resume
 ```
 

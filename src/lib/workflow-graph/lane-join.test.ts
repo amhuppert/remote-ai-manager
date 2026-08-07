@@ -11,6 +11,7 @@ import {
   appendPendingJoin,
   findActiveJoin,
   findBusyJoinSourceLaneIds,
+  findContextsWithUnfinishedTasks,
   materializeSessionLane,
   pickJoinTarget,
   planContextJoin,
@@ -1455,5 +1456,353 @@ describe("materializeSessionLane", () => {
       now: () => t1,
     });
     expect(next.executionLanes["session-lane"]?.createdAt).toBe(t0);
+  });
+});
+
+describe("skipped contexts are settled with nothing (D4 R4.1)", () => {
+  /**
+   * A skipped context never runs its tasks, so the task-based completion
+   * invariant would otherwise hold the whole execution open on work that is
+   * definitionally never going to happen.
+   */
+  it("exempts a skipped context from the unfinished-task completion invariant", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "skipped",
+          completedTaskCount: 0,
+          skipReason: {
+            edgeEvaluations: [
+              { edgeId: "edge-plan-implement", verdict: "inactive" },
+            ],
+            at: t0,
+          },
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "skipped",
+          completedTaskCount: 0,
+          skipReason: {
+            edgeEvaluations: [
+              { edgeId: "edge-implement-verify", verdict: "omitted" },
+            ],
+            at: t0,
+          },
+        },
+      },
+    };
+
+    expect(findContextsWithUnfinishedTasks(execution)).toEqual([]);
+  });
+
+  it("does not treat a skipped context's lane as holding incomplete work at final publish", () => {
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "cc/lane-a",
+          includedContextIds: ["context-plan"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          laneId: "lane-a",
+          isolation: "worktree",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "skipped",
+          // A skipped context is frozen mid-graph and may still carry the lane
+          // its dispatch would have used; it holds no work, so it must not
+          // block that lane's publication.
+          laneId: "lane-a",
+          skipReason: { edgeEvaluations: [], at: t0 },
+        },
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
+          status: "skipped",
+          skipReason: { edgeEvaluations: [], at: t0 },
+        },
+      },
+    };
+
+    const join = planFinalPublishJoin({
+      execution,
+      sessionLaneId: "__session__",
+      now: () => t1,
+      generateJoinId: () => "join-publish",
+    });
+
+    expect(join).not.toBeNull();
+    expect(join?.sourceLaneIds).toEqual(["lane-a"]);
+  });
+
+  it("plans no join for a fan-in whose second branch was skipped", () => {
+    const base = createWorkflowExecution({
+      workingDefinition: {
+        ...createWorkflowExecution().workingDefinition,
+        edges: [
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+          {
+            id: "edge-implement-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      },
+    });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "cc/lane-a",
+          includedContextIds: ["context-plan"],
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "cc/lane-b",
+          includedContextIds: ["context-implement"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          laneId: "lane-a",
+          isolation: "worktree",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "skipped",
+          laneId: "lane-b",
+          isolation: "worktree",
+          skipReason: {
+            edgeEvaluations: [
+              { edgeId: "edge-implement-verify", verdict: "inactive" },
+            ],
+            at: t0,
+          },
+        },
+      },
+    };
+
+    // Only one branch actually contributes work, so there is nothing to merge.
+    expect(
+      planContextJoin({
+        contextId: "context-verify",
+        execution,
+        now: () => t1,
+        generateJoinId: () => "join-1",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("quiescence derives from the route projection (D4 R4.1, decision D1)", () => {
+  /**
+   * A restart between a guard resolving false and the settlement pass that
+   * persists the skip. The routing has already decided the branch does not run;
+   * only the durable status has not caught up. Completion and publish must
+   * derive that from the projection — reading the status alone strands the run
+   * on a context that is never going to execute.
+   */
+  function routeDeclinedExecution(): GraphWorkflowExecution {
+    const base = createWorkflowExecution({
+      workingDefinition: {
+        ...createWorkflowExecution().workingDefinition,
+        executionContexts:
+          createWorkflowExecution().workingDefinition.executionContexts.map(
+            (context) =>
+              context.id === "context-plan"
+                ? {
+                    ...context,
+                    outputSchema: {
+                      type: "object",
+                      properties: { verdict: { type: "string" } },
+                      required: ["verdict"],
+                    },
+                  }
+                : context,
+          ),
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+            when: {
+              schema: {
+                type: "object",
+                properties: { verdict: { const: "implement" } },
+                required: ["verdict"],
+              },
+            },
+          },
+          {
+            id: "edge-implement-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      },
+    });
+    return {
+      ...base,
+      contextOutputs: {
+        "context-plan": {
+          value: { verdict: "done" },
+          capturedAt: t0,
+          iteration: 1,
+          parse: { source: "native" },
+        },
+      },
+      executionLanes: {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "cc/lane-a",
+          includedContextIds: ["context-plan"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          laneId: "lane-a",
+          isolation: "worktree",
+        },
+      },
+    };
+  }
+
+  it("exempts a route-declined context from the unfinished-task invariant before its skip is persisted", () => {
+    const execution = routeDeclinedExecution();
+
+    expect(execution.contextStates["context-implement"]?.status).toBe(
+      "pending",
+    );
+    expect(findContextsWithUnfinishedTasks(execution)).toEqual([]);
+  });
+
+  it("still counts a context the routing has not declined", () => {
+    const execution = routeDeclinedExecution();
+    execution.contextOutputs["context-plan"] = {
+      value: { verdict: "implement" },
+      capturedAt: t0,
+      iteration: 1,
+      parse: { source: "native" },
+    };
+
+    expect(
+      findContextsWithUnfinishedTasks(execution).map(
+        (state) => state.contextId,
+      ),
+    ).toEqual(["context-implement", "context-verify"]);
+  });
+
+  it("publishes the branch that ran without waiting for the declined one", () => {
+    const join = planFinalPublishJoin({
+      execution: routeDeclinedExecution(),
+      sessionLaneId: "__session__",
+      now: () => t1,
+      generateJoinId: () => "join-publish",
+    });
+
+    expect(join?.sourceLaneIds).toEqual(["lane-a"]);
+  });
+
+  /**
+   * The projection carries no lane or merge state on purpose, so its skip
+   * verdict alone is a ROUTING decision, not a settled exemption. Until the
+   * source's work has landed, R2.5 says the source BLOCKS its dependents —
+   * exempting them from completion and final publish first would let a run
+   * converge around a branch whose fate is still open.
+   */
+  function unlandedSource(
+    execution: GraphWorkflowExecution,
+  ): GraphWorkflowExecution {
+    const next = structuredClone(execution);
+    next.contextStates["context-plan"] = {
+      ...next.contextStates["context-plan"]!,
+      mergeStatus: "merged-failed",
+      lastMergeError: "conflict in src/app.ts",
+      landingIntent: {
+        mode: "fan_in_merge",
+        attempt: 1,
+        token: "cc-landing:execution-1:context-plan:1",
+        laneId: "lane-a",
+        worktreePath: "/tmp/lane-a",
+        baselineSha: "aaa",
+        headSha: null,
+        joinId: null,
+        state: "failed",
+        evidence: "join-merge",
+        recordedAt: t0,
+        settledAt: t0,
+      },
+    };
+    return next;
+  }
+
+  it("counts a route-declined context until its source has landed (R2.5)", () => {
+    const execution = unlandedSource(routeDeclinedExecution());
+
+    expect(
+      findContextsWithUnfinishedTasks(execution).map(
+        (state) => state.contextId,
+      ),
+    ).toEqual(["context-implement", "context-verify"]);
+  });
+
+  it("refuses the final publish while the declined branch's source has not landed (R2.5)", () => {
+    expect(
+      planFinalPublishJoin({
+        execution: unlandedSource(routeDeclinedExecution()),
+        sessionLaneId: "__session__",
+        now: () => t1,
+        generateJoinId: () => "join-publish",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not let a route-declined context's lane hold the publish open", () => {
+    const execution = routeDeclinedExecution();
+    // The declined context was placed on the lane before the guard resolved.
+    execution.contextStates["context-implement"] = {
+      ...execution.contextStates["context-implement"]!,
+      laneId: "lane-a",
+      isolation: "worktree",
+    };
+
+    const join = planFinalPublishJoin({
+      execution,
+      sessionLaneId: "__session__",
+      now: () => t1,
+      generateJoinId: () => "join-publish",
+    });
+
+    expect(join?.sourceLaneIds).toEqual(["lane-a"]);
   });
 });

@@ -10,11 +10,17 @@ import {
   resetContextStateToInitial,
   resetJoinForRetry,
   resetRunningJoinsToPending,
+  skipContext,
   transitionContextMergeStatus,
   transitionContextStatus,
 } from "./context-transitions";
 import { createWorkflowExecution } from "./test-fixtures";
-import type { GraphWorkflowExecutionJoinState } from "@/lib/workflow-graph/schemas";
+import type { RouteEdgeEvaluation } from "./route-projection";
+import {
+  graphWorkflowContextSkipReasonSchema,
+  type GraphWorkflowContextSkipReason,
+  type GraphWorkflowExecutionJoinState,
+} from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 
 const ALL_STATUSES: GraphWorkflowContextStatus[] = [
@@ -25,6 +31,7 @@ const ALL_STATUSES: GraphWorkflowContextStatus[] = [
   "halted",
   "awaiting_approval",
   "awaiting_user_input",
+  "skipped",
 ];
 
 function buildJoin(
@@ -54,8 +61,11 @@ describe("CONTEXT_STATUS_TRANSITIONS legality table", () => {
     GraphWorkflowContextStatus,
     GraphWorkflowContextStatus[]
   > = {
-    pending: ["ready", "running", "halted"],
-    ready: ["running", "halted"],
+    // A route verdict can only skip a context that has not started (D4 R4):
+    // once a context is running it has a lane, a conversation and work on
+    // disk, none of which a skip may discard.
+    pending: ["ready", "running", "halted", "skipped"],
+    ready: ["running", "halted", "skipped"],
     running: [
       "ready",
       "completed",
@@ -79,6 +89,7 @@ describe("CONTEXT_STATUS_TRANSITIONS legality table", () => {
       "awaiting_user_input",
     ],
     completed: [],
+    skipped: [],
   };
 
   it("covers every context status as a source", () => {
@@ -98,6 +109,110 @@ describe("CONTEXT_STATUS_TRANSITIONS legality table", () => {
 
   it("completed is terminal (no outgoing transitions)", () => {
     expect(CONTEXT_STATUS_TRANSITIONS.completed).toEqual([]);
+  });
+
+  it("skipped is terminal (no outgoing transitions)", () => {
+    expect(CONTEXT_STATUS_TRANSITIONS.skipped).toEqual([]);
+  });
+});
+
+describe("skipContext (D4 R4.2)", () => {
+  // The projection computes the verdicts and this schema persists them. They
+  // are spelled in two modules on purpose (the projection stays structural and
+  // browser-safe), so the assignment below is the pin that keeps them one shape:
+  // it stops compiling the moment either side gains or renames a field.
+  it("persists exactly the shape the route projection produces", () => {
+    const fromProjection: RouteEdgeEvaluation = {
+      edgeId: "edge-plan-implement",
+      verdict: "inactive",
+    };
+    const persisted: GraphWorkflowContextSkipReason["edgeEvaluations"][number] =
+      fromProjection;
+
+    expect(
+      graphWorkflowContextSkipReasonSchema.safeParse({
+        edgeEvaluations: [persisted],
+        at: "2026-08-04T10:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+
+  const skipReason: GraphWorkflowContextSkipReason = {
+    edgeEvaluations: [
+      { edgeId: "edge-plan-implement", verdict: "inactive" },
+      { edgeId: "edge-design-implement", verdict: "active" },
+    ],
+    at: "2026-08-04T10:00:00.000Z",
+  };
+
+  it("moves an unstarted context to skipped and persists the guard verdicts in the same write", () => {
+    const execution = createWorkflowExecution();
+    execution.contextStates["context-implement"]!.status = "ready";
+
+    skipContext(execution, "context-implement", skipReason, {
+      reason: "test",
+    });
+
+    const contextState = execution.contextStates["context-implement"]!;
+    expect(contextState.status).toBe("skipped");
+    expect(contextState.skipReason).toEqual(skipReason);
+  });
+
+  it("skips a pending context that never became ready", () => {
+    const execution = createWorkflowExecution();
+
+    skipContext(execution, "context-implement", skipReason, { reason: "test" });
+
+    expect(execution.contextStates["context-implement"]!.status).toBe(
+      "skipped",
+    );
+  });
+
+  it("refuses a started context and records no skip reason", () => {
+    const execution = createWorkflowExecution();
+    execution.contextStates["context-implement"]!.status = "running";
+
+    expect(() =>
+      skipContext(execution, "context-implement", skipReason, {
+        reason: "test",
+      }),
+    ).toThrow(IllegalContextStatusTransitionError);
+    expect(execution.contextStates["context-implement"]!.status).toBe(
+      "running",
+    );
+    expect(execution.contextStates["context-implement"]!.skipReason).toBeNull();
+  });
+
+  it("refuses a completed context (completed stays terminal)", () => {
+    const execution = createWorkflowExecution();
+    execution.contextStates["context-implement"]!.status = "completed";
+
+    expect(() =>
+      skipContext(execution, "context-implement", skipReason, {
+        reason: "test",
+      }),
+    ).toThrow(IllegalContextStatusTransitionError);
+  });
+
+  it("keeps the first recorded reason when a settled skip is re-derived", () => {
+    const execution = createWorkflowExecution();
+    skipContext(execution, "context-implement", skipReason, { reason: "test" });
+
+    skipContext(
+      execution,
+      "context-implement",
+      {
+        edgeEvaluations: [
+          { edgeId: "edge-plan-implement", verdict: "omitted" },
+        ],
+        at: "2026-08-04T11:00:00.000Z",
+      },
+      { reason: "test" },
+    );
+
+    expect(execution.contextStates["context-implement"]!.skipReason).toEqual(
+      skipReason,
+    );
   });
 });
 
@@ -193,6 +308,8 @@ describe("resetContextStateToInitial", () => {
       lastMergeError: null,
       pendingApproval: null,
       pendingUserInputs: {},
+      skipReason: null,
+      landingIntent: null,
     });
     expect(next["context-plan"]).toBe(execution.contextStates["context-plan"]);
     expect(next["context-verify"]).toBe(
@@ -223,6 +340,33 @@ describe("resetContextStateToInitial", () => {
     } catch (error) {
       if (!(error instanceof IllegalContextStatusTransitionError)) throw error;
       expect(error.from).toBe("completed");
+      expect(error.to).toBe("pending");
+      expect(error.contextId).toBe("context-implement");
+    }
+  });
+
+  it("rejects a skipped context with IllegalContextStatusTransitionError", () => {
+    const execution = createWorkflowExecution();
+    skipContext(
+      execution,
+      "context-implement",
+      {
+        edgeEvaluations: [
+          { edgeId: "edge-plan-implement", verdict: "inactive" },
+        ],
+        at: "2026-08-04T10:00:00.000Z",
+      },
+      { reason: "test" },
+    );
+
+    try {
+      resetContextStateToInitial(execution, "context-implement", {
+        reason: "test",
+      });
+      expect.unreachable("expected an illegal-transition throw");
+    } catch (error) {
+      if (!(error instanceof IllegalContextStatusTransitionError)) throw error;
+      expect(error.from).toBe("skipped");
       expect(error.to).toBe("pending");
       expect(error.contextId).toBe("context-implement");
     }
@@ -402,10 +546,8 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
       const fileName = String(relativePath);
       if (!fileName.endsWith(".ts")) continue;
       if (fileName.endsWith(".test.ts")) continue;
-      // Test scaffolding, not engine code: fixtures and harnesses FABRICATE
-      // states to run a test against, so routing them through the transition
-      // owner would test the owner rather than use it.
-      if (fileName === "test-fixtures.ts") continue;
+      // Test scaffolding builds states rather than transitioning them.
+      if (fileName.endsWith("test-fixtures.ts")) continue;
       if (fileName.startsWith("testing/")) continue;
       if (fileName === "context-transitions.ts") continue;
 
@@ -443,6 +585,11 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
       // the working definition by the same operation — construction of a new
       // context, not a transition of an existing one.
       /next\.contextStates\[op\.id\] = buildInitialContextState\(/,
+      // materialize-loop-pass: the same construction case one pass instance at
+      // a time — every id here was minted by this operation and pushed into the
+      // working definition alongside it, so there is no existing context whose
+      // lifecycle is being written over.
+      /next\.contextStates\[instanceId\] = buildInitialContextState\(/,
     ],
     "lane-join.ts": [
       // appendPendingJoin spreads the existing entry and only sets `joinId`,
@@ -459,10 +606,8 @@ describe("single-transition-owner grep assertion (Phase 2 exit criterion)", () =
       const fileName = String(relativePath);
       if (!fileName.endsWith(".ts")) continue;
       if (fileName.endsWith(".test.ts")) continue;
-      // Test scaffolding, not engine code: fixtures and harnesses FABRICATE
-      // states to run a test against, so routing them through the transition
-      // owner would test the owner rather than use it.
-      if (fileName === "test-fixtures.ts") continue;
+      // Test scaffolding builds states rather than transitioning them.
+      if (fileName.endsWith("test-fixtures.ts")) continue;
       if (fileName.startsWith("testing/")) continue;
       if (fileName === "context-transitions.ts") continue;
 

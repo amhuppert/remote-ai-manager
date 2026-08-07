@@ -1,4 +1,18 @@
-import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type {
+  GraphWorkflowContextSkipReason,
+  GraphWorkflowExecution,
+  GraphWorkflowLoopState,
+} from "@/lib/workflow-graph/schemas";
+import { projectExecutionRoutes } from "@/lib/workflow-graph/execution-routes";
+import type {
+  ResolvedRouteEdge,
+  RouteEdgeResolution,
+} from "@/lib/workflow-graph/route-projection";
+import { resolveExpansionProvenance } from "@/lib/workflow-graph/expansion-receipts";
+import {
+  resolveLoopPassMembership,
+  type LoopPassMembership,
+} from "@/lib/workflow-graph/loop-ledger";
 import type { ResolvedCollaborationConfig } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
   GraphWorkflowAgentConfig,
@@ -186,6 +200,58 @@ export type LiveOutlineResolvedConfig = Pick<
  */
 export type LiveOutlineOutputSchemaSummary = GraphWorkflowOutputSchemaShape;
 
+/**
+ * One edge as the route projection resolved it (D4 R13.2).
+ *
+ * `source` is the AUTHORED (logical) source — the topology an operator reads —
+ * and `effectiveSource` is the instance whose landed work actually satisfies
+ * the edge (decision D1). They differ exactly when a concluded loop's external
+ * edge resolves onto its concluding pass's exit instance, which is how the
+ * outline renders a logical exit with its effective instance as provenance.
+ * `null` while the edge is unresolved.
+ */
+export interface LiveOutlineRoute {
+  id: string;
+  source: string;
+  effectiveSource: string | null;
+  target: string;
+  guard: ResolvedRouteEdge["guard"];
+  resolution: RouteEdgeResolution["kind"];
+}
+
+/** One declared loop's activation, pass counter and budget (R13.2). */
+export interface LiveOutlineLoop {
+  loopGroupId: string;
+  activation: GraphWorkflowLoopState["activation"];
+  passCount: number;
+  maxPasses: number;
+  loopControlRevision: number;
+  /** The AUTHORED exit whose external edges the loop holds. */
+  logicalExitContextId: string;
+  /** The concluding pass's exit instance; null until the loop concludes. */
+  concludingExitContextId: string | null;
+}
+
+/** The expansion audit ledgers, flattened for the CLI (R8/R13.2). */
+export interface LiveOutlineExpansions {
+  accepted: Array<{
+    requestId: string;
+    invokerContextId: string;
+    rationale: string;
+    addedContextIds: string[];
+    addedTaskIds: string[];
+    rejoinContextIds: string[];
+    payloadHash: string;
+    acceptedAt: string;
+  }>;
+  refusals: Array<{
+    requestId: string;
+    invokerContextId: string;
+    refusalCode: string;
+    refusedAt: string;
+  }>;
+}
+
 export interface LiveOutlineContext {
   id: string;
   title: string;
@@ -199,14 +265,27 @@ export interface LiveOutlineContext {
   maxIterations: number;
   /** `null` when the context declares no output contract (free-form). */
   outputSchema: LiveOutlineOutputSchemaSummary | null;
+  /**
+   * The recorded route verdicts of a `skipped` context (D4 R4); `null` on every
+   * other status. The COMPLETE verdict set, exactly as persisted — a skip an
+   * operator cannot reconstruct is not an auditable decision.
+   */
+  skip: GraphWorkflowContextSkipReason | null;
+  /** Loop pass membership; `null` for a context outside every loop body. */
+  loop: LoopPassMembership | null;
+  /** The expansion that created this context; `null` when the planner did. */
+  provenance: { requestId: string; invokerContextId: string } | null;
 }
 
 /**
  * One context's output contract and what it has produced (R7.2 CLI read path).
  *
- * `capture` mirrors the two states {@link getContextOutput} can report for a
+ * `capture` mirrors the states {@link getContextOutput} can report for a
  * context that participates at all; contexts it reports `none` for never appear
  * here, so "absent" unambiguously means "declares nothing and banked nothing".
+ * `skipped` is listed rather than dropped — its declared contract is still part
+ * of the graph an operator is reading — but never as `pending`, because a
+ * not-taken branch owes nothing (D4 R4).
  */
 export interface LiveOutlineContextOutput {
   contextId: string;
@@ -222,7 +301,8 @@ export interface LiveOutlineContextOutput {
         iteration: number;
         parse: AgentCallStructuredOutputParse;
       }
-    | { kind: "pending" };
+    | { kind: "pending" }
+    | { kind: "skipped" };
 }
 
 export interface LiveOutlineTask {
@@ -272,6 +352,18 @@ export interface LiveOutline {
    * for executions seeded before the snapshot existed.
    */
   laneMergeValidation: GraphWorkflowLaneMergeValidationConfig | null;
+  /**
+   * Every edge with its guard and resolved verdict (R13.2). Always present and
+   * always complete: guard-free routes report `guard: "none"`, so a reader
+   * never has to infer "unguarded" from an absent row. The CLI text view
+   * renders the block only when there is something conditional to say, which is
+   * what keeps a pre-D4 outline's rendering unchanged.
+   */
+  routes: LiveOutlineRoute[];
+  /** Declared loops with their activation, pass counter and budget; `[]` if none. */
+  loops: LiveOutlineLoop[];
+  /** The expansion audit ledgers; both empty for an execution that never expanded. */
+  expansions: LiveOutlineExpansions;
 }
 
 export type LiveOutlineSelector =
@@ -487,6 +579,10 @@ function contextRow(
 ): LiveOutlineContext {
   const state = execution.contextStates[context.id];
   const lifecycle = classifyContextLifecycle(execution, context.id);
+  const provenance = resolveExpansionProvenance(
+    execution.expansionReceipts,
+    context.id,
+  );
   return {
     id: context.id,
     title: context.title,
@@ -498,6 +594,77 @@ function contextRow(
     iterationCount: state?.iterationCount ?? 0,
     maxIterations: context.iterationPolicy.maxIterations,
     outputSchema: summarizeOutputSchema(context.outputSchema),
+    skip: state?.status === "skipped" ? (state.skipReason ?? null) : null,
+    loop: resolveLoopPassMembership({
+      contextId: context.id,
+      loopGroups: execution.workingDefinition.loopGroups ?? [],
+      loopStates: execution.loopStates,
+    }),
+    provenance:
+      provenance?.nodeKind === "context"
+        ? {
+            requestId: provenance.receipt.requestId,
+            invokerContextId: provenance.receipt.invokerContextId,
+          }
+        : null,
+  };
+}
+
+/**
+ * Every edge with the projection's verdict on it (R13.2). Read through
+ * `projectExecutionRoutes` rather than re-evaluated here: guard semantics live
+ * in `route-projection.ts` and nowhere else, so the CLI reports exactly what
+ * the scheduler decided.
+ */
+function routeRows(execution: GraphWorkflowExecution): LiveOutlineRoute[] {
+  const projection = projectExecutionRoutes(execution);
+  return projection.edges.map((edge) => ({
+    id: edge.edgeId,
+    source: edge.logicalSourceId,
+    effectiveSource: edge.effectiveSourceId,
+    target: edge.targetContextId,
+    guard: edge.guard,
+    resolution: edge.resolution.kind,
+  }));
+}
+
+/** Declared loops with their runtime ledger state; `[]` when none are declared. */
+function loopRows(execution: GraphWorkflowExecution): LiveOutlineLoop[] {
+  const loopGroups = execution.workingDefinition.loopGroups ?? [];
+  return loopGroups.map((group) => {
+    const state = execution.loopStates[group.id];
+    return {
+      loopGroupId: group.id,
+      activation: state?.activation ?? "unstarted",
+      passCount: state?.passCount ?? 0,
+      maxPasses: group.maxPasses,
+      loopControlRevision: state?.loopControlRevision ?? 0,
+      logicalExitContextId: group.exitContextId,
+      concludingExitContextId: state?.concludingExitContextId ?? null,
+    };
+  });
+}
+
+function expansionRows(
+  execution: GraphWorkflowExecution,
+): LiveOutlineExpansions {
+  return {
+    accepted: execution.expansionReceipts.accepted.map((receipt) => ({
+      requestId: receipt.requestId,
+      invokerContextId: receipt.invokerContextId,
+      rationale: receipt.rationale,
+      addedContextIds: [...receipt.addedContextIds],
+      addedTaskIds: [...receipt.addedTaskIds],
+      rejoinContextIds: [...receipt.rejoinContextIds],
+      payloadHash: receipt.payloadHash,
+      acceptedAt: receipt.acceptedAt,
+    })),
+    refusals: execution.expansionReceipts.refusals.map((receipt) => ({
+      requestId: receipt.requestId,
+      invokerContextId: receipt.invokerContextId,
+      refusalCode: receipt.refusalCode,
+      refusedAt: receipt.refusedAt,
+    })),
   };
 }
 
@@ -514,6 +681,12 @@ function contextOutputRows(
   for (const context of execution.workingDefinition.executionContexts) {
     const lookup = getContextOutput(execution, context.id);
     if (lookup.kind === "none") continue;
+    // A skipped context answers `skipped` before it can answer `none`, so the
+    // free-form ones are filtered on the declaration instead: they have no
+    // contract to report here either way.
+    if (lookup.kind === "skipped" && context.outputSchema === undefined) {
+      continue;
+    }
     // `orphaned` — banked, then its declaration cleared — still lists here with
     // a null `schema`: this is the operator's read path for what a context
     // produced, and losing the payload because the contract was edited away
@@ -533,7 +706,9 @@ function contextOutputRows(
             iteration: lookup.output.iteration,
             parse: lookup.output.parse,
           }
-        : { kind: "pending" },
+        : lookup.kind === "skipped"
+          ? { kind: "skipped" }
+          : { kind: "pending" },
     });
   }
   return rows;
@@ -701,6 +876,9 @@ export function projectLiveOutline(
       config: contexts.map((context) => summarizeConfig(context)),
       laneMergeValidation:
         execution.workingDefinition.laneMergeValidation ?? null,
+      routes: routeRows(execution),
+      loops: loopRows(execution),
+      expansions: expansionRows(execution),
     },
   };
 }

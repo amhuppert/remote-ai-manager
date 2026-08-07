@@ -39,11 +39,13 @@ export function resetExecutionContext(
     );
   }
 
-  // The transition owner holds the legality decision (completed is terminal).
-  // It is pure (runs inside a write-queue reducer, so it does no logging); its
-  // rejection is translated back into the reset API's error contract:
-  // workflow-manager and respondToManagerError key off ResetExecutionContextError
-  // and this message.
+  // The transition owner holds the legality decision (completed and skipped are
+  // terminal). It is pure (runs inside a write-queue reducer, so it does no
+  // logging); its rejection is translated back into the reset API's error
+  // contract: workflow-manager and respondToManagerError key off
+  // ResetExecutionContextError and this message. The refusing status is named
+  // rather than assumed — a skipped context was never run, and reporting it as
+  // completed would misdescribe the branch to the operator.
   let nextContextStates: Record<string, GraphWorkflowExecutionContextState>;
   try {
     nextContextStates = resetContextStateToInitial(execution, contextId, {
@@ -52,7 +54,7 @@ export function resetExecutionContext(
   } catch (error) {
     if (error instanceof IllegalContextStatusTransitionError) {
       throw new ResetExecutionContextError(
-        `Execution context "${contextId}" is completed and cannot be reset.`,
+        `Execution context "${contextId}" is ${error.from} and cannot be reset.`,
       );
     }
     throw error;

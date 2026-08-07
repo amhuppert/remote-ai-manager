@@ -244,6 +244,52 @@ describe("workflow-graph storage", () => {
     ).rejects.toThrow("unknown-task-context");
   });
 
+  it("rejects create and update of a guard-bearing edge whose source declares no outputSchema (R1.1)", async () => {
+    const { storage } = createServices();
+    const base = createWorkflowDefinition();
+    const guarded = createWorkflowDefinition({
+      edges: base.edges.map((edge, index) =>
+        index === 0
+          ? {
+              ...edge,
+              when: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "ship" } },
+                  required: ["verdict"],
+                },
+              },
+            }
+          : edge,
+      ),
+    });
+
+    await expect(
+      storage.create(REPO_SCOPE, {
+        name: "Guarded",
+        description: null,
+        definition: guarded,
+        layout: createWorkflowDefinitionRecord().layout,
+      }),
+    ).rejects.toThrow("guard-source-without-output-schema");
+
+    const created = await storage.create(REPO_SCOPE, {
+      name: "Guarded",
+      description: null,
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowDefinitionRecord().layout,
+    });
+
+    await expect(
+      storage.update(REPO_SCOPE, created.id, {
+        name: created.name,
+        description: created.description,
+        definition: guarded,
+        layout: created.layout,
+      }),
+    ).rejects.toThrow("guard-source-without-output-schema");
+  });
+
   it("rejects create with an undeclared parameter reference (accept-time lint via choke point)", async () => {
     const { storage } = createServices();
     const base = createWorkflowDefinition();

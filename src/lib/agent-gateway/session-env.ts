@@ -2,6 +2,7 @@ import path from "node:path";
 import type { ConversationTarget } from "@/lib/conversations/conversation-target";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
+import { LANE_CAPABILITY_ENV_VAR } from "./lane-capability";
 
 const logger = createLogger("session-env");
 
@@ -55,6 +56,15 @@ export interface SessionEnvContractInput {
    */
   workflowExecutionId?: string;
   workflowContextId?: string;
+  /**
+   * The signed implementer-lane capability (D4 R7), minted at dispatch for lane
+   * conversations that may hold one. Absent lanes export nothing and inherit
+   * nothing: the ambient CC_* neutralization above already zeroes an outer
+   * lane's capability, which matters more here than for the identity vars —
+   * this one is a CREDENTIAL, and a lane holding another lane's would be a
+   * confused-deputy path straight through the expansion authority check.
+   */
+  workflowLaneCapability?: string;
 }
 
 /** Override every inherited CC_* key with "" (in place). */
@@ -111,6 +121,8 @@ export function buildSessionEnvContract(
     env["CC_WORKFLOW_EXECUTION_ID"] = input.workflowExecutionId;
   if (input.workflowContextId !== undefined)
     env["CC_WORKFLOW_CONTEXT_ID"] = input.workflowContextId;
+  if (input.workflowLaneCapability !== undefined)
+    env[LANE_CAPABILITY_ENV_VAR] = input.workflowLaneCapability;
   env["BASH_MAX_TIMEOUT_MS"] ??= BASH_MAX_TIMEOUT_MS_DEFAULT;
 
   const binDir = path.join(input.configDir, "bin");
