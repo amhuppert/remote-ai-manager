@@ -137,6 +137,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
             profile: { tier: "builtin", id: "general-reviewer" },
             focus: "workflow-tier steer",
             strategy: "conversation",
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -249,6 +250,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
               profile: { tier: "project", id: "security-reviewer" },
               focus: "auth boundaries and token handling",
               strategy: "conversation",
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -261,6 +263,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
               profile: { tier: "global", id: "perf-reviewer" },
               focus: "hot paths only",
               strategy: "task",
+              authority: "blocking",
               agent: {
                 backend: "codex",
                 model: "gpt-5.4",

@@ -226,6 +226,108 @@ describe("graph-workflow-executions-repo durability contract", () => {
       roundSeq: 4,
     });
   });
+
+  // R9: advisories and their dispositions are durable per specialist and per
+  // round, and the long-lived kinds are additionally readable from the execution
+  // without opening a round. The durability harness above proves every key path
+  // survives; this pins the two shapes whole, because an advisory reloaded
+  // without its identity, its delivery stamp, or its disposition is a record
+  // nobody can act on afterwards.
+  it("reloads each specialist's advisories with their identities, delivery, and dispositions", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+      const execution = maximalExecution();
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        execution,
+        "2026-03-01T00:00:00Z",
+      );
+
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+
+      const round = reloaded?.contextStates["ctx-1"]?.validationRound;
+      expect(round?.specialists["general"]?.advisories).toEqual([
+        {
+          kind: "plan",
+          title: "The rollback step belongs in its own task",
+          description:
+            "Reverting the migration is work in its own right, not a footnote on this one.",
+          identity: { roundSeq: 4, assignmentId: "general", ordinal: 1 },
+          deliveredAt: "2026-03-01T00:00:00.000Z",
+          disposition: {
+            outcome: "declined",
+            reason: "The plan is already approved at this shape.",
+            recordedAt: "2026-03-01T00:05:00.000Z",
+          },
+        },
+      ]);
+      // The state every advisory starts in survives too: an undelivered advisory
+      // reloaded with a delivery stamp would be one the implementer never saw,
+      // recorded as one it had.
+      expect(round?.specialists["security-reviewer"]?.advisories).toEqual([
+        {
+          kind: "out_of_scope",
+          title: "The auth middleware has no rate limit",
+          description: "Nothing in this context owns it; worth filing.",
+          identity: {
+            roundSeq: 4,
+            assignmentId: "security-reviewer",
+            ordinal: 1,
+          },
+          deliveredAt: null,
+          disposition: null,
+        },
+      ]);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("reloads the execution-level advisory index across both indexed kinds", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+      fixture.graphWorkflowExecutions.setActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+        maximalExecution(),
+        "2026-03-01T00:00:00Z",
+      );
+
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+
+      expect(reloaded?.advisoryIndex).toEqual([
+        {
+          identity: { roundSeq: 4, assignmentId: "general", ordinal: 1 },
+          kind: "plan",
+          title: "The rollback step belongs in its own task",
+          contextId: "ctx-1",
+        },
+        {
+          identity: {
+            roundSeq: 4,
+            assignmentId: "security-reviewer",
+            ordinal: 1,
+          },
+          kind: "out_of_scope",
+          title: "The auth middleware has no rate limit",
+          contextId: "ctx-1",
+        },
+      ]);
+    } finally {
+      fixture.close();
+    }
+  });
 });
 
 describe("graph-workflow-executions-repo captured context outputs", () => {

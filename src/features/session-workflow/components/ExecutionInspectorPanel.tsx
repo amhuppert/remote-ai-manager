@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   MultilineInput,
   runMultilinePrimaryAction,
@@ -124,11 +124,15 @@ import {
   formatAgentProfileRef,
   type AgentProfileSnapshot,
 } from "@/lib/agent-profiles/schemas";
-import CohortRoundCard from "./CohortRoundCard";
+import AdvisoryIndexPanel, { type AdvisoryOrigin } from "./AdvisoryIndexPanel";
+import CohortRoundCard, { AuthorityChip } from "./CohortRoundCard";
 import {
+  authorityOfSeat,
   deriveCohortRoundView,
+  type CohortMemberAuthority,
   type CohortMemberView,
 } from "./cohort-round-view";
+import type { ValidatorAuthority } from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -333,10 +337,17 @@ interface ExecutionInspectorPanelProps {
    */
   onEditSchema?: (contextId: string) => void;
   /**
+   * An advisory-index entry's link back to where it was raised. Same shape and
+   * same reason as `onEditSchema`: the overview has no context selected, so the
+   * container owns the navigation and the tab request that follows it.
+   */
+  onOpenAdvisoryOrigin?: (origin: AdvisoryOrigin) => void;
+  /**
    * A host's request to open a specific tab for a specific context — the halt
-   * dialog's "Edit schema" deep link. `seq` distinguishes two identical
-   * requests (the operator asking twice) from a re-render of one, so the
-   * inspector honours the second without stealing the tab on every render.
+   * dialog's "Edit schema" deep link, and the advisory index's origin link.
+   * `seq` distinguishes two identical requests (the operator asking twice) from
+   * a re-render of one, so the inspector honours the second without stealing
+   * the tab on every render.
    */
   contextTabRequest?: ContextTabRequest | null;
   /** Project-scoped registry summaries for the config tab's command
@@ -348,6 +359,13 @@ export interface ContextTabRequest {
   contextId: string;
   tab: DetailTab;
   seq: number;
+  /**
+   * The validation round the request is aimed at, when it has one. A context's
+   * History tab holds every round it has run, so a deep link that named only
+   * the tab would leave the reader at whichever round the context has since
+   * reached — so the advisory index's links carry the round that raised them.
+   */
+  roundSeq?: number;
 }
 
 function findContextHaltReason(
@@ -455,7 +473,37 @@ function getHistoryEntries(
       }),
     );
 
-  return { validationEvents, circuitBreakerEvents, incidentEvents };
+  // The rounds a context reset retired. They are deliberately absent from the
+  // lists above — the visible history is the current attempt — but an advisory
+  // raised before the reset outlives it in the execution's index, and its
+  // origin link has nowhere else to land.
+  const clearedValidationEvents = events
+    .filter(
+      (
+        entry,
+      ): entry is {
+        occurredAt: string;
+        event: GraphWorkflowValidationResultEvent;
+        preReset: boolean;
+      } =>
+        entry.event.type === "graph-workflow-validation-result" &&
+        entry.preReset === true &&
+        (contextId == null || entry.event.contextId === contextId),
+    )
+    .map(
+      (entry): Timestamped<GraphWorkflowValidationResultEvent> => ({
+        ...entry.event,
+        occurredAt: entry.occurredAt,
+      }),
+    )
+    .reverse();
+
+  return {
+    validationEvents,
+    clearedValidationEvents,
+    circuitBreakerEvents,
+    incidentEvents,
+  };
 }
 
 function formatTimestamp(iso: string): string {
@@ -677,10 +725,13 @@ function assignmentTranscriptLabel(assignmentId: string): string {
 function SpecialistCard({
   specialist,
   contextId,
+  authority,
   onViewConversation,
 }: {
   specialist: GraphWorkflowValidationSpecialistEntry;
   contextId: string;
+  /** This seat's blocking power, read from the cohort as configured now. */
+  authority: CohortMemberAuthority;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }): React.JSX.Element {
   const sessionRef = specialist.sessionRef;
@@ -693,6 +744,7 @@ function SpecialistCard({
       data-testid="validation-specialist"
       data-assignment-id={specialist.assignmentId}
       data-verdict={specialist.pass ? "pass" : "fail"}
+      data-authority={authority}
     >
       <div className="flex flex-wrap items-center gap-[6px]">
         <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
@@ -704,6 +756,7 @@ function SpecialistCard({
         >
           {`${formatAgentProfileRef(specialist.profile)}@${specialist.profile.revision}`}
         </span>
+        <AuthorityChip authority={authority} />
         <StatusChip tone={specialist.pass ? "green" : "red"}>
           {specialist.pass ? "Passed" : "Rejected"}
         </StatusChip>
@@ -766,14 +819,50 @@ function SpecialistCard({
   );
 }
 
+/**
+ * The attributes that mark a round record as the one a deep link landed on.
+ *
+ * The ring is driven by the data attribute rather than by `:focus-visible`,
+ * because the focus that put the reader here was programmatic — the browser
+ * heuristic would leave the destination unmarked exactly when it matters most.
+ */
+const focusedRoundClass =
+  "rounded-sm [outline:2px_solid_var(--color-cyan)] outline-offset-2";
+
+function focusedRoundAttrs(anchorId: string) {
+  return { id: anchorId, tabIndex: -1, "data-focused-round": "true" } as const;
+}
+
+/**
+ * The cohort seats of the context an event belongs to, as configured NOW. The
+ * event froze a roster; authority is deliberately not read from it, exactly as
+ * `deriveCohortRoundView` does for the live round — a seat holds the blocking
+ * power it holds now, and the two round surfaces must not disagree.
+ */
+function cohortAssignmentsFor(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): readonly { id: string; authority: ValidatorAuthority }[] {
+  return (
+    execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === contextId,
+    )?.contextValidator?.assignments ?? []
+  );
+}
+
 function ValidationCard({
   event,
+  cohortAssignments,
   isReusedSession,
   onViewConversation,
+  focusAnchorId,
 }: {
   event: Timestamped<GraphWorkflowValidationResultEvent>;
+  cohortAssignments: readonly { id: string; authority: ValidatorAuthority }[];
   isReusedSession?: boolean;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
+  /** Set on the ONE card a round deep link is aimed at; absent on the rest. */
+  focusAnchorId?: string;
 }) {
   const specialists = event.specialists ?? [];
   // A rejecting cohort publishes each finding TWICE: `concludeCohort`
@@ -813,9 +902,13 @@ function ValidationCard({
 
   return (
     <div
-      className="border-x-0 border-t-0 border-b border-solid border-border-dim py-[10px] last:border-b-0"
+      className={cn(
+        "border-x-0 border-t-0 border-b border-solid border-border-dim py-[10px] last:border-b-0",
+        focusAnchorId !== undefined && focusedRoundClass,
+      )}
       data-testid="validation-aggregate"
       data-round-seq={event.roundSeq ?? undefined}
+      {...(focusAnchorId !== undefined ? focusedRoundAttrs(focusAnchorId) : {})}
     >
       <div className="flex items-start gap-[8px] text-[0.72rem]">
         <span
@@ -939,6 +1032,10 @@ function ValidationCard({
               key={specialist.assignmentId}
               specialist={specialist}
               contextId={event.contextId}
+              authority={authorityOfSeat(
+                cohortAssignments,
+                specialist.assignmentId,
+              )}
               {...(onViewConversation ? { onViewConversation } : {})}
             />
           ))}
@@ -970,12 +1067,15 @@ function OverviewView({
   execution,
   events,
   onSelectContext,
+  onOpenAdvisoryOrigin,
   onEditSchema,
   onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
   onSelectContext?: (contextId: string) => void;
+  /** Opens an indexed advisory's originating context at the round that raised it. */
+  onOpenAdvisoryOrigin?: (origin: AdvisoryOrigin) => void;
   onEditSchema?: (contextId: string) => void;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
@@ -991,6 +1091,16 @@ function OverviewView({
   const mergeCounts = countMerges(execution);
 
   const history = useMemo(() => getHistoryEntries(events), [events]);
+  const contextTitles = useMemo(
+    () =>
+      Object.fromEntries(
+        execution.workingDefinition.executionContexts.map((ctx) => [
+          ctx.id,
+          ctx.title,
+        ]),
+      ),
+    [execution.workingDefinition.executionContexts],
+  );
   // The overview is the first halt surface an operator sees, and it renders
   // every reason on the run — so it derives evidence for all of them, not just
   // the primary one.
@@ -1095,6 +1205,22 @@ function OverviewView({
           />
         </section>
 
+        {execution.advisoryIndex.length > 0 && (
+          <section className={wbOverviewSection} data-section="advisories">
+            <GroupHeader
+              label="Advisories"
+              meta={`${execution.advisoryIndex.length}`}
+            />
+            <AdvisoryIndexPanel
+              index={execution.advisoryIndex}
+              contextTitles={contextTitles}
+              {...(onOpenAdvisoryOrigin !== undefined
+                ? { onOpenOrigin: onOpenAdvisoryOrigin }
+                : {})}
+            />
+          </section>
+        )}
+
         {history.validationEvents.length > 0 && (
           <section className={wbOverviewSection}>
             <GroupHeader label="Recent Validations" />
@@ -1106,6 +1232,10 @@ function OverviewView({
                   <ValidationCard
                     key={`val-${index}`}
                     event={event}
+                    cohortAssignments={cohortAssignmentsFor(
+                      execution,
+                      event.contextId,
+                    )}
                     isReusedSession={reused.has(index)}
                     onViewConversation={onViewConversation}
                   />
@@ -1230,6 +1360,12 @@ function DetailView({
   const [honouredTabRequestSeq, setHonouredTabRequestSeq] = useState<
     number | null
   >(null);
+  // The round a honoured request aimed at, held as a fresh object per request so
+  // that asking twice for the same round scrolls back to it rather than reading
+  // as unchanged state.
+  const [focusedRound, setFocusedRound] = useState<{ seq: number } | null>(
+    null,
+  );
   if (
     contextTabRequest != null &&
     contextTabRequest.contextId === contextId &&
@@ -1237,6 +1373,11 @@ function DetailView({
   ) {
     setHonouredTabRequestSeq(contextTabRequest.seq);
     setActiveTab(contextTabRequest.tab);
+    setFocusedRound(
+      contextTabRequest.roundSeq === undefined
+        ? null
+        : { seq: contextTabRequest.roundSeq },
+    );
   }
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -1314,14 +1455,61 @@ function DetailView({
       }),
     [execution, contextHaltReason, history.validationEvents],
   );
-  const cohortRoundView = useMemo(
-    () =>
-      deriveCohortRoundView({
-        round: execution.contextStates[contextId]?.validationRound,
-        incidents: history.incidentEvents,
-      }),
-    [execution, contextId, history.incidentEvents],
+  // The cohort as configured NOW: the engine reads a seat's authority the same
+  // way, so a live authority edit moves every badge on this tab with it — the
+  // live round's rows and the rows of every round already in the history.
+  const cohortAssignments = useMemo(
+    () => cohortAssignmentsFor(execution, contextId),
+    [execution, contextId],
   );
+  const cohortRoundView = useMemo(() => {
+    const state = execution.contextStates[contextId];
+    return deriveCohortRoundView({
+      round: state?.validationRound,
+      incidents: history.incidentEvents,
+      assignments: cohortAssignments,
+      advisoryResponse: state?.advisoryResponse ?? null,
+    });
+  }, [execution, contextId, cohortAssignments, history.incidentEvents]);
+
+  // Which round record a deep link is aimed at. The context state keeps only
+  // the LATEST round, so a superseded one is read off its validation-result
+  // event — which is where an advisory older than the current round still is.
+  const focusedRoundSeq = focusedRound?.seq ?? null;
+  const liveRoundFocused =
+    cohortRoundView !== null &&
+    focusedRoundSeq !== null &&
+    cohortRoundView.seq === focusedRoundSeq;
+  const focusedValidationIndex =
+    focusedRoundSeq === null || liveRoundFocused
+      ? -1
+      : history.validationEvents.findIndex(
+          (event) => event.roundSeq === focusedRoundSeq,
+        );
+  // Neither the live round nor the visible history holds it: the round was
+  // retired by a context reset, or concluded without leaving an aggregate. The
+  // link still has to land ON that round, so it gets a section of its own —
+  // carrying the retired record when one survives, and naming the round either
+  // way. Nothing here rejoins the ordinary history: it is one round, shown
+  // because it was asked for.
+  const unlistedFocusRound =
+    focusedRoundSeq !== null && !liveRoundFocused && focusedValidationIndex < 0
+      ? {
+          seq: focusedRoundSeq,
+          record:
+            history.clearedValidationEvents.find(
+              (event) => event.roundSeq === focusedRoundSeq,
+            ) ?? null,
+        }
+      : null;
+  const focusedRoundAnchorId = useId();
+  useEffect(() => {
+    if (focusedRound === null) return;
+    const target = document.getElementById(focusedRoundAnchorId);
+    if (target === null) return;
+    target.scrollIntoView({ block: "center" });
+    target.focus({ preventScroll: true });
+  }, [focusedRound, focusedRoundAnchorId]);
 
   if (!context) return null;
 
@@ -1802,7 +1990,17 @@ function DetailView({
               />
             </section>
             {cohortRoundView && (
-              <section className={wbOverviewSection} data-testid="cohort-round">
+              <section
+                className={cn(
+                  wbOverviewSection,
+                  liveRoundFocused && focusedRoundClass,
+                )}
+                data-testid="cohort-round"
+                data-round-seq={cohortRoundView.seq}
+                {...(liveRoundFocused
+                  ? focusedRoundAttrs(focusedRoundAnchorId)
+                  : {})}
+              >
                 <GroupHeader
                   label="Validation Round"
                   meta={`#${cohortRoundView.seq}`}
@@ -1825,6 +2023,35 @@ function DetailView({
                 />
               </section>
             )}
+            {unlistedFocusRound && (
+              <section
+                className={cn(wbOverviewSection, focusedRoundClass)}
+                data-testid="linked-round"
+                data-round-seq={unlistedFocusRound.seq}
+                {...focusedRoundAttrs(focusedRoundAnchorId)}
+              >
+                <GroupHeader
+                  label="Linked Round"
+                  meta={`#${unlistedFocusRound.seq}`}
+                />
+                <div className={wbExecEvent}>
+                  <div className={wbExecEventHeader}>
+                    <span className={wbExecEventText}>
+                      {unlistedFocusRound.record === null
+                        ? `Round ${unlistedFocusRound.seq} left no record in this context's history.`
+                        : `Round ${unlistedFocusRound.seq} was retired when this context was reset, so it is not part of the current attempt below.`}
+                    </span>
+                  </div>
+                </div>
+                {unlistedFocusRound.record !== null && (
+                  <ValidationCard
+                    event={unlistedFocusRound.record}
+                    cohortAssignments={cohortAssignments}
+                    onViewConversation={onViewConversation}
+                  />
+                )}
+              </section>
+            )}
             <section className={wbOverviewSection}>
               <GroupHeader label="Validations" />
               {history.validationEvents.length > 0 ? (
@@ -1836,8 +2063,12 @@ function DetailView({
                     <ValidationCard
                       key={`val-${index}`}
                       event={event}
+                      cohortAssignments={cohortAssignments}
                       isReusedSession={reused.has(index)}
                       onViewConversation={onViewConversation}
+                      {...(index === focusedValidationIndex
+                        ? { focusAnchorId: focusedRoundAnchorId }
+                        : {})}
                     />
                   ));
                 })()
@@ -1935,6 +2166,7 @@ export default function ExecutionInspectorPanel({
   configSaveSucceeded,
   onViewConversation,
   onEditSchema,
+  onOpenAdvisoryOrigin,
   contextTabRequest,
   commandOptions,
 }: ExecutionInspectorPanelProps) {
@@ -1950,6 +2182,9 @@ export default function ExecutionInspectorPanel({
         execution={execution}
         events={events}
         onSelectContext={onSelectContext}
+        {...(onOpenAdvisoryOrigin !== undefined
+          ? { onOpenAdvisoryOrigin }
+          : {})}
         onEditSchema={onEditSchema}
         onViewConversation={onViewConversation}
       />

@@ -19,6 +19,7 @@ import {
   graphWorkflowExecutionJoinKindSchema,
   graphWorkflowExecutionJoinStatusSchema,
   graphWorkflowHaltReasonSchema,
+  graphWorkflowValidationAdvisorySchema,
   graphWorkflowValidationReviewArtifactSchema,
   graphWorkflowValidationSessionRefSchema,
   type GraphWorkflowValidationReviewArtifact,
@@ -188,6 +189,24 @@ export const graphWorkflowValidationSpecialistEntrySchema = z.object({
   pass: z.boolean(),
   summary: z.string(),
   issues: z.array(graphWorkflowValidationIssueSchema).default([]),
+  /**
+   * This lane's non-blocking observations (R9), as the ROUND RECORD holds them:
+   * the engine-stamped identity every later reference uses, plus the delivery
+   * and disposition recorded so far.
+   *
+   * Defaulted rather than absent, unlike the round fields at the top of the
+   * aggregate: an entry exists only for a lane that reported, and a lane
+   * recorded before the advisory channel existed raised none — which is what
+   * `[]` means here, not an unknown.
+   *
+   * A publication is a point in time, so what it carries is what had been
+   * recorded when it went out. Both events publish as the round settles, and a
+   * disposition is only produced by the response turn that follows a PASSING
+   * round's conclusion — so a consumer that needs an advisory's final answer
+   * reads the round record or the execution's advisory index, not the event it
+   * first appeared on.
+   */
+  advisories: z.array(graphWorkflowValidationAdvisorySchema).default([]),
   sessionRef: graphWorkflowValidationSessionRefSchema.nullable().default(null),
   reviewArtifact: graphWorkflowValidationReviewArtifactSchema
     .nullable()

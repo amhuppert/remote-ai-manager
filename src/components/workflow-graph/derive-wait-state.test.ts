@@ -116,6 +116,7 @@ function makeExecution(
     contextStates: {},
     taskStates: {},
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},
@@ -521,5 +522,85 @@ describe("deriveContextWaitState", () => {
     });
 
     expect(result).toEqual({ kind: "halted" });
+  });
+});
+
+describe("deriveContextWaitState — advisory response phase (R6.3)", () => {
+  it("reports advisory-response while a certified context still owes the turn", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "running",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          advisoryResponse: {
+            roundSeq: 2,
+            phase: "awaiting_response",
+            enteredAt: "2026-03-27T10:10:00.000Z",
+          },
+        }),
+      },
+    });
+
+    // Without the phase this same state reads as `validating`, which is the
+    // exact confusion R6.3 forbids: the cohort has already passed and released
+    // the candidate, and it is the implementer that is about to run.
+    expect(
+      deriveContextWaitState({
+        contextId: "ctx-1",
+        definition: makeDefinition(),
+        execution,
+      }),
+    ).toEqual({ kind: "advisory-response" });
+  });
+
+  it("reports validating again once the response turn moved the candidate", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "running",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          advisoryResponse: {
+            roundSeq: 2,
+            phase: "recertifying",
+            enteredAt: "2026-03-27T10:10:00.000Z",
+          },
+        }),
+      },
+    });
+
+    expect(
+      deriveContextWaitState({
+        contextId: "ctx-1",
+        definition: makeDefinition(),
+        execution,
+      }),
+    ).toEqual({ kind: "validating" });
+  });
+
+  it("reports completed once the context finished, phase record or not", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "completed",
+          totalTaskCount: 3,
+          completedTaskCount: 3,
+          advisoryResponse: {
+            roundSeq: 2,
+            phase: "awaiting_response",
+            enteredAt: "2026-03-27T10:10:00.000Z",
+          },
+        }),
+      },
+    });
+
+    expect(
+      deriveContextWaitState({
+        contextId: "ctx-1",
+        definition: makeDefinition(),
+        execution,
+      }),
+    ).toEqual({ kind: "completed" });
   });
 });

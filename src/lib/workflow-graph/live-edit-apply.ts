@@ -35,8 +35,10 @@ import type {
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import {
   prepareLiveEditAssignmentSnapshots,
+  type PlaceableAssignment,
   type PrepareAssignmentSnapshotsResult,
 } from "./live-edit-preparation";
+import { assignmentProfileBlockOptions } from "./role-instructions";
 import type {
   GraphWorkflowEventDelivery,
   PublishCharterUpdatedInput,
@@ -59,7 +61,6 @@ import {
   type LiveEditSource,
   type ResolvedContextConfig,
 } from "./runtime-edits";
-import type { AgentAssignment } from "./config-schemas";
 
 const logger = createLogger("workflow.live-edit");
 
@@ -75,7 +76,7 @@ const logger = createLogger("workflow.live-edit");
  */
 async function buildAssignmentSnapshotLookup(
   projectPath: string,
-): Promise<(assignment: AgentAssignment) => AgentProfileSnapshot> {
+): Promise<(assignment: PlaceableAssignment) => AgentProfileSnapshot> {
   const library = createAgentProfileLibraryService();
   const { profiles } = await library.list(projectPath);
 
@@ -94,11 +95,10 @@ async function buildAssignmentSnapshotLookup(
     if (!profile) {
       throw new AgentProfileNotResolvableError(assignment.profile);
     }
-    return buildAgentProfileSnapshot(profile, {
-      ...(assignment.focus === undefined
-        ? {}
-        : { assignmentFocus: assignment.focus }),
-    });
+    return buildAgentProfileSnapshot(
+      profile,
+      assignmentProfileBlockOptions(assignment),
+    );
   };
 }
 
@@ -116,11 +116,7 @@ export function buildDefaultAssignmentSnapshotPreparation(
     composeSnapshot: async (assignment) =>
       buildAgentProfileSnapshot(
         await library.resolve(projectPath, assignment.profile),
-        {
-          ...(assignment.focus === undefined
-            ? {}
-            : { assignmentFocus: assignment.focus }),
-        },
+        assignmentProfileBlockOptions(assignment),
       ),
   });
 }

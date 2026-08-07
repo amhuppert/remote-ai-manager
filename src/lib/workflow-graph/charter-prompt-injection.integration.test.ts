@@ -47,6 +47,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation",
+        authority: "blocking",
         agent: {
           backend: "claude",
           model: "sonnet",
@@ -114,6 +115,7 @@ const VALIDATOR: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin", id: "general-reviewer" },
   strategy: "conversation",
+  authority: "blocking",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   continuity: { enabled: true },
 };

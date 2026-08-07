@@ -69,7 +69,7 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { runCircuitBreakerGate } from "./circuit-breaker-gate";
 import { runStructuredOutputGate } from "./structured-output-gate";
-import { workflowAgentValidatorResultSchema } from "@/lib/workflow-graph/definition-schemas";
+import { workflowBlockingValidatorResultSchema } from "@/lib/workflow-graph/definition-schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type {
@@ -669,7 +669,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
       _schema: Record<string, unknown>,
       value: unknown,
     ): { valid: boolean; errors?: string[] } => {
-      const parsed = workflowAgentValidatorResultSchema.safeParse(value);
+      const parsed = workflowBlockingValidatorResultSchema.safeParse(value);
       if (parsed.success) return { valid: true };
       return {
         valid: false,
@@ -679,7 +679,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
 
     const passResult = runStructuredOutputGate(
       {},
-      { summary: "ok", issues: [] },
+      { summary: "ok", issues: [], advisories: [] },
       validator,
     );
     expect(passResult.status).toBe("pass");
@@ -1003,13 +1003,17 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
 
   describe("graph implementer + validator route through the conversation entrypoint (Task 6.2)", () => {
     it("validator-runner builds task_run requests through deps.executeWorkflowTaskRun", async () => {
-      const { createValidatorRunner, VALIDATOR_OUTPUT_SCHEMA } =
+      const { createValidatorRunner, buildValidatorOutputSchema } =
         await import("@/lib/workflow-graph/validator-runner");
       const fixtures = await import("@/lib/workflow-graph/test-fixtures");
 
       const executeWorkflowTaskRunSpy = vi.fn().mockResolvedValue({
         kind: "text",
-        text: JSON.stringify({ summary: "All good", issues: [] }),
+        text: JSON.stringify({
+          summary: "All good",
+          issues: [],
+          advisories: [],
+        }),
         usage: {
           costUsd: null,
           durationMs: null,
@@ -1045,6 +1049,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
                         profile: { tier: "builtin", id: "general-reviewer" },
                         profileSnapshot: makeProfileSnapshot(),
                         strategy: "conversation",
+                        authority: "blocking",
                         agent: {
                           backend: "claude",
                           model: "sonnet",
@@ -1081,7 +1086,10 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         kind: "task_run",
         outputFormat: {
           type: "json_schema",
-          schema: VALIDATOR_OUTPUT_SCHEMA,
+          schema: buildValidatorOutputSchema({
+            authority: contextDef.contextValidator.assignments[0]!.authority,
+            taskIds: ["task-plan-1"],
+          }),
         },
       });
     });

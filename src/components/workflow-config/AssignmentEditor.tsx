@@ -25,14 +25,16 @@ import type {
   AgentAssignment,
   GraphWorkflowAgentConfig,
   ValidatorAssignment,
+  ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
 import {
-  ASSIGNMENT_FOCUS_RULES_HINT,
+  ASSIGNMENT_INSTRUCTIONS_PRESENTATION,
   assignmentFocusRefusal,
 } from "./assignment-focus";
 import { FieldRow } from "./FieldPrimitives";
 
 export const VALIDATOR_STRATEGY_OPTIONS = ["conversation", "task"] as const;
+export const VALIDATOR_AUTHORITY_OPTIONS = ["blocking", "advisory"] as const;
 
 /**
  * The concrete per-backend runtime an assignment runs with.
@@ -127,9 +129,22 @@ export interface AssignmentStrategyControl {
   onChange: (next: ValidatorAssignment["strategy"]) => void;
 }
 
-export interface AssignmentEditorProps {
-  value: AgentAssignment;
-  onChange: (next: AgentAssignment) => void;
+export interface AssignmentAuthorityControl {
+  value: ValidatorAuthority;
+  onChange: (next: ValidatorAuthority) => void;
+}
+
+export interface AssignmentEditorProps<T extends AgentAssignment> {
+  value: T;
+  /**
+   * Receives the WHOLE assignment, not a patch of the fields this editor owns.
+   *
+   * That is what lets a wrapper forward the result instead of merging it over
+   * the previous value: an assignment edit can DELETE an optional key
+   * (instructions cleared), and a merge would restore exactly the key the
+   * author just removed.
+   */
+  onChange: (next: T) => void;
   /**
    * Present only for use sites that HAVE a strategy. Passed as a control rather
    * than read off the value so one editor serves both the implementer (no
@@ -137,6 +152,13 @@ export interface AssignmentEditorProps {
    * could carry a strategy where none is dispatched.
    */
   strategy?: AssignmentStrategyControl;
+  /**
+   * Present only for use sites that HAVE an authority — validators. An
+   * implementer has no verdict to gate, so it has no axis here, and its
+   * instructions take the subordinate face by construction rather than by a
+   * default that could be forgotten.
+   */
+  authority?: AssignmentAuthorityControl;
   /** Drives the picker's advisory warning; never its selectability. */
   audience: AgentProfileAudience;
   /**
@@ -152,34 +174,54 @@ export interface AssignmentEditorProps {
 /**
  * ONE agent assignment, wherever it is authored (D11).
  *
- * The four fields are separate axes on purpose: a library profile supplies the
- * durable prompt identity, the focus narrows it at this use site only, the
- * strategy decides how the lane is dispatched, and the runtime is the concrete
- * backend/model. None of them implies another — a Codex agent under the
- * conversation strategy carrying a project profile is authorable here.
+ * The axes are separate on purpose: a library profile supplies the durable
+ * prompt identity, the instructions steer it at this use site only, the
+ * authority decides what a verdict from it can do, the strategy decides how the
+ * lane is dispatched, and the runtime is the concrete backend/model. None of
+ * them implies another — a Codex agent under the conversation strategy carrying
+ * a project profile is authorable here.
  *
- * The focus refusal is shown rather than enforced: the text keeps flowing to
- * the caller so a half-typed steer survives a re-render, and the schema at the
- * save boundary is the one thing that refuses. Silently withholding the change
- * would leave the author looking at text the draft does not contain.
+ * Authority and instructions are adjacent because they are one decision read
+ * twice: the authority is what turns the same text from a subordinate steer
+ * into the mandate a blocking verdict must trace to (R12.2).
+ *
+ * The instructions refusal is shown rather than enforced: the text keeps
+ * flowing to the caller so a half-typed steer survives a re-render, and the
+ * schema at the save boundary is the one thing that refuses. Silently
+ * withholding the change would leave the author looking at text the draft does
+ * not contain.
+ *
+ * Generic over the assignment so it edits the shared facet of whatever use site
+ * holds it — a plain implementer assignment, a validator carrying strategy,
+ * authority and continuity — and hands that same assignment back intact. A
+ * non-generic editor would force every wrapper to re-widen the result by
+ * merging it over the previous value, which is a deletion-losing operation.
  */
-export function AssignmentEditor({
+export function AssignmentEditor<T extends AgentAssignment>({
   value,
   onChange,
   strategy,
+  authority,
   audience,
   libraryProjectName,
   readOnly,
   open,
-}: AssignmentEditorProps): React.JSX.Element {
+}: AssignmentEditorProps<T>): React.JSX.Element {
   const focusText = value.focus ?? "";
   const focusRefusal = assignmentFocusRefusal(focusText);
-  const focusErrorId = `assignment-focus-error-${value.id}`;
+  const focusErrorId = `assignment-instructions-error-${value.id}`;
+  const instructions =
+    ASSIGNMENT_INSTRUCTIONS_PRESENTATION[authority?.value ?? "advisory"];
 
   const handleFocus = (text: string) => {
     if (text.trim() === "") {
-      const { focus: _focus, ...withoutFocus } = value;
-      onChange(withoutFocus);
+      // Clearing REMOVES the key rather than storing "". Absence is what "no
+      // use-site instructions" is in the schema, and on a live execution it is
+      // also the edit that moves the seat's fingerprint and retires its lane —
+      // an empty string would be a different document that saves as a no-op.
+      const cleared = { ...value };
+      delete cleared.focus;
+      onChange(cleared);
       return;
     }
     onChange({ ...value, focus: text });
@@ -200,11 +242,30 @@ export function AssignmentEditor({
         />
       </FieldRow>
 
+      {authority ? (
+        <FieldRow label="Authority">
+          <SegmentedControl
+            value={authority.value}
+            onValueChange={(next) =>
+              authority.onChange(next as ValidatorAuthority)
+            }
+            disabled={readOnly}
+            aria-label="Validator authority"
+          >
+            {VALIDATOR_AUTHORITY_OPTIONS.map((option) => (
+              <SegmentedControlItem key={option} value={option}>
+                {option}
+              </SegmentedControlItem>
+            ))}
+          </SegmentedControl>
+        </FieldRow>
+      ) : null}
+
       <FieldRow
-        label="Focus"
+        label={instructions.label}
         hint={
-          <span data-testid="assignment-focus-hint">
-            {ASSIGNMENT_FOCUS_RULES_HINT}
+          <span data-testid="assignment-instructions-hint">
+            {instructions.hint}
           </span>
         }
       >
@@ -214,17 +275,17 @@ export function AssignmentEditor({
             className="min-h-[46px] w-full resize-y rounded-sm border border-solid border-border-default bg-bg-surface px-[10px] py-[7px] text-[0.75rem] leading-[1.5] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-red aria-[invalid=true]:focus:border-red"
             value={focusText}
             disabled={readOnly}
-            aria-label={`Focus for ${value.id}`}
+            aria-label={`${instructions.label} for ${value.id}`}
             aria-invalid={focusRefusal === null ? undefined : true}
             aria-describedby={focusRefusal === null ? undefined : focusErrorId}
-            placeholder="Optional — narrow this profile for this use site"
+            placeholder={instructions.placeholder}
             onValueChange={handleFocus}
           />
           {focusRefusal !== null ? (
             <span
               id={focusErrorId}
               role="alert"
-              data-testid="assignment-focus-error"
+              data-testid="assignment-instructions-error"
               className="font-mono text-[0.7rem] leading-[1.4] text-red"
             >
               {focusRefusal}

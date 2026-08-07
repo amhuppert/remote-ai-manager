@@ -45,6 +45,7 @@ const GLOBAL_VALIDATOR: ValidatorCohort = {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
+      authority: "blocking",
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       continuity: { enabled: true },
     },
@@ -157,6 +158,19 @@ function makeDefinition(
   };
 }
 
+describe("SEEDED_WORKFLOW_DEFAULTS", () => {
+  it("writes blocking authority onto the seeded acceptance-criteria verifier", () => {
+    // The default is advisory for every assignment; the seed is the one place
+    // that authors blocking, and it does so explicitly rather than by having
+    // the schema special-case this assignment's id.
+    expect(
+      SEEDED_WORKFLOW_DEFAULTS.contextValidator.assignments.map(
+        (assignment) => assignment.authority,
+      ),
+    ).toEqual(["blocking"]);
+  });
+});
+
 describe("resolveContext", () => {
   it("inherits all blocks from workflow-level effective values when all context blocks are omitted", () => {
     const workflowConfig: WorkflowConfigOverride = {
@@ -222,6 +236,7 @@ describe("resolveContext", () => {
           id: "security",
           profile: { tier: "builtin", id: "general-reviewer" },
           strategy: "task",
+          authority: "blocking",
           agent: {
             backend: "codex",
             model: "gpt-5.4",
@@ -248,6 +263,7 @@ describe("resolveContext", () => {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "haiku",
@@ -1360,6 +1376,7 @@ describe("computeUsedBackends", () => {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
+    authority: "blocking",
     agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     continuity: { enabled: true },
   };
@@ -1367,6 +1384,7 @@ describe("computeUsedBackends", () => {
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "task",
+    authority: "blocking",
     agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "medium" },
     continuity: { enabled: true },
   };
@@ -1520,6 +1538,7 @@ describe("agent assignment cascade", () => {
     profile: { tier: "global", id: "deep-reviewer" },
     focus: "cross-module consistency",
     strategy: "conversation",
+    authority: "blocking",
     agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
     continuity: { enabled: false, contextLimitTokens: 40_000 },
   };
@@ -1528,6 +1547,7 @@ describe("agent assignment cascade", () => {
     id: "claude-task",
     profile: { tier: "project", id: "spec-reviewer" },
     strategy: "task",
+    authority: "blocking",
     agent: { backend: "claude", model: "opus", reasoningEffort: "high" },
     continuity: { enabled: true },
   };
@@ -1639,6 +1659,7 @@ describe("agent assignment cascade", () => {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation",
+        authority: "blocking",
         agent: {
           backend: "claude",
           model: "sonnet",

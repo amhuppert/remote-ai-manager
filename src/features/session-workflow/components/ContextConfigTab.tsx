@@ -19,6 +19,7 @@ import {
   CohortEditor,
   toggleCohortEnabled,
 } from "@/components/workflow-config/CohortEditor";
+import { LaneRotationNotice } from "@/components/workflow-config/LaneRotationNotice";
 import { ToggleControl } from "@/components/workflow-config/FieldPrimitives";
 import {
   OutputSchemaField,
@@ -973,19 +974,31 @@ export default function ContextConfigTab({
             {draft.contextValidator.assignments.length === 0 ? (
               <p className={BLOCK_TEXT}>Off — no validator for this context.</p>
             ) : (
-              <CohortEditor
-                value={draft.contextValidator}
-                onChange={(contextValidator) => patch({ contextValidator })}
-                libraryProjectName={libraryProjectName}
-                {...(onResetAssignment && resetEligible
-                  ? {
-                      onResetAssignment: (assignmentId: string) =>
-                        onResetAssignment(contextId, assignmentId),
-                    }
-                  : {})}
-                resettingAssignmentId={resettingAssignmentId}
-                readOnly={readOnly}
-              />
+              <div className="flex flex-col gap-sm">
+                {/* This is a LIVE execution, so a seat already holds a lane:
+                    the rotation an authority/instructions edit forces has to be
+                    visible while the edit can still be reconsidered, not
+                    discovered afterwards in the event log (R12.4). */}
+                {seedBase ? (
+                  <LaneRotationNotice
+                    base={seedBase.contextValidator}
+                    draft={draft.contextValidator}
+                  />
+                ) : null}
+                <CohortEditor
+                  value={draft.contextValidator}
+                  onChange={(contextValidator) => patch({ contextValidator })}
+                  libraryProjectName={libraryProjectName}
+                  {...(onResetAssignment && resetEligible
+                    ? {
+                        onResetAssignment: (assignmentId: string) =>
+                          onResetAssignment(contextId, assignmentId),
+                      }
+                    : {})}
+                  resettingAssignmentId={resettingAssignmentId}
+                  readOnly={readOnly}
+                />
+              </div>
             )}
           </ConfigBlock>
 

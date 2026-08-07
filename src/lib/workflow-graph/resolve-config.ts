@@ -49,6 +49,11 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation",
+        // The one seeded blocking seat: its mandate is the context's acceptance
+        // criteria, so it is the assignment an unconfigured workflow relies on
+        // to reopen tasks. Written here rather than defaulted by id, which is
+        // what keeps the schema default a flat "advisory" for everyone else.
+        authority: "blocking",
         agent: {
           backend: "claude",
           model: "sonnet",

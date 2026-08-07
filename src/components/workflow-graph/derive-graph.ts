@@ -56,6 +56,7 @@ export type ContextEdgeData = {
 export type ContextDisplayPhase =
   | GraphWorkflowContextStatus
   | "validating"
+  | "advisory-response"
   | "merging";
 
 export type DisplayValidators = {
@@ -106,12 +107,20 @@ export function getContextDisplayPhase(
   if (contextState.mergeStatus === "in-progress") {
     return "merging";
   }
-  if (
-    contextState.status === "running" &&
-    contextState.totalTaskCount > 0 &&
-    contextState.completedTaskCount >= contextState.totalTaskCount
-  ) {
-    return "validating";
+  if (contextState.status === "running") {
+    // Ahead of the task-count check for the same reason as the wait state: a
+    // context owing an advisory-response turn has already been certified, and
+    // reading it as `validating` would colour the node for a review that is
+    // over. `recertifying` falls through — a blocking round IS what runs next.
+    if (contextState.advisoryResponse?.phase === "awaiting_response") {
+      return "advisory-response";
+    }
+    if (
+      contextState.totalTaskCount > 0 &&
+      contextState.completedTaskCount >= contextState.totalTaskCount
+    ) {
+      return "validating";
+    }
   }
   return contextState.status;
 }

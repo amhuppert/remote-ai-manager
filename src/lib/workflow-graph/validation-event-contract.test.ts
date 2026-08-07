@@ -22,6 +22,7 @@ import {
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
 import {
+  advisoryItem,
   createCohortExecution,
   createHarness,
   failResult,
@@ -38,16 +39,21 @@ import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
  * Three seats with genuinely distinct profile identity. The fixture cohort
  * shares one profile across every seat, which cannot tell "the entries carry
  * their own identity" from "the entries carry the first seat's identity".
+ *
+ * Blocking, because this file asserts what a REJECTION publishes: the aggregate
+ * verdict, the reopen list, and the per-specialist entries behind them.
  */
 const DISTINCT_COHORT = [
   makeSeededValidatorAssignment({
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
+    authority: "blocking",
   }),
   {
     ...makeSeededValidatorAssignment({
       id: "security",
       profile: { tier: "project", id: "security-reviewer" },
+      authority: "blocking",
     }),
     profileSnapshot: {
       ...makeSeededValidatorAssignment({
@@ -62,6 +68,7 @@ const DISTINCT_COHORT = [
     ...makeSeededValidatorAssignment({
       id: "perf",
       profile: { tier: "global", id: "perf-reviewer" },
+      authority: "blocking",
     }),
     profileSnapshot: {
       ...makeSeededValidatorAssignment({
@@ -657,10 +664,177 @@ describe("specialist entry type", () => {
       pass: true,
       summary: "ok",
       issues: [],
+      advisories: [],
       sessionRef: null,
       reviewArtifact: null,
       usage: null,
     };
     expect(entry.assignmentId).toBe("general");
+  });
+});
+
+/**
+ * Advisories publish on the same two events the verdicts do (R9.1). Additively:
+ * an entry written before the advisory channel existed says the lane raised
+ * none, which is what it means, and nothing about the events' existing fields
+ * moves.
+ */
+describe("advisories on the validation events (R9.1)", () => {
+  const ADVISORY_COHORT = [
+    makeSeededValidatorAssignment({ id: "general", authority: "blocking" }),
+    makeSeededValidatorAssignment({ id: "security", authority: "advisory" }),
+  ];
+
+  function advisoryHarness() {
+    return createHarness({
+      execution: createCohortExecution({ assignments: ADVISORY_COHORT }),
+      runContextValidator: async (input) => ({
+        result:
+          input.validator.id === "security"
+            ? passResult("security", [
+                advisoryItem({ title: "Widen the token scope check" }),
+                advisoryItem({ kind: "plan", title: "Split task-plan-1" }),
+              ])
+            : passResult("general"),
+        metadata: metadataFor(input.validator.id),
+        roundToken: input.roundToken ?? null,
+      }),
+    });
+  }
+
+  it("parses an entry written before advisories existed as having raised none", () => {
+    const parsed = graphWorkflowValidationResultEventSchema.parse({
+      type: "graph-workflow-validation-result",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      validatorType: "context",
+      pass: true,
+      summary: "The cohort passed.",
+      roundSeq: 1,
+      specialists: [
+        {
+          assignmentId: "general",
+          profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
+          resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+          pass: true,
+          summary: "ok",
+          issues: [],
+        },
+      ],
+    });
+
+    expect(parsed.specialists?.[0]?.advisories).toEqual([]);
+  });
+
+  // The advisory the event carries is the RECORD, disposition field and all, so
+  // a publication that happens after the response turn recorded one carries it.
+  // Through the SSE union rather than the event schema alone: an envelope that
+  // refuses the payload drops the event silently on the wire.
+  it("carries a recorded disposition through the SSE envelope", () => {
+    const envelope = {
+      occurredAt: NOW,
+      preReset: false,
+      event: {
+        type: "graph-workflow-validation-result",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        contextId: "context-plan",
+        validatorType: "context",
+        pass: true,
+        summary: "The cohort passed.",
+        roundSeq: 1,
+        specialists: [
+          {
+            assignmentId: "security",
+            profile: { tier: "project", id: "security-reviewer", revision: 4 },
+            resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+            pass: true,
+            summary: "ok",
+            issues: [],
+            advisories: [
+              {
+                kind: "plan",
+                title: "Split task-plan-1",
+                description: "It is really two pieces of work.",
+                identity: { roundSeq: 1, assignmentId: "security", ordinal: 1 },
+                deliveredAt: "2026-08-04T12:00:01.000Z",
+                disposition: {
+                  outcome: "declined",
+                  reason: "The plan is approved at this shape.",
+                  recordedAt: "2026-08-04T12:00:02.000Z",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const parsed = graphWorkflowExecutionEventSchema.parse(envelope);
+    if (parsed.event.type !== "graph-workflow-validation-result") {
+      throw new Error("expected a validation-result event");
+    }
+    expect(parsed.event.specialists?.[0]?.advisories).toEqual(
+      envelope.event.specialists[0]?.advisories,
+    );
+  });
+
+  it("puts each lane's own advisories on its aggregate entry, engine-stamped", async () => {
+    const harness = advisoryHarness();
+
+    await harness.run();
+
+    const specialists = specialistsOf(aggregateOf(harness.results()));
+    expect(
+      specialists.find((entry) => entry.assignmentId === "security")
+        ?.advisories,
+    ).toEqual([
+      expect.objectContaining({
+        title: "Widen the token scope check",
+        kind: "implementation",
+        identity: { roundSeq: 1, assignmentId: "security", ordinal: 1 },
+      }),
+      expect.objectContaining({
+        title: "Split task-plan-1",
+        kind: "plan",
+        identity: { roundSeq: 1, assignmentId: "security", ordinal: 2 },
+      }),
+    ]);
+    // A lane that raised none says so on its own entry rather than inheriting
+    // the cohort's — the same attribution rule the findings follow.
+    expect(
+      specialists.find((entry) => entry.assignmentId === "general")?.advisories,
+    ).toEqual([]);
+  });
+
+  it("carries the lane's advisories on its own specialist-result detail event", async () => {
+    const harness = advisoryHarness();
+
+    await harness.run();
+
+    const byAssignment = new Map<string, unknown>();
+    for (const entry of harness.specialistResults()) {
+      const parsed = graphWorkflowExecutionEventSchema.parse(entry);
+      if (parsed.event.type !== "graph-workflow-validation-specialist-result") {
+        throw new Error("expected a specialist-result event");
+      }
+      byAssignment.set(
+        parsed.event.specialist.assignmentId,
+        parsed.event.specialist.advisories,
+      );
+    }
+
+    expect(byAssignment.get("security")).toEqual([
+      expect.objectContaining({
+        identity: { roundSeq: 1, assignmentId: "security", ordinal: 1 },
+      }),
+      expect.objectContaining({
+        identity: { roundSeq: 1, assignmentId: "security", ordinal: 2 },
+      }),
+    ]);
+    expect(byAssignment.get("general")).toEqual([]);
   });
 });

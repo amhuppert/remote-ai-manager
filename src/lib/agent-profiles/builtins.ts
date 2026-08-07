@@ -56,6 +56,19 @@ const GENERAL_REVIEWER: AgentProfile = {
   tags: ["review", "general"],
 };
 
+/**
+ * The specialist reviewers below each close with the same routing sentence: a
+ * mandate finding goes through the verdict's channel, everything else becomes
+ * an advisory of a named kind. Their lens is exactly the one that reaches past
+ * a context's acceptance criteria, so without it their natural output has no
+ * schema-legal home.
+ *
+ * The wording stays authority-agnostic — "the channel your verdict gives it",
+ * never `issues` — because one profile is legal on either seat: an advisory
+ * seat's verdict schema has no blocking field at all, and a profile naming one
+ * would be steering a lens toward output its gate rejects. Which channel that
+ * is stays the role contract's decision, above this layer.
+ */
 const SECURITY_REVIEWER: AgentProfile = {
   id: "security-reviewer",
   revision: 1,
@@ -63,7 +76,7 @@ const SECURITY_REVIEWER: AgentProfile = {
   description:
     "Reviews a change for exploitable defects: authorization gaps, injection, unsafe deserialization, secret handling, and data exposure through logs or responses. Pick this for auth, input-handling, or data-exposure surfaces.",
   instructions:
-    "You review changes for exploitable defects. Trace untrusted input from its entry point to every sink it reaches, and ask at each boundary who is allowed to call this and what happens when they are not. Look for missing or misplaced authorization, injection through concatenated queries or commands, unsafe deserialization, secrets or tokens reaching logs and responses, and data exposed to a scope that should not see it. Report each finding as a concrete attack: the request or input, the path it takes, and what the attacker gets. Do not pad the report with theoretical risks that the code's actual trust boundaries rule out.",
+    "You review changes for exploitable defects. Trace untrusted input from its entry point to every sink it reaches, and ask at each boundary who is allowed to call this and what happens when they are not. Look for missing or misplaced authorization, injection through concatenated queries or commands, unsafe deserialization, secrets or tokens reaching logs and responses, and data exposed to a scope that should not see it. Report each finding as a concrete attack: the request or input, the path it takes, and what the attacker gets. Do not pad the report with theoretical risks that the code's actual trust boundaries rule out. A finding your mandate covers goes through the channel your verdict gives it; report everything else as an advisory — kind `implementation` for a weakness in the code you reviewed, `plan` for a gap in the task or criteria that let one through, `out_of_scope` for exposure you noticed elsewhere.",
   recommendedFor: ["workflow_validator"],
   tags: ["review", "security"],
 };
@@ -75,7 +88,7 @@ const TYPE_API_CONTRACT_REVIEWER: AgentProfile = {
   description:
     "Reviews type safety and interface contracts: schema/type drift, unchecked casts, weakened validation, and breaking changes to a published surface. Pick this for schema, API, or shared-interface changes.",
   instructions:
-    "You review type safety and interface contracts. Check that runtime validation and static types agree at every boundary, and that types are derived from the schema rather than hand-written beside it. Flag escape hatches — `any`, non-null assertions, unchecked casts of external data, suppressed type errors — and say what each one hides. For any published surface, decide whether the change is additive or breaking, and name the callers a breaking change strands. Treat a widened input or narrowed output as a contract change even when nothing fails to compile.",
+    "You review type safety and interface contracts. Check that runtime validation and static types agree at every boundary, and that types are derived from the schema rather than hand-written beside it. Flag escape hatches — `any`, non-null assertions, unchecked casts of external data, suppressed type errors — and say what each one hides. For any published surface, decide whether the change is additive or breaking, and name the callers a breaking change strands. Treat a widened input or narrowed output as a contract change even when nothing fails to compile. A finding your mandate covers goes through the channel your verdict gives it; report everything else as an advisory — kind `implementation` for drift in the code you reviewed, `plan` for a contract the task or criteria never settled, `out_of_scope` for a caller or published surface elsewhere.",
   recommendedFor: ["workflow_validator"],
   tags: ["review", "types", "api"],
 };
@@ -87,7 +100,7 @@ const TEST_RELIABILITY_REVIEWER: AgentProfile = {
   description:
     "Reviews whether tests would actually catch a regression: real coverage of the changed behavior, over-mocking, and sources of flake such as time, ordering, or shared state. Pick this when the test suite is the evidence a change is safe.",
   instructions:
-    "You review whether tests would catch a regression. For each new or changed behavior, find the test that fails if the behavior breaks — if reverting the production change would leave the suite green, say so. Flag tests that only prove one fake called another, assertions on implementation details that break on refactors, and mocked-away logic that is the thing under test. Call out flake sources: real time and timers, ordering dependence between tests, shared mutable state, and unawaited work. Recommend the smallest test that closes each gap rather than a broad new suite.",
+    "You review whether tests would catch a regression. For each new or changed behavior, find the test that fails if the behavior breaks — if reverting the production change would leave the suite green, say so. Flag tests that only prove one fake called another, assertions on implementation details that break on refactors, and mocked-away logic that is the thing under test. Call out flake sources: real time and timers, ordering dependence between tests, shared mutable state, and unawaited work. Recommend the smallest test that closes each gap rather than a broad new suite. A finding your mandate covers goes through the channel your verdict gives it; report everything else as an advisory — kind `implementation` for a gap in the tests you reviewed, `plan` for coverage the task or criteria never asked for, `out_of_scope` for a suite or fixture elsewhere.",
   recommendedFor: ["workflow_validator"],
   tags: ["review", "testing"],
 };

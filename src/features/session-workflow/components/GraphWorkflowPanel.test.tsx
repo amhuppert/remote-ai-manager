@@ -15,6 +15,7 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { renderWithQuery } from "@/test/component-mocks";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
@@ -666,5 +667,160 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
         "true",
       );
     });
+  });
+});
+
+describe("GraphWorkflowPanel — advisory index origin link (R9.4)", () => {
+  // jsdom has no layout, so it does not implement the scroll the deep link
+  // performs on its way to the round.
+  Element.prototype.scrollIntoView = () => {};
+
+  const SECURITY_HASH = `sha256:${"c".repeat(64)}`;
+
+  const advisory = {
+    kind: "plan" as const,
+    title: "The plan skips the backfill",
+    description: "Nothing writes the historic rows.",
+    identity: { roundSeq: 1, assignmentId: "security", ordinal: 1 },
+    deliveredAt: "2026-03-27T10:05:00.000Z",
+    disposition: null,
+  };
+
+  /**
+   * The advisory was raised on round 1; the context has since run rounds 2 and
+   * 3 and its state holds round 3. A link that carried only the context would
+   * land on round 3, which never raised this advisory.
+   */
+  function executionWithAdvisory(): GraphWorkflowExecution {
+    const base = createWorkflowExecution({
+      status: "running",
+      workingDefinition: createResolvedWorkflowDefinition(),
+      advisoryIndex: [
+        {
+          identity: advisory.identity,
+          kind: "plan",
+          title: advisory.title,
+          contextId: "context-implement",
+        },
+      ],
+    });
+    const state = base.contextStates["context-implement"];
+    if (!state) throw new Error("fixture is missing context-implement state");
+    return {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-implement": {
+          ...state,
+          validationRound: {
+            seq: 3,
+            candidate: {
+              headSha: "head-3",
+              candidateTreeHash: "tree-hash-3",
+              taskStateHash: "tasks-3",
+            },
+            roster: [
+              {
+                assignmentId: "security",
+                profileRef: { tier: "project", id: "security-reviewer" },
+                revision: 4,
+                resolvedInstructionHash: SECURITY_HASH,
+                strategy: "conversation",
+              },
+            ],
+            specialists: {
+              security: {
+                state: "verdict_pass",
+                attempts: 1,
+                summary: "Still nothing blocking.",
+                issues: [],
+                advisories: [],
+                questionToken: null,
+                sessionRef: null,
+                reviewArtifact: null,
+                lastInfraFailure: null,
+              },
+            },
+            phase: "concluded",
+            outcome: "passed",
+            startedAt: "2026-03-27T12:00:00.000Z",
+          },
+        },
+      },
+    };
+  }
+
+  function roundEvents(): GraphWorkflowExecutionEvent[] {
+    return [1, 2, 3].map((seq) => ({
+      occurredAt: `2026-03-27T1${seq}:00:00.000Z`,
+      preReset: false,
+      event: {
+        type: "graph-workflow-validation-result",
+        projectName: "test-project",
+        sessionName: "test-session",
+        executionId: "execution-1",
+        contextId: "context-implement",
+        validatorType: "context",
+        kind: "context_validation",
+        pass: true,
+        summary: `Round ${seq} concluded`,
+        reopenTaskIds: [],
+        issues: [],
+        rejectedOutput: null,
+        gateRepairAttempts: null,
+        gateRepairBudget: null,
+        roundSeq: seq,
+        specialists: [
+          {
+            assignmentId: "security",
+            profile: { tier: "project", id: "security-reviewer", revision: 4 },
+            resolvedInstructionHash: SECURITY_HASH,
+            pass: true,
+            summary: "Nothing blocking.",
+            issues: [],
+            advisories: seq === 1 ? [advisory] : [],
+            sessionRef: null,
+            reviewArtifact: null,
+            usage: null,
+          },
+        ],
+      },
+    }));
+  }
+
+  it("lands on the originating round, not the round the context has since reached", async () => {
+    const { container } = renderWithQuery(
+      <GraphWorkflowPanel
+        execution={executionWithAdvisory()}
+        events={roundEvents()}
+        archivedExecutions={[]}
+        {...noopCallbacks}
+      />,
+    );
+
+    // The overview lists the advisory without any round having been opened.
+    const origin = screen.getByTestId("advisory-index-origin");
+    expect(origin).toHaveTextContent("Implement · Round 1 · security");
+
+    fireEvent.click(origin);
+
+    // The link lands on the context that raised it, at the tab where that
+    // round's advisory text and disposition live.
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /history/i })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+    // The inspector header names the context it switched to.
+    expect(
+      screen.getByRole("button", { name: /back/i }).parentElement,
+    ).toHaveTextContent("Implement");
+
+    // ...and on the ROUND that raised it, not the round the context reached.
+    const focused = container.querySelectorAll('[data-focused-round="true"]');
+    expect(focused).toHaveLength(1);
+    expect(focused[0]).toHaveAttribute("data-round-seq", "1");
+    expect(focused[0]).toHaveTextContent("Round 1 concluded");
   });
 });

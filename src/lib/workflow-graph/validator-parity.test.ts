@@ -51,6 +51,7 @@ const validatorConfig: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin" as const, id: "general-reviewer" },
   strategy: "conversation" as const,
+  authority: "blocking",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   continuity: { enabled: false },
 };
@@ -127,12 +128,13 @@ async function runLegacyValidatorPath(
     };
   }
 
-  return parseValidatorResponse(
-    taskResult.text ?? "",
-    VALIDATOR_ENGINE,
-    taskResult.structuredOutput,
+  return parseValidatorResponse({
+    text: taskResult.text ?? "",
+    engine: VALIDATOR_ENGINE,
+    authority: "blocking",
+    structuredOutput: taskResult.structuredOutput,
     allowedTaskIds,
-  ).result;
+  }).result;
 }
 
 function buildExecutionForNewPath(): {
@@ -267,6 +269,7 @@ function completedAgentCallResult(
 const passPayload = {
   summary: "All tasks satisfy the acceptance criteria.",
   issues: [],
+  advisories: [],
 };
 
 const failPayload = {
@@ -278,6 +281,7 @@ const failPayload = {
       description: "Add the rollout section to plan.md.",
     },
   ],
+  advisories: [],
 };
 
 const mismatchPayload = {
@@ -289,6 +293,7 @@ const mismatchPayload = {
       description: "References a task outside the active context.",
     },
   ],
+  advisories: [],
 };
 
 const fencedJsonText = (payload: unknown): string =>

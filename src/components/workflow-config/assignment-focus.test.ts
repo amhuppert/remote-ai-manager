@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ASSIGNMENT_FOCUS_MAX_LENGTH } from "@/lib/agent-profiles/block";
 import {
-  ASSIGNMENT_FOCUS_RULES_HINT,
+  ASSIGNMENT_INSTRUCTIONS_PRESENTATION,
+  ASSIGNMENT_INSTRUCTIONS_RULES_HINT,
   assignmentFocusRefusal,
 } from "./assignment-focus";
 
@@ -39,12 +40,37 @@ describe("assignmentFocusRefusal", () => {
   });
 });
 
-describe("ASSIGNMENT_FOCUS_RULES_HINT", () => {
+describe("ASSIGNMENT_INSTRUCTIONS_RULES_HINT", () => {
   it("states both refusal rules before the author can trip them", () => {
-    expect(ASSIGNMENT_FOCUS_RULES_HINT).toContain(
+    expect(ASSIGNMENT_INSTRUCTIONS_RULES_HINT).toContain(
       String(ASSIGNMENT_FOCUS_MAX_LENGTH),
     );
-    expect(ASSIGNMENT_FOCUS_RULES_HINT).toContain("```");
-    expect(ASSIGNMENT_FOCUS_RULES_HINT).toContain("<<<CC_AGENT_PROFILE");
+    expect(ASSIGNMENT_INSTRUCTIONS_RULES_HINT).toContain("```");
+    expect(ASSIGNMENT_INSTRUCTIONS_RULES_HINT).toContain("<<<CC_AGENT_PROFILE");
+  });
+});
+
+describe("ASSIGNMENT_INSTRUCTIONS_PRESENTATION", () => {
+  it("presents a blocking assignment's instructions as its authoritative mandate", () => {
+    const blocking = ASSIGNMENT_INSTRUCTIONS_PRESENTATION.blocking;
+    expect(blocking.label).toBe("Mandate");
+    expect(blocking.hint).toContain("authoritative mandate");
+    expect(blocking.hint).toContain("advisory");
+  });
+
+  it("presents an advisory assignment's instructions as a subordinate profile focus", () => {
+    const advisory = ASSIGNMENT_INSTRUCTIONS_PRESENTATION.advisory;
+    expect(advisory.label).toBe("Focus");
+    expect(advisory.hint).toContain("Subordinate");
+    expect(advisory.hint).toContain("profile block");
+  });
+
+  it("carries the shared refusal rules into both faces of the one field", () => {
+    expect(ASSIGNMENT_INSTRUCTIONS_PRESENTATION.blocking.hint).toContain(
+      ASSIGNMENT_INSTRUCTIONS_RULES_HINT,
+    );
+    expect(ASSIGNMENT_INSTRUCTIONS_PRESENTATION.advisory.hint).toContain(
+      ASSIGNMENT_INSTRUCTIONS_RULES_HINT,
+    );
   });
 });

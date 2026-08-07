@@ -135,6 +135,7 @@ function buildCleanExecution(): GraphWorkflowExecution {
     contextStates: {},
     taskStates: {},
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},

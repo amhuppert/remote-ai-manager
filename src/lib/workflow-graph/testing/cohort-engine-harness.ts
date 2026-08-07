@@ -18,6 +18,11 @@ import type {
   GraphWorkflowValidationSpecialist,
 } from "@/lib/workflow-graph/schemas";
 import type { SeededValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
+import type { WorkflowValidatorAdvisory } from "@/lib/workflow-graph/definition-schemas";
+import type {
+  GraphWorkflowAdvisoryResponseInput,
+  GraphWorkflowAdvisoryResponseOutcome,
+} from "@/lib/workflow-graph/advisory-response-runner";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
@@ -28,7 +33,10 @@ import {
   createWorkflowExecution,
   makeSeededValidatorAssignment,
 } from "@/lib/workflow-graph/test-fixtures";
-import { createGraphWorkflowIterationOrchestrator } from "@/lib/workflow-graph/iteration-orchestrator";
+import {
+  createGraphWorkflowIterationOrchestrator,
+  type GraphWorkflowIterationResult,
+} from "@/lib/workflow-graph/iteration-orchestrator";
 import { createGraphWorkflowValidationService } from "@/lib/workflow-graph/execution-validation";
 import type { GraphWorkflowContextValidatorInput } from "@/lib/workflow-graph/execution-validation";
 import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
@@ -143,10 +151,15 @@ export function createCohortExecution(
     consecutiveFailureCount?: number;
   } = {},
 ): GraphWorkflowExecution {
+  // Blocking by id-only construction: every rule this harness exists to
+  // exercise — precedence, attempts, halts, remediation — is a rule about
+  // lanes that can gate a round, so a cohort of advisory seats would quietly
+  // turn those tests into tests of a round nothing can fail. A test whose
+  // subject IS authority passes `assignments` and says so.
   const assignments =
     options.assignments ??
     (options.assignmentIds ?? COHORT).map((id) =>
-      makeSeededValidatorAssignment({ id }),
+      makeSeededValidatorAssignment({ id, authority: "blocking" }),
     );
   const base = createResolvedWorkflowDefinition();
   const definition = createResolvedWorkflowDefinition({
@@ -243,6 +256,7 @@ export function specialistRecord(
     attempts: 0,
     summary: null,
     issues: [],
+    advisories: [],
     questionToken: null,
     sessionRef: null,
     reviewArtifact: null,
@@ -260,11 +274,15 @@ export function metadata(): ValidatorRunResult["metadata"] {
   };
 }
 
-export function passResult(assignmentId: string): ValidatorRunResult["result"] {
+export function passResult(
+  assignmentId: string,
+  advisories: WorkflowValidatorAdvisory[] = [],
+): ValidatorRunResult["result"] {
   return {
     kind: "pass",
     summary: `${assignmentId} is satisfied.`,
     issues: [],
+    advisories,
     reopenTaskIds: [],
   };
 }
@@ -272,6 +290,7 @@ export function passResult(assignmentId: string): ValidatorRunResult["result"] {
 export function failResult(
   assignmentId: string,
   taskIds: string[],
+  advisories: WorkflowValidatorAdvisory[] = [],
 ): ValidatorRunResult["result"] {
   return {
     kind: "fail",
@@ -281,7 +300,20 @@ export function failResult(
       title: `${assignmentId} on ${taskId}`,
       description: `${assignmentId} wants ${taskId} redone.`,
     })),
+    advisories,
     reopenTaskIds: taskIds,
+  };
+}
+
+/** One advisory as a lane would report it, before the engine stamps identity. */
+export function advisoryItem(
+  overrides: Partial<WorkflowValidatorAdvisory> = {},
+): WorkflowValidatorAdvisory {
+  return {
+    kind: "implementation",
+    title: "Consider extracting the helper",
+    description: "The same shape appears in two places.",
+    ...overrides,
   };
 }
 
@@ -302,7 +334,7 @@ export interface Harness {
   repository: ReturnType<typeof createRepository>;
   run(overrides?: {
     resumeUserInputs?: readonly ResumeUserInputContext[];
-  }): Promise<void>;
+  }): Promise<GraphWorkflowIterationResult>;
   /** The operator pausing to edit — the real `workflowManager.send({pause})`. */
   pause(): Promise<void>;
   /**
@@ -319,6 +351,8 @@ export interface Harness {
    */
   restartAndResume(): Promise<void>;
   runContextValidator: ReturnType<typeof vi.fn>;
+  /** The advisory-response turn, when the test wired one. */
+  runAdvisoryResponse: ReturnType<typeof vi.fn>;
   incidents(): GraphWorkflowExecutionEvent[];
   results(): GraphWorkflowExecutionEvent[];
   specialistResults(): GraphWorkflowExecutionEvent[];
@@ -339,6 +373,14 @@ export function createHarness(params: {
    * dispatches); otherwise each builds its own default over this repository.
    */
   userInputGateService?: UserInputGateService;
+  /**
+   * What the advisory-response turn returns. Omitted leaves the service
+   * unwired, which is the shape of every context whose validators raise no
+   * advisories — the engine must dispatch nothing.
+   */
+  advisoryResponse?: (
+    input: GraphWorkflowAdvisoryResponseInput,
+  ) => Promise<GraphWorkflowAdvisoryResponseOutcome>;
 }): Harness {
   const repository = createRepository(params.execution);
   const eventPublisher = createGraphWorkflowExecutionEventPublisher({
@@ -377,8 +419,22 @@ export function createHarness(params: {
     now: () => NOW,
   });
 
+  // Unwired means the service is never passed to the orchestrator at all, so
+  // this default exists only to keep the spy's type honest. It throws rather
+  // than inventing an empty batch: a test that reaches it has wired nothing and
+  // is about to assert on dispositions no turn produced.
+  const runAdvisoryResponse = vi.fn(
+    params.advisoryResponse ??
+      (async (): Promise<GraphWorkflowAdvisoryResponseOutcome> => {
+        throw new Error("no advisory response was wired for this harness");
+      }),
+  );
+
   const orchestrator = createGraphWorkflowIterationOrchestrator({
     executionRepository: repository,
+    ...(params.advisoryResponse
+      ? { advisoryResponseService: { runAdvisoryResponse } }
+      : {}),
     signalHalt,
     findLatestContextValidationEvent:
       repository.findLatestContextValidationEvent,
@@ -413,8 +469,9 @@ export function createHarness(params: {
   return {
     repository,
     runContextValidator,
+    runAdvisoryResponse,
     async run(overrides) {
-      await orchestrator.runIteration({
+      return await orchestrator.runIteration({
         projectPath: "/repo",
         projectName: "repo",
         sessionName: "session-1",

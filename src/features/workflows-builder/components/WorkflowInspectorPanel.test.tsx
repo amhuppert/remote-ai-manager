@@ -637,6 +637,7 @@ describe("WorkflowInspectorPanel — validator cohort override footer", () => {
         id: "security" as const,
         profile: { tier: "builtin" as const, id: "general-reviewer" },
         strategy: "conversation" as const,
+        authority: "blocking" as const,
         agent: {
           backend: "claude" as const,
           model: "sonnet" as const,
@@ -734,6 +735,82 @@ describe("WorkflowInspectorPanel — validator cohort override footer", () => {
     );
 
     expect(planContext()?.contextValidator).toBeUndefined();
+  });
+
+  /**
+   * R12.1/R12.2 on the workflow-definition consumer. The builder renders the
+   * SAME shared cohort editor the Settings defaults form and the live Config
+   * tab render, so proving the axis lights up here is proving the wiring, not a
+   * per-surface reimplementation.
+   */
+  it("exposes the authority axis and its instructions face through the shared editor", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanValidator(OVERRIDE_COHORT),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Context validator")!;
+    expect(
+      within(block).getByTestId("cohort-authority-badge").textContent,
+    ).toBe("Blocking");
+    expect(
+      within(block).getByLabelText("Mandate for security"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(within(block).getByLabelText("Validator authority")).getByRole(
+        "radio",
+        { name: "advisory" },
+      ),
+    );
+
+    expect(planContext()?.contextValidator?.assignments[0]?.authority).toBe(
+      "advisory",
+    );
+  });
+
+  it("edits a validator's instructions through the shared editor", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanValidator(OVERRIDE_COHORT),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Context validator")!;
+    fireEvent.change(within(block).getByLabelText("Mandate for security"), {
+      target: { value: "auth boundaries" },
+    });
+
+    expect(planContext()?.contextValidator?.assignments[0]?.focus).toBe(
+      "auth boundaries",
+    );
+  });
+
+  it("clears a validator's instructions through the shared editor", () => {
+    resetStore();
+    setupStore({
+      selectedContextId: "context-plan",
+      definition: definitionWithPlanValidator({
+        ...OVERRIDE_COHORT,
+        assignments: OVERRIDE_COHORT.assignments.map((entry) => ({
+          ...entry,
+          focus: "auth boundaries",
+        })),
+      }),
+    });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const block = findBlockByLabel(container, "Context validator")!;
+    fireEvent.change(within(block).getByLabelText("Mandate for security"), {
+      target: { value: "" },
+    });
+
+    expect(planContext()?.contextValidator?.assignments[0]).not.toHaveProperty(
+      "focus",
+    );
   });
 });
 
@@ -1356,11 +1433,13 @@ describe("WorkflowInspectorPanel — validator cohort editor", () => {
     ]);
   });
 
-  it("edits one assignment's focus and runtime", () => {
+  it("edits one assignment's instructions and runtime", () => {
     const { container } = renderContextTab();
     const block = overrideCohort(container);
 
-    fireEvent.change(within(block).getByLabelText("Focus for general"), {
+    // The seeded seat is blocking, so its instructions field reads as the
+    // assignment's mandate (R12.2).
+    fireEvent.change(within(block).getByLabelText("Mandate for general"), {
       target: { value: "auth boundaries" },
     });
     expect(contextCohort()!.assignments[0]?.focus).toBe("auth boundaries");

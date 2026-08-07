@@ -789,6 +789,7 @@ describe("ExecutionInspectorPanel — multi-assignment cohort rounds", () => {
         revision: 1,
       },
       resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+      advisories: [],
       pass: true,
       summary: "general: ok",
       issues: [],
@@ -804,6 +805,7 @@ describe("ExecutionInspectorPanel — multi-assignment cohort rounds", () => {
         revision: 4,
       },
       resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+      advisories: [],
       pass: false,
       summary: "security: no",
       issues: [],
@@ -2388,6 +2390,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
           attempts: 1,
           summary: "No blocking findings.",
           issues: [],
+          advisories: [],
           questionToken: null,
           sessionRef: {
             backend: "claude",
@@ -2405,6 +2408,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
           attempts: 2,
           summary: null,
           issues: [],
+          advisories: [],
           questionToken: null,
           sessionRef: null,
           reviewArtifact: null,
@@ -2660,6 +2664,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
                 revision: 1,
               },
               resolvedInstructionHash: GENERAL_HASH,
+              advisories: [],
               pass: true,
               summary: "Implementation matches the criteria.",
               issues: [],
@@ -2682,6 +2687,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
                 revision: 4,
               },
               resolvedInstructionHash: SECURITY_HASH,
+              advisories: [],
               pass: false,
               summary: "Secret is logged in plaintext.",
               issues: [
@@ -2774,6 +2780,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
                 revision: 4,
               },
               resolvedInstructionHash: SECURITY_HASH,
+              advisories: [],
               pass: false,
               summary: "No.",
               issues: [],
@@ -2871,6 +2878,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
             assignmentId: "security",
             profile: { tier: "project", id: "security-reviewer", revision: 4 },
             resolvedInstructionHash: SECURITY_HASH,
+            advisories: [],
             pass: false,
             summary: "Secret is logged in plaintext.",
             issues: securityFindings,
@@ -2889,6 +2897,7 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
             assignmentId: "docs",
             profile: { tier: "global", id: "docs-reviewer", revision: 2 },
             resolvedInstructionHash: GENERAL_HASH,
+            advisories: [],
             pass: false,
             summary: "The route docs are stale.",
             issues: docsFindings,
@@ -3019,5 +3028,692 @@ describe("ExecutionInspectorPanel — per-assignment cohort inspector (R12.3)", 
     expect(issues).toHaveTextContent("Issues (1)");
     expect(issues).not.toHaveTextContent("Unattributed");
     expect(within(issues).getByText("Missing coverage")).toBeInTheDocument();
+  });
+});
+
+describe("ExecutionInspectorPanel — advisories in the round history (R9.2/R9.3/R9.5)", () => {
+  function advisoryExecution(): GraphWorkflowExecution {
+    const base = createResolvedWorkflowDefinition();
+    const execution = createWorkflowExecution({
+      status: "running",
+      workingDefinition: {
+        ...base,
+        executionContexts: base.executionContexts.map((ctx) =>
+          ctx.id === "context-plan"
+            ? {
+                ...ctx,
+                contextValidator: {
+                  enabled: true,
+                  assignments: [
+                    seedAssignment(
+                      makeValidatorAssignment({
+                        id: "acceptance-criteria",
+                        authority: "blocking",
+                      }),
+                    ),
+                    seedAssignment(
+                      makeValidatorAssignment({
+                        id: "security",
+                        profile: { tier: "project", id: "security-reviewer" },
+                        authority: "advisory",
+                      }),
+                    ),
+                  ],
+                },
+              }
+            : ctx,
+        ),
+      },
+    });
+    const planState = execution.contextStates["context-plan"];
+    if (!planState) throw new Error("fixture is missing context-plan state");
+    return {
+      ...execution,
+      contextStates: {
+        ...execution.contextStates,
+        "context-plan": {
+          ...planState,
+          validationRound: {
+            seq: 2,
+            candidate: {
+              headSha: "head-1",
+              candidateTreeHash: "tree-hash-1",
+              taskStateHash: "tasks-1",
+            },
+            roster: [
+              {
+                assignmentId: "acceptance-criteria",
+                profileRef: { tier: "builtin", id: "general-reviewer" },
+                revision: 1,
+                resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+                strategy: "conversation",
+              },
+              {
+                assignmentId: "security",
+                profileRef: { tier: "project", id: "security-reviewer" },
+                revision: 4,
+                resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+                strategy: "conversation",
+              },
+            ],
+            specialists: {
+              "acceptance-criteria": {
+                state: "verdict_pass",
+                attempts: 1,
+                summary: "Every criterion is met.",
+                issues: [],
+                advisories: [],
+                questionToken: null,
+                sessionRef: null,
+                reviewArtifact: null,
+                lastInfraFailure: null,
+              },
+              security: {
+                state: "verdict_pass",
+                attempts: 1,
+                summary: "Nothing blocking.",
+                issues: [],
+                advisories: [
+                  {
+                    kind: "plan",
+                    title: "The plan skips the backfill",
+                    description: "Nothing writes the historic rows.",
+                    identity: {
+                      roundSeq: 2,
+                      assignmentId: "security",
+                      ordinal: 1,
+                    },
+                    deliveredAt: "2026-03-27T10:05:00.000Z",
+                    disposition: {
+                      outcome: "declined",
+                      reason: "The backfill is a separate approved task.",
+                      recordedAt: "2026-03-27T10:20:00.000Z",
+                    },
+                  },
+                ],
+                questionToken: null,
+                sessionRef: null,
+                reviewArtifact: null,
+                lastInfraFailure: null,
+              },
+            },
+            phase: "concluded",
+            outcome: "passed",
+            startedAt: "2026-03-27T10:00:00.000Z",
+          },
+          advisoryResponse: {
+            roundSeq: 2,
+            phase: "awaiting_response",
+            enteredAt: "2026-03-27T10:10:00.000Z",
+          },
+        },
+      },
+    };
+  }
+
+  it("renders the advisory, its authority badges and its disposition on the history tab", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={advisoryExecution()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+    selectDetailTab(/history/i);
+
+    const rows = screen.getAllByTestId("cohort-member");
+    expect(rows.map((row) => row.getAttribute("data-authority"))).toEqual([
+      "blocking",
+      "advisory",
+    ]);
+
+    const advisory = within(rows[1]!).getByTestId("cohort-advisory");
+    expect(
+      within(advisory).getByTestId("cohort-advisory-kind"),
+    ).toHaveTextContent("Plan");
+    expect(
+      within(advisory).getByTestId("cohort-advisory-disposition"),
+    ).toHaveAttribute("data-disposition", "declined");
+    expect(
+      screen.getByText("The backfill is a separate approved task."),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * The round-2 aggregate as the engine publishes it: the specialist entries
+   * carry the advisories that lane raised, and no disposition, because the
+   * publication goes out when the round settles — before the advisory-response
+   * turn that produces one.
+   */
+  function roundTwoAggregate(): GraphWorkflowExecutionEvent {
+    return {
+      occurredAt: "2026-03-27T10:06:00.000Z",
+      preReset: false,
+      event: makeValidationEvent({
+        roundSeq: 2,
+        pass: true,
+        summary: "The cohort passed",
+        specialists: [
+          {
+            assignmentId: "acceptance-criteria",
+            profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
+            resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+            pass: true,
+            summary: "Every criterion is met.",
+            issues: [],
+            advisories: [],
+            sessionRef: null,
+            reviewArtifact: null,
+            usage: null,
+          },
+          {
+            assignmentId: "security",
+            profile: { tier: "project", id: "security-reviewer", revision: 4 },
+            resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+            pass: true,
+            summary: "Nothing blocking.",
+            issues: [],
+            advisories: [
+              {
+                kind: "plan",
+                title: "The plan skips the backfill",
+                description: "Nothing writes the historic rows.",
+                identity: {
+                  roundSeq: 2,
+                  assignmentId: "security",
+                  ordinal: 1,
+                },
+                deliveredAt: null,
+                disposition: null,
+              },
+            ],
+            sessionRef: null,
+            reviewArtifact: null,
+            usage: null,
+          },
+        ],
+      }),
+    };
+  }
+
+  it("shows an advisory's disposition once and only from the round record (R9.3)", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={advisoryExecution()}
+        events={[roundTwoAggregate()]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+    selectDetailTab(/history/i);
+
+    // The event's copy of this advisory was published before the response turn
+    // recorded the decline, so rendering it would put a second, contradicting
+    // "No disposition" copy of the same advisory on the same tab.
+    const advisories = screen.getAllByTestId("cohort-advisory");
+    expect(advisories).toHaveLength(1);
+    expect(
+      within(advisories[0]!).getByTestId("cohort-advisory-disposition"),
+    ).toHaveAttribute("data-disposition", "declined");
+    expect(screen.queryByText("No disposition")).toBeNull();
+  });
+
+  it("carries a tone-coded authority badge on every specialist row, live round or not (R9.5)", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={advisoryExecution()}
+        events={[roundTwoAggregate()]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+    selectDetailTab(/history/i);
+
+    // The rows of a round read off its validation-result event answer the
+    // authority question the same way the live round's roster rows do.
+    const historicalRows = screen.getAllByTestId("validation-specialist");
+    expect(
+      historicalRows.map((row) => row.getAttribute("data-authority")),
+    ).toEqual(["blocking", "advisory"]);
+    const badges = historicalRows.map((row) =>
+      within(row).getByTestId("cohort-member-authority"),
+    );
+    expect(
+      badges.map((badge) => [
+        badge.textContent,
+        badge.getAttribute("data-tone"),
+      ]),
+    ).toEqual([
+      ["Blocking", "amber"],
+      ["Advisory", "neutral"],
+    ]);
+    // Never the failure tone: authority is not a verdict.
+    for (const badge of badges) {
+      expect(badge).not.toHaveAttribute("data-tone", "red");
+    }
+  });
+
+  it("badges a seat the live cohort no longer holds as unknown rather than advisory (R9.5)", () => {
+    const execution = advisoryExecution();
+    const base = execution.workingDefinition;
+    render(
+      <ExecutionInspectorPanel
+        execution={{
+          ...execution,
+          workingDefinition: {
+            ...base,
+            executionContexts: base.executionContexts.map((ctx) =>
+              ctx.id === "context-plan"
+                ? {
+                    ...ctx,
+                    contextValidator: { enabled: true, assignments: [] },
+                  }
+                : ctx,
+            ),
+          },
+        }}
+        events={[roundTwoAggregate()]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+    selectDetailTab(/history/i);
+
+    // Claiming "Advisory" would tell the reader this seat could never have
+    // failed the context — which nothing in the record supports.
+    const rows = screen.getAllByTestId("validation-specialist");
+    expect(rows.map((row) => row.getAttribute("data-authority"))).toEqual([
+      "unknown",
+      "unknown",
+    ]);
+    expect(
+      within(rows[0]!).getByTestId("cohort-member-authority"),
+    ).toHaveTextContent("Authority unknown");
+  });
+
+  it("shows the advisory-response step on the round timeline", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={advisoryExecution()}
+        events={[]}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+    selectDetailTab(/history/i);
+
+    const steps = screen.getAllByTestId("cohort-round-step");
+    expect(steps[steps.length - 1]).toHaveAttribute(
+      "data-step",
+      "advisory_response",
+    );
+    expect(steps[steps.length - 1]).toHaveAttribute("data-state", "current");
+  });
+});
+
+describe("ExecutionInspectorPanel — execution-level advisory index (R9.4)", () => {
+  function indexedExecution(): GraphWorkflowExecution {
+    return createWorkflowExecution({
+      advisoryIndex: [
+        {
+          identity: { roundSeq: 2, assignmentId: "security", ordinal: 1 },
+          kind: "plan",
+          title: "The plan skips the backfill",
+          contextId: "context-plan",
+        },
+        {
+          identity: { roundSeq: 1, assignmentId: "general", ordinal: 3 },
+          kind: "out_of_scope",
+          title: "The legacy importer is unreachable",
+          contextId: "context-implement",
+        },
+      ],
+    });
+  }
+
+  it("aggregates every long-lived advisory on the overview, no round opened", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={indexedExecution()}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    const entries = screen.getAllByTestId("advisory-index-entry");
+    expect(entries).toHaveLength(2);
+    // Two different contexts and two different rounds, in one list.
+    expect(entries.map((el) => el.getAttribute("data-context-id"))).toEqual([
+      "context-plan",
+      "context-implement",
+    ]);
+    expect(
+      within(entries[0]!).getByTestId("advisory-index-origin"),
+    ).toHaveTextContent("Plan · Round 2 · security");
+    expect(
+      within(entries[1]!).getByTestId("advisory-index-origin"),
+    ).toHaveTextContent("Implement · Round 1 · general");
+  });
+
+  it("links an entry back to the context that raised it", () => {
+    const onOpenAdvisoryOrigin = vi.fn();
+    render(
+      <ExecutionInspectorPanel
+        execution={indexedExecution()}
+        events={[]}
+        selectedContextId={null}
+        onOpenAdvisoryOrigin={onOpenAdvisoryOrigin}
+        {...baseHandlers}
+      />,
+    );
+
+    fireEvent.click(
+      within(screen.getAllByTestId("advisory-index-entry")[1]!).getByTestId(
+        "advisory-index-origin",
+      ),
+    );
+
+    expect(onOpenAdvisoryOrigin).toHaveBeenCalledWith({
+      contextId: "context-implement",
+      roundSeq: 1,
+    });
+  });
+
+  it("renders no advisory section for a run that raised none", () => {
+    render(
+      <ExecutionInspectorPanel
+        execution={createWorkflowExecution()}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByTestId("advisory-index")).toBeNull();
+  });
+});
+
+describe("ExecutionInspectorPanel — an origin link reaches the originating round (R9.4)", () => {
+  // jsdom has no layout, so it does not implement the scroll the deep link
+  // performs on its way to the round.
+  Element.prototype.scrollIntoView = () => {};
+
+  const SECURITY_HASH = `sha256:${"c".repeat(64)}`;
+
+  // As the engine publishes it: the aggregate goes out when the round settles,
+  // which is before any advisory-response turn can record a disposition.
+  const roundOneAdvisory = {
+    kind: "plan" as const,
+    title: "The plan skips the backfill",
+    description: "Nothing writes the historic rows.",
+    identity: { roundSeq: 1, assignmentId: "security", ordinal: 1 },
+    deliveredAt: null,
+    disposition: null,
+  };
+
+  function securityEntry(
+    advisories: (typeof roundOneAdvisory)[],
+  ): NonNullable<GraphWorkflowValidationResultEvent["specialists"]>[number] {
+    return {
+      assignmentId: "security",
+      profile: { tier: "project", id: "security-reviewer", revision: 4 },
+      resolvedInstructionHash: SECURITY_HASH,
+      pass: true,
+      summary: "Nothing blocking.",
+      issues: [],
+      advisories,
+      sessionRef: null,
+      reviewArtifact: null,
+      usage: null,
+    };
+  }
+
+  /**
+   * A context that has moved on: round 1 raised the advisory, rounds 2 and 3
+   * followed, and round 3 is the one the context state still holds. This is the
+   * shape that tells a link to the ORIGIN apart from a link to "the tab".
+   */
+  function advancedContext(): {
+    execution: GraphWorkflowExecution;
+    events: GraphWorkflowExecutionEvent[];
+  } {
+    const base = createWorkflowExecution();
+    const planState = base.contextStates["context-plan"];
+    if (!planState) throw new Error("fixture is missing context-plan state");
+    const liveRound: GraphWorkflowValidationRound = {
+      seq: 3,
+      candidate: {
+        headSha: "head-3",
+        candidateTreeHash: "tree-hash-3",
+        taskStateHash: "tasks-3",
+      },
+      roster: [
+        {
+          assignmentId: "security",
+          profileRef: { tier: "project", id: "security-reviewer" },
+          revision: 4,
+          resolvedInstructionHash: SECURITY_HASH,
+          strategy: "conversation",
+        },
+      ],
+      specialists: {
+        security: {
+          state: "verdict_pass",
+          attempts: 1,
+          summary: "Still nothing blocking.",
+          issues: [],
+          advisories: [],
+          questionToken: null,
+          sessionRef: null,
+          reviewArtifact: null,
+          lastInfraFailure: null,
+        },
+      },
+      phase: "concluded",
+      outcome: "passed",
+      startedAt: "2026-03-27T12:00:00.000Z",
+    };
+    return {
+      execution: {
+        ...base,
+        advisoryIndex: [
+          {
+            identity: roundOneAdvisory.identity,
+            kind: "plan",
+            title: roundOneAdvisory.title,
+            contextId: "context-plan",
+          },
+        ],
+        contextStates: {
+          ...base.contextStates,
+          "context-plan": { ...planState, validationRound: liveRound },
+        },
+      },
+      events: [1, 2, 3].map((seq) => ({
+        occurredAt: `2026-03-27T1${seq}:00:00.000Z`,
+        preReset: false,
+        event: makeValidationEvent({
+          roundSeq: seq,
+          summary: `Round ${seq} concluded`,
+          specialists: [securityEntry(seq === 1 ? [roundOneAdvisory] : [])],
+        }),
+      })),
+    };
+  }
+
+  function renderAtRound(roundSeq: number) {
+    const { execution, events } = advancedContext();
+    return render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        contextTabRequest={{
+          contextId: "context-plan",
+          tab: "history",
+          roundSeq,
+          seq: 1,
+        }}
+        {...baseHandlers}
+      />,
+    );
+  }
+
+  it("focuses the round the advisory came from, not the round the context is on now", () => {
+    const { container } = renderAtRound(1);
+
+    expect(screen.getByRole("tab", { name: /history/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const focused = container.querySelectorAll('[data-focused-round="true"]');
+    expect(focused).toHaveLength(1);
+    expect(focused[0]).toHaveAttribute("data-round-seq", "1");
+    // The context is on round 3; landing there would show a record that never
+    // raised this advisory.
+    expect(screen.getByTestId("cohort-round")).toHaveAttribute(
+      "data-round-seq",
+      "3",
+    );
+    expect(screen.getByTestId("cohort-round")).not.toHaveAttribute(
+      "data-focused-round",
+      "true",
+    );
+  });
+
+  it("moves keyboard focus onto the round it navigated to", () => {
+    const { container } = renderAtRound(1);
+
+    expect(document.activeElement).toBe(
+      container.querySelector('[data-focused-round="true"]'),
+    );
+  });
+
+  it("names the round it landed on", () => {
+    const { container } = renderAtRound(1);
+
+    const focused = container.querySelector('[data-focused-round="true"]');
+    if (!(focused instanceof HTMLElement)) {
+      throw new Error("no round was focused");
+    }
+    expect(focused).toHaveTextContent("Round 1");
+  });
+
+  it("focuses the live round record when the advisory came from that round", () => {
+    const { container } = renderAtRound(3);
+
+    const focused = container.querySelectorAll('[data-focused-round="true"]');
+    expect(focused).toHaveLength(1);
+    expect(focused[0]).toBe(screen.getByTestId("cohort-round"));
+  });
+
+  it("focuses nothing when the deep link names no round", () => {
+    const { execution, events } = advancedContext();
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        contextTabRequest={{
+          contextId: "context-plan",
+          tab: "config",
+          seq: 1,
+        }}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(container.querySelector('[data-focused-round="true"]')).toBeNull();
+  });
+
+  /**
+   * A context reset retires the round history — `validationRound` is dropped
+   * and every prior event is marked pre-reset — but leaves the execution's
+   * advisory index standing. The entries raised before the reset are still
+   * listed, so their links must still reach the round that raised them.
+   */
+  function resetContext(): {
+    execution: GraphWorkflowExecution;
+    events: GraphWorkflowExecutionEvent[];
+  } {
+    const { execution, events } = advancedContext();
+    const planState = execution.contextStates["context-plan"];
+    if (!planState) throw new Error("fixture is missing context-plan state");
+    const { validationRound: _retired, ...afterReset } = planState;
+    return {
+      execution: {
+        ...execution,
+        contextStates: {
+          ...execution.contextStates,
+          "context-plan": afterReset,
+        },
+      },
+      events: events.map((entry) => ({ ...entry, preReset: true })),
+    };
+  }
+
+  it("still reaches a round the context reset retired", () => {
+    const { execution, events } = resetContext();
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        contextTabRequest={{
+          contextId: "context-plan",
+          tab: "history",
+          roundSeq: 1,
+          seq: 1,
+        }}
+        {...baseHandlers}
+      />,
+    );
+
+    // The reset emptied the ordinary history...
+    expect(screen.queryByTestId("cohort-round")).toBeNull();
+    expect(screen.getByText("No validations yet")).toBeInTheDocument();
+    // ...and the link still lands on round 1, with the retired record itself
+    // and a plain statement of why it sits outside the current attempt.
+    const focused = container.querySelectorAll('[data-focused-round="true"]');
+    expect(focused).toHaveLength(1);
+    expect(focused[0]).toHaveAttribute("data-round-seq", "1");
+    const linked = screen.getByTestId("linked-round");
+    expect(linked).toHaveTextContent("retired when this context was reset");
+    expect(
+      within(linked).getByTestId("validation-aggregate"),
+    ).toHaveTextContent("Round 1 concluded");
+  });
+
+  it("still names a round that left no record at all", () => {
+    const { execution, events } = advancedContext();
+    const { container } = render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={events}
+        selectedContextId="context-plan"
+        contextTabRequest={{
+          contextId: "context-plan",
+          tab: "history",
+          roundSeq: 7,
+          seq: 1,
+        }}
+        {...baseHandlers}
+      />,
+    );
+
+    const focused = container.querySelectorAll('[data-focused-round="true"]');
+    expect(focused).toHaveLength(1);
+    expect(focused[0]).toHaveAttribute("data-round-seq", "7");
+    expect(screen.getByTestId("linked-round")).toHaveTextContent(
+      "Round 7 left no record",
+    );
+    // A round with no record has nothing to show beyond saying so.
+    expect(
+      within(screen.getByTestId("linked-round")).queryByTestId(
+        "validation-aggregate",
+      ),
+    ).toBeNull();
   });
 });

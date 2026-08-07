@@ -422,6 +422,10 @@ describe("a migrated pre-existing workflow reviews the way it always did (R3.3)"
     // built-in reviewer profile.
     const authoredToday: ValidatorAssignment = makeValidatorAssignment({
       strategy: "conversation",
+      // Blocking, because the seat an operator gets today for acceptance-criteria
+      // verification is the seeded blocking one — the migrated legacy validator
+      // must land on it rather than on the advisory default.
+      authority: "blocking",
       agent: { ...LEGACY_VALIDATOR_AGENT },
       continuity: { ...LEGACY_VALIDATOR_CONTINUITY },
     });
@@ -634,7 +638,7 @@ describe("a migrated reviewer resumes its own session across rounds (R3.3)", () 
   function passTurn(): TaskRunResult {
     return {
       kind: "text",
-      text: JSON.stringify({ summary: "All good", issues: [] }),
+      text: JSON.stringify({ summary: "All good", issues: [], advisories: [] }),
       error: null,
       backendRef: null,
       continuationDisposition: "keep",

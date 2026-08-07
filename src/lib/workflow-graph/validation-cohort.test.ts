@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ValidatorAuthority } from "./config-schemas";
 import {
   COHORT_ADMISSION_WAITS,
   COHORT_SPECIALIST_ATTEMPTS,
@@ -7,11 +8,35 @@ import {
   type CohortDispatchOutcome,
   type CohortLane,
   type CohortLaneProgress,
+  type CohortRosterSeat,
 } from "./validation-cohort";
 
-function pass(assignmentId: string, summary = "Looks good."): CohortLane {
+/**
+ * A roster of blocking seats. The dispatch and retry rules below are the same
+ * whatever a seat may decide, so they are exercised on the authority whose
+ * settlements the round actually acts on.
+ */
+function seats(assignmentIds: readonly string[]): CohortRosterSeat[] {
+  return assignmentIds.map((assignmentId) => ({
+    assignmentId,
+    authority: "blocking",
+  }));
+}
+
+/**
+ * The lane helpers default to BLOCKING: every precedence rule below predates
+ * the authority axis and is stated about lanes that can gate a round, so a
+ * default of advisory would silently turn those assertions into assertions
+ * about a lane that cannot fail anything.
+ */
+function pass(
+  assignmentId: string,
+  summary = "Looks good.",
+  authority: ValidatorAuthority = "blocking",
+): CohortLane {
   return {
     assignmentId,
+    authority,
     attempts: 0,
     settlement: {
       kind: "pass",
@@ -35,9 +60,11 @@ function fail(
   assignmentId: string,
   taskIds: string[],
   summary = `${assignmentId}: rejected`,
+  authority: ValidatorAuthority = "blocking",
 ): CohortLane {
   return {
     assignmentId,
+    authority,
     attempts: 0,
     settlement: {
       kind: "fail",
@@ -56,9 +83,14 @@ function fail(
   };
 }
 
-function exhausted(assignmentId: string, attempts = 3): CohortLane {
+function exhausted(
+  assignmentId: string,
+  attempts = 3,
+  authority: ValidatorAuthority = "blocking",
+): CohortLane {
   return {
     assignmentId,
+    authority,
     attempts,
     settlement: {
       kind: "infra_exhausted",
@@ -71,9 +103,13 @@ function exhausted(assignmentId: string, attempts = 3): CohortLane {
   };
 }
 
-function parked(assignmentId: string): CohortLane {
+function parked(
+  assignmentId: string,
+  authority: ValidatorAuthority = "blocking",
+): CohortLane {
   return {
     assignmentId,
+    authority,
     attempts: 0,
     settlement: {
       kind: "asked_user",
@@ -84,9 +120,13 @@ function parked(assignmentId: string): CohortLane {
   };
 }
 
-function mismatched(assignmentId: string): CohortLane {
+function mismatched(
+  assignmentId: string,
+  authority: ValidatorAuthority = "blocking",
+): CohortLane {
   return {
     assignmentId,
+    authority,
     attempts: 0,
     settlement: {
       kind: "candidate_mismatch",
@@ -210,6 +250,106 @@ describe("concludeCohort: precedence", () => {
   });
 });
 
+describe("concludeCohort: authority partition (R5.1)", () => {
+  it("never lets an advisory lane's fail-shaped verdict fail the round", () => {
+    // An advisory seat's dispatched schema has no `issues` field, so this
+    // settlement should be unreachable — which is exactly why the rule is
+    // asserted here too. Gating is decided by the partition, not by trusting
+    // the shape that arrived.
+    const conclusion = concludeCohort([
+      pass("general", "general: fine"),
+      fail("advisor", ["task-plan-1"], "advisor: rejected", "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("passed");
+  });
+
+  it("never lets an exhausted advisory lane leave the round unconcluded", () => {
+    // All-of semantics apply to the lanes that can reject. Nobody is waiting
+    // to hear from an advisory specialist before the round may conclude.
+    const conclusion = concludeCohort([
+      pass("general"),
+      exhausted("advisor", 3, "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("passed");
+  });
+
+  it("still fails on a blocking rejection, with only the blocking lane's findings", () => {
+    const conclusion = concludeCohort([
+      fail("general", ["task-plan-1"]),
+      fail("advisor", ["task-plan-2"], "advisor: rejected", "advisory"),
+      pass("perf-reviewer", "perf-reviewer: fine", "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("failed");
+    if (conclusion.kind !== "failed") return;
+    expect(conclusion.issues.map((issue) => issue.assignmentId)).toEqual([
+      "general",
+    ]);
+    expect(conclusion.reopenTaskIds).toEqual(["task-plan-1"]);
+    // Every lane that rendered a verdict is still reported: an advisory lane's
+    // review is evidence even when it decides nothing.
+    expect(conclusion.verdicts.map((lane) => lane.assignmentId)).toEqual([
+      "general",
+      "advisor",
+      "perf-reviewer",
+    ]);
+  });
+
+  it("concludes an advisory-only cohort as passed once its lanes settle or exhaust", () => {
+    const conclusion = concludeCohort([
+      pass("advisor-a", "advisor-a: nothing blocking", "advisory"),
+      exhausted("advisor-b", 3, "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("passed");
+    if (conclusion.kind !== "passed") return;
+    expect(conclusion.summary).toBe("advisor-a: nothing blocking");
+    expect(conclusion.verdicts.map((lane) => lane.assignmentId)).toEqual([
+      "advisor-a",
+    ]);
+  });
+
+  it("keeps an exhausted BLOCKING lane unconcludable next to a settled advisory one", () => {
+    const conclusion = concludeCohort([
+      pass("advisor", "advisor: fine", "advisory"),
+      exhausted("general", 3),
+    ]);
+
+    expect(conclusion.kind).toBe("unconcluded");
+    if (conclusion.kind !== "unconcluded") return;
+    expect(conclusion.assignmentId).toBe("general");
+  });
+
+  it("parks the round for an advisory lane's question exactly as for a blocking one", () => {
+    // Unchanged by authority: a standing question belongs to the human, and
+    // discarding an advisory lane's would strand an answer nobody could route.
+    const conclusion = concludeCohort([
+      pass("general", "general: fine"),
+      parked("advisor", "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("parked");
+    if (conclusion.kind !== "parked") return;
+    expect(conclusion.parked.map((lane) => lane.assignmentId)).toEqual([
+      "advisor",
+    ]);
+  });
+
+  it("lets an advisory lane's candidate mismatch outrank the round, as any lane's does", () => {
+    // A mismatch is a fact about the TREE, not about the reviewer: an advisory
+    // lane that saw a different candidate has still proved the round cannot
+    // certify what it reviewed.
+    const conclusion = concludeCohort([
+      pass("general"),
+      mismatched("advisor", "advisory"),
+    ]);
+
+    expect(conclusion.kind).toBe("candidate_mismatch");
+  });
+});
+
 describe("concludeCohort: aggregate assembly", () => {
   it("groups findings by assignment in cohort order and dedupes only the reopened task ids", () => {
     const conclusion = concludeCohort([
@@ -317,7 +457,7 @@ describe("runCohortLanes: simultaneous dispatch", () => {
     const gates = new Map<string, () => void>();
 
     const lanes = runCohortLanes({
-      assignmentIds: ["general", "security-reviewer", "perf-reviewer"],
+      roster: seats(["general", "security-reviewer", "perf-reviewer"]),
       dispatch: async (assignmentId): Promise<CohortDispatchOutcome> => {
         started.push(assignmentId);
         await new Promise<void>((resolve) => gates.set(assignmentId, resolve));
@@ -355,7 +495,7 @@ describe("runCohortLanes: simultaneous dispatch", () => {
     });
 
     const lanesPromise = runCohortLanes({
-      assignmentIds: ["slow", "fast-a", "fast-b"],
+      roster: seats(["slow", "fast-a", "fast-b"]),
       dispatch: async (assignmentId): Promise<CohortDispatchOutcome> => {
         started.push(assignmentId);
         if (assignmentId === "slow") await slowGate;
@@ -403,7 +543,7 @@ describe("runCohortLanes: attempt accounting", () => {
     );
 
     const lanes = await runCohortLanes({
-      assignmentIds: ["general"],
+      roster: seats(["general"]),
       dispatch,
     });
 
@@ -417,7 +557,7 @@ describe("runCohortLanes: attempt accounting", () => {
     let generalAttempts = 0;
 
     const lanes = await runCohortLanes({
-      assignmentIds: ["general", "security-reviewer"],
+      roster: seats(["general", "security-reviewer"]),
       dispatch: async (assignmentId): Promise<CohortDispatchOutcome> => {
         calls.push(assignmentId);
         if (assignmentId === "general") {
@@ -454,7 +594,7 @@ describe("runCohortLanes: attempt accounting", () => {
   it("does not charge an attempt for a dispatch the queue never admitted", async () => {
     let call = 0;
     const lanes = await runCohortLanes({
-      assignmentIds: ["general"],
+      roster: seats(["general"]),
       dispatch: async (): Promise<CohortDispatchOutcome> => {
         call += 1;
         if (call <= 2) {
@@ -484,7 +624,7 @@ describe("runCohortLanes: attempt accounting", () => {
   it("leaves the full retry budget intact for an infra failure that follows queue pressure", async () => {
     let call = 0;
     const lanes = await runCohortLanes({
-      assignmentIds: ["general"],
+      roster: seats(["general"]),
       dispatch: async (): Promise<CohortDispatchOutcome> => {
         call += 1;
         if (call === 1) {
@@ -520,7 +660,7 @@ describe("runCohortLanes: attempt accounting", () => {
     );
 
     const lanes = await runCohortLanes({
-      assignmentIds: ["general"],
+      roster: seats(["general"]),
       dispatch,
     });
 
@@ -549,7 +689,7 @@ describe("runCohortLanes: retained lanes", () => {
     );
 
     const lanes = await runCohortLanes({
-      assignmentIds: ["general", "security-reviewer"],
+      roster: seats(["general", "security-reviewer"]),
       retained: { general: pass("general", "general: settled last round") },
       dispatch,
     });
@@ -581,7 +721,7 @@ describe("runCohortLanes: retained lanes", () => {
     );
 
     const lanes = await runCohortLanes({
-      assignmentIds: ["general"],
+      roster: seats(["general"]),
       dispatch,
     });
 
@@ -596,7 +736,7 @@ describe("runCohortLanes: progress reporting", () => {
     let call = 0;
 
     await runCohortLanes({
-      assignmentIds: ["general"],
+      roster: seats(["general"]),
       dispatch: async (): Promise<CohortDispatchOutcome> => {
         call += 1;
         if (call === 1) {
@@ -658,6 +798,7 @@ describe("runCohortLanes: progress reporting", () => {
             description: "Add them.",
           },
         ],
+        advisories: [],
         // Carried alongside the state change so the write that ACCEPTS the
         // verdict can publish its detail in the same mutation.
         verdict: { pass: false, sessionRef: null, reviewArtifact: null },

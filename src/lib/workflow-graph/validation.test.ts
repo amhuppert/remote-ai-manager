@@ -640,6 +640,7 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
                     id: "unsandboxed-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     strategy: "task",
+                    authority: "blocking",
                     agent: {
                       backend: "codex",
                       model: "gpt-5.4",
@@ -688,6 +689,7 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
               id: "unsandboxed-reviewer",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "task",
+              authority: "blocking",
               agent: {
                 backend: "codex",
                 model: "gpt-5.4",
@@ -728,6 +730,7 @@ describe("validator write-restriction refusal at the authoring gate (R7.2)", () 
               id: "general-reviewer",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "task",
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -855,6 +858,7 @@ describe("validateResolvedWorkflow", () => {
                     profile: { tier: "builtin", id: "general-reviewer" },
                     profileSnapshot: makeProfileSnapshot(),
                     strategy: "task",
+                    authority: "blocking",
                     agent: {
                       backend: "codex",
                       model: "gpt-5.4",
@@ -895,6 +899,7 @@ describe("validateResolvedWorkflow", () => {
                     profile: { tier: "builtin", id: "general-reviewer" },
                     profileSnapshot: makeProfileSnapshot(),
                     strategy: "conversation",
+                    authority: "blocking",
                     agent: {
                       backend: "codex",
                       model: "gpt-5.4",
@@ -926,6 +931,7 @@ describe("validateResolvedWorkflow", () => {
       id,
       profile: { tier: "builtin" as const, id: "general-reviewer" },
       strategy: "task" as const,
+      authority: "blocking" as const,
       agent: {
         backend: "codex" as const,
         model: "gpt-5.4" as const,
@@ -986,6 +992,7 @@ describe("validateResolvedWorkflow", () => {
                     id: "ok-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     strategy: "task",
+                    authority: "blocking",
                     agent: {
                       backend: "claude",
                       model: "sonnet",
@@ -997,6 +1004,7 @@ describe("validateResolvedWorkflow", () => {
                     id: "unsandboxed-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     strategy: "conversation",
+                    authority: "blocking",
                     agent: {
                       backend: "codex",
                       model: "gpt-5.4",
@@ -1071,6 +1079,7 @@ describe("validateResolvedWorkflow", () => {
                     id: "codex-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     strategy: "task",
+                    authority: "blocking",
                     agent: {
                       backend: "codex",
                       model: "gpt-5.4",
@@ -1108,6 +1117,7 @@ describe("validateResolvedWorkflow", () => {
                     id: "dormant-reviewer",
                     profile: { tier: "builtin", id: "general-reviewer" },
                     strategy: "task",
+                    authority: "blocking",
                     agent: {
                       backend: "codex",
                       model: "gpt-5.4",
@@ -1148,6 +1158,7 @@ describe("validateResolvedWorkflow", () => {
                     profile: { tier: "builtin", id: "general-reviewer" },
                     profileSnapshot: makeProfileSnapshot(),
                     strategy: "conversation",
+                    authority: "blocking",
                     agent: {
                       backend: "claude",
                       model: "sonnet",

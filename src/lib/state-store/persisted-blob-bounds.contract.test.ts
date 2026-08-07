@@ -169,6 +169,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: single pending merge-retry descriptor. In graph_workflow_executions.runtime_json.",
       sharedDocuments:
         "tracked: one entry per workflow-produced shared document with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
+      advisoryIndex:
+        "tracked: grows one metadata-only entry (identity, kind, title, origin context) per `plan` or `out_of_scope` advisory raised anywhere in the run, with no eviction — the index outlives the rounds it projects, which is the point of it (R9, D9). A seat's entries are replaced, not appended, when it re-reports inside one round, so growth per round is bounded by the cohort's advisory output; the title is the only free text and the advisory's description stays on the round record. In graph_workflow_executions.runtime_json.",
     },
   },
   {

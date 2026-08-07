@@ -5,16 +5,35 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { PROFILE_BLOCK_BEGIN } from "@/lib/agent-profiles/composer";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import {
   applyLiveEditsToActiveExecution,
+  buildDefaultAssignmentSnapshotPreparation,
   type LiveEditApplyServiceDeps,
 } from "./live-edit-apply";
 import { assignmentFingerprint } from "./lane-identity";
-import type { LiveEditDeps, ResolvedContextConfig } from "./runtime-edits";
+import {
+  buildValidatorRoleContract,
+  composeWorkflowRoleInstructions,
+} from "./role-instructions";
+import type { ValidatorAssignment } from "./config-schemas";
+import type {
+  LiveEditDeps,
+  LiveEditSource,
+  ResolvedContextConfig,
+} from "./runtime-edits";
+import {
+  expandPlanRepairOperations,
+  validatePlanRepairOperations,
+} from "./plan-repair/schemas";
 import type { GraphWorkflowExecution } from "./schemas";
-import { makeProfileSnapshot, makeValidatorAssignment } from "./test-fixtures";
+import {
+  makeProfileSnapshot,
+  makeSeededValidatorAssignment,
+  makeValidatorAssignment,
+} from "./test-fixtures";
 import { prepareLiveEditAssignmentSnapshots } from "./live-edit-preparation";
 import {
   createCohortExecution,
@@ -117,6 +136,7 @@ function applyEdit(
   harness: Harness,
   execution: GraphWorkflowExecution,
   operations: WorkflowLiveEditOperation[],
+  source: LiveEditSource = "ui",
 ) {
   return applyLiveEditsToActiveExecution(
     {
@@ -125,7 +145,7 @@ function applyEdit(
       request: {
         executionId: execution.id,
         baseLiveRevision: execution.liveRevision,
-        source: "ui",
+        source,
         operations,
       },
     },
@@ -278,6 +298,57 @@ describe("assignment edits on a live execution (R11)", () => {
     );
   });
 
+  it("moves the fingerprint when the edit only flips the seat's authority", async () => {
+    // Stated by the fixture rather than inherited: the promotion under test is
+    // advisory -> blocking, so the starting authority is part of the case.
+    const execution = createCohortExecution({
+      assignments: [
+        makeSeededValidatorAssignment({ id: "alpha", authority: "advisory" }),
+      ],
+    });
+    execution.status = "paused";
+    const harness = createHarness({
+      execution,
+      runContextValidator: async () => {
+        throw new Error("no validator should run in this test");
+      },
+    });
+    const before = harness.repository
+      .read()
+      .workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      )!.contextValidator.assignments[0]!;
+    expect(before.authority).toBe("advisory");
+
+    const promoted = await applyEdit(harness, harness.repository.read(), [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        contextValidator: {
+          enabled: true,
+          assignments: [
+            makeValidatorAssignment({ id: "alpha", authority: "blocking" }),
+          ],
+        },
+      },
+    ]);
+    expect(promoted.ok).toBe(true);
+
+    const after = harness.repository
+      .read()
+      .workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      )!.contextValidator.assignments[0]!;
+
+    // The seat now decides whether the context can pass, and it does so under a
+    // different output schema: the lane that ran as an advisor cannot be resumed
+    // into that, so the fingerprint has to move.
+    expect(after.authority).toBe("blocking");
+    expect(assignmentFingerprint(after)).not.toBe(
+      assignmentFingerprint(before),
+    );
+  });
+
   it("refuses to re-enable a migrated empty cohort unless the same edit adds an assignment", async () => {
     const execution = createCohortExecution({ assignmentIds: ["alpha"] });
     execution.status = "paused";
@@ -310,5 +381,220 @@ describe("assignment edits on a live execution (R11)", () => {
       [cohortEdit(["alpha"])],
     );
     expect(enableWithMember.ok).toBe(true);
+  });
+});
+
+/**
+ * R10.1 — the narrowing a repair emits, from the allowlist that admits it to
+ * the execution it lands on.
+ *
+ * The allowlist expands one narrowing op into a cohort write, so what matters
+ * is not that the expansion parses but that the real apply core accepts it on a
+ * halted execution and changes exactly the one seat it names. Both halves run
+ * here; only the single-specialist dispatch is faked, and it never runs.
+ */
+describe("a plan-repair narrowing reaches the cohort (R10.1)", () => {
+  it("demotes and refocuses the named seat, leaving its sibling untouched", async () => {
+    const execution = createCohortExecution({
+      assignments: [
+        makeSeededValidatorAssignment({
+          id: "alpha",
+          authority: "blocking",
+          focus: "Judge this context against the threat model.",
+        }),
+        makeSeededValidatorAssignment({ id: "beta", authority: "advisory" }),
+      ],
+    });
+    execution.status = "halted";
+    execution.haltReason = {
+      type: "circuit_breaker",
+      contextId: "context-plan",
+      condition: "retry_exhaustion",
+      failureCount: 3,
+      summary: null,
+    };
+    const harness = createHarness({
+      execution,
+      runContextValidator: async () => {
+        throw new Error("no validator should run in this test");
+      },
+    });
+    const before = harness.repository
+      .read()
+      .workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      )!.contextValidator.assignments;
+
+    const validated = validatePlanRepairOperations(
+      [
+        {
+          type: "update-validator-assignment",
+          contextId: "context-plan",
+          assignmentId: "alpha",
+          authority: "advisory",
+          instructions: "Report threat-model concerns as advisories.",
+        },
+      ],
+      harness.repository.read().workingDefinition.executionContexts,
+    );
+    expect(validated.ok).toBe(true);
+    if (!validated.ok) return;
+
+    // The supervisor's sequence: the cohort write is built from the state the
+    // apply is about to be revision-guarded against.
+    const expanded = expandPlanRepairOperations(
+      validated.operations,
+      harness.repository.read().workingDefinition.executionContexts,
+    );
+    expect(expanded.ok).toBe(true);
+    if (!expanded.ok) return;
+
+    const applied = await applyEdit(
+      harness,
+      harness.repository.read(),
+      expanded.operations,
+      "plan-repair",
+    );
+    expect(applied.ok).toBe(true);
+
+    const after = harness.repository
+      .read()
+      .workingDefinition.executionContexts.find(
+        (entry) => entry.id === "context-plan",
+      )!.contextValidator;
+
+    expect(after.enabled).toBe(true);
+    expect(after.assignments.map((entry) => entry.id)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(after.assignments[0]).toMatchObject({
+      authority: "advisory",
+      focus: "Report threat-model concerns as advisories.",
+    });
+    // The demoted seat's delivered bytes were recomposed, so its lane rotates
+    // rather than resuming as the blocking reviewer it no longer is.
+    expect(assignmentFingerprint(after.assignments[0]!)).not.toBe(
+      assignmentFingerprint(before[0]!),
+    );
+    // The sibling passed through the expansion with its configuration intact.
+    // Its snapshot is re-pinned, as it is for every seat in any cohort write —
+    // what a narrowing must not do is change what the seat IS.
+    const authored = ({ profileSnapshot, ...rest }: (typeof before)[number]) =>
+      rest;
+    expect(authored(after.assignments[1]!)).toEqual(authored(before[1]!));
+  });
+});
+
+/**
+ * R4.1 — where a live-edited assignment's authored instructions land.
+ *
+ * The production preparation closure is the subject here, not a stand-in for
+ * it. A live edit is the one path that composes a seat's profile block AFTER
+ * execution start, so a placement rule applied only at seed time would deliver
+ * a live-added or newly promoted blocking seat's instructions twice: once as
+ * the mandate the role contract renders above the fence, and again inside the
+ * block. Builtin profiles resolve out of code with no storage access, so the
+ * real closure runs here unmodified — the only thing this file fakes elsewhere.
+ */
+describe("live-edited assignment instruction placement (R4.1)", () => {
+  const MANDATE =
+    "Judge this context against the rollback plan the migration declares.";
+
+  function preparationFor(assignments: ValidatorAssignment[]) {
+    return buildDefaultAssignmentSnapshotPreparation("/repo", [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        contextValidator: { enabled: true, assignments },
+      },
+    ]);
+  }
+
+  async function snapshotsFor(assignments: ValidatorAssignment[]) {
+    const preparation = await preparationFor(assignments);
+    if (!preparation.ok) {
+      throw new Error(
+        `preparation rejected: ${JSON.stringify(preparation.issues)}`,
+      );
+    }
+    return assignments.map((assignment) =>
+      preparation.prepared.snapshotFor(assignment),
+    );
+  }
+
+  function occurrences(haystack: string, needle: string): number {
+    return haystack.split(needle).length - 1;
+  }
+
+  it("withholds a blocking seat's mandate from the block it composes", async () => {
+    const [snapshot] = await snapshotsFor([
+      makeValidatorAssignment({
+        id: "alpha",
+        authority: "blocking",
+        focus: MANDATE,
+      }),
+    ]);
+
+    expect(snapshot?.renderedInstructionBlock).not.toContain(MANDATE);
+  });
+
+  it("keeps an advisory seat's focus inside the block it composes", async () => {
+    const [snapshot] = await snapshotsFor([
+      makeValidatorAssignment({
+        id: "alpha",
+        authority: "advisory",
+        focus: MANDATE,
+      }),
+    ]);
+
+    expect(snapshot?.renderedInstructionBlock).toContain(MANDATE);
+  });
+
+  it("delivers a live-edited mandate exactly once, above the fence", async () => {
+    const blocking = makeValidatorAssignment({
+      id: "alpha",
+      authority: "blocking",
+      focus: MANDATE,
+    });
+    const [snapshot] = await snapshotsFor([blocking]);
+
+    // The two production functions the validator runner composes for a lane,
+    // over the bytes the live edit actually committed.
+    const payload = composeWorkflowRoleInstructions({
+      roleContract: buildValidatorRoleContract({
+        authority: "blocking",
+        verdictSchema: { type: "object" },
+        mandate: blocking.focus ?? "",
+      }),
+      profileBlock: snapshot?.renderedInstructionBlock ?? "",
+    });
+
+    expect(occurrences(payload, MANDATE)).toBe(1);
+    expect(payload.indexOf(MANDATE)).toBeLessThan(
+      payload.indexOf(PROFILE_BLOCK_BEGIN),
+    );
+  });
+
+  it("composes distinct bytes for two seats that share a profile and a focus but not an authority", async () => {
+    // The preparation cache is keyed on what the composer was given. Authority
+    // now decides that, so a key blind to it would hand the second seat the
+    // first one's block — placement by whichever seat the op happened to list
+    // first.
+    const [blocking, advisory] = await snapshotsFor([
+      makeValidatorAssignment({
+        id: "alpha",
+        authority: "blocking",
+        focus: MANDATE,
+      }),
+      makeValidatorAssignment({
+        id: "beta",
+        authority: "advisory",
+        focus: MANDATE,
+      }),
+    ]);
+
+    expect(blocking?.renderedInstructionBlock).not.toContain(MANDATE);
+    expect(advisory?.renderedInstructionBlock).toContain(MANDATE);
   });
 });

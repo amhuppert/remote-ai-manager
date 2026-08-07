@@ -129,6 +129,7 @@ One row per shared concept: where the canonical implementation lives, who actual
 | Plan-repair supervisor (D1) | `workflow-graph/plan-repair/{trigger,schemas,prompt,agent-runner,supervisor}.ts`, composed at the `kickOffExecutionLoop` seam | every loop settlement (`execution-route-handlers.ts` `runExecutionLoopWithPlanRepair`) | supported | — | — |
 | Agent profile (prompt identity for an agent role) | `agent-profiles/library-service.ts` (resolution + listing) and `agent-profiles/composer.ts` (the rendered block + snapshot) | conversation creation/admission (`conversations/profile-resolution.ts`), the library API, `cctl agent list\|get`, and workflow assignment references (`workflow-graph/assignment-references.ts`, `seed-assignment-snapshots.ts`) | supported | — | — |
 | Agent-profile deletion references | PORT: `AgentProfileReferenceReporter` declared by `agent-profiles/library-service.ts`, implemented by `workflow-graph/profile-reference-reporter.ts` | `library-service.previewDeletion` / `delete`, wired only at `agent-profiles/route-handlers.ts` | supported | — | Domain code in `agent-profiles` never imports `workflow-graph` — the reporter reaches it through the route composition, and an unwired library REFUSES rather than reporting "no holders". The delete dialog holds its confirm button until the preview is on screen (advisory content, mandatory step) |
+| Validator authority (blocking vs advisory) | `workflow-graph/config-schemas.ts` (`validatorAuthoritySchema`, per-assignment, default `advisory`) — read by `role-instructions.ts` (which contract and where the mandate renders), `validator-runner.ts` (which verdict schema is dispatched), `validation-cohort.ts` (`concludeCohort`'s partition), `lane-identity.ts` (fingerprint input) | every graph validation round; `resolve-config.ts` seeds the single blocking acceptance-criteria seat; the shared `workflow-config` assignment editors author it | supported | — | Authority is never inherited or keyed on an assignment id — the ONE blocking seat is an explicit write in `SEEDED_WORKFLOW_DEFAULTS`, so a specialist arrives non-blocking and gains blocking power only by an author's deliberate act. Read the authority section before adding a consumer: an advisory seat's verdict schema has no `issues` field, so "handle both authorities" is a schema selection, never a runtime branch on a shared shape |
 | Dangling-reference fail-closed check | `workflow-graph/assignment-references.ts` (`checkDefinition` + `checkWorkflowDefaults`) | `storage.ts` accept, `validate-route-handlers.ts`, execution start in `execution-repository.ts`, config PUT | supported | — | Validate and execution start must run BOTH checks: a definition inherits staffing from `workflowDefaults` it never mentions, and checking only the definition turns a dangling default into an unlocated resolve failure inside snapshot seeding |
 
 ## Testing
@@ -205,7 +206,7 @@ for real cascade values (`form-state.test.ts` pins the identity).
 {
   "workflowDefaults": {
     "implementer":      { "id": "implementer", "profile": { "tier": "builtin", "id": "general-implementer" }, "agent": { "backend": "claude", "model": "opus", "reasoningEffort": "medium" } },
-    "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } } ] },
+    "contextValidator": { "enabled": true, "assignments": [ { "id": "general", "profile": { "tier": "builtin", "id": "general-reviewer" }, "strategy": "conversation", "authority": "blocking", "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "medium" }, "continuity": { "enabled": true } } ] },
     "scriptValidator":  { "commands": [] },
     "iterationPolicy":  { "maxIterations": 20, "continuity": { "enabled": true } },
     "circuitBreaker":   { "consecutiveFailureThreshold": 3 },
@@ -245,7 +246,7 @@ Nine blocks, all individually overridable per tier:
 | Block | Purpose |
 |---|---|
 | `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the runtime (backend, model, reasoning) that runs it |
-| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; a disabled cohort keeps its assignments dormant |
+| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, authority, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; `authority` (`blocking \| advisory`, default advisory) decides whether the seat can reopen tasks — see the authority section; a disabled cohort keeps its assignments dormant |
 | `scriptValidator` | Deterministic validator that runs its ordered registered command selection. `{ commands: string[] }`; an empty list disables it |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
@@ -381,10 +382,109 @@ workflow's three rather than adding a fourth.
 
 ```jsonc
 { "contextValidator": { "enabled": false, "assignments": [] } }
-{ "contextValidator": { "enabled": true, "assignments": [ { "id": "security", "profile": { "tier": "builtin", "id": "general-reviewer" }, "focus": "auth boundaries", "strategy": "task", "agent": { "backend": "codex", "model": "gpt-5.4", "reasoningEffort": "high" }, "continuity": { "enabled": true } } ] } }
+{ "contextValidator": { "enabled": true, "assignments": [ { "id": "security", "profile": { "tier": "builtin", "id": "security-reviewer" }, "focus": "auth boundaries", "strategy": "task", "authority": "advisory", "agent": { "backend": "codex", "model": "gpt-5.4", "reasoningEffort": "high" }, "continuity": { "enabled": true } } ] } }
 ```
 
 Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns allowed levels.
+
+## Validator authority and advisories
+
+Every validator assignment carries `authority` (`validatorAuthoritySchema` in
+`workflow-graph/config-schemas.ts`): `blocking` findings reopen tasks, `advisory`
+findings never can. The schema default is `advisory` for every assignment, and
+the one blocking seat an unconfigured workflow gets — the acceptance-criteria
+verifier — is written explicitly in `SEEDED_WORKFLOW_DEFAULTS`
+(`resolve-config.ts`), never derived from an id. A specialist added to a cohort
+therefore arrives non-blocking; making it able to fail a context is a deliberate
+authoring act, and the author who performs it owns convergence for that standard
+(the circuit breaker and plan repair are the backstops, not a substitute).
+Authority is an `assignmentFingerprint` input, so flipping it rotates the lane
+through the existing `assignment_changed` path — no new rotation machinery.
+
+Authority selects three things:
+
+- **Where the assignment's instructions render.** A blocking seat's instructions
+  are its MANDATE — the standard the context is judged against — so they render
+  inside the role contract above the profile fence (`role-instructions.ts`). An
+  advisory seat's instructions stay the subordinate use-site focus inside the
+  profile block. One authored field, two placements, decided in one place
+  (`assignmentProfileBlockOptions`) so a seat's text lands by what the seat IS,
+  not by which code path composed it. The cohort's shared turn prompt stays
+  byte-identical either way; per-assignment divergence lives entirely in
+  `systemInstructions`, which already differs per assignment through profiles.
+- **The verdict schema it is dispatched with** (`validator-runner.ts`). Blocking:
+  `{summary, issues, advisories}`. Advisory: `{summary, advisories}` — `issues`
+  does not exist on it, so an advisory seat cannot emit a blocking finding at
+  all; an attempt fails the structured-output gate and takes the normal retry.
+  The parse-side twins in `definition-schemas.ts` split identically, so a backend
+  without native structured output has no laxer path either.
+- **Whether the round waits on it.** `concludeCohort` (`validation-cohort.ts`)
+  partitions the frozen roster: pass/fail derives from blocking lanes only, with
+  findings concatenated and never merged. Advisory lanes contribute verdict,
+  summary, and advisories; an advisory lane's exhaustion is recorded on the lane
+  and never holds the round open — a lane that could not gate the round cannot
+  gate it by dying either. Candidate mismatch and `asked_user` parking still
+  count every lane: those are facts about the candidate and about a human being
+  waited on, not about blocking power.
+
+An advisory is `{ kind, title, description }`, `kind` one of `implementation`
+(the code under review), `plan` (the task or criteria that shaped it), or
+`out_of_scope` (anything beyond this context). It carries no `taskId` and never
+reaches `validateIssueTaskIds`, so an observation about code no task owns cannot
+become an `infra_error` or consume a lane attempt — the trap that used to punish
+a specialist for noticing a real cross-context defect. Identity is engine-stamped
+(`roundSeq`, `assignmentId`, ordinal) like every other assignment attribution: a
+reviewer writes about the work, never about itself.
+
+**An advisory-only cohort is legal.** The empty-roster refusal is unchanged, but
+an enabled cohort with zero blocking seats is a valid authoring choice: a context
+may already run with no validator at all, so advisory-only oversight is strictly
+more than an allowed baseline.
+
+### The advisory loop
+
+Every advisory reaches the implementer lane, which may act on it or decline it
+without obligation, and every one gets a durable disposition:
+
+- **Failing round** — the round's fresh advisories ride the existing task-failure
+  messages, so the implementer sees them beside the fixes it must make.
+- **Passing round with fresh advisories** — the context enters the
+  `advisory_response` phase instead of completing. The implementer lane gets one
+  structured turn carrying the batch with explicit non-binding framing, and
+  returns one disposition per delivered advisory: `addressed`, `declined`
+  (reason required by the schema), or `deferred`. Dispositions come back through
+  the existing structured-output gate, keyed by the engine-stamped identity; a
+  set that does not cover exactly the delivered batch is a schema failure and
+  retries.
+- **Re-certification** — once the dispositions land, the engine recomputes the
+  candidate identity (`headSha` + `trackedDiffHash` + `taskStateHash`).
+  Identical: the context completes on the certification it already earned — no
+  script run, no validator dispatch of any kind. Different: a blocking-only
+  re-certification round runs in the normal order (script gate first, then
+  blocking lanes) against the same frozen snapshots, and a failure there
+  re-enters the ordinary iteration loop. The hash is ground truth and the
+  dispositions are testimony, so an implementer that declines everything and
+  edits anyway is still re-certified.
+
+The loop is bounded by construction: a round's batch is delivered exactly once,
+and the re-certification round runs no advisory lanes, so it cannot raise a fresh
+batch and trigger a second response turn.
+
+**Advisory-only cohorts ship uncertified.** Because re-certification is
+blocking-only, a cohort with no blocking seat and no script gate has nothing to
+re-certify a changed candidate with: if the implementer edits files during the
+advisory-response turn, the context completes on a candidate no gate ever
+reviewed — **uncertified**, at the same trust level as a validator-less context.
+That is the honest consequence of the authority the author chose, not a gap to
+patch. An author who wants a floor under post-advisory edits configures a script
+gate or keeps one blocking seat.
+
+The built-in specialist reviewer profiles (`security-reviewer`,
+`type-api-contract-reviewer`, `test-reliability-reviewer` in
+`agent-profiles/builtins.ts`) model the channel: a finding the mandate covers
+goes through the channel the verdict gives it, and everything else becomes an
+advisory of the matching kind. Their prose names no blocking field, because one
+profile is legal on either seat.
 
 ## Land-gate invariant
 

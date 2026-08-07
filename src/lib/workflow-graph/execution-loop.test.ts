@@ -167,6 +167,7 @@ function createRunningExecution(
       },
     },
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},

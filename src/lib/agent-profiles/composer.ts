@@ -28,6 +28,7 @@ export {
   findReservedSequence,
   normalizeAssignmentFocus,
   renderProfileBlock,
+  renderableFocus,
   type ProfileTextField,
   type RenderProfileBlockOptions,
   type ReservedSequenceCollision,

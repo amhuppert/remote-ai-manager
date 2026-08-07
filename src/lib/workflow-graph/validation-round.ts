@@ -17,7 +17,10 @@
  */
 
 import { createHash } from "node:crypto";
-import type { SeededValidatorAssignment } from "@/lib/workflow-graph/config-schemas";
+import type {
+  SeededValidatorAssignment,
+  ValidatorAuthority,
+} from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowHaltReason,
   GraphWorkflowTaskState,
@@ -107,12 +110,37 @@ export function buildValidationRoundRoster(
   }));
 }
 
+/**
+ * The cohort a re-certification round runs: the blocking lanes, and nothing else
+ * (R8.2).
+ *
+ * A filter over the runnable assignments rather than a rule applied when the
+ * verdicts are weighed, so the advisory lanes are absent from the ROSTER — the
+ * round's own record of who reviewed the candidate. They never dispatch, never
+ * appear as seats a reader could mistake for reviewers that stayed silent, and
+ * never raise advisories a second response turn would have to answer. A
+ * re-certification asks one question — is the changed candidate still certified
+ * — and only a lane that can answer "no" has anything to contribute to it.
+ *
+ * An empty result is legal and means exactly what it says: an advisory-only
+ * cohort has nothing that could refuse the changed candidate, so its
+ * re-certification is the script gate alone, or nothing at all.
+ */
+export function selectRecertificationAssignments<
+  T extends { authority: ValidatorAuthority },
+>(assignments: readonly T[]): T[] {
+  return assignments.filter(
+    (assignment) => assignment.authority === "blocking",
+  );
+}
+
 function buildPendingSpecialist(): GraphWorkflowValidationSpecialist {
   return {
     state: "pending",
     attempts: 0,
     summary: null,
     issues: [],
+    advisories: [],
     questionToken: null,
     sessionRef: null,
     reviewArtifact: null,

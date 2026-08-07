@@ -111,14 +111,22 @@ export function parseGraphLaneId(
  * The delivered profile bytes (`resolvedInstructionHash`) are in it because a
  * lane replays its instructions once, at creation; strategy, continuity, and
  * the runtime triple are in it because each decides which handle the lane
- * holds. The use-site `id` is deliberately NOT: two assignments of one profile
- * differ by lane key, not by fingerprint, and folding the id in would force a
- * rotation on every rename while proving nothing about the delivered bytes.
+ * holds. Authority is in it because it selects the output schema the lane's
+ * turn is bound to, so a lane that already ran under the other one has to be
+ * rebuilt rather than resumed. `focus` is in it because a BLOCKING seat's
+ * instructions are delivered as its mandate above the profile fence (D4) and
+ * are therefore outside the block the hash covers; without it, an edited
+ * mandate would resume a lane that had already baked in the previous one. The
+ * use-site `id` is deliberately NOT: two assignments of one profile differ by
+ * lane key, not by fingerprint, and folding the id in would force a rotation on
+ * every rename while proving nothing about the delivered bytes.
  */
 export interface FingerprintableAssignment {
   profileSnapshot: { resolvedInstructionHash: string };
   agent: GraphWorkflowAgentConfig;
   strategy?: string;
+  authority?: string;
+  focus?: string;
   continuity?: { enabled: boolean; contextLimitTokens?: number };
 }
 
@@ -128,6 +136,8 @@ export function assignmentFingerprint(
   return [
     assignment.profileSnapshot.resolvedInstructionHash,
     assignment.strategy ?? "",
+    assignment.authority ?? "",
+    assignment.focus ?? "",
     assignment.continuity === undefined
       ? ""
       : String(assignment.continuity.enabled),

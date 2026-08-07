@@ -185,6 +185,19 @@ export const agentAssignmentSchema = z
 export type AgentAssignment = z.infer<typeof agentAssignmentSchema>;
 
 /**
+ * Whether a validator's findings can reopen tasks.
+ *
+ * `blocking` is authored, never inherited: the default is `advisory` for every
+ * assignment, and the seeded acceptance-criteria verifier gets its blocking
+ * authority from an explicit write in the seed rather than from a rule keyed on
+ * its id. A specialist added to a cohort therefore arrives non-blocking, and
+ * making it able to fail a context is a deliberate act by the workflow author
+ * — who then owns convergence for it.
+ */
+export const validatorAuthoritySchema = z.enum(["blocking", "advisory"]);
+export type ValidatorAuthority = z.infer<typeof validatorAuthoritySchema>;
+
+/**
  * A validator use site. Strategy is independent of backend exactly as the
  * pre-cutover `type` field was in practice: all four backend-x-strategy
  * combinations are expressible, and dispatch reads `strategy` directly.
@@ -192,6 +205,7 @@ export type AgentAssignment = z.infer<typeof agentAssignmentSchema>;
 export const validatorAssignmentSchema = agentAssignmentSchema
   .extend({
     strategy: z.enum(["conversation", "task"]),
+    authority: validatorAuthoritySchema.default("advisory"),
     continuity: graphWorkflowLaneContinuityPolicySchema.default({
       enabled: true,
     }),

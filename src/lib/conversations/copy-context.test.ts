@@ -249,6 +249,7 @@ function makeGraphWorkflowExecution(
       },
     },
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},

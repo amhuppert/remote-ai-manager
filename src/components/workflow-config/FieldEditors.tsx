@@ -75,11 +75,17 @@ export function ImplementerEditor({
 
 /**
  * Editor for ONE validator assignment: the shared assignment editor plus the
- * two axes only a validator has.
+ * axes only a validator has.
  *
  * Strategy and backend stay independent, so a Codex agent under conversation
  * strategy (or Claude under task) is authorable rather than implied by a
- * provider-named type.
+ * provider-named type. Authority is handed down as a control for the same
+ * reason strategy is — it exists only where a verdict does, and the shared
+ * editor must not assume every assignment carries one.
+ *
+ * The shared editor's result is FORWARDED, never merged over the current value:
+ * it returns this validator assignment whole, and merging would restore an
+ * optional key the author cleared (instructions) from the stale value.
  */
 export function ContextValidatorEditor({
   value,
@@ -96,10 +102,14 @@ export function ContextValidatorEditor({
     <div className="flex flex-col gap-sm">
       <AssignmentEditor
         value={value}
-        onChange={(next) => onChange({ ...value, ...next })}
+        onChange={onChange}
         strategy={{
           value: value.strategy,
           onChange: (strategy) => onChange({ ...value, strategy }),
+        }}
+        authority={{
+          value: value.authority,
+          onChange: (authority) => onChange({ ...value, authority }),
         }}
         audience="workflow_validator"
         libraryProjectName={libraryProjectName}

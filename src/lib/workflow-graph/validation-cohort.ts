@@ -17,7 +17,10 @@
  * semantics mean the passing siblings cannot vouch for what it would have said,
  * so a round with no rejection and an exhausted specialist does not conclude at
  * all — it stays open, uncharged, with its settled verdicts retained for a
- * resume that reruns only the lanes that never settled.
+ * resume that reruns only the lanes that never settled. "Required" is now the
+ * seat's authority: only a BLOCKING lane is one the round waits to hear from,
+ * and an advisory lane is by construction unable to reject work or to hold a
+ * round open (R5).
  *
  * Everything here is pure or injected: {@link runCohortLanes} takes the dispatch
  * function rather than knowing how a specialist runs, and {@link concludeCohort}
@@ -26,7 +29,11 @@
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
-import type { WorkflowValidatorIssue } from "@/lib/workflow-graph/definition-schemas";
+import type { ValidatorAuthority } from "@/lib/workflow-graph/config-schemas";
+import type {
+  WorkflowValidatorAdvisory,
+  WorkflowValidatorIssue,
+} from "@/lib/workflow-graph/definition-schemas";
 import type {
   GraphWorkflowValidationReviewArtifact,
   GraphWorkflowValidationSessionRef,
@@ -127,9 +134,31 @@ export type CohortSpecialistSettlement =
 
 export interface CohortLane {
   assignmentId: string;
+  /**
+   * Whether this lane's settlement can gate the round. Stamped from the roster
+   * seat rather than carried by the settlement: authority is a property of WHO
+   * was asked, not of what came back, and a lane that could describe its own
+   * authority from its verdict would be deciding its own blocking power.
+   */
+  authority: ValidatorAuthority;
   /** Admitted dispatches that failed as infrastructure. Never counts waits. */
   attempts: number;
   settlement: CohortSpecialistSettlement;
+}
+
+/**
+ * A lane an earlier pass of this round already accounted for.
+ *
+ * Authority-free by construction: it is rebuilt from the round RECORD, which
+ * stores what each seat did rather than what it was allowed to decide, and the
+ * roster this pass runs against is the one place that answer comes from.
+ */
+export type RetainedCohortLane = Omit<CohortLane, "authority">;
+
+/** One seat of the frozen roster: who runs, and what its findings may do. */
+export interface CohortRosterSeat {
+  assignmentId: string;
+  authority: ValidatorAuthority;
 }
 
 /**
@@ -143,6 +172,12 @@ export interface CohortLaneProgress {
   state: GraphWorkflowValidationSpecialistState;
   summary?: string | null;
   issues?: WorkflowValidatorIssue[];
+  /**
+   * This lane's advisories, exactly as it reported them and in that order.
+   * Unstamped: the identity is the engine's, assigned by the write that accepts
+   * this progress into a round it knows the `seq` of.
+   */
+  advisories?: WorkflowValidatorAdvisory[];
   questionToken?: string | null;
   /**
    * The verdict's provenance, carried alongside the state change so the write
@@ -186,13 +221,13 @@ export interface CohortCarriedProgress {
 
 export interface RunCohortLanesInput {
   /** The roster, in configured cohort order. */
-  assignmentIds: readonly string[];
+  roster: readonly CohortRosterSeat[];
   /**
    * Lanes an earlier pass of this same round already accounted for and that
    * must not run again: the verdicts a resume carries forward, and any lane
    * still parked on a question the human has not answered.
    */
-  retained?: Readonly<Record<string, CohortLane>>;
+  retained?: Readonly<Record<string, RetainedCohortLane>>;
   /**
    * What unsettled lanes already spent in this round, recovered from the round
    * record. Absent for a fresh round, and absent for a lane whose budget an
@@ -237,6 +272,7 @@ function progressForSettlement(
       state,
       summary: settlement.summary,
       issues: settlement.issues,
+      advisories: settlement.advisories ?? [],
       verdict: {
         pass: settlement.kind === "pass",
         sessionRef: settlement.sessionRef ?? null,
@@ -268,9 +304,13 @@ function progressForSettlement(
 export async function runCohortLanes(
   input: RunCohortLanesInput,
 ): Promise<CohortLane[]> {
-  async function runLane(assignmentId: string): Promise<CohortLane> {
+  async function runLane(seat: CohortRosterSeat): Promise<CohortLane> {
+    const { assignmentId, authority } = seat;
     const retained = input.retained?.[assignmentId];
-    if (retained !== undefined) return retained;
+    // Stamped from THIS pass's roster, so a carried-forward lane is judged
+    // under the authority the seat holds now rather than one reconstructed
+    // from a record that never stored it.
+    if (retained !== undefined) return { ...retained, authority };
 
     const carried = input.carried?.[assignmentId];
     let attempts = carried?.attempts ?? 0;
@@ -280,7 +320,7 @@ export async function runCohortLanes(
     // recovered at the bound has already had its three admitted dispatches, so
     // it settles on what the record says happened rather than buying a fourth.
     if (carried !== undefined && attempts >= COHORT_SPECIALIST_ATTEMPTS) {
-      return settle(assignmentId, attempts, {
+      return settle(seat, attempts, {
         kind: "infra_exhausted",
         assignmentId,
         attempts,
@@ -297,7 +337,7 @@ export async function runCohortLanes(
       if (outcome.kind === "queue_admission_timeout") {
         waits += 1;
         if (waits < COHORT_ADMISSION_WAITS) continue;
-        return settle(assignmentId, attempts, {
+        return settle(seat, attempts, {
           kind: "infra_exhausted",
           assignmentId,
           attempts,
@@ -320,7 +360,7 @@ export async function runCohortLanes(
           },
         });
         if (attempts < COHORT_SPECIALIST_ATTEMPTS) continue;
-        return settle(assignmentId, attempts, {
+        return settle(seat, attempts, {
           kind: "infra_exhausted",
           assignmentId,
           attempts,
@@ -330,22 +370,27 @@ export async function runCohortLanes(
         });
       }
 
-      return settle(assignmentId, attempts, outcome);
+      return settle(seat, attempts, outcome);
     }
   }
 
   function settle(
-    assignmentId: string,
+    seat: CohortRosterSeat,
     attempts: number,
     settlement: CohortSpecialistSettlement,
   ): CohortLane {
     input.onProgress?.(
-      progressForSettlement(assignmentId, attempts, settlement),
+      progressForSettlement(seat.assignmentId, attempts, settlement),
     );
-    return { assignmentId, attempts, settlement };
+    return {
+      assignmentId: seat.assignmentId,
+      authority: seat.authority,
+      attempts,
+      settlement,
+    };
   }
 
-  return await Promise.all(input.assignmentIds.map(runLane));
+  return await Promise.all(input.roster.map(runLane));
 }
 
 export type CohortConclusion =
@@ -417,7 +462,8 @@ interface CohortRef {
 }
 
 /**
- * Resolve what the cohort decided, in one precedence rule (R6).
+ * Resolve what the cohort decided, in one precedence rule (R6), applied to the
+ * lanes that hold blocking authority (R5).
  *
  * The order encodes the argument, not a preference:
  *
@@ -431,6 +477,14 @@ interface CohortRef {
  *     need their opinion to know the work is going back;
  *  4. no rejection plus an exhausted required specialist cannot conclude;
  *  5. otherwise every specialist passed.
+ *
+ * Authority partitions rules 3 and 4 and nothing else. Steps 1 and 2 are about
+ * the CANDIDATE and about a human being waited on — neither becomes untrue
+ * because the lane that surfaced it cannot reject work — so every lane still
+ * counts there. An advisory lane contributes its verdict, its summary, and its
+ * advisories, and is structurally incapable of failing the round or of holding
+ * it open: with zero blocking seats the round concludes passed once its
+ * advisory lanes have settled or exhausted.
  */
 export function concludeCohort(lanes: readonly CohortLane[]): CohortConclusion {
   const mismatch = lanes.find(
@@ -464,13 +518,22 @@ export function concludeCohort(lanes: readonly CohortLane[]): CohortConclusion {
     };
   }
 
-  const rejected = verdicts.some((lane) => lane.settlement.kind === "fail");
+  // The partition. Everything below decides the round from these lanes only;
+  // the advisory ones stay in `verdicts` because their reviews are still
+  // reported, priced, and (for their advisories) delivered.
+  const blocking = lanes.filter((lane) => lane.authority === "blocking");
+  const blockingVerdicts = verdicts.filter(
+    (lane) => lane.authority === "blocking",
+  );
+  const rejected = blockingVerdicts.some(
+    (lane) => lane.settlement.kind === "fail",
+  );
 
   if (rejected) {
     const issues: CohortFinding[] = [];
     const reopenTaskIds: string[] = [];
     const seenTaskIds = new Set<string>();
-    for (const lane of verdicts) {
+    for (const lane of blockingVerdicts) {
       if (lane.settlement.kind !== "fail") continue;
       // Findings are concatenated, never merged: two reviewers objecting to one
       // task for different reasons is two findings, and collapsing them would
@@ -485,7 +548,9 @@ export function concludeCohort(lanes: readonly CohortLane[]): CohortConclusion {
         reopenTaskIds.push(taskId);
       }
     }
-    const last = lastRef(verdicts, "fail");
+    // The refs come from the rejection that concluded the round, so they are
+    // read off the blocking lanes even though the aggregate reports them all.
+    const last = lastRef(blockingVerdicts, "fail");
     return {
       kind: "failed",
       summary: joinSummaries(verdicts),
@@ -497,7 +562,10 @@ export function concludeCohort(lanes: readonly CohortLane[]): CohortConclusion {
     };
   }
 
-  const exhausted = lanes.find(
+  // An advisory lane's exhaustion is recorded on its own lane and goes no
+  // further: nothing was waiting to hear from it, so the round is not held
+  // open for a review that could not have gated it.
+  const exhausted = blocking.find(
     (lane) => lane.settlement.kind === "infra_exhausted",
   );
   if (exhausted?.settlement.kind === "infra_exhausted") {

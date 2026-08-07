@@ -55,12 +55,14 @@ function validator(
   id: string,
   profile: { tier: "builtin" | "global" | "project"; id: string },
   focus?: string,
+  authority: "blocking" | "advisory" = "advisory",
 ) {
   return {
     id,
     profile,
     ...(focus === undefined ? {} : { focus }),
     strategy: "conversation" as const,
+    authority,
     agent: CLAUDE_AGENT,
     continuity: { enabled: true },
   };
@@ -218,6 +220,45 @@ describe("seedAssignmentSnapshots (R4)", () => {
     expect(snapshot?.renderedInstructionBlock).toBe(expected.block);
     expect(snapshot?.resolvedInstructionHash).toBe(
       expected.resolvedInstructionHash,
+    );
+  });
+
+  it("keeps a blocking seat's instructions out of its profile block (R4)", async () => {
+    const seeded = await seedAssignmentSnapshots(
+      cascade({
+        enabled: true,
+        assignments: [
+          validator(
+            "security",
+            { tier: "project", id: "repo-reviewer" },
+            "auth boundaries",
+            "blocking",
+          ),
+          validator(
+            "performance",
+            { tier: "project", id: "repo-reviewer" },
+            "hot paths",
+            "advisory",
+          ),
+        ],
+      }),
+      { library, projectPath: PROJECT_PATH },
+    );
+
+    const [blocking, advisory] =
+      seeded.executionContexts[0]?.contextValidator.assignments ?? [];
+
+    // The blocking seat's instructions are its mandate: the role contract
+    // delivers them above the fence, so rendering them inside the block too
+    // would put one text at two authority levels.
+    expect(blocking?.focus).toBe("auth boundaries");
+    expect(blocking?.profileSnapshot.renderedInstructionBlock).not.toContain(
+      "auth boundaries",
+    );
+    // The advisory seat's stay exactly where they were: subordinate, inside
+    // the block, covered by the delivered-bytes hash.
+    expect(advisory?.profileSnapshot.renderedInstructionBlock).toContain(
+      "hot paths",
     );
   });
 

@@ -54,6 +54,7 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import type { ExecutePromptInput } from "@/lib/workflows/conversation/types";
 import { agentAssignmentSchema } from "./config-schemas";
+import { assignmentFingerprint } from "./lane-identity";
 import { createGraphLaneContinuity } from "./lane-continuity";
 import { seedAssignmentSnapshots } from "./seed-assignment-snapshots";
 import type { CascadeWorkflowSemanticDefinition } from "./definition-schemas";
@@ -134,10 +135,15 @@ function assignment(id: string, focus?: string) {
   };
 }
 
-function validatorAssignment(id: string, focus?: string) {
+function validatorAssignment(
+  id: string,
+  focus?: string,
+  authority: "blocking" | "advisory" = "advisory",
+) {
   return {
     ...assignment(id, focus),
     strategy: "conversation" as const,
+    authority,
     continuity: { enabled: true },
   };
 }
@@ -352,7 +358,32 @@ describe("lane snapshot handoff (R4.1)", () => {
     ).toBe(false);
   });
 
-  it("gives two assignments of one profile distinct blocks and hashes under different focus", async () => {
+  it("gives two blocking assignments of one profile distinct lane identities under different mandates", async () => {
+    const seeded = await seedAssignmentSnapshots(
+      cascade([
+        validatorAssignment("security", "auth boundaries only", "blocking"),
+        validatorAssignment("performance", "hot paths only", "blocking"),
+      ]),
+      { library, projectPath: PROJECT_PATH },
+    );
+
+    const [security, performance] =
+      seeded.executionContexts[0]!.contextValidator.assignments;
+
+    // A blocking seat's instructions are its mandate and travel above the
+    // fence, so the two blocks — and the hash over them — are now identical.
+    expect(security!.profileSnapshot.renderedInstructionBlock).toBe(
+      performance!.profileSnapshot.renderedInstructionBlock,
+    );
+    // What must still separate them is what decides whether a lane may be
+    // resumed: neither can pick up the other's conversation and replay a
+    // mandate it never ran under.
+    expect(assignmentFingerprint(security!)).not.toBe(
+      assignmentFingerprint(performance!),
+    );
+  });
+
+  it("gives two advisory assignments of one profile distinct blocks and hashes under different focus", async () => {
     const seeded = await seedAssignmentSnapshots(
       cascade([
         validatorAssignment("security", "auth boundaries only"),

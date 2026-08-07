@@ -26,6 +26,34 @@ const EXPECTED_IDS = [
   "test-reliability-reviewer",
 ];
 
+/** The reviewers whose lens reaches past any one context's acceptance criteria. */
+const SPECIALIST_REVIEWER_IDS = [
+  "security-reviewer",
+  "type-api-contract-reviewer",
+  "test-reliability-reviewer",
+];
+
+/**
+ * The advisory item's `kind` values, as the validator output schema defines
+ * them. Restated rather than imported: `agent-profiles` never depends on
+ * `workflow-graph`, and the point of the assertion is that the shipped prose
+ * names the enum members a validator's structured output must actually carry —
+ * a profile steering an agent toward some other word would fail the gate.
+ */
+const ADVISORY_KINDS = ["implementation", "plan", "out_of_scope"];
+
+/**
+ * Text that would presume a blocking channel. A specialist profile is legal on
+ * either authority, and an advisory seat's verdict schema has no `issues` field
+ * and no way to reopen anything — so a profile naming one would be instructing
+ * output the seat cannot emit.
+ */
+const BLOCKING_CHANNEL_PRESUMPTIONS = [
+  /`issues`/,
+  /\breopen\b/i,
+  /\bfail(?:ing)? (?:the|this) context\b/i,
+];
+
 describe("built-in agent profiles (R3.1)", () => {
   it("ships exactly the curated set", () => {
     expect([...BUILTIN_AGENT_PROFILES].map((p) => p.id).sort()).toEqual(
@@ -140,6 +168,34 @@ describe("built-in agent profiles (R3.1)", () => {
             ),
           `${operation} ${profile.id}`,
         ).toThrow(AgentProfileTierReadOnlyError);
+      }
+    }
+  });
+});
+
+describe("specialist reviewer advisory routing (R11.1)", () => {
+  it("routes a beyond-mandate finding to an advisory of a named kind", () => {
+    for (const id of SPECIALIST_REVIEWER_IDS) {
+      const instructions = findBuiltinAgentProfile(id)?.instructions ?? "";
+
+      expect(instructions, id).toMatch(/\bmandate\b/);
+      expect(instructions, id).toMatch(/\badvisor(?:y|ies)\b/);
+      for (const kind of ADVISORY_KINDS) {
+        expect(instructions, `${id} names the \`${kind}\` kind`).toContain(
+          `\`${kind}\``,
+        );
+      }
+    }
+  });
+
+  it("keeps specialist instructions legal on an advisory seat", () => {
+    for (const id of SPECIALIST_REVIEWER_IDS) {
+      const instructions = findBuiltinAgentProfile(id)?.instructions ?? "";
+
+      for (const presumption of BLOCKING_CHANNEL_PRESUMPTIONS) {
+        expect(instructions, `${id} vs ${presumption}`).not.toMatch(
+          presumption,
+        );
       }
     }
   });

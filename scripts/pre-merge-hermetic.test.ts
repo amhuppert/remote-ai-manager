@@ -100,20 +100,33 @@ beforeAll(() => {
   git(repo, "add", ".");
   git(repo, "commit", "-m", "change");
 
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    PREMERGE_TEST_LOG: logPath,
+    // The script must isolate even when the caller already pointed
+    // CC_CONFIG_DIR at live state — as the CC server does in production.
+    CC_CONFIG_DIR: SENTINEL_CONFIG_DIR,
+    TARGET_BRANCH: "main",
+  };
+  // This suite may itself be running under scripts/validate/test.sh, whose
+  // common.sh exports CC_VALIDATION_SCRATCH_CONFIG_DIR so sibling phases share
+  // one scratch dir instead of each making (and deleting) their own. That
+  // marker — not CC_CONFIG_DIR — is what gates the isolation block, so
+  // inheriting it would tell the script under test that an outer run had
+  // already isolated this environment: it would skip its own setup and leave
+  // CC_CONFIG_DIR on the sentinel above, and the test would then report a leak
+  // it had manufactured. Production never reaches that state, because the one
+  // writer of the marker sets CC_CONFIG_DIR to the same scratch dir in the same
+  // block. The caller being simulated here is a FRESH one.
+  delete childEnv["CC_VALIDATION_SCRATCH_CONFIG_DIR"];
+
   try {
     output = execFileSync("bash", [scriptPath], {
       cwd: repo,
       encoding: "utf8",
       stdio: "pipe",
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        PREMERGE_TEST_LOG: logPath,
-        // The script must isolate even when the caller already pointed
-        // CC_CONFIG_DIR at live state — as the CC server does in production.
-        CC_CONFIG_DIR: SENTINEL_CONFIG_DIR,
-        TARGET_BRANCH: "main",
-      },
+      env: childEnv,
     });
     exitCode = 0;
   } catch (err) {

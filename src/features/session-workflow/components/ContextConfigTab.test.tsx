@@ -59,6 +59,7 @@ function fullContext(): GraphWorkflowResolvedContext {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "sonnet",
@@ -306,6 +307,7 @@ describe("ContextConfigTab — context validator enabled field", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "sonnet",
@@ -344,6 +346,7 @@ describe("ContextConfigTab — context validator enabled field", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "task",
+          authority: "blocking",
           agent: {
             backend: "codex",
             model: "gpt-5.4",
@@ -378,6 +381,9 @@ describe("ContextConfigTab — context validator enabled field", () => {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "task",
+              // Preserved, not re-derived: an enabled-flip that dropped it
+              // would demote the seat to the schema default (advisory).
+              authority: "blocking",
               agent: {
                 backend: "codex",
                 model: "gpt-5.4",
@@ -418,6 +424,7 @@ describe("ContextConfigTab — context validator enabled field", () => {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "conversation",
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -460,6 +467,11 @@ describe("ContextConfigTab — context validator enabled field", () => {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "conversation",
+              // Cloned from SEEDED_WORKFLOW_DEFAULTS, whose one seeded seat is
+              // the shipped blocking reviewer — so re-enabling an empty cohort
+              // seeds that blocking seat rather than the schema's flat
+              // "advisory" default.
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -471,6 +483,136 @@ describe("ContextConfigTab — context validator enabled field", () => {
         },
       },
     ]);
+  });
+});
+
+/**
+ * R12.1/R12.2 on the live-execution consumer, and R12.4's rotation disclosure.
+ *
+ * The axis reaches this tab through the same shared cohort editor the builder
+ * and the Settings defaults form render; what is unique here is that a seat
+ * already HOLDS a lane, so the rotation an edit forces has to be visible before
+ * the edit is applied.
+ */
+describe("ContextConfigTab — validator authority and lane rotation", () => {
+  function renderEditable(onSaveContextConfig = vi.fn()) {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(fullContext(), startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+    return { onSaveContextConfig };
+  }
+
+  function validatorBlock(): HTMLElement {
+    return screen.getByTestId("config-block-context-validator");
+  }
+
+  it("exposes the authority axis and its instructions face through the shared editor", () => {
+    renderEditable();
+    const block = validatorBlock();
+    expect(
+      within(block).getByTestId("cohort-authority-badge").textContent,
+    ).toBe("Blocking");
+    expect(
+      within(block).getByLabelText("Mandate for general"),
+    ).toBeInTheDocument();
+    expect(
+      within(block).getByLabelText("Validator authority"),
+    ).toBeInTheDocument();
+  });
+
+  it("carries an authority edit into the update-context op", () => {
+    const { onSaveContextConfig } = renderEditable();
+    fireEvent.click(
+      within(
+        within(validatorBlock()).getByLabelText("Validator authority"),
+      ).getByRole("radio", { name: "advisory" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const op = onSaveContextConfig.mock.calls[0]?.[0]?.[0];
+    expect(op.contextValidator.assignments[0].authority).toBe("advisory");
+  });
+
+  it("warns that changing a seat's authority rotates its lane BEFORE the edit is applied", () => {
+    const { onSaveContextConfig } = renderEditable();
+    expect(
+      screen.queryByTestId("lane-rotation-notice"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(
+        within(validatorBlock()).getByLabelText("Validator authority"),
+      ).getByRole("radio", { name: "advisory" }),
+    );
+
+    const notice = screen.getByTestId("lane-rotation-notice");
+    expect(notice.textContent).toContain("general");
+    expect(notice.textContent).toContain("assignment_changed");
+    // The disclosure precedes the write, so the operator can still back out.
+    expect(onSaveContextConfig).not.toHaveBeenCalled();
+  });
+
+  it("warns that editing a seat's instructions rotates its lane", () => {
+    renderEditable();
+    fireEvent.change(
+      within(validatorBlock()).getByLabelText("Mandate for general"),
+      { target: { value: "auth boundaries only" } },
+    );
+    expect(screen.getByTestId("lane-rotation-notice").textContent).toContain(
+      "general",
+    );
+  });
+
+  // Removing a mandate is an authority-bearing edit like writing one: the seat
+  // stops being bound to that text, its fingerprint moves, and its lane is
+  // retired. It reaches the op as a MISSING key, not an empty string.
+  it("warns about the rotation when a seat's instructions are cleared, and saves the removal", () => {
+    const context = fullContext();
+    const seat = context.contextValidator.assignments[0];
+    if (!seat) throw new Error("fixture carries no validator assignment");
+    seat.focus = "auth boundaries";
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(context, startedContextState(), {
+          status: "paused",
+        })}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    fireEvent.change(
+      within(validatorBlock()).getByLabelText("Mandate for general"),
+      { target: { value: "" } },
+    );
+
+    expect(screen.getByTestId("lane-rotation-notice").textContent).toContain(
+      "general",
+    );
+    expect(
+      within(validatorBlock()).getByLabelText("Mandate for general"),
+    ).toHaveValue("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    const op = onSaveContextConfig.mock.calls[0]?.[0]?.[0];
+    expect(op.contextValidator.assignments[0]).not.toHaveProperty("focus");
+  });
+
+  it("stays silent for an edit that does not retire the lane", () => {
+    renderEditable();
+    fireEvent.change(screen.getByLabelText("Context title"), {
+      target: { value: "Implement, revised" },
+    });
+    expect(
+      screen.queryByTestId("lane-rotation-notice"),
+    ).not.toBeInTheDocument();
   });
 });
 

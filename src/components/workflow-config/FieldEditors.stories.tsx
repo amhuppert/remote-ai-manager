@@ -64,6 +64,7 @@ const VALIDATOR: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin", id: "general-reviewer" },
   strategy: "conversation",
+  authority: "blocking",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   continuity: { enabled: true },
 };
@@ -180,6 +181,45 @@ export const Editable: Story = {
 
 export const ReadOnly: Story = {
   render: () => <AllEditors readOnly />,
+};
+
+/**
+ * The same seat under each authority, side by side: one field, two forces
+ * (R12.2). Blocking reads as the mandate its issues must trace to; advisory
+ * reads as a subordinate steer inside the profile block.
+ */
+export const AuthorityFaces: Story = {
+  render: () => {
+    const AuthorityHarness = () => {
+      const [blocking, setBlocking] = useState<ValidatorAssignment>({
+        ...VALIDATOR,
+        id: "general",
+        authority: "blocking",
+        focus: "the context's acceptance criteria, and nothing beyond them",
+      });
+      const [advisory, setAdvisory] = useState<ValidatorAssignment>({
+        ...VALIDATOR,
+        id: "security",
+        authority: "advisory",
+        focus: "auth boundaries and session fixation",
+      });
+      return (
+        <Panel>
+          <ContextValidatorEditor
+            value={blocking}
+            onChange={setBlocking}
+            libraryProjectName={PROJECT}
+          />
+          <ContextValidatorEditor
+            value={advisory}
+            onChange={setAdvisory}
+            libraryProjectName={PROJECT}
+          />
+        </Panel>
+      );
+    };
+    return <AuthorityHarness />;
+  },
 };
 
 export const CodexImplementer: Story = {

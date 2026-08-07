@@ -64,10 +64,14 @@ let logDirRoot: string;
 // closed when it cannot resolve.
 const worktreeDir = mkdtempSync(path.join(tmpdir(), "cc-cohort-wt-"));
 
-/** Both assignments name the SAME library profile — only the use site differs. */
+/**
+ * Both assignments name the SAME library profile — only the use site differs.
+ * Both are blocking, which is what makes `passTurn`'s issues-bearing verdict the
+ * shape their lanes are held to.
+ */
 function cohortOfTwo(): SeededValidatorAssignment[] {
   return ["reviewer-a", "reviewer-b"].map((id) =>
-    makeSeededValidatorAssignment({ id }),
+    makeSeededValidatorAssignment({ id, authority: "blocking" }),
   );
 }
 
@@ -130,7 +134,7 @@ const executionRepository = {
 function passTurn(): TaskRunResult {
   return {
     kind: "text",
-    text: JSON.stringify({ summary: "All good", issues: [] }),
+    text: JSON.stringify({ summary: "All good", issues: [], advisories: [] }),
     error: null,
     backendRef: null,
     continuationDisposition: "keep",

@@ -122,6 +122,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
                 profile: { tier: "project", id: "security-reviewer" },
                 focus: "auth boundaries",
                 strategy: "conversation",
+                // Non-default authority: an authored blocking specialist has to
+                // survive persistence as blocking, not decay to the advisory
+                // default on reload.
+                authority: "blocking",
                 agent: {
                   backend: "claude",
                   model: "sonnet",
@@ -375,6 +379,25 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
                   description: "Document how to revert the migration.",
                 },
               ],
+              advisories: [
+                {
+                  kind: "plan",
+                  title: "The rollback step belongs in its own task",
+                  description:
+                    "Reverting the migration is work in its own right, not a footnote on this one.",
+                  identity: {
+                    roundSeq: 4,
+                    assignmentId: "general",
+                    ordinal: 1,
+                  },
+                  deliveredAt: "2026-03-01T00:00:00.000Z",
+                  disposition: {
+                    outcome: "declined",
+                    reason: "The plan is already approved at this shape.",
+                    recordedAt: "2026-03-01T00:05:00.000Z",
+                  },
+                },
+              ],
               questionToken: "qb-general-1",
               sessionRef: {
                 backend: "claude",
@@ -401,6 +424,22 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
               attempts: 1,
               summary: null,
               issues: [],
+              // Undelivered and undisposed, so the round trip also covers the
+              // state every advisory starts in.
+              advisories: [
+                {
+                  kind: "out_of_scope",
+                  title: "The auth middleware has no rate limit",
+                  description: "Nothing in this context owns it; worth filing.",
+                  identity: {
+                    roundSeq: 4,
+                    assignmentId: "security-reviewer",
+                    ordinal: 1,
+                  },
+                  deliveredAt: null,
+                  disposition: null,
+                },
+              ],
               questionToken: "qb-security-1",
               sessionRef: {
                 backend: "codex",
@@ -427,6 +466,15 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           phase: "concluded",
           outcome: "failed",
           startedAt: "2026-01-01T00:03:00.000Z",
+        },
+        // The advisory-response phase, under the same superimposition rule as
+        // the records above: a context that owes a re-certification does not
+        // simultaneously carry a failed round, but every persisted key path has
+        // to survive the round-trip.
+        advisoryResponse: {
+          roundSeq: 4,
+          phase: "recertifying",
+          enteredAt: "2026-01-01T00:06:00.000Z",
         },
       },
     },
@@ -487,6 +535,28 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
         lastUpdatedByConversationId: "conv-doc-1",
+      },
+    ],
+    // Both indexed kinds, projected from the two advisories the round record
+    // above carries: the index is what an advisory's audience reads without
+    // opening a round, so a run that persisted the rounds but dropped the index
+    // would lose exactly the long-lived half of the record.
+    advisoryIndex: [
+      {
+        identity: { roundSeq: 4, assignmentId: "general", ordinal: 1 },
+        kind: "plan",
+        title: "The rollback step belongs in its own task",
+        contextId: "ctx-1",
+      },
+      {
+        identity: {
+          roundSeq: 4,
+          assignmentId: "security-reviewer",
+          ordinal: 1,
+        },
+        kind: "out_of_scope",
+        title: "The auth middleware has no rate limit",
+        contextId: "ctx-1",
       },
     ],
     laneStates: {

@@ -65,14 +65,21 @@ import {
   _resetActorDepsForTesting,
 } from "@/lib/workflows/conversation/actor-implementations";
 import { createActorImplementationDepsFixture } from "@/lib/workflows/conversation/testing/actor-deps-fixture";
-import { WORKFLOW_ROLE_CONTRACT_HEADING } from "./role-instructions";
+import {
+  assignmentProfileBlockOptions,
+  VALIDATOR_MANDATE_HEADING,
+  WORKFLOW_ROLE_CONTRACT_HEADING,
+} from "./role-instructions";
 import {
   createValidatorRunner,
   type ValidatorRunResult,
 } from "./validator-runner";
 import { createWorkflowExecution } from "./test-fixtures";
 import type { GraphWorkflowExecution } from "./schemas";
-import type { SeededValidatorAssignment } from "./config-schemas";
+import type {
+  SeededValidatorAssignment,
+  ValidatorAuthority,
+} from "./config-schemas";
 import type { GraphWorkflowResolvedContext } from "./definition-schemas";
 import {
   ADVERSARY_EDIT_MARKER,
@@ -115,6 +122,9 @@ const DEMANDS = renderAdversarialDemands({
 const CONFORMING_VERDICT = JSON.stringify({
   summary: "Reviewed against the delivered criteria.",
   issues: [],
+  // A blocking seat's dispatched schema requires advisories alongside issues,
+  // so the conforming shape carries the empty array.
+  advisories: [],
 });
 
 /** ---------------------------------------------------------------- provider */
@@ -244,17 +254,30 @@ function profileFor(instructions: string): ResolvedAgentProfile {
   };
 }
 
+/**
+ * A seat as execution start would have seeded it, authority included.
+ *
+ * The block is composed through the production placement rule rather than a
+ * restatement of it: authority decides which layer an assignment's authored
+ * instructions are delivered at, and a fixture that decided that for itself
+ * could assert a placement production never produces.
+ */
 function seededValidator(
   backend: AgentBackendId,
   text: { instructions: string; focus?: string },
+  authority: ValidatorAuthority = "blocking",
 ): SeededValidatorAssignment {
+  const focus = text.focus === undefined ? {} : { focus: text.focus };
   return {
     id: "reviewer",
     profile: { tier: "builtin", id: "general-reviewer" },
-    profileSnapshot: buildAgentProfileSnapshot(profileFor(text.instructions), {
-      ...(text.focus === undefined ? {} : { assignmentFocus: text.focus }),
-    }),
+    ...focus,
+    profileSnapshot: buildAgentProfileSnapshot(
+      profileFor(text.instructions),
+      assignmentProfileBlockOptions({ ...focus, authority }),
+    ),
     strategy: "task",
+    authority,
     agent: { backend, model: "sonnet", reasoningEffort: "medium" },
     continuity: { enabled: true },
   } as SeededValidatorAssignment;
@@ -328,6 +351,8 @@ interface RunOptions {
   backend: AgentBackendId;
   instructions: string;
   focus?: string;
+  /** Which contract the seat runs under; blocking unless a test says otherwise. */
+  authority?: ValidatorAuthority;
   /** What the scripted provider returns; defaults to a conforming verdict. */
   verdictText?: string;
 }
@@ -336,10 +361,14 @@ async function runValidator(options: RunOptions): Promise<ValidatorRunResult> {
   resetCapture();
   scriptedVerdictText = options.verdictText ?? CONFORMING_VERDICT;
 
-  const validator = seededValidator(options.backend, {
-    instructions: options.instructions,
-    ...(options.focus === undefined ? {} : { focus: options.focus }),
-  });
+  const validator = seededValidator(
+    options.backend,
+    {
+      instructions: options.instructions,
+      ...(options.focus === undefined ? {} : { focus: options.focus }),
+    },
+    options.authority ?? "blocking",
+  );
   const execution = createWorkflowExecution();
   const context = contextFor(validator, execution);
 
@@ -414,7 +443,7 @@ describe.each(["claude", "codex"] as const)(
           ...(verdictText === undefined ? {} : { verdictText }),
         });
 
-      it("lands the demands inside the profile block, below the role contract", async () => {
+      it("lands the demands in the layer its authoring surface owns, below the role contract", async () => {
         await runAdversary();
 
         const payload = privilegedPayload(backend);
@@ -425,33 +454,49 @@ describe.each(["claude", "codex"] as const)(
 
         expect(contractAt).toBeGreaterThanOrEqual(0);
         expect(beginAt).toBeGreaterThan(contractAt);
-        expect(marker).toBeGreaterThan(beginAt);
-        expect(endAt).toBeGreaterThan(marker);
+        if (vector === "profile") {
+          // Library content is subordinate wherever it comes from: inside the
+          // markers, below the contract.
+          expect(marker).toBeGreaterThan(beginAt);
+          expect(endAt).toBeGreaterThan(marker);
+        } else {
+          // This seat is blocking, so its authored instructions ARE its
+          // mandate: they render in the contract, above the fence — the layer
+          // the workflow author is entitled to write at (R4/D4).
+          expect(marker).toBeGreaterThan(contractAt);
+          expect(marker).toBeLessThan(beginAt);
+          expect(payload.indexOf(VALIDATOR_MANDATE_HEADING)).toBeLessThan(
+            marker,
+          );
+        }
 
-        // Exactly one block. Hostile text that could open a second one would
-        // have somewhere to put a payload the frame does not govern.
+        // Exactly one block, whichever layer carried the demands. Hostile text
+        // that could open a second one would have somewhere to put a payload
+        // the frame does not govern.
         expect(occurrences(payload, PROFILE_BLOCK_BEGIN)).toBe(1);
         expect(occurrences(payload, PROFILE_BLOCK_END)).toBe(1);
       });
 
-      it("leaves the frame above the block byte-identical to a benign profile's", async () => {
-        const frameOf = (payload: string) =>
-          payload.slice(0, payload.indexOf(PROFILE_BLOCK_BEGIN));
+      it("leaves every layer it does not own byte-identical to a benign seat's", async () => {
+        // Whichever layer carries the demands, the OTHER one must come out
+        // unchanged: the frame for block-borne text, the block for a
+        // mandate. Stated as bytes rather than as position, so a demand that
+        // widened its own layer by a single character is caught.
+        const untouchedRegion = (payload: string) =>
+          vector === "profile"
+            ? payload.slice(0, payload.indexOf(PROFILE_BLOCK_BEGIN))
+            : payload.slice(payload.indexOf(PROFILE_BLOCK_BEGIN));
 
         await runAdversary();
-        const hostileFrame = frameOf(privilegedPayload(backend));
+        const hostileRegion = untouchedRegion(privilegedPayload(backend));
 
         await runValidator({
           backend,
           instructions: BENIGN_PROFILE_INSTRUCTIONS,
         });
-        const benignFrame = frameOf(privilegedPayload(backend));
+        const benignRegion = untouchedRegion(privilegedPayload(backend));
 
-        // Same profile identity, same role contract, same subordination
-        // contract — the demands changed only what is inside the markers. The
-        // frame is where the authority lives, so this is the containment claim
-        // stated as bytes rather than as position.
-        expect(hostileFrame).toBe(benignFrame);
+        expect(hostileRegion).toBe(benignRegion);
       });
 
       it("delivers the acceptance criteria from the harness, never from the profile", async () => {
@@ -531,15 +576,21 @@ describe.each(["claude", "codex"] as const)(
                 description: "Raised because the profile said to.",
               },
             ],
+            advisories: [],
           }),
         );
 
-        // Schema-valid and obedient, and still refused: containment is checked
-        // against the context's own task ids, which the profile never sees.
+        // Obedient and still refused. Containment is now checked by the
+        // dispatched schema itself — `taskId` is an enum of this context's task
+        // ids — so the foreign id never becomes a verdict at all. The refusal
+        // is located at the offending issue and states the ids the context
+        // actually owns, which is what a retry needs; it does not echo the id
+        // the adversarial profile supplied.
         expect(expanded.result.kind).toBe("infra_error");
         if (expanded.result.kind === "infra_error") {
-          expect(expanded.result.reason).toBe("schema_mismatch");
-          expect(expanded.result.message).toContain(FOREIGN_TASK_ID);
+          expect(expanded.result.message).toContain("issues[0].taskId");
+          expect(expanded.result.message).toContain(IN_SCOPE_TASK_ID);
+          expect(expanded.result.message).not.toContain(FOREIGN_TASK_ID);
         }
 
         // Positive control: the same shape against a task the context owns is
@@ -555,6 +606,7 @@ describe.each(["claude", "codex"] as const)(
                 description: "The plan omits two modules.",
               },
             ],
+            advisories: [],
           }),
         );
         expect(inScope.result.kind).toBe("fail");
@@ -562,6 +614,124 @@ describe.each(["claude", "codex"] as const)(
           expect(inScope.result.reopenTaskIds).toEqual([IN_SCOPE_TASK_ID]);
         }
       });
+    });
+  },
+);
+
+/**
+ * R4.1 — where an assignment's instructions land, and what the divergence
+ * costs the shared inputs.
+ *
+ * The authority value alone decides the layer, so the two placements are
+ * asserted against one another rather than each in isolation: the same authored
+ * text, the same profile, the same context, moved only by the seat's authority.
+ */
+describe.each(["claude", "codex"] as const)(
+  "assignment instructions by authority — %s (R4.1)",
+  (backend) => {
+    /** Everything before the output contract: the evidence the cohort shares. */
+    const REQUIRED_OUTPUT_HEADING = "## Required Output";
+
+    function sharedEvidence(prompt: string): string {
+      const at = prompt.indexOf(REQUIRED_OUTPUT_HEADING);
+      expect(at).toBeGreaterThan(0);
+      return prompt.slice(0, at);
+    }
+
+    const MANDATE_A =
+      "Judge this context against the rollback plan the migration declares.";
+    const MANDATE_B =
+      "Judge this context against the backfill plan the migration declares.";
+
+    it("keeps an advisory seat's instructions inside the fence, with no mandate above it", async () => {
+      await runValidator({
+        backend,
+        instructions: BENIGN_PROFILE_INSTRUCTIONS,
+        focus: DEMANDS,
+        authority: "advisory",
+        // An advisory seat's dispatched schema has no `issues` field, so the
+        // conforming shape for this run is the advisory twin.
+        verdictText: JSON.stringify({
+          summary: "Reviewed through the profile's lens.",
+          advisories: [],
+        }),
+      });
+
+      const payload = privilegedPayload(backend);
+      const marker = payload.indexOf(ADVERSARY_MARKER);
+
+      expect(marker).toBeGreaterThan(payload.indexOf(PROFILE_BLOCK_BEGIN));
+      expect(marker).toBeLessThan(payload.indexOf(PROFILE_BLOCK_END));
+      // No mandate section at all: an advisory seat has nothing to say at the
+      // authoritative layer, so the layer offers it no section to say it in.
+      expect(payload).not.toContain(VALIDATOR_MANDATE_HEADING);
+      expect(payload).toMatch(/cannot fail this context/i);
+    });
+
+    it("delivers a blocking seat's mandate above the fence and never into the turn prompt", async () => {
+      const run = await runValidator({
+        backend,
+        instructions: BENIGN_PROFILE_INSTRUCTIONS,
+        focus: `${MANDATE_A}\n${DEMANDS}`,
+      });
+
+      const payload = privilegedPayload(backend);
+      expect(payload.indexOf(MANDATE_A)).toBeGreaterThan(
+        payload.indexOf(VALIDATOR_MANDATE_HEADING),
+      );
+      expect(payload.indexOf(MANDATE_A)).toBeLessThan(
+        payload.indexOf(PROFILE_BLOCK_BEGIN),
+      );
+
+      // The mandate is per-seat and the turn prompt is shared, so the mandate
+      // has no route into it — which is what keeps the divergence confined to
+      // one channel.
+      const prompt = userPrompt(backend);
+      expect(prompt).not.toContain(MANDATE_A);
+      expect(prompt).not.toContain(ADVERSARY_MARKER);
+
+      // Writing at the authoritative layer still does not let the author (or
+      // anything that reached this field) rewrite the verdict contract: the
+      // schema quoted in the contract is the harness's.
+      expect(run.result.kind).toBe("pass");
+      const replaced = await runValidator({
+        backend,
+        instructions: BENIGN_PROFILE_INSTRUCTIONS,
+        focus: `${MANDATE_A}\n${DEMANDS}`,
+        verdictText: JSON.stringify(ADVERSARY_REPLACEMENT_VERDICT),
+      });
+      expect(replaced.result.kind).toBe("infra_error");
+    });
+
+    it("holds the shared evidence byte-identical across a cohort whose mandates diverge", async () => {
+      await runValidator({
+        backend,
+        instructions: BENIGN_PROFILE_INSTRUCTIONS,
+        focus: MANDATE_A,
+      });
+      const first = {
+        payload: privilegedPayload(backend),
+        evidence: sharedEvidence(userPrompt(backend)),
+      };
+
+      await runValidator({
+        backend,
+        instructions: BENIGN_PROFILE_INSTRUCTIONS,
+        focus: MANDATE_B,
+      });
+      const second = {
+        payload: privilegedPayload(backend),
+        evidence: sharedEvidence(userPrompt(backend)),
+      };
+
+      // Two seats of one round: what they were shown of the candidate — the
+      // criteria, the tasks, the charter, the diff — is the same bytes, while
+      // what each was told to judge it against is not. Divergence lives
+      // entirely in the per-lane authoritative channel (D4).
+      expect(second.evidence).toBe(first.evidence);
+      expect(second.payload).not.toBe(first.payload);
+      expect(first.payload).toContain(MANDATE_A);
+      expect(second.payload).toContain(MANDATE_B);
     });
   },
 );

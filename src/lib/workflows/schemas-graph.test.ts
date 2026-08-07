@@ -40,7 +40,7 @@ import {
   graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowResolvedContextSchema,
   graphWorkflowSharedDocumentEntrySchema,
-  workflowAgentValidatorResultSchema,
+  workflowBlockingValidatorResultSchema,
   workflowConfigOverrideSchema,
   workflowDefinitionRecordSchema,
   workflowSemanticDefinitionSchema,
@@ -532,13 +532,8 @@ describe("workflow charter requirement on persisted schemas", () => {
 });
 
 describe("workflow graph validator and request schemas", () => {
-  it("defaults issues to an empty array and requires taskId on each issue", () => {
-    const emptyResult = workflowAgentValidatorResultSchema.parse({
-      summary: "Looks good",
-    });
-    expect(emptyResult.issues).toEqual([]);
-
-    const issueResult = workflowAgentValidatorResultSchema.parse({
+  it("requires both verdict arrays and a taskId on each issue", () => {
+    const issueResult = workflowBlockingValidatorResultSchema.parse({
       summary: "Needs fixes",
       issues: [
         {
@@ -547,12 +542,22 @@ describe("workflow graph validator and request schemas", () => {
           description: "Add tests for the new graph workflow state fields.",
         },
       ],
+      advisories: [],
     });
 
     expect(issueResult.issues[0]?.title).toBe("Missing coverage");
     expect(issueResult.issues[0]?.taskId).toBe("task-1");
 
-    const missingTaskId = workflowAgentValidatorResultSchema.safeParse({
+    // A summary alone is not a verdict: both arrays are required by the
+    // dispatched schema, so defaulting them here would let a validator that
+    // never considered advisories read as one that found none.
+    expect(
+      workflowBlockingValidatorResultSchema.safeParse({
+        summary: "Looks good",
+      }).success,
+    ).toBe(false);
+
+    const missingTaskId = workflowBlockingValidatorResultSchema.safeParse({
       summary: "Needs fixes",
       issues: [
         {
@@ -560,6 +565,7 @@ describe("workflow graph validator and request schemas", () => {
           description: "Add tests for the new graph workflow state fields.",
         },
       ],
+      advisories: [],
     });
     expect(missingTaskId.success).toBe(false);
   });

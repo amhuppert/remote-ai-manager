@@ -127,6 +127,7 @@ describe("graph-workflow validate route handler", () => {
                     id: "security",
                     profile: { tier: "global" as const, id: "never-created" },
                     strategy: "conversation" as const,
+                    authority: "blocking" as const,
                     agent: {
                       backend: "claude" as const,
                       model: "sonnet" as const,
@@ -398,6 +399,7 @@ describe("graph-workflow validate route handler", () => {
                         id: "repo-reviewer",
                       },
                       strategy: "conversation" as const,
+                      authority: "blocking",
                       agent: {
                         backend: "claude" as const,
                         model: "sonnet" as const,

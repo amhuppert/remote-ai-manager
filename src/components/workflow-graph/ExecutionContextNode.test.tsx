@@ -92,3 +92,31 @@ describe("ExecutionContextNode — output schema glyph (R7.7)", () => {
     expect(glyph.parentElement).toBe(badge.parentElement);
   });
 });
+
+describe("ExecutionContextNode — advisory response phase (R6.3)", () => {
+  it("distinguishes the advisory-response phase from validating and completed", () => {
+    const { unmount } = renderNode(
+      makeData({ waitState: { kind: "advisory-response" } }),
+    );
+    expect(screen.getByText("Advisory Response")).toBeInTheDocument();
+    expect(screen.getByText("Awaiting advisory response")).toBeInTheDocument();
+    unmount();
+
+    renderNode(makeData({ waitState: { kind: "validating" } }));
+    expect(screen.queryByText("Advisory Response")).toBeNull();
+    expect(screen.getByText("Validating")).toBeInTheDocument();
+    expect(screen.getByText("Validating context")).toBeInTheDocument();
+  });
+
+  it("does not read as a finished context", () => {
+    const { unmount } = renderNode(
+      makeData({ waitState: { kind: "advisory-response" } }),
+    );
+    expect(screen.queryByText("Completed")).toBeNull();
+    unmount();
+
+    // A finished context says so twice — badge and footer.
+    renderNode(makeData({ waitState: { kind: "completed" } }));
+    expect(screen.getAllByText("Completed")).toHaveLength(2);
+  });
+});

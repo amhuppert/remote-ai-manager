@@ -252,6 +252,7 @@ function makeExecution(
                 profile: { tier: "builtin", id: "general-reviewer" },
                 profileSnapshot: makeProfileSnapshot(),
                 strategy: "conversation",
+                authority: "blocking",
                 agent: {
                   backend: "claude",
                   model: "sonnet",
@@ -507,6 +508,7 @@ const createUserSchema = z.object({
         lastUpdatedByConversationId: null,
       },
     ],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},
@@ -689,6 +691,7 @@ function makeCohortRound(): GraphWorkflowValidationRound {
         attempts: 1,
         summary: "Endpoints match the acceptance criteria.",
         issues: [],
+        advisories: [],
         questionToken: null,
         sessionRef: {
           backend: "claude",
@@ -706,6 +709,7 @@ function makeCohortRound(): GraphWorkflowValidationRound {
         attempts: 2,
         summary: null,
         issues: [],
+        advisories: [],
         questionToken: null,
         sessionRef: null,
         reviewArtifact: null,
@@ -720,6 +724,7 @@ function makeCohortRound(): GraphWorkflowValidationRound {
         attempts: 1,
         summary: null,
         issues: [],
+        advisories: [],
         questionToken: null,
         sessionRef: null,
         reviewArtifact: null,
@@ -791,6 +796,7 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
         assignmentId: "general",
         profile: { tier: "builtin", id: "general-reviewer", revision: 1 },
         resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+        advisories: [],
         pass: true,
         summary: "Endpoints match the acceptance criteria.",
         issues: [],
@@ -809,6 +815,7 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
         assignmentId: "security",
         profile: { tier: "project", id: "security-reviewer", revision: 4 },
         resolvedInstructionHash: `sha256:${"c".repeat(64)}`,
+        advisories: [],
         pass: false,
         summary: "The bearer token is written to the request log.",
         issues: [
@@ -846,6 +853,7 @@ const cohortAggregateEvent: GraphWorkflowExecutionEvent = {
         assignmentId: "docs",
         profile: { tier: "global", id: "docs-reviewer", revision: 2 },
         resolvedInstructionHash: `sha256:${"d".repeat(64)}`,
+        advisories: [],
         pass: true,
         summary: "The route docs cover every new endpoint.",
         issues: [],
@@ -896,6 +904,7 @@ function makeCohortExecution({
                 revision: seat.revision,
               }),
               strategy: seat.strategy,
+              authority: "blocking" as const,
               agent:
                 seat.strategy === "task"
                   ? {

@@ -21,6 +21,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation",
+        authority: "blocking",
         agent: {
           backend: "claude",
           model: "sonnet",

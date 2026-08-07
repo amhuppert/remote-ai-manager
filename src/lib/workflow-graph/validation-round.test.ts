@@ -167,6 +167,7 @@ describe("openValidationRound", () => {
         attempts: 0,
         summary: null,
         issues: [],
+        advisories: [],
         questionToken: null,
         sessionRef: null,
         reviewArtifact: null,

@@ -8,7 +8,8 @@ import {
   parseValidatorResponse,
   resolveValidatorAskUserQuestionsEnabled,
   type BuildContextValidationPromptInput,
-  VALIDATOR_OUTPUT_SCHEMA,
+  type ValidatorOutcome,
+  buildValidatorOutputSchema,
 } from "./validator-runner";
 import {
   createExecutionLogger,
@@ -115,6 +116,16 @@ function textTaskRun(
   };
 }
 
+/**
+ * A blocking validator's passing verdict, in the exact shape its dispatched
+ * output schema requires — both arrays present, nothing extra. Anything less is
+ * refused as `schema_mismatch`, so a fixture that hand-rolls a partial payload
+ * silently tests the infra path instead of the verdict path.
+ */
+function verdictJson(summary: string): string {
+  return JSON.stringify({ summary, issues: [], advisories: [] });
+}
+
 function errorTaskRun(
   error: string,
   overrides: TaskRunResultOverrides = {},
@@ -146,6 +157,7 @@ const validatorConfig: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin", id: "general-reviewer" },
   strategy: "conversation",
+  authority: "blocking",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   continuity: { enabled: true },
 };
@@ -346,6 +358,88 @@ function buildExecutionWithContextValidation(
   });
 }
 
+describe("buildValidatorOutputSchema", () => {
+  const ADVISORY_ITEMS = {
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: ["implementation", "plan", "out_of_scope"],
+        },
+        title: { type: "string" },
+        description: { type: "string" },
+      },
+      required: ["kind", "title", "description"],
+      additionalProperties: false,
+    },
+  };
+
+  /** The whole blocking schema, parameterized by the one field under test. */
+  function blockingSchema(taskId: Record<string, unknown>) {
+    return {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        issues: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              taskId,
+              title: { type: "string" },
+              description: { type: "string" },
+            },
+            required: ["taskId", "title", "description"],
+            additionalProperties: false,
+          },
+        },
+        advisories: ADVISORY_ITEMS,
+      },
+      required: ["summary", "issues", "advisories"],
+      additionalProperties: false,
+    };
+  }
+
+  it("gives a blocking validator issues bound to the context's task set, alongside advisories", () => {
+    // The context's task set IS the schema, so a hallucinated id is refused at
+    // the structured-output gate and retried, instead of arriving as a verdict
+    // the runner can only reject as an infrastructure failure.
+    expect(
+      buildValidatorOutputSchema({
+        authority: "blocking",
+        taskIds: ["task-1", "task-2"],
+      }),
+    ).toEqual(blockingSchema({ type: "string", enum: ["task-1", "task-2"] }));
+  });
+
+  it("gives an advisory validator no issues field at all", () => {
+    const schema = buildValidatorOutputSchema({
+      authority: "advisory",
+      taskIds: ["task-1"],
+    });
+
+    expect(schema).toEqual({
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        advisories: ADVISORY_ITEMS,
+      },
+      required: ["summary", "advisories"],
+      additionalProperties: false,
+    });
+  });
+
+  it("leaves taskId free-form when the context has no tasks to enumerate", () => {
+    // An empty enum matches nothing and providers reject it outright, so the
+    // degenerate context falls back rather than dispatching a broken schema.
+    expect(
+      buildValidatorOutputSchema({ authority: "blocking", taskIds: [] }),
+    ).toEqual(blockingSchema({ type: "string" }));
+  });
+});
+
 describe("parseValidatorResponse fenced-block parsing", () => {
   it("returns kind=pass with empty reopenTaskIds when issues is empty", () => {
     const text = [
@@ -353,14 +447,17 @@ describe("parseValidatorResponse fenced-block parsing", () => {
       JSON.stringify({
         summary: "All checks passed",
         issues: [],
+        advisories: [],
       }),
       "```",
     ].join("\n");
 
-    const outcome = parseValidatorResponse(text, "claude", undefined, [
-      "task-1",
-      "task-2",
-    ]).result;
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
     expect(outcome.kind).toBe("pass");
     if (outcome.kind === "pass") {
       expect(outcome.reopenTaskIds).toEqual([]);
@@ -380,14 +477,17 @@ describe("parseValidatorResponse fenced-block parsing", () => {
             description: "Add missing tests.",
           },
         ],
+        advisories: [],
       }),
       "```",
     ].join("\n");
 
-    const outcome = parseValidatorResponse(text, "claude", undefined, [
-      "task-1",
-      "task-2",
-    ]).result;
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
     expect(outcome.kind).toBe("fail");
     if (outcome.kind === "fail") {
       expect(outcome.reopenTaskIds).toEqual(["task-2"]);
@@ -416,14 +516,17 @@ describe("parseValidatorResponse fenced-block parsing", () => {
             description: "README is stale.",
           },
         ],
+        advisories: [],
       }),
       "```",
     ].join("\n");
 
-    const outcome = parseValidatorResponse(text, "claude", undefined, [
-      "task-1",
-      "task-2",
-    ]).result;
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
     expect(outcome.kind).toBe("fail");
     if (outcome.kind === "fail") {
       expect(outcome.reopenTaskIds).toEqual(["task-2", "task-1"]);
@@ -442,14 +545,17 @@ describe("parseValidatorResponse fenced-block parsing", () => {
             description: "Issue points outside the context.",
           },
         ],
+        advisories: [],
       }),
       "```",
     ].join("\n");
 
-    const outcome = parseValidatorResponse(text, "claude", undefined, [
-      "task-1",
-      "task-2",
-    ]).result;
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
     expect(outcome.kind).toBe("infra_error");
     if (outcome.kind === "infra_error") {
       expect(outcome.reason).toBe("schema_mismatch");
@@ -471,10 +577,12 @@ describe("parseValidatorResponse fenced-block parsing", () => {
       "```",
     ].join("\n");
 
-    const outcome = parseValidatorResponse(text, "claude", undefined, [
-      "task-1",
-      "task-2",
-    ]).result;
+    const outcome = parseValidatorResponse({
+      text,
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
     expect(outcome.kind).toBe("infra_error");
     if (outcome.kind === "infra_error") {
       expect(outcome.reason).toBe("schema_mismatch");
@@ -787,24 +895,6 @@ describe("buildContextValidationPrompt", () => {
     expect(lowered).toMatch(/applicability scope|appliesto|applies to/);
   });
 
-  it("requires taskId on each issue in the structured output schema", () => {
-    const issueSchema = VALIDATOR_OUTPUT_SCHEMA.properties.issues.items;
-    expect(issueSchema.properties).toHaveProperty("taskId");
-    expect(issueSchema.required).toEqual(
-      expect.arrayContaining(["taskId", "title", "description"]),
-    );
-    expect(VALIDATOR_OUTPUT_SCHEMA.required).toEqual(
-      expect.arrayContaining(["summary", "issues"]),
-    );
-    expect(VALIDATOR_OUTPUT_SCHEMA.required).not.toEqual(
-      expect.arrayContaining(["pass"]),
-    );
-    expect(VALIDATOR_OUTPUT_SCHEMA.properties).not.toHaveProperty("pass");
-    expect(VALIDATOR_OUTPUT_SCHEMA.properties).not.toHaveProperty(
-      "reopenTaskIds",
-    );
-  });
-
   it("embeds the framed answers block on a validator resume", () => {
     const questionBatchId = "batch-validator-1";
     const answers: Record<string, AskQuestionAnswer> = {
@@ -887,6 +977,7 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
+    authority: "blocking",
     agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     continuity: { enabled: true },
   };
@@ -894,6 +985,7 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "task",
+    authority: "blocking",
     agent: {
       backend: "codex",
       model: "gpt-5.4",
@@ -974,15 +1066,17 @@ describe("resolveValidatorAskUserQuestionsEnabled (Req 8.1, codex suppression)",
 
 describe("parseValidatorResponse", () => {
   it("prefers structuredOutput and derives reopenTaskIds from issue taskIds", () => {
-    const result = parseValidatorResponse(
-      "ignored",
-      "claude",
-      {
+    const result = parseValidatorResponse({
+      text: "ignored",
+      engine: "claude",
+      authority: "blocking",
+      structuredOutput: {
         summary: "Needs work",
         issues: [{ taskId: "task-1", title: "Bug", description: "Fix" }],
+        advisories: [],
       },
-      ["task-1", "task-2"],
-    );
+      allowedTaskIds: ["task-1", "task-2"],
+    });
 
     expect(result.result.kind).toBe("fail");
     if (result.result.kind === "fail") {
@@ -1004,18 +1098,20 @@ describe("parseValidatorResponse", () => {
       JSON.stringify({
         summary: "Recovered via fenced JSON.",
         issues: [{ taskId: "task-1", title: "Bug", description: "Fix" }],
+        advisories: [],
       }),
       "```",
     ].join("\n");
 
     // Native payload omits the required `summary` field — invalid against the
     // validator schema.
-    const result = parseValidatorResponse(
-      validFencedText,
-      "claude",
-      { issues: [] },
-      ["task-1", "task-2"],
-    );
+    const result = parseValidatorResponse({
+      text: validFencedText,
+      engine: "claude",
+      authority: "blocking",
+      structuredOutput: { issues: [] },
+      allowedTaskIds: ["task-1", "task-2"],
+    });
 
     expect(result.result.kind).toBe("fail");
     if (result.result.kind === "fail") {
@@ -1025,10 +1121,300 @@ describe("parseValidatorResponse", () => {
   });
 });
 
+describe("parseValidatorResponse advisories", () => {
+  const ADVISORY = {
+    kind: "implementation" as const,
+    title: "Duplicated retry helper",
+    description: "Both lanes hand-roll the same backoff.",
+  };
+
+  function fenced(payload: unknown): string {
+    return ["```json", JSON.stringify(payload), "```"].join("\n");
+  }
+
+  it("carries a blocking validator's advisories through a passing verdict", () => {
+    const outcome = parseValidatorResponse({
+      text: fenced({
+        summary: "Criteria met.",
+        issues: [],
+        advisories: [ADVISORY],
+      }),
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
+
+    expect(outcome.kind).toBe("pass");
+    if (outcome.kind !== "pass") return;
+    expect(outcome.advisories).toEqual([ADVISORY]);
+  });
+
+  it("carries advisories through a rejecting verdict alongside its issues", () => {
+    const outcome = parseValidatorResponse({
+      text: fenced({
+        summary: "One blocker, one suggestion.",
+        issues: [
+          {
+            taskId: "task-2",
+            title: "Coverage gap",
+            description: "Add tests.",
+          },
+        ],
+        advisories: [ADVISORY],
+      }),
+      engine: "claude",
+      authority: "blocking",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
+
+    expect(outcome.kind).toBe("fail");
+    if (outcome.kind !== "fail") return;
+    expect(outcome.reopenTaskIds).toEqual(["task-2"]);
+    expect(outcome.advisories).toEqual([ADVISORY]);
+  });
+
+  it("parses an advisory validator's verdict, which carries no issues field", () => {
+    const outcome = parseValidatorResponse({
+      text: fenced({ summary: "Two observations.", advisories: [ADVISORY] }),
+      engine: "claude",
+      authority: "advisory",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
+
+    expect(outcome.kind).toBe("pass");
+    if (outcome.kind !== "pass") return;
+    expect(outcome.advisories).toEqual([ADVISORY]);
+    // An advisory assignment can never reopen a task, whatever it observed.
+    expect(outcome.issues).toEqual([]);
+    expect(outcome.reopenTaskIds).toEqual([]);
+  });
+
+  it("refuses issues from an advisory validator, taking the structured-output retry path", () => {
+    const outcome = parseValidatorResponse({
+      text: fenced({
+        summary: "Trying to block.",
+        advisories: [],
+        issues: [
+          { taskId: "task-1", title: "Blocker", description: "Reopen this." },
+        ],
+      }),
+      engine: "claude",
+      authority: "advisory",
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
+
+    // Authority is structural: an advisory validator cannot smuggle a blocking
+    // finding through by emitting the blocking shape.
+    expect(outcome.kind).toBe("infra_error");
+    if (outcome.kind !== "infra_error") return;
+    expect(outcome.reason).toBe("schema_mismatch");
+  });
+
+  it("passes an advisory about out-of-context code verbatim, spending no attempt", () => {
+    const outOfContext = {
+      kind: "out_of_scope" as const,
+      title: "task-elsewhere leaks a handle",
+      description: "src/other/pool.ts, owned by no task in this context.",
+    };
+
+    for (const authority of ["blocking", "advisory"] as const) {
+      const outcome = parseValidatorResponse({
+        text: fenced({
+          summary: "Nothing blocking here.",
+          ...(authority === "blocking" ? { issues: [] } : {}),
+          advisories: [outOfContext],
+        }),
+        engine: "claude",
+        authority,
+        allowedTaskIds: ["task-1", "task-2"],
+      }).result;
+
+      // The same reference raised as an ISSUE is an infra_error that costs the
+      // lane an attempt (see the task-id containment tests above). Raised as an
+      // advisory it never reaches that check: the verdict settles as a pass,
+      // and only an infra_error dispatch increments a lane's attempt count.
+      expect(outcome.kind, `authority=${authority}`).toBe("pass");
+      if (outcome.kind !== "pass") return;
+      expect(outcome.advisories).toEqual([outOfContext]);
+    }
+  });
+});
+
+/**
+ * The fallback parse paths (raw JSON, fenced block) are not a laxer contract
+ * than the dispatched schema — they are the SAME contract read back. A backend
+ * with no native structured output reaches the engine through here, so anything
+ * these twins accept is a verdict shape that authority never gated. Each case
+ * below is a payload the dispatched schema refuses (`required`, or
+ * `additionalProperties: false`) and therefore one the parser must also refuse,
+ * turning it into the retry that the structured-output gate would have run.
+ */
+describe("parseValidatorResponse verdict shape is the dispatched schema", () => {
+  const ADVISORY = {
+    kind: "implementation" as const,
+    title: "Duplicated retry helper",
+    description: "Both lanes hand-roll the same backoff.",
+  };
+  const ISSUE = {
+    taskId: "task-1",
+    title: "Coverage gap",
+    description: "Add missing tests.",
+  };
+
+  function fenced(payload: unknown): string {
+    return ["```json", JSON.stringify(payload), "```"].join("\n");
+  }
+
+  function parseFenced(
+    authority: "blocking" | "advisory",
+    payload: unknown,
+  ): ValidatorOutcome {
+    return parseValidatorResponse({
+      text: fenced(payload),
+      engine: "claude",
+      authority,
+      allowedTaskIds: ["task-1", "task-2"],
+    }).result;
+  }
+
+  function expectSchemaMismatch(
+    outcome: ValidatorOutcome,
+    label: string,
+  ): void {
+    expect(outcome.kind, label).toBe("infra_error");
+    if (outcome.kind !== "infra_error") return;
+    expect(outcome.reason, label).toBe("schema_mismatch");
+  }
+
+  const REFUSED: Array<{
+    label: string;
+    authority: "blocking" | "advisory";
+    payload: unknown;
+  }> = [
+    {
+      label: "advisory verdict omitting advisories",
+      authority: "advisory",
+      payload: { summary: "Nothing to report." },
+    },
+    {
+      label: "blocking verdict omitting advisories",
+      authority: "blocking",
+      payload: { summary: "Criteria met.", issues: [] },
+    },
+    {
+      label: "blocking verdict omitting issues",
+      authority: "blocking",
+      payload: { summary: "Criteria met.", advisories: [] },
+    },
+    {
+      label: "advisory item carrying a taskId",
+      authority: "advisory",
+      payload: {
+        summary: "Observation.",
+        advisories: [{ ...ADVISORY, taskId: "task-1" }],
+      },
+    },
+    {
+      label: "blocking verdict whose advisory carries a taskId",
+      authority: "blocking",
+      payload: {
+        summary: "Observation.",
+        issues: [],
+        advisories: [{ ...ADVISORY, taskId: "task-1" }],
+      },
+    },
+    {
+      label: "blocking verdict with an unknown top-level key",
+      authority: "blocking",
+      payload: {
+        summary: "Criteria met.",
+        issues: [],
+        advisories: [],
+        verdict: "approved",
+      },
+    },
+    {
+      label: "advisory verdict with an unknown top-level key",
+      authority: "advisory",
+      payload: { summary: "Observation.", advisories: [], issueCount: 0 },
+    },
+    {
+      label: "issue carrying an unknown key",
+      authority: "blocking",
+      payload: {
+        summary: "One blocker.",
+        issues: [{ ...ISSUE, severity: "high" }],
+        advisories: [],
+      },
+    },
+  ];
+
+  it.each(REFUSED)(
+    "refuses a $label on the fenced-JSON path",
+    ({ label, authority, payload }) => {
+      expectSchemaMismatch(parseFenced(authority, payload), label);
+    },
+  );
+
+  it.each(REFUSED)(
+    "refuses a $label on the raw-JSON path",
+    ({ label, authority, payload }) => {
+      const outcome = parseValidatorResponse({
+        text: JSON.stringify(payload),
+        engine: "claude",
+        authority,
+        allowedTaskIds: ["task-1", "task-2"],
+      }).result;
+
+      expectSchemaMismatch(outcome, label);
+    },
+  );
+
+  it.each(REFUSED)(
+    "refuses a $label on the native structured-output path",
+    ({ label, authority, payload }) => {
+      const outcome = parseValidatorResponse({
+        text: "The verdict is above.",
+        engine: "claude",
+        authority,
+        structuredOutput: payload,
+        allowedTaskIds: ["task-1", "task-2"],
+      }).result;
+
+      expectSchemaMismatch(outcome, label);
+    },
+  );
+
+  it("accepts the exact dispatched shape on every parse path", () => {
+    const blocking = { summary: "Criteria met.", issues: [], advisories: [] };
+    const advisory = { summary: "Observation.", advisories: [ADVISORY] };
+
+    expect(parseFenced("blocking", blocking).kind).toBe("pass");
+    expect(parseFenced("advisory", advisory).kind).toBe("pass");
+    expect(
+      parseValidatorResponse({
+        text: JSON.stringify(blocking),
+        engine: "claude",
+        authority: "blocking",
+        allowedTaskIds: ["task-1", "task-2"],
+      }).result.kind,
+    ).toBe("pass");
+    expect(
+      parseValidatorResponse({
+        text: "The verdict is above.",
+        engine: "claude",
+        authority: "advisory",
+        structuredOutput: advisory,
+        allowedTaskIds: ["task-1", "task-2"],
+      }).result.kind,
+    ).toBe("pass");
+  });
+});
+
 describe("createValidatorRunner", () => {
   it("dispatches an agent validator through its configured backend instead of its legacy validator-type label", async () => {
     const executeWorkflowTaskRun = vi.fn(async () =>
-      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+      textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
       resolveWorktreePath: stubWorktreePath,
@@ -1044,6 +1430,7 @@ describe("createValidatorRunner", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -1080,7 +1467,7 @@ describe("createValidatorRunner", () => {
   // context-artifacts/service.test.ts.
   it("constructs the validator lane as an ephemeral runtime (no ConversationState record)", async () => {
     const executeWorkflowTaskRun = vi.fn(async () =>
-      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+      textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
       resolveWorktreePath: stubWorktreePath,
@@ -1114,7 +1501,7 @@ describe("createValidatorRunner", () => {
     _registerBackendForTesting(fake.descriptor);
     try {
       const executeWorkflowTaskRun = vi.fn(async () =>
-        textTaskRun(JSON.stringify({ summary: "All good", issues: [] }), {
+        textTaskRun(verdictJson("All good"), {
           backendRef: {
             backend: TESTFAKE_BACKEND_ID,
             ref: "testfake-review-ref",
@@ -1149,6 +1536,7 @@ describe("createValidatorRunner", () => {
         id: "general",
         profile: { tier: "builtin", id: "general-reviewer" },
         strategy: "conversation",
+        authority: "blocking",
         continuity: { enabled: true },
         // The per-backend union only knows the registered production backends,
         // so a test-only backend needs the cast; the rest of the assignment is
@@ -1199,7 +1587,7 @@ describe("createValidatorRunner", () => {
 
   it("attaches transcript-derived usage to conversation-strategy review artifacts", async () => {
     const executeWorkflowTaskRun = vi.fn(async () =>
-      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+      textTaskRun(verdictJson("All good")),
     );
     const readValidatorConversationTelemetry = vi.fn(async () => ({
       costUsd: 4.21,
@@ -1252,7 +1640,7 @@ describe("createValidatorRunner", () => {
 
   it("records a null-usage conversation artifact when telemetry is unreadable", async () => {
     const executeWorkflowTaskRun = vi.fn(async () =>
-      textTaskRun(JSON.stringify({ summary: "All good", issues: [] })),
+      textTaskRun(verdictJson("All good")),
     );
     const runner = createValidatorRunner({
       resolveWorktreePath: stubWorktreePath,
@@ -1300,6 +1688,7 @@ describe("createValidatorRunner", () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
       issues: [],
+      advisories: [],
     });
 
     const executeWorkflowTaskRun = vi.fn(
@@ -1333,7 +1722,12 @@ describe("createValidatorRunner", () => {
       effort: "medium",
       outputFormat: {
         type: "json_schema",
-        schema: VALIDATOR_OUTPUT_SCHEMA,
+        // The dispatched schema is the one this seat's authority selects, with
+        // its issue ids bound to this context's tasks.
+        schema: buildValidatorOutputSchema({
+          authority: "blocking",
+          taskIds: ["task-plan-1", "task-plan-2"],
+        }),
       },
     });
     expect(input.prompt).toContain(
@@ -1361,7 +1755,7 @@ describe("createValidatorRunner", () => {
     const executeWorkflowTaskRun = vi.fn(
       async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
         kind: "text",
-        text: JSON.stringify({ summary: "ok", issues: [] }),
+        text: verdictJson("ok"),
         transcript,
         usage: emptyUsage,
         backendRef: null,
@@ -1512,6 +1906,7 @@ describe("createValidatorRunner", () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
       issues: [],
+      advisories: [],
     });
 
     const executeWorkflowTaskRun = vi.fn(
@@ -1702,7 +2097,7 @@ describe("createValidatorRunner", () => {
     // The reader returns null (Codex validator lanes, or no question asked) →
     // the runner falls through to normal verdict parsing (deny-by-default).
     const executeWorkflowTaskRun = vi.fn(async () =>
-      textTaskRun(JSON.stringify({ summary: "Looks good", issues: [] })),
+      textTaskRun(verdictJson("Looks good")),
     );
     const readLaneConversation = vi.fn(async () => null);
     const runner = createValidatorRunner({
@@ -1744,6 +2139,7 @@ describe("createValidatorRunner", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -1788,6 +2184,7 @@ describe("createValidatorRunner", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -1826,6 +2223,7 @@ describe("createValidatorRunner", () => {
           description: "Add the missing tests.",
         },
       ],
+      advisories: [],
     });
 
     const executeWorkflowTaskRun = vi.fn(async () =>
@@ -1842,6 +2240,7 @@ describe("createValidatorRunner", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -1879,6 +2278,7 @@ describe("context validator continuity runtime integration", () => {
   const passResponseJson = JSON.stringify({
     summary: "All good",
     issues: [],
+    advisories: [],
   });
   const NOW = "2026-04-01T10:00:00.000Z";
 
@@ -2113,6 +2513,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -2174,6 +2575,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
+      authority: "blocking",
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
       continuity: { enabled: true, contextLimitTokens: 100_000 },
     };
@@ -2236,6 +2638,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -2319,6 +2722,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -2396,6 +2800,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -2505,6 +2910,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -2567,6 +2973,7 @@ describe("context validator continuity runtime integration", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "task",
+      authority: "blocking",
       agent: {
         backend: "codex",
         model: "gpt-5.4",
@@ -2627,6 +3034,7 @@ describe("validator-runner executionTarget override", () => {
     const agentResponse = JSON.stringify({
       summary: "All good",
       issues: [],
+      advisories: [],
     });
 
     const executeWorkflowTaskRun = vi.fn(async () =>
@@ -2675,6 +3083,7 @@ describe("validator-runner executionTarget override", () => {
     const agentResponse = JSON.stringify({
       summary: "All good",
       issues: [],
+      advisories: [],
     });
 
     const executeWorkflowTaskRun = vi.fn(async () =>
@@ -2780,7 +3189,7 @@ describe("createValidatorRunner diff scope", () => {
   it("computes diff scope from the resolved session worktree and injects it into the prompt", async () => {
     const executeWorkflowTaskRun = vi.fn(
       async (_input: ExecuteWorkflowTaskRunInput) =>
-        textTaskRun(JSON.stringify({ summary: "ok", issues: [] })),
+        textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
       async (_wt: string) => availableScope,
@@ -2815,7 +3224,7 @@ describe("createValidatorRunner diff scope", () => {
   it("computes diff scope from executionTarget.worktreePath when supplied", async () => {
     const executeWorkflowTaskRun = vi.fn(
       async (_input: ExecuteWorkflowTaskRunInput) =>
-        textTaskRun(JSON.stringify({ summary: "ok", issues: [] })),
+        textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
       async (_wt: string) => availableScope,
@@ -2851,7 +3260,7 @@ describe("createValidatorRunner diff scope", () => {
   it("still dispatches the validator turn when diff scope is unavailable", async () => {
     const executeWorkflowTaskRun = vi.fn(
       async (_input: ExecuteWorkflowTaskRunInput) =>
-        textTaskRun(JSON.stringify({ summary: "ok", issues: [] })),
+        textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
       async (): Promise<ValidationDiffScope> => ({

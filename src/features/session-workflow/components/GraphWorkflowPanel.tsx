@@ -23,6 +23,7 @@ import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel, {
   type ContextTabRequest,
 } from "./ExecutionInspectorPanel";
+import type { AdvisoryOrigin } from "./AdvisoryIndexPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
 import { deriveUserInputStandings } from "@/hooks/use-user-input-gate";
@@ -144,6 +145,25 @@ export default function GraphWorkflowPanel({
       setContextTabRequest({
         contextId,
         tab: "config",
+        seq: tabRequestSeq.current,
+      });
+    },
+    [handleSelectContext],
+  );
+
+  // An advisory-index entry's origin link: select the context that raised it and
+  // open its history at the ROUND that raised it — an indexed advisory outlives
+  // its round, so by the time it is read the context is usually several rounds
+  // further on. Shares the one tab-request counter, so a request from either
+  // deep link is always distinguishable from the previous one.
+  const handleOpenAdvisoryOrigin = useCallback(
+    ({ contextId, roundSeq }: AdvisoryOrigin) => {
+      handleSelectContext(contextId);
+      tabRequestSeq.current += 1;
+      setContextTabRequest({
+        contextId,
+        tab: "history",
+        roundSeq,
         seq: tabRequestSeq.current,
       });
     },
@@ -333,6 +353,7 @@ export default function GraphWorkflowPanel({
                 configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
                 onEditSchema={handleEditOutputSchema}
+                onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
                 contextTabRequest={contextTabRequest}
                 commandOptions={commandOptions}
               />
@@ -423,6 +444,7 @@ export default function GraphWorkflowPanel({
                 configSaveSucceeded={configSaveSucceeded}
                 onViewConversation={handleViewConversation}
                 onEditSchema={handleEditOutputSchema}
+                onOpenAdvisoryOrigin={handleOpenAdvisoryOrigin}
                 contextTabRequest={contextTabRequest}
                 commandOptions={commandOptions}
               />

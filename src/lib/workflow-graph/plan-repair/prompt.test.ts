@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "../test-fixtures";
-import type { GraphWorkflowExecution } from "../schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowValidationAdvisory,
+} from "../schemas";
 import {
   buildPlanRepairPrompt,
   toPlanRepairValidationVerdict,
@@ -297,10 +300,11 @@ describe("buildPlanRepairPrompt: cohort evidence", () => {
     expect(prompt).not.toContain("rev 1) [");
   });
 
-  // The repair agent may rewrite plan artifacts, never the cohort. A vocabulary
-  // that offered assignment operations would let a repair silence the reviewer
-  // that keeps objecting instead of fixing what it objects to.
-  it("offers no assignment operations, even for a cohort trip", () => {
+  // D10: the repair agent may narrow ONE named assignment and may never write
+  // the cohort. A vocabulary that offered roster operations would let a repair
+  // remove the reviewer that keeps objecting instead of fixing what it objects
+  // to — and one that offered promotion would let a halt mint new ways to fail.
+  it("offers narrowing on a named assignment and no roster operations", () => {
     const prompt = buildPlanRepairPrompt(
       makeInput({ validationHistory: [COHORT_VERDICT] }),
     );
@@ -311,11 +315,9 @@ describe("buildPlanRepairPrompt: cohort evidence", () => {
     for (const forbidden of [
       "add-validator",
       "remove-validator",
-      "update-validator",
       "set-validator",
       "add-assignment",
       "remove-assignment",
-      "update-assignment",
       "contextValidator",
       "assignments",
       "profileSnapshot",
@@ -323,7 +325,7 @@ describe("buildPlanRepairPrompt: cohort evidence", () => {
     ]) {
       expect(vocabulary).not.toContain(forbidden);
     }
-    // The allowed vocabulary is exactly the plan-artifact set.
+    // The allowed vocabulary is the plan-artifact set plus the narrowing op.
     expect(
       // Line-anchored: each operation shape occupies its own line, so a
       // nested `{"type": "object"}` inside a JSON Schema example is not one.
@@ -337,7 +339,162 @@ describe("buildPlanRepairPrompt: cohort evidence", () => {
       "update-task",
       "remove-task",
       "reorder-tasks",
+      "update-validator-assignment",
     ]);
+    // The one authority value the op shape shows is the one it accepts.
+    const narrowingShape = vocabulary
+      .split("\n")
+      .find((line) =>
+        line.startsWith('{"type": "update-validator-assignment"'),
+      );
+    expect(narrowingShape).toContain('"authority": "advisory"');
+  });
+});
+
+// R10/D10: the advisories a run raised are evidence about the plan that nobody
+// was obliged to act on, so the repair agent — the one reader whose job IS the
+// plan — must see them, together with what the implementer decided about each.
+describe("buildPlanRepairPrompt: advisory evidence", () => {
+  function advisory(
+    overrides: Partial<GraphWorkflowValidationAdvisory> & {
+      identity: GraphWorkflowValidationAdvisory["identity"];
+    },
+  ): GraphWorkflowValidationAdvisory {
+    return {
+      kind: "implementation",
+      title: "Consider extracting the helper",
+      description: "The same shape appears in two places.",
+      deliveredAt: null,
+      disposition: null,
+      ...overrides,
+    };
+  }
+
+  function withRound(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+    seq: number,
+    seats: Record<string, GraphWorkflowValidationAdvisory[]>,
+  ): GraphWorkflowExecution {
+    const contextState = execution.contextStates[contextId];
+    if (!contextState) throw new Error(`no runtime state for ${contextId}`);
+    return {
+      ...execution,
+      contextStates: {
+        ...execution.contextStates,
+        [contextId]: {
+          ...contextState,
+          validationRound: {
+            seq,
+            candidate: {
+              headSha: "head-1",
+              candidateTreeHash: "tree-1",
+              taskStateHash: "tasks-1",
+            },
+            roster: Object.keys(seats).map((assignmentId) => ({
+              assignmentId,
+              profileRef: { tier: "builtin" as const, id: "general-reviewer" },
+              revision: 1,
+              resolvedInstructionHash: `sha256:${assignmentId}`,
+              strategy: "conversation" as const,
+            })),
+            specialists: Object.fromEntries(
+              Object.entries(seats).map(([assignmentId, advisories]) => [
+                assignmentId,
+                {
+                  state: "verdict_pass" as const,
+                  attempts: 1,
+                  summary: `${assignmentId} reviewed the work.`,
+                  issues: [],
+                  advisories,
+                  questionToken: null,
+                  sessionRef: null,
+                  reviewArtifact: null,
+                  lastInfraFailure: null,
+                },
+              ]),
+            ),
+            phase: "concluded" as const,
+            outcome: "failed" as const,
+            startedAt: "2026-07-29T00:00:00.000Z",
+          },
+        },
+      },
+    };
+  }
+
+  it("carries the tripped context's advisories and their dispositions", () => {
+    const base = makeInput();
+    const execution = withRound(base.execution, "context-implement", 2, {
+      security: [
+        advisory({
+          identity: { roundSeq: 2, assignmentId: "security", ordinal: 1 },
+          kind: "implementation",
+          title: "The handler logs the bearer token",
+          description: "Redact it before the log line.",
+          deliveredAt: "2026-07-29T00:02:00.000Z",
+          disposition: {
+            outcome: "declined",
+            reason: "The log sink is already private",
+            recordedAt: "2026-07-29T00:03:00.000Z",
+          },
+        }),
+      ],
+      perf: [
+        advisory({
+          identity: { roundSeq: 2, assignmentId: "perf", ordinal: 1 },
+          kind: "plan",
+          title: "The rollback step belongs in its own task",
+          description: "Reverting the migration is work in its own right.",
+        }),
+      ],
+    });
+
+    const prompt = buildPlanRepairPrompt({ ...base, execution });
+
+    expect(prompt).toContain("The handler logs the bearer token");
+    expect(prompt).toContain("Redact it before the log line.");
+    expect(prompt).toContain("declined");
+    expect(prompt).toContain("The log sink is already private");
+    // The undisposed one reads as undisposed rather than as an unanswered
+    // demand: a repair agent that cannot tell them apart invents obligations.
+    expect(prompt).toContain("The rollback step belongs in its own task");
+    expect(prompt).toContain("not yet delivered");
+  });
+
+  it("carries another context's long-lived advisories and drops its round-local ones", () => {
+    const base = makeInput();
+    const execution = withRound(base.execution, "context-plan", 1, {
+      general: [
+        advisory({
+          identity: { roundSeq: 1, assignmentId: "general", ordinal: 1 },
+          kind: "plan",
+          title: "The plan assumes an endpoint nobody owns",
+          description: "No task in this workflow creates /v2/users.",
+          deliveredAt: "2026-07-28T00:02:00.000Z",
+        }),
+        advisory({
+          identity: { roundSeq: 1, assignmentId: "general", ordinal: 2 },
+          kind: "implementation",
+          title: "The planning doc has a stale heading",
+          description: "Cosmetic only.",
+        }),
+      ],
+    });
+
+    const prompt = buildPlanRepairPrompt({ ...base, execution });
+
+    // A `plan` advisory outlives the round that raised it (D9) and is exactly
+    // what this agent exists to weigh, wherever in the run it was raised.
+    expect(prompt).toContain("The plan assumes an endpoint nobody owns");
+    expect(prompt).toContain("context-plan");
+    // An `implementation` advisory was answered inside its own context's round
+    // by the implementer who owned that work; replaying it here is noise.
+    expect(prompt).not.toContain("The planning doc has a stale heading");
+  });
+
+  it("omits the section entirely for a run whose validators raised nothing", () => {
+    expect(buildPlanRepairPrompt(makeInput())).not.toContain("## Advisories");
   });
 });
 

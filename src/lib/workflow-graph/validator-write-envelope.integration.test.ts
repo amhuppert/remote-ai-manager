@@ -58,7 +58,11 @@ function fakeCodexClient() {
             item: {
               id: "item-1",
               type: "agent_message",
-              text: JSON.stringify({ summary: "ok", issues: [] }),
+              text: JSON.stringify({
+                summary: "ok",
+                issues: [],
+                advisories: [],
+              }),
             },
           };
           yield {
@@ -124,7 +128,11 @@ const EXPECTED_POLICY = {
   denyWrite: [WORKTREE_PATH],
 };
 
-const VERDICT_TEXT = JSON.stringify({ summary: "ok", issues: [] });
+const VERDICT_TEXT = JSON.stringify({
+  summary: "ok",
+  issues: [],
+  advisories: [],
+});
 
 interface NeutralCall {
   request: AgentCallRequest;

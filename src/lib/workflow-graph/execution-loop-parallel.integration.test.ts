@@ -367,6 +367,7 @@ function createInitialExecution(
     contextStates,
     taskStates,
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},

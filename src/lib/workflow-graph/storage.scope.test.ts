@@ -254,6 +254,7 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
                 id: "org",
                 profile: { tier: "global", id: "org-reviewer" },
                 strategy: "conversation",
+                authority: "blocking",
                 agent: {
                   backend: "claude",
                   model: "sonnet",
@@ -265,6 +266,7 @@ describe("workflow storage — assignment reference scope rule (R4.2)", () => {
                 id: "repo",
                 profile: { tier: "project", id: "repo-reviewer" },
                 strategy: "conversation",
+                authority: "blocking",
                 agent: {
                   backend: "claude",
                   model: "sonnet",

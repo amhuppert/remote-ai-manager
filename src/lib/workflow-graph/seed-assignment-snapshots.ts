@@ -26,6 +26,10 @@ import type {
   GraphWorkflowResolvedContext,
   ResolvedWorkflowSemanticDefinition,
 } from "./definition-schemas";
+import {
+  assignmentProfileBlockOptions,
+  type AssignmentInstructionPlacement,
+} from "./role-instructions";
 
 const logger = createLogger("workflow-assignment-seeding");
 
@@ -88,16 +92,15 @@ async function seedContext(
  * the caller the same way.
  */
 async function snapshotFor(
-  assignment: AgentAssignment,
+  assignment: AgentAssignment & AssignmentInstructionPlacement,
   deps: SeedAssignmentSnapshotsDeps,
 ): Promise<AgentProfileSnapshot> {
   const resolved = await deps.library.resolve(
     deps.projectPath,
     assignment.profile,
   );
-  return buildAgentProfileSnapshot(resolved, {
-    ...(assignment.focus === undefined
-      ? {}
-      : { assignmentFocus: assignment.focus }),
-  });
+  return buildAgentProfileSnapshot(
+    resolved,
+    assignmentProfileBlockOptions(assignment),
+  );
 }

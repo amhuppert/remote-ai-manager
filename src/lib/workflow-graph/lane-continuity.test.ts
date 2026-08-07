@@ -23,8 +23,11 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { graphLaneId } from "./graph-lane-store";
-import { laneStateKey } from "./lane-identity";
-import { makeProfileSnapshot } from "./test-fixtures";
+import { assignmentFingerprint, laneStateKey } from "./lane-identity";
+import {
+  makeProfileSnapshot,
+  makeSeededValidatorAssignment,
+} from "./test-fixtures";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -132,6 +135,7 @@ function makeExecution(
       },
     },
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},
@@ -1235,6 +1239,7 @@ describe("resolveValidatorCall", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "sonnet",
@@ -1474,6 +1479,7 @@ describe("resolveValidatorCall — resume conversation pin", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "sonnet",
@@ -1528,6 +1534,7 @@ describe("resolveValidatorCall — resume conversation pin", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "sonnet",
@@ -2516,6 +2523,57 @@ describe("rotation decision reconciliation", () => {
         lane: "context_validator",
         engine: "claude",
         reason: "no_prior_lane",
+      });
+    } finally {
+      unregister();
+    }
+  });
+
+  it("rotates a validator lane with reason assignment_changed when the seat's authority is edited", async () => {
+    const { decisions, unregister } = captureDecisions();
+    try {
+      // Both fingerprints come from the real assignments, so the test proves the
+      // whole path an authority edit travels: authority → fingerprint → the
+      // rotation the lane takes because of it.
+      const blocking = makeSeededValidatorAssignment({
+        id: DEFAULT_ASSIGNMENT_ID,
+        authority: "blocking",
+      });
+      const advisory = makeSeededValidatorAssignment({
+        id: DEFAULT_ASSIGNMENT_ID,
+        authority: "advisory",
+      });
+      const harness = makeHarness();
+      const svc = createGraphLaneContinuity(harness.deps);
+      const existingLane = {
+        ...makeClaudeSessionState({
+          lane: "context_validator",
+          conversationId: "conv-val",
+        }),
+        assignmentFingerprint: assignmentFingerprint(blocking),
+      };
+
+      const result = await svc.resolveValidatorCall({
+        execution: makeExecution({
+          laneStates: laneStatesByContext(existingLane),
+        }),
+        projectPath: "/proj",
+        sessionName: "sess",
+        contextId: "ctx-1",
+        lane: "context_validator",
+        assignmentId: DEFAULT_ASSIGNMENT_ID,
+        assignmentFingerprint: assignmentFingerprint(advisory),
+        backend: "claude",
+        strategy: "conversation",
+      });
+
+      expect(result.sessionAction).toBe("create");
+      expect(
+        decisions.filter((d) => d.event === "validator.rotation")[0]?.data,
+      ).toMatchObject({
+        contextId: "ctx-1",
+        lane: "context_validator",
+        reason: "assignment_changed",
       });
     } finally {
       unregister();

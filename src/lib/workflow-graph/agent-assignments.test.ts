@@ -187,6 +187,36 @@ describe("validatorAssignmentSchema", () => {
     );
     expect(result.success).toBe(false);
   });
+
+  it("defaults authority to advisory, so blocking is authored rather than inherited", () => {
+    const parsed = validatorAssignmentSchema.parse({
+      id: "security",
+      profile: { tier: "builtin", id: "general-reviewer" },
+      strategy: "conversation",
+      agent: CLAUDE_AGENT,
+    });
+    expect(parsed.authority).toBe("advisory");
+  });
+
+  it("carries an authored blocking authority verbatim", () => {
+    const parsed = validatorAssignmentSchema.parse(
+      reviewer({ authority: "blocking" }),
+    );
+    expect(parsed.authority).toBe("blocking");
+  });
+
+  it("refuses an authority outside the two-value axis", () => {
+    for (const authority of ["advisory-only", "BLOCKING", "", null]) {
+      const result = validatorAssignmentSchema.safeParse(
+        reviewer({ authority }),
+      );
+      expect(
+        result.success,
+        `expected ${String(authority)} to be refused`,
+      ).toBe(false);
+      if (!result.success) expect(issuePaths(result)).toContain("authority");
+    }
+  });
 });
 
 describe("validatorCohortSchema", () => {
@@ -265,6 +295,21 @@ describe("validatorCohortSchema", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) expect(issuePaths(result)).toContain("assignments");
+  });
+
+  it("accepts an enabled cohort whose every assignment is advisory", () => {
+    const parsed = validatorCohortSchema.parse({
+      enabled: true,
+      assignments: [
+        reviewer({ id: "security", authority: "advisory" }),
+        reviewer({ id: "performance" }),
+      ],
+    });
+
+    expect(parsed.assignments.map((entry) => entry.authority)).toEqual([
+      "advisory",
+      "advisory",
+    ]);
   });
 
   it("refuses duplicate assignment ids, located on the offending entry", () => {

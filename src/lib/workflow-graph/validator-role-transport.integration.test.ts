@@ -34,7 +34,11 @@ function fakeCodexClient(options: { config?: Record<string, unknown> }) {
     run: (input: unknown) => {
       codexClientState.promptCalls.push(input);
       return Promise.resolve({
-        finalResponse: JSON.stringify({ summary: "ok", issues: [] }),
+        finalResponse: JSON.stringify({
+          summary: "ok",
+          issues: [],
+          advisories: [],
+        }),
         usage: {
           input_tokens: 1,
           cached_input_tokens: 0,
@@ -89,7 +93,11 @@ const WORKTREE_PATH = mkdtempSync(path.join(tmpdir(), "cc-role-transport-wt-"));
 const PROFILE_SENTINEL = "PROFILE_LENS_SENTINEL";
 const PROFILE_INSTRUCTIONS = `Focus on the review lens. ${PROFILE_SENTINEL}`;
 
-const VERDICT_TEXT = JSON.stringify({ summary: "ok", issues: [] });
+const VERDICT_TEXT = JSON.stringify({
+  summary: "ok",
+  issues: [],
+  advisories: [],
+});
 
 function claudeStream(): AsyncGenerator<unknown, void, unknown> {
   return (async function* () {

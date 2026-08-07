@@ -10,11 +10,82 @@ import type { GraphWorkflowValidationIssue } from "../definition-schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  GraphWorkflowValidationAdvisory,
   PlanRepairRound,
 } from "../schemas";
 
 /** Most recent validation verdicts rendered into the prompt. */
 const VALIDATION_HISTORY_LIMIT = 5;
+
+/** One advisory as the repair agent's evidence carries it, with its origin. */
+interface PlanRepairAdvisoryEvidence {
+  contextId: string;
+  advisory: GraphWorkflowValidationAdvisory;
+}
+
+/**
+ * The advisories this execution raised, as evidence for the repair agent (D10).
+ *
+ * Read off the retained round records rather than off the execution's advisory
+ * index, because the index is a recognition projection — title and identity —
+ * while this reader needs the observation itself and what the implementer
+ * decided about it.
+ *
+ * The tripped context contributes everything it heard; every other context
+ * contributes only what outlives its own round. An `implementation` advisory
+ * raised elsewhere was addressed to the implementer who owned that work and
+ * was answered there, so replaying it here would put work no one owes in front
+ * of an agent looking for a planning defect — while a `plan` or `out_of_scope`
+ * observation is exactly what that agent exists to weigh, wherever it was
+ * raised (the same split the D9 index draws).
+ */
+function collectAdvisoryEvidence(
+  execution: GraphWorkflowExecution,
+  trippedContextId: string,
+): PlanRepairAdvisoryEvidence[] {
+  const contextIds = [
+    trippedContextId,
+    ...execution.workingDefinition.executionContexts
+      .map((context) => context.id)
+      .filter((id) => id !== trippedContextId),
+  ];
+
+  const evidence: PlanRepairAdvisoryEvidence[] = [];
+  for (const contextId of contextIds) {
+    const round = execution.contextStates[contextId]?.validationRound;
+    if (!round) continue;
+    for (const seat of round.roster) {
+      const advisories = round.specialists[seat.assignmentId]?.advisories ?? [];
+      for (const advisory of advisories) {
+        if (
+          contextId !== trippedContextId &&
+          advisory.kind === "implementation"
+        )
+          continue;
+        evidence.push({ contextId, advisory });
+      }
+    }
+  }
+  return evidence;
+}
+
+/**
+ * What happened to one advisory after it was raised.
+ *
+ * Delivery is rendered alongside the disposition rather than separately: "no
+ * disposition" means two different things — nobody has been asked yet, or
+ * somebody was asked and the answer is not recorded — and only the first is
+ * an ordinary state.
+ */
+function renderDisposition(advisory: GraphWorkflowValidationAdvisory): string {
+  if (advisory.disposition !== null) {
+    const { outcome, reason } = advisory.disposition;
+    return `disposition: ${outcome}${reason === null ? "" : ` — ${reason}`}`;
+  }
+  return advisory.deliveredAt === null
+    ? "disposition: none — not yet delivered to the implementer"
+    : `disposition: none — delivered ${advisory.deliveredAt}`;
+}
 
 export interface PlanRepairValidationVerdict {
   pass: boolean;
@@ -212,6 +283,25 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
     );
   }
 
+  const advisories = collectAdvisoryEvidence(execution, contextId);
+  if (advisories.length > 0) {
+    sections.push(
+      [
+        "## Advisories raised in this execution",
+        "",
+        "Non-blocking observations from the validator cohort. None of them failed a context and the implementer was free to decline any of them, so read them as evidence about the plan rather than as work owed — a plan defect several reviewers noticed and nobody was obliged to fix is exactly what tends to survive into a halt.",
+        "",
+        ...advisories.map(({ contextId: origin, advisory }) =>
+          [
+            `- [${advisory.kind}] ${origin} · round ${advisory.identity.roundSeq} · ${advisory.identity.assignmentId}: ${advisory.title}`,
+            `    ${advisory.description}`,
+            `    ${renderDisposition(advisory)}`,
+          ].join("\n"),
+        ),
+      ].join("\n"),
+    );
+  }
+
   const priorRounds = input.priorRounds ?? [];
   if (priorRounds.length > 0) {
     sections.push(
@@ -252,7 +342,7 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       "",
       "## Allowed repair operations",
       "",
-      "Emit live-edit operations from this vocabulary ONLY (plan artifacts; no structural graph changes, no validator/gate/config controls). Every entry in `operations` MUST be a JSON object with a `type` field, using EXACTLY these shapes:",
+      "Emit live-edit operations from this vocabulary ONLY (plan artifacts, plus the one narrowing operation below; no structural graph changes, no gate or config controls). Every entry in `operations` MUST be a JSON object with a `type` field, using EXACTLY these shapes:",
       "```jsonc",
       '{"type": "amend-charter", "rationale": "<required: why the charter changes>", "mission": "...", "conventions": ["..."], "nonGoals": ["..."], "vocabulary": ["..."], "testStrategy": "...", "knownAmbiguities": ["..."], "invariants": [{"id": "...", "statement": "..."}]}  // include only the charter fields you are changing',
       '{"type": "update-context", "contextId": "<id>", "title": "...", "description": "...", "acceptanceCriteria": "...", "outputSchema": {"type": "object", "properties": {}} /* or null to drop it */, "iterationPolicy": {"maxIterations": 10, "continuity": {"enabled": true}}, "circuitBreaker": {"consecutiveFailureThreshold": 3}}  // include only the fields you are changing',
@@ -260,7 +350,10 @@ export function buildPlanRepairPrompt(input: PlanRepairPromptInput): string {
       '{"type": "update-task", "taskId": "<id>", "title": "...", "instructions": "..."}  // include only the fields you are changing',
       '{"type": "remove-task", "taskId": "<id>"}',
       '{"type": "reorder-tasks", "contextId": "<id>", "orderedTaskIds": ["<taskId>", "..."]}',
+      '{"type": "update-validator-assignment", "contextId": "<id>", "assignmentId": "<id>", "instructions": "...", "authority": "advisory"}  // include only the fields you are changing',
       "```",
+      "",
+      'The last operation is the ONLY one that reaches a reviewer, and it narrows: it rewrites what one validator is told to judge, or takes its blocking authority away so its findings become non-blocking advisories. It cannot grant blocking authority (`"authority": "blocking"` is refused), add or remove a reviewer, or change which agent runs one. Use it when a blocking validator is holding the context against a standard the plan never meant it to enforce — not to silence a reviewer whose objection is correct.',
       "",
       "## Output",
       "",

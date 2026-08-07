@@ -98,6 +98,8 @@ loop settles halted (circuit_breaker | max_iterations)
   repair agent: one-shot task_run in the session worktree
     prompt = charter digest + amendment log + tripped context (AC, tasks,
              failureHistory) + validation-result event history + budgets
+             + advisories and their dispositions (workflow-validator-advisories
+               D10: the tripped context's, plus every long-lived one elsewhere)
     output = { planningDefect, diagnosis, operations[] }  (JSON schema enforced)
         ▼
   verdict gate
@@ -202,13 +204,25 @@ the **controls** (who validates, what gates run, what it may itself do). The age
 | `amend-charter` | full doc 07 content shape, `rationale` required by the op itself |
 | `update-context` | **only** `title`, `description`, `acceptanceCriteria`, `iterationPolicy`, `circuitBreaker` |
 | `add-task`, `update-task`, `remove-task`, `reorder-tasks` | any non-frozen context (the shared gates enforce frozen/quiescence as for every live edit) |
+| `update-validator-assignment` | narrowing only, one named seat: rewrite its authored `instructions`, or demote `authority` blocking → advisory. Repair-only vocabulary — the engine expands it into the `update-context` cohort write, so the agent never authors a roster (workflow-validator-advisories D10) |
 
 Denied (schema-absent, so a violating batch fails closed as a `failed` round):
 `add-context`, `remove-context`, `add-edge`, `remove-edge`, `move-task`, and on
 `update-context` every control block — `implementer`, `contextValidator`,
 `scriptValidator`, `humanApprovalGate`, `askUserQuestions`, `mutability`,
 `collaboration`, and `planRepair` itself (the agent must not raise its own attempt cap
-or disable a human gate).
+or disable a human gate). Setting `authority: "blocking"` through the narrowing op is
+denied at op validation rather than by schema absence, so the round records which line
+the agent tried to cross: a repair may defuse a mis-scoped blocking standard, never mint
+blocking authority.
+
+`update-validator-assignment` is admitted and expanded in two steps, because the agent's
+turn is long enough for an operator to edit the same cohort. Admission judges the op
+against the snapshot the prompt was built from; the cohort write is composed later, from
+the snapshot the apply's `baseLiveRevision` pins. Expanding early would carry a stale
+roster into a whole-cohort write and silently revert a concurrent edit, turning a
+one-seat narrowing into a roster overwrite. If the named context or seat is gone by then,
+the batch fails closed as a `failed` round — a narrowing never re-creates a seat.
 
 ## Config
 

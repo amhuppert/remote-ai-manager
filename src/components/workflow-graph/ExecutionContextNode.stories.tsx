@@ -586,6 +586,7 @@ export const ValidatorsClaudeAgent: Story = {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "conversation",
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -613,6 +614,7 @@ export const ValidatorsCodexAgent: Story = {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "task",
+              authority: "blocking",
               agent: {
                 backend: "codex",
                 model: "gpt-5.5",
@@ -641,6 +643,7 @@ export const ValidatorsScriptPlusClaude: Story = {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "conversation",
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -683,6 +686,7 @@ export const ValidatorsInheritedClaude: Story = {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "conversation",
+              authority: "blocking",
               agent: {
                 backend: "claude",
                 model: "sonnet",
@@ -732,6 +736,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "task",
+              authority: "blocking",
               agent: {
                 backend: "codex",
                 model: "gpt-5.5",
@@ -806,6 +811,7 @@ export const ApprovalGateWithValidators: Story = {
               id: "general",
               profile: { tier: "builtin", id: "general-reviewer" },
               strategy: "task",
+              authority: "blocking",
               agent: {
                 backend: "codex",
                 model: "gpt-5.5",

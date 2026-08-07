@@ -82,6 +82,7 @@ function makeExecution(
                 profile: { tier: "builtin", id: "general-reviewer" },
                 profileSnapshot: makeProfileSnapshot(),
                 strategy: "conversation",
+                authority: "blocking",
                 agent: {
                   backend: "claude",
                   model: "sonnet",
@@ -136,6 +137,7 @@ function makeExecution(
     contextStates: {},
     taskStates: {},
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},

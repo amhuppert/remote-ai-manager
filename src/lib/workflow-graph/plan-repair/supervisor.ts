@@ -33,7 +33,9 @@ import {
   type PlanRepairValidationVerdict,
 } from "./prompt";
 import {
+  expandPlanRepairOperations,
   validatePlanRepairOperations,
+  type PlanRepairOperationIssue,
   type PlanRepairVerdict,
 } from "./schemas";
 import { evaluatePlanRepairTrigger } from "./trigger";
@@ -364,7 +366,14 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
       return { ran: true, outcome: "declined", seq: round.seq };
     }
 
-    const validated = validatePlanRepairOperations(verdict.operations);
+    // Judged against the same snapshot the prompt was built from — the agent's
+    // output is diagnosed against what the agent was shown. Narrowings stay in
+    // repair vocabulary here; the cohort they are written onto is decided at
+    // apply time, below.
+    const validated = validatePlanRepairOperations(
+      verdict.operations,
+      execution.workingDefinition.executionContexts,
+    );
     if (!validated.ok) {
       const issueSummary = validated.issues
         .map((issue) => `[${issue.index}] ${issue.message}`)
@@ -404,9 +413,25 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
     // any other rejection means the operator got there first (superseded) or
     // the batch is invalid against current state (failed).
     let applyOutcome: LiveEditApplyOutcome | null = null;
+    let staleIssues: PlanRepairOperationIssue[] | null = null;
     for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
       const fresh = await deps.getActiveExecution(projectPath, sessionName);
       if (!fresh || fresh.id !== executionId || fresh.status !== "halted") {
+        applyOutcome = null;
+        break;
+      }
+      // Expanded from the SAME snapshot `baseLiveRevision` pins below, not from
+      // the one the agent was shown: a narrowing is carried out as a whole-
+      // cohort write, so expanding it from the older roster would revert any
+      // cohort edit an operator made during the agent's turn. Anything that
+      // lands between this read and the apply trips the revision conflict and
+      // re-expands on the retry.
+      const expanded = expandPlanRepairOperations(
+        validated.operations,
+        fresh.workingDefinition.executionContexts,
+      );
+      if (!expanded.ok) {
+        staleIssues = expanded.issues;
         applyOutcome = null;
         break;
       }
@@ -417,7 +442,7 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
           executionId,
           baseLiveRevision: fresh.liveRevision,
           source: "plan-repair",
-          operations: validated.operations,
+          operations: expanded.operations,
         },
       });
       if (
@@ -428,6 +453,44 @@ export function createPlanRepairSupervisor(deps: PlanRepairSupervisorDeps) {
         continue;
       }
       break;
+    }
+
+    // The repair still parses, but it no longer describes the plan in front of
+    // it — an operator removed what it named. Fail closed: a narrowing may only
+    // ever take authority away from a seat that exists, never re-create one.
+    if (staleIssues !== null) {
+      const issueSummary = staleIssues
+        .map((issue) => `[${issue.index}] ${issue.message}`)
+        .join("; ");
+      logger.warn("plan_repair.operations_stale", {
+        executionId,
+        contextId,
+        attempt,
+        issues: issueSummary,
+      });
+      await settleRound(input, round.seq, {
+        outcome: "failed",
+        planningDefect: true,
+        diagnosis: `${verdict.diagnosis} — repair operations no longer match the current plan: ${issueSummary}`,
+        conversationId: agentResult.conversationId,
+      });
+      await populateHaltSummary(
+        input,
+        contextId,
+        `Plan repair attempt ${attempt} no longer matches the current plan (it was edited while the repair ran): ${issueSummary}`,
+      );
+      await emitRound(input, executionId, {
+        contextId,
+        haltType,
+        attempt,
+        outcome: "failed",
+        planningDefect: true,
+        diagnosis: verdict.diagnosis,
+        operationCount: validated.operations.length,
+        resumed: false,
+        conversationId: agentResult.conversationId,
+      });
+      return { ran: true, outcome: "failed", seq: round.seq };
     }
 
     const supersededOutcome =

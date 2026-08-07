@@ -514,10 +514,138 @@ export type GraphWorkflowValidationIssue = z.infer<
   typeof graphWorkflowValidationIssueSchema
 >;
 
-export const workflowAgentValidatorResultSchema = z.object({
-  summary: z.string(),
-  issues: z.array(workflowValidatorIssueSchema).default([]),
-});
+/**
+ * A non-blocking observation, in the one shape both authorities emit.
+ *
+ * It carries no `taskId` by construction: an advisory is addressed to the
+ * implementer, not to a task the engine must reopen, and `kind` already says
+ * whether it is about the implementation, the plan, or something outside this
+ * context entirely. Nothing here is checked against the context's task set, so
+ * an observation about code no task owns costs the lane nothing.
+ */
+export const workflowValidatorAdvisorySchema = z
+  .object({
+    kind: z.enum(["implementation", "plan", "out_of_scope"]),
+    title: z.string().trim().min(1),
+    description: z.string().trim().min(1),
+  })
+  .strict();
+export type WorkflowValidatorAdvisory = z.infer<
+  typeof workflowValidatorAdvisorySchema
+>;
+
+/**
+ * What names ONE advisory, for as long as anything refers to it.
+ *
+ * Stamped by the engine when a lane's result is accepted into the round record,
+ * never reported by the validator that raised it: an advisory is delivered,
+ * disposed of, and indexed by this triple, so a self-reported identity would let
+ * one specialist claim another's advisory or renumber its own between rounds.
+ * The three components are exactly what makes it unique — a round, a seat in
+ * that round's roster, and the advisory's position in that seat's own output.
+ */
+export const workflowAdvisoryIdentitySchema = z
+  .object({
+    roundSeq: z.number().int().positive(),
+    assignmentId: z.string().trim().min(1),
+    /** 1-based position within its own lane's advisories. */
+    ordinal: z.number().int().positive(),
+  })
+  .strict();
+export type WorkflowAdvisoryIdentity = z.infer<
+  typeof workflowAdvisoryIdentitySchema
+>;
+
+/**
+ * What the implementer may do with an advisory. `declined` is the reason this is
+ * a union rather than an enum: declining is the one answer that owes an
+ * explanation, and requiring it in the SCHEMA means the structured-output gate
+ * refuses a bare decline and retries, instead of the engine recording a refusal
+ * nobody can read later.
+ */
+export const workflowAdvisoryDispositionEntrySchema = z.discriminatedUnion(
+  "disposition",
+  [
+    z
+      .object({
+        identity: workflowAdvisoryIdentitySchema,
+        disposition: z.literal("addressed"),
+        reason: z.string().trim().min(1).nullish(),
+      })
+      .strict(),
+    z
+      .object({
+        identity: workflowAdvisoryIdentitySchema,
+        disposition: z.literal("declined"),
+        reason: z.string().trim().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        identity: workflowAdvisoryIdentitySchema,
+        disposition: z.literal("deferred"),
+        reason: z.string().trim().min(1).nullish(),
+      })
+      .strict(),
+  ],
+);
+export type WorkflowAdvisoryDispositionEntry = z.infer<
+  typeof workflowAdvisoryDispositionEntrySchema
+>;
+
+/**
+ * The advisory-response turn's output contract, read back off the turn.
+ *
+ * Closed and exhaustive for the same reason as the validator parse twins: this
+ * is not a laxer fallback but the same contract the dispatched schema enforces,
+ * so anything it accepts beyond that shape is a disposition that reached the
+ * engine without passing the gate.
+ */
+export const workflowAdvisoryDispositionsResultSchema = z
+  .object({
+    dispositions: z.array(workflowAdvisoryDispositionEntrySchema),
+  })
+  .strict();
+
+/**
+ * The issue shape as a validator may EMIT it, closed to anything else.
+ *
+ * Strictness lives here rather than on `workflowValidatorIssueSchema` because
+ * that base is also the persisted shape (extended for recorded findings, stored
+ * on specialist state), where an unknown key is a row to read, not a verdict to
+ * refuse.
+ */
+const workflowValidatorOutputIssueSchema =
+  workflowValidatorIssueSchema.strict();
+
+/**
+ * The two parse-side twins of the dispatched output schemas, split by
+ * authority.
+ *
+ * Both are closed and require every field the dispatched schema requires,
+ * because these twins are not a laxer fallback contract — they are the same
+ * contract read back off a backend with no native structured output. Anything
+ * they accept beyond the dispatched shape is a verdict that reached the engine
+ * without passing the gate: a blocking finding smuggled in by an advisory seat,
+ * an advisory silently stripped of a field, or a missing array defaulted to
+ * empty so a validator that never considered advisories reads as one that found
+ * none. Refusing here routes the payload to the same structured-output retry
+ * the gate would have run.
+ */
+export const workflowBlockingValidatorResultSchema = z
+  .object({
+    summary: z.string(),
+    issues: z.array(workflowValidatorOutputIssueSchema),
+    advisories: z.array(workflowValidatorAdvisorySchema),
+  })
+  .strict();
+
+export const workflowAdvisoryValidatorResultSchema = z
+  .object({
+    summary: z.string(),
+    advisories: z.array(workflowValidatorAdvisorySchema),
+  })
+  .strict();
 
 export const graphWorkflowSharedDocumentEntrySchema = z.object({
   id: z.string().trim().min(1),

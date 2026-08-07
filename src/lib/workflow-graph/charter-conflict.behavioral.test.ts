@@ -99,6 +99,7 @@ const validatorConfig: ValidatorAssignment = {
   id: "general",
   profile: { tier: "builtin" as const, id: "general-reviewer" },
   strategy: "conversation" as const,
+  authority: "blocking",
   agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
   continuity: { enabled: true },
 };
@@ -195,7 +196,11 @@ function deferralTaskRun(): TaskRunResult {
     kind: "text",
     text: [
       "```json",
-      JSON.stringify({ summary: DEFERRAL_SUMMARY, issues: [] }),
+      JSON.stringify({
+        summary: DEFERRAL_SUMMARY,
+        issues: [],
+        advisories: [],
+      }),
       "```",
     ].join("\n"),
     usage: {

@@ -12,9 +12,14 @@ import {
 import type { ValidatorCohort } from "./config-schemas";
 import type { ValidatorRunResult } from "./validator-runner";
 
+/**
+ * The seeded shape: one reviewer that can actually reject the context. The
+ * service's outcome mapping is what this file tests, and an advisory seat
+ * decides nothing, so its verdicts would map to the same pass either way.
+ */
 const SINGLE_ASSIGNMENT_COHORT: ValidatorCohort = {
   enabled: true,
-  assignments: [makeValidatorAssignment()],
+  assignments: [makeValidatorAssignment({ authority: "blocking" })],
 };
 
 function buildExecutionWithContextValidator(
@@ -122,6 +127,7 @@ describe("graph workflow execution validation service", () => {
                 "The migration rollback steps are not documented in the plan.",
             },
           ],
+          advisories: [],
           reopenTaskIds: ["task-plan-2"],
         },
         metadata: emptyMetadata(),
@@ -168,6 +174,7 @@ describe("graph workflow execution validation service", () => {
           kind: "pass",
           summary: "All acceptance criteria were satisfied.",
           issues: [],
+          advisories: [],
           reopenTaskIds: [],
         },
         metadata: emptyMetadata(),
@@ -325,6 +332,9 @@ describe("graph workflow execution validation service", () => {
   });
 
   describe("cohort execution", () => {
+    // Three BLOCKING seats: these tests are about what a cohort's verdicts do
+    // to the round — reject it, exhaust it, attribute its findings — which is
+    // only a question for lanes that can decide something.
     function threeSpecialistCohort(): ValidatorCohort {
       return {
         enabled: true,
@@ -332,10 +342,12 @@ describe("graph workflow execution validation service", () => {
           makeValidatorAssignment({
             id: "security",
             focus: "auth boundaries",
+            authority: "blocking",
           }),
           makeValidatorAssignment({
             id: "performance",
             strategy: "task",
+            authority: "blocking",
             agent: {
               backend: "codex",
               model: "gpt-5.6-sol",
@@ -343,14 +355,20 @@ describe("graph workflow execution validation service", () => {
             },
             continuity: { enabled: false },
           }),
-          makeValidatorAssignment({ id: "docs" }),
+          makeValidatorAssignment({ id: "docs", authority: "blocking" }),
         ],
       };
     }
 
     function passingRun(summary: string): ValidatorRunResult {
       return {
-        result: { kind: "pass", summary, issues: [], reopenTaskIds: [] },
+        result: {
+          kind: "pass",
+          summary,
+          issues: [],
+          advisories: [],
+          reopenTaskIds: [],
+        },
         metadata: emptyMetadata(),
       };
     }
@@ -426,6 +444,7 @@ describe("graph workflow execution validation service", () => {
                   description: "No latency budget is recorded.",
                 },
               ],
+              advisories: [],
               reopenTaskIds: ["task-plan-2"],
             },
             metadata: emptyMetadata(),
@@ -591,6 +610,7 @@ describe("graph workflow execution validation service", () => {
                   description: "The rollback path is undocumented.",
                 },
               ],
+              advisories: [],
               reopenTaskIds: ["task-plan-2"],
             },
             metadata: emptyMetadata(),
@@ -641,6 +661,7 @@ describe("graph workflow execution validation service", () => {
                 description: "Document the migration.",
               },
             ],
+            advisories: [],
             reopenTaskIds: ["task-plan-2"],
           },
           metadata: emptyMetadata(),
@@ -719,6 +740,7 @@ describe("graph workflow execution validation service", () => {
               kind: "pass",
               summary: `${input.validator.id} approved.`,
               issues: [],
+              advisories: [],
               reopenTaskIds: [],
             },
             metadata: emptyMetadata(),
@@ -789,6 +811,7 @@ describe("graph workflow execution validation service", () => {
                 description: "Add rollback guidance.",
               },
             ],
+            advisories: [],
             reopenTaskIds: ["task-plan-2"],
           },
           metadata: emptyMetadata(),
@@ -833,6 +856,7 @@ describe("graph workflow execution validation service", () => {
             kind: "pass",
             summary: `${input.validator.id} approved.`,
             issues: [],
+            advisories: [],
             reopenTaskIds: [],
           },
           metadata: emptyMetadata(),
@@ -890,6 +914,7 @@ describe("graph workflow execution validation service", () => {
               kind: "pass",
               summary: `${input.validator.id} approved.`,
               issues: [],
+              advisories: [],
               reopenTaskIds: [],
             },
             metadata: emptyMetadata(),
@@ -923,6 +948,7 @@ describe("graph workflow execution validation service", () => {
               kind: "pass",
               summary: "ok",
               issues: [],
+              advisories: [],
               reopenTaskIds: [],
             },
             metadata: emptyMetadata(),
@@ -971,6 +997,7 @@ describe("graph workflow execution validation service", () => {
             kind: "pass",
             summary: `${input.validator.id} approved.`,
             issues: [],
+            advisories: [],
             reopenTaskIds: [],
           },
           metadata: emptyMetadata(),
@@ -1014,6 +1041,7 @@ describe("graph workflow execution validation service", () => {
               kind: "pass",
               summary: "ok",
               issues: [],
+              advisories: [],
               reopenTaskIds: [],
             },
             metadata: emptyMetadata(),
@@ -1050,6 +1078,7 @@ describe("graph workflow execution validation service", () => {
                 description: "Add rollback guidance.",
               },
             ],
+            advisories: [],
             reopenTaskIds: ["task-plan-2"],
           },
           metadata: emptyMetadata(),
@@ -1085,6 +1114,7 @@ describe("graph workflow execution validation service", () => {
             kind: "pass",
             summary: "ok",
             issues: [],
+            advisories: [],
             reopenTaskIds: [],
           },
           metadata: emptyMetadata(),
@@ -1117,6 +1147,7 @@ describe("graph workflow execution validation service", () => {
           kind: "pass" as const,
           summary: "ok",
           issues: [],
+          advisories: [],
           reopenTaskIds: [],
         },
         metadata: emptyMetadata(),
@@ -1157,6 +1188,7 @@ describe("graph workflow execution validation service", () => {
           kind: "pass" as const,
           summary: "ok",
           issues: [],
+          advisories: [],
           reopenTaskIds: [],
         },
         metadata: emptyMetadata(),

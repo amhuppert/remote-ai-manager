@@ -6,6 +6,7 @@ import { StatusChip } from "@/components/ui/StatusChip";
 import { cn } from "@/lib/ui/cn";
 import type {
   ValidatorAssignment,
+  ValidatorAuthority,
   ValidatorCohort,
 } from "@/lib/workflow-graph/config-schemas";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
@@ -62,6 +63,23 @@ export function toggleCohortEnabled(
       : structuredClone(cohort.assignments);
   return { enabled, assignments };
 }
+
+/**
+ * What each authority looks like in the roster.
+ *
+ * Blocking takes the amber consequence tone because that seat can reopen tasks
+ * and fail the context; advisory stays muted because its findings only ever
+ * reach the implementer as suggestions. The failure tone is deliberately not
+ * used for either — red belongs to a verdict that HAS failed, not to a seat
+ * that could.
+ */
+const AUTHORITY_PRESENTATION: Record<
+  ValidatorAuthority,
+  { label: string; tone: "amber" | "neutral" }
+> = {
+  blocking: { label: "Blocking", tone: "amber" },
+  advisory: { label: "Advisory", tone: "neutral" },
+};
 
 /** Where the cohort on screen came from, and what this tier did with it. */
 export type CohortCascadeState = "inherit" | "use" | "disabled";
@@ -174,7 +192,15 @@ export function CohortEditor({
       ...value,
       assignments: [
         ...value.assignments,
-        { ...seed, id: freshAssignmentId(taken, seed.profile.id) },
+        {
+          ...seed,
+          id: freshAssignmentId(taken, seed.profile.id),
+          // The seed's blocking authority is the acceptance-criteria verifier's
+          // own, not a template: blocking is authored, never inherited, so a
+          // seat added here arrives unable to fail the context until its author
+          // says otherwise and takes on convergence for it.
+          authority: "advisory",
+        },
       ],
     });
   };
@@ -213,6 +239,7 @@ export function CohortEditor({
 
       {value.assignments.map((assignment, index) => {
         const tier = agentProfileTierPresentation(assignment.profile.tier);
+        const authority = AUTHORITY_PRESENTATION[assignment.authority];
         return (
           <div
             key={assignment.id}
@@ -229,6 +256,14 @@ export function CohortEditor({
                 data-testid="cohort-tier-badge"
               >
                 {tier.label}
+              </StatusChip>
+              <StatusChip
+                tone={authority.tone}
+                appearance="flat"
+                data-testid="cohort-authority-badge"
+                data-authority={assignment.authority}
+              >
+                {authority.label}
               </StatusChip>
               {dormant ? (
                 <StatusChip tone="amber" appearance="flat">

@@ -35,6 +35,7 @@ function round(
         attempts: 1,
         summary: "Fine.",
         issues: [],
+        advisories: [],
         questionToken: null,
         sessionRef: null,
         reviewArtifact: null,

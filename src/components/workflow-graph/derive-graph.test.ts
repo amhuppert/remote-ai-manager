@@ -490,6 +490,38 @@ describe("getContextDisplayPhase", () => {
     expect(getContextDisplayPhase(undefined)).toBeUndefined();
   });
 
+  it("reports advisory-response ahead of validating for a certified context", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "running",
+          completedTaskCount: 3,
+          advisoryResponse: {
+            roundSeq: 2,
+            phase: "awaiting_response",
+            enteredAt: "2026-03-27T10:10:00.000Z",
+          },
+        }),
+      ),
+    ).toBe("advisory-response");
+  });
+
+  it("returns to validating once the response turn moved the candidate", () => {
+    expect(
+      getContextDisplayPhase(
+        makeState({
+          status: "running",
+          completedTaskCount: 3,
+          advisoryResponse: {
+            roundSeq: 2,
+            phase: "recertifying",
+            enteredAt: "2026-03-27T10:10:00.000Z",
+          },
+        }),
+      ),
+    ).toBe("validating");
+  });
+
   it("passes through non-running statuses", () => {
     expect(getContextDisplayPhase(makeState({ status: "pending" }))).toBe(
       "pending",
@@ -672,6 +704,7 @@ describe("getDisplayValidators", () => {
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
             strategy: "conversation" as const,
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -698,6 +731,7 @@ describe("getDisplayValidators", () => {
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
             strategy: "task" as const,
+            authority: "blocking",
             agent: {
               backend: "codex",
               model: "gpt-5.4",
@@ -724,6 +758,7 @@ describe("getDisplayValidators", () => {
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
             strategy: "conversation" as const,
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -751,6 +786,7 @@ describe("getDisplayValidators", () => {
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             profileSnapshot: makeProfileSnapshot(),
             strategy: "conversation" as const,
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -776,6 +812,7 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             strategy: "conversation" as const,
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -801,6 +838,7 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             strategy: "task" as const,
+            authority: "blocking",
             agent: {
               backend: "codex",
               model: "gpt-5.5",
@@ -826,6 +864,7 @@ describe("getDisplayValidators", () => {
             id: "general",
             profile: { tier: "builtin" as const, id: "general-reviewer" },
             strategy: "conversation" as const,
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",

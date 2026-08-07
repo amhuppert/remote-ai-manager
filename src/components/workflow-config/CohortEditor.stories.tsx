@@ -60,24 +60,29 @@ function assignment(
     id,
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
+    authority: "blocking",
     continuity: { enabled: true },
     agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     ...overrides,
   };
 }
 
+// The realistic shape: one authored blocking seat (the acceptance-criteria
+// verifier) alongside specialists that only advise.
 const COHORT: ValidatorCohort = {
   enabled: true,
   assignments: [
     assignment("general"),
     assignment("security", {
       profile: { tier: "global", id: "security-reviewer" },
+      authority: "advisory",
       focus: "auth boundaries and session fixation",
       agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
     }),
     assignment("house-style", {
       profile: { tier: "project", id: "house-style" },
       strategy: "task",
+      authority: "advisory",
       continuity: { enabled: false },
     }),
   ],
@@ -189,6 +194,27 @@ export const DisabledForThisContext: Story = {
     <Harness
       initial={{ ...COHORT, enabled: false }}
       cascade={{ state: "disabled", origin: "this context" }}
+    />
+  ),
+};
+
+/** A legal roster with no blocking seat at all: every finding is a suggestion. */
+export const AdvisoryOnlyRoster: Story = {
+  render: () => (
+    <Harness
+      initial={{
+        enabled: true,
+        assignments: [
+          assignment("security", {
+            profile: { tier: "global", id: "security-reviewer" },
+            authority: "advisory",
+          }),
+          assignment("house-style", {
+            profile: { tier: "project", id: "house-style" },
+            authority: "advisory",
+          }),
+        ],
+      }}
     />
   ),
 };

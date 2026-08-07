@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createWorkflowExecution } from "../test-fixtures";
+import {
+  createWorkflowExecution,
+  makeSeededValidatorAssignment,
+} from "../test-fixtures";
 import type { GraphWorkflowExecution } from "../schemas";
+import type { SeededValidatorAssignment } from "../config-schemas";
 import type { MutateActiveResult } from "../execution-repository";
 import type { LiveEditApplyOutcome } from "../live-edit-apply";
+import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 import type { PublishPlanRepairInput } from "../execution-events";
 import {
   createPlanRepairSupervisor,
@@ -31,6 +36,11 @@ interface HarnessOptions {
   agentResults?: PlanRepairAgentResult[];
   applyOutcomes?: LiveEditApplyOutcome[];
   resumeError?: Error;
+  /**
+   * An edit that lands while the repair agent's turn is open — the window a
+   * live operator actually has, since the turn is minutes long.
+   */
+  duringAgentTurn?: (current: GraphWorkflowExecution) => GraphWorkflowExecution;
 }
 
 function makeHarness(options: HarnessOptions) {
@@ -42,6 +52,7 @@ function makeHarness(options: HarnessOptions) {
     source: string;
     operationCount: number;
   }[] = [];
+  const appliedOperations: WorkflowLiveEditOperation[][] = [];
   const published: PublishPlanRepairInput[] = [];
   const agentCalls: { prompt: string; roundsAtCall: number }[] = [];
   let resumeCalls = 0;
@@ -67,6 +78,7 @@ function makeHarness(options: HarnessOptions) {
         source: input.request.source,
         operationCount: input.request.operations.length,
       });
+      appliedOperations.push([...input.request.operations]);
       const next = applyOutcomes.shift();
       if (!next) throw new Error("no scripted apply outcome left");
       if (next.ok && !next.dryRun && execution) {
@@ -82,6 +94,9 @@ function makeHarness(options: HarnessOptions) {
         prompt: invocation.prompt,
         roundsAtCall: execution?.planRepairRounds.length ?? -1,
       });
+      if (options.duringAgentTurn && execution) {
+        execution = options.duringAgentTurn(execution);
+      }
       const scripted = agentResults.shift();
       if (scripted) return Promise.resolve(scripted);
       return new Promise((resolve) => {
@@ -114,6 +129,7 @@ function makeHarness(options: HarnessOptions) {
     deps,
     current: () => execution,
     applyRequests,
+    appliedOperations,
     published,
     agentCalls,
     resumeCalls: () => resumeCalls,
@@ -508,5 +524,157 @@ describe("plan-repair supervisor", () => {
       outcome: "repaired",
       resumed: false,
     });
+  });
+});
+
+/**
+ * R10.1 — a narrowing names ONE assignment, so what lands must change one seat
+ * and nothing else. The op is expanded into a whole-cohort write, and the agent
+ * turn is minutes long, so the cohort the agent was shown is not necessarily the
+ * cohort the write lands on: the expansion has to be built from the state the
+ * apply is guarded against, not from the state the prompt was built from.
+ */
+describe("plan-repair validator narrowing vs. a concurrent cohort edit", () => {
+  function haltedWithCohort(
+    assignments: SeededValidatorAssignment[],
+  ): GraphWorkflowExecution {
+    const execution = haltedExecution();
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-implement",
+    )!;
+    context.contextValidator = { enabled: true, assignments };
+    return execution;
+  }
+
+  function withCohort(
+    execution: GraphWorkflowExecution,
+    assignments: SeededValidatorAssignment[],
+  ): GraphWorkflowExecution {
+    return {
+      ...execution,
+      liveRevision: execution.liveRevision + 1,
+      workingDefinition: {
+        ...execution.workingDefinition,
+        executionContexts: execution.workingDefinition.executionContexts.map(
+          (entry) =>
+            entry.id === "context-implement"
+              ? {
+                  ...entry,
+                  contextValidator: { enabled: true, assignments },
+                }
+              : entry,
+        ),
+      },
+    };
+  }
+
+  const DEMOTE_ALPHA = [
+    {
+      type: "update-validator-assignment",
+      contextId: "context-implement",
+      assignmentId: "alpha",
+      authority: "advisory",
+    },
+  ];
+
+  function appliedCohort(
+    operations: WorkflowLiveEditOperation[],
+  ): Array<Record<string, unknown>> {
+    const operation = operations[0] as {
+      contextValidator?: { assignments?: Array<Record<string, unknown>> };
+    };
+    return operation.contextValidator?.assignments ?? [];
+  }
+
+  it("carries a concurrent operator edit through instead of overwriting it", async () => {
+    const harness = makeHarness({
+      initial: haltedWithCohort([
+        makeSeededValidatorAssignment({ id: "alpha", authority: "blocking" }),
+        makeSeededValidatorAssignment({
+          id: "beta",
+          authority: "blocking",
+          focus: "Judge the migration order.",
+        }),
+      ]),
+      // While the repair agent is thinking, an operator refocuses beta and adds
+      // a third reviewer.
+      duringAgentTurn: (current) =>
+        withCohort(current, [
+          makeSeededValidatorAssignment({ id: "alpha", authority: "blocking" }),
+          makeSeededValidatorAssignment({
+            id: "beta",
+            authority: "blocking",
+            focus: "Judge the rollback path instead.",
+          }),
+          makeSeededValidatorAssignment({ id: "gamma", authority: "advisory" }),
+        ]),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: true,
+            diagnosis: "alpha's blocking standard is mis-scoped",
+            operations: DEMOTE_ALPHA,
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+      applyOutcomes: [appliedOutcome(3)],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toMatchObject({ ran: true, outcome: "repaired" });
+    const cohort = appliedCohort(harness.appliedOperations[0] ?? []);
+    // The operator's roster, not the one the agent was shown.
+    expect(cohort.map((entry) => entry.id)).toEqual(["alpha", "beta", "gamma"]);
+    expect(cohort[1]).toMatchObject({
+      focus: "Judge the rollback path instead.",
+    });
+    // …with exactly the named seat narrowed.
+    expect(cohort[0]).toMatchObject({ id: "alpha", authority: "advisory" });
+  });
+
+  it("fails closed when the concurrent edit removed the seat the repair names", async () => {
+    const harness = makeHarness({
+      initial: haltedWithCohort([
+        makeSeededValidatorAssignment({ id: "alpha", authority: "blocking" }),
+        makeSeededValidatorAssignment({ id: "beta", authority: "blocking" }),
+      ]),
+      // The operator got there first and removed the seat outright.
+      duringAgentTurn: (current) =>
+        withCohort(current, [
+          makeSeededValidatorAssignment({ id: "beta", authority: "blocking" }),
+        ]),
+      agentResults: [
+        {
+          kind: "verdict",
+          verdict: {
+            planningDefect: true,
+            diagnosis: "alpha's blocking standard is mis-scoped",
+            operations: DEMOTE_ALPHA,
+          },
+          conversationId: "conv-repair-1",
+        },
+      ],
+    });
+    const supervisor = createPlanRepairSupervisor(harness.deps);
+
+    const result = await supervisor.maybeRunPlanRepair(RUN_INPUT);
+
+    expect(result).toMatchObject({ ran: true, outcome: "failed" });
+    // Nothing was written: a vanished seat is never resurrected by an expansion.
+    expect(harness.applyRequests).toHaveLength(0);
+    expect(harness.resumeCalls()).toBe(0);
+    expect(harness.current()?.planRepairRounds.at(-1)).toMatchObject({
+      outcome: "failed",
+    });
+    const current = harness.current();
+    expect(
+      current?.haltReason?.type === "circuit_breaker"
+        ? current.haltReason.summary
+        : null,
+    ).toContain("alpha");
   });
 });

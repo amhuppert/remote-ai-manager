@@ -49,6 +49,9 @@ export function makeValidatorAssignment(
     id: "general",
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
+    // The schema default, so a fixture whose subject is not authority behaves
+    // like an ordinary authored specialist rather than like the seeded verifier.
+    authority: "advisory",
     agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     continuity: { enabled: true },
     ...overrides,
@@ -523,6 +526,7 @@ export function createWorkflowExecution(
       },
     },
     sharedDocuments: [],
+    advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
     joins: {},

@@ -1,4 +1,7 @@
-import { workflowAgentValidatorResultSchema } from "@/lib/workflow-graph/definition-schemas";
+import {
+  workflowAdvisoryValidatorResultSchema,
+  workflowBlockingValidatorResultSchema,
+} from "@/lib/workflow-graph/definition-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   CharterAmendment,
@@ -23,6 +26,7 @@ import {
 import {
   selectRunnableCohortAssignments,
   type ValidatorAssignment,
+  type ValidatorAuthority,
 } from "@/lib/workflow-graph/config-schemas";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
 import {
@@ -37,6 +41,7 @@ import { getBackendDescriptor } from "@/lib/agent-backends/registry";
 import type {
   GraphWorkflowCascadeContext,
   GraphWorkflowTaskDefinition,
+  WorkflowValidatorAdvisory,
   WorkflowValidatorIssue,
 } from "@/lib/workflow-graph/definition-schemas";
 import { isQuerySlotAdmissionTimeout } from "@/lib/shared/query-semaphore";
@@ -95,27 +100,85 @@ import {
   type StructuredOutputSource,
 } from "@/lib/agent-backends/structured-output";
 
-export const VALIDATOR_OUTPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    summary: { type: "string" },
-    issues: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          taskId: { type: "string" },
-          title: { type: "string" },
-          description: { type: "string" },
-        },
-        required: ["taskId", "title", "description"],
-        additionalProperties: false,
+/**
+ * The advisory item both authorities emit, closed to anything else. No
+ * `taskId`: an advisory is addressed to the implementer rather than to a task
+ * the engine must reopen.
+ */
+const ADVISORY_ITEMS_OUTPUT_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        enum: ["implementation", "plan", "out_of_scope"],
       },
+      title: { type: "string" },
+      description: { type: "string" },
     },
+    required: ["kind", "title", "description"],
+    additionalProperties: false,
   },
-  required: ["summary", "issues"],
-  additionalProperties: false,
 } as const;
+
+/**
+ * The structured-output schema for one validator dispatch, selected by the
+ * seat's authority and bound to the context it is reviewing.
+ *
+ * Two properties are load-bearing. Authority is STRUCTURAL: `issues` is absent
+ * from the advisory schema, so a validator with no blocking authority cannot
+ * emit a blocking finding at all — the attempt fails the output gate and
+ * retries rather than reaching the engine as a verdict. And `taskId` is an enum
+ * of this context's task ids, so an id the validator invented is caught at the
+ * same gate, where a retry can fix it, instead of arriving as a well-formed
+ * verdict the runner can only reject as an infrastructure failure.
+ */
+export function buildValidatorOutputSchema(input: {
+  authority: ValidatorAuthority;
+  taskIds: readonly string[];
+}): Record<string, unknown> {
+  if (input.authority === "advisory") {
+    return {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        advisories: ADVISORY_ITEMS_OUTPUT_SCHEMA,
+      },
+      required: ["summary", "advisories"],
+      additionalProperties: false,
+    };
+  }
+
+  return {
+    type: "object",
+    properties: {
+      summary: { type: "string" },
+      issues: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            // An empty enum matches nothing and providers refuse it outright,
+            // so a context with no tasks to name falls back to a free-form id
+            // rather than dispatching an unsatisfiable schema.
+            taskId: {
+              type: "string",
+              ...(input.taskIds.length > 0 ? { enum: [...input.taskIds] } : {}),
+            },
+            title: { type: "string" },
+            description: { type: "string" },
+          },
+          required: ["taskId", "title", "description"],
+          additionalProperties: false,
+        },
+      },
+      advisories: ADVISORY_ITEMS_OUTPUT_SCHEMA,
+    },
+    required: ["summary", "issues", "advisories"],
+    additionalProperties: false,
+  };
+}
 
 export interface BuildContextValidationPromptInput {
   context: GraphWorkflowCascadeContext;
@@ -192,6 +255,32 @@ function formatTaskBlock(
     `  - Instructions: ${task.instructions}`,
     `  - Stored Summary: ${summary}`,
   ].join("\n");
+}
+
+/**
+ * The output fields this seat's authority actually admits, described in the
+ * prompt exactly as the dispatched schema enforces them. An advisory seat is
+ * never told about `issues`: its schema has no such field, so describing one
+ * would only produce verdicts that fail the output gate and burn retries.
+ */
+function requiredOutputFieldLines(authority: ValidatorAuthority): string[] {
+  const advisories =
+    "- `advisories` (array of `{ kind, title, description }`, `kind` one of `implementation` | `plan` | `out_of_scope`): Non-blocking observations delivered to the implementer, who may act on them or decline. An advisory carries no `taskId`, reopens nothing, and may name matters outside this context — use `out_of_scope` for those. Emit an empty array when you have none.";
+
+  if (authority === "advisory") {
+    return [
+      advisories,
+      "",
+      "You have no blocking authority in this round: your findings never reopen a task and never fail this context. Report everything you found as advisories.",
+    ];
+  }
+
+  return [
+    "- `issues` (array of `{ taskId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).",
+    advisories,
+    "",
+    "An empty `issues` array means the context passes validation. A non-empty `issues` array means every referenced task will be reopened. Advisories never reopen anything, whatever the `issues` array holds.",
+  ];
 }
 
 export function buildContextValidationPrompt(
@@ -282,9 +371,7 @@ export function buildContextValidationPrompt(
     "",
     "Output a JSON object with these fields:",
     "- `summary` (string): Brief explanation of your assessment.",
-    "- `issues` (array of `{ taskId, title, description }`): Each issue must reference the `taskId` of the task that needs to be reopened to address it. If the same problem touches multiple tasks in this context, include one issue entry per affected task (duplicate the entry with each distinct `taskId`).",
-    "",
-    "An empty `issues` array means the context passes validation. A non-empty `issues` array means every referenced task will be reopened.",
+    ...requiredOutputFieldLines(input.validator.authority),
   ].join("\n");
 }
 
@@ -293,12 +380,14 @@ export type ValidatorOutcome =
       kind: "pass";
       summary: string;
       issues: WorkflowValidatorIssue[];
+      advisories: WorkflowValidatorAdvisory[];
       reopenTaskIds: string[];
     }
   | {
       kind: "fail";
       summary: string;
       issues: WorkflowValidatorIssue[];
+      advisories: WorkflowValidatorAdvisory[];
       reopenTaskIds: string[];
     }
   | {
@@ -389,15 +478,18 @@ function deriveReopenTaskIds(issues: WorkflowValidatorIssue[]): string[] {
 function wireResultToOutcome(
   result: {
     summary: string;
-    issues: WorkflowValidatorIssue[];
+    issues?: WorkflowValidatorIssue[];
+    advisories: WorkflowValidatorAdvisory[];
   },
   engine: AgentBackendId,
   allowedTaskIds: Set<string> | null,
 ): ValidatorOutcome {
-  const invalidIssueTaskIds = validateIssueTaskIds(
-    result.issues,
-    allowedTaskIds,
-  );
+  // Absent for an advisory assignment, whose schema has no `issues` at all.
+  const issues = result.issues ?? [];
+  // Only issues are checked against the context's task set. Advisories pass
+  // through untouched, which is what keeps an out-of-context observation from
+  // taking the infra_error path and spending one of the lane's attempts.
+  const invalidIssueTaskIds = validateIssueTaskIds(issues, allowedTaskIds);
   if (invalidIssueTaskIds) {
     return {
       kind: "infra_error",
@@ -407,11 +499,12 @@ function wireResultToOutcome(
     };
   }
 
-  if (result.issues.length === 0) {
+  if (issues.length === 0) {
     return {
       kind: "pass",
       summary: result.summary,
       issues: [],
+      advisories: result.advisories,
       reopenTaskIds: [],
     };
   }
@@ -419,8 +512,9 @@ function wireResultToOutcome(
   return {
     kind: "fail",
     summary: result.summary,
-    issues: result.issues,
-    reopenTaskIds: deriveReopenTaskIds(result.issues),
+    issues,
+    advisories: result.advisories,
+    reopenTaskIds: deriveReopenTaskIds(issues),
   };
 }
 
@@ -442,6 +536,19 @@ const PARSE_PATH_BY_SOURCE: Record<
   fenced: "fenced_json_block",
 };
 
+export interface ParseValidatorResponseInput {
+  text: string;
+  engine: AgentBackendId;
+  /**
+   * Selects the parse twin. Required rather than defaulted: a caller that
+   * forgot it would parse an advisory validator's output under the blocking
+   * schema, which is precisely the shape the split exists to refuse.
+   */
+  authority: ValidatorAuthority;
+  structuredOutput?: unknown;
+  allowedTaskIds?: string[];
+}
+
 /**
  * Maps a validator turn's output onto a `ValidatorOutcome` via the shared
  * structured-output module (extraction precedence native → raw JSON → last
@@ -449,15 +556,15 @@ const PARSE_PATH_BY_SOURCE: Record<
  * validator-specific task-id containment check.
  */
 export function parseValidatorResponse(
-  text: string,
-  engine: AgentBackendId,
-  structuredOutput?: unknown,
-  allowedTaskIds?: string[],
+  input: ParseValidatorResponseInput,
 ): ParsedValidatorResponse {
+  const { text, engine, authority, structuredOutput, allowedTaskIds } = input;
   const allowedTaskIdSet = allowedTaskIds ? new Set(allowedTaskIds) : null;
 
   const validated = validateStructuredOutput(
-    workflowAgentValidatorResultSchema,
+    authority === "advisory"
+      ? workflowAdvisoryValidatorResultSchema
+      : workflowBlockingValidatorResultSchema,
     {
       ...(structuredOutput != null ? { native: structuredOutput } : {}),
       text,
@@ -715,6 +822,12 @@ interface ValidatorTaskInvocation {
    * shape here even though the transport allows it for implementer lanes.
    */
   fsWritePolicy: FsWritePolicy;
+  /**
+   * The authority-selected, task-bound output schema for this dispatch (D2).
+   * Built once per turn by the caller so the schema the provider enforces is
+   * the same one the role contract quotes.
+   */
+  outputSchema: Record<string, unknown>;
 }
 
 /**
@@ -837,6 +950,9 @@ interface RunValidatorTurnInput {
   reasoningEffort: string | undefined;
   contextLimitTokens: number | undefined;
   allowedTaskIds: string[];
+  /** Selects both the dispatched output schema and the parse twin (D2). */
+  authority: ValidatorAuthority;
+  outputSchema: Record<string, unknown>;
   overrideWorktreePath: string | undefined;
   pinnedConversationId: string | undefined;
 }
@@ -909,7 +1025,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       fsWritePolicy: invocation.fsWritePolicy,
       outputFormat: {
         type: "json_schema",
-        schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+        schema: invocation.outputSchema,
       },
       timeoutMs: invocation.timeoutMs,
       ...(invocation.modelId !== undefined
@@ -1047,6 +1163,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       reasoningEffort,
       contextLimitTokens,
       allowedTaskIds,
+      authority,
+      outputSchema,
       overrideWorktreePath,
       pinnedConversationId,
     } = input;
@@ -1105,6 +1223,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         sessionName,
         conversationId: noServiceConversationId,
         fsWritePolicy,
+        outputSchema,
       });
 
       if (taskResult.transcript) {
@@ -1150,12 +1269,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       }
 
       const text = taskResult.text ?? "";
-      const { result: parsed, parsePath } = parseValidatorResponse(
+      const { result: parsed, parsePath } = parseValidatorResponse({
         text,
-        backend,
-        taskResult.structuredOutput,
+        engine: backend,
+        authority,
+        structuredOutput: taskResult.structuredOutput,
         allowedTaskIds,
-      );
+      });
 
       execLogger?.validation(contextId, "validator.result_parsed", {
         lane,
@@ -1253,6 +1373,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionName,
       conversationId: dispatchConversationId,
       fsWritePolicy,
+      outputSchema,
     });
 
     if (taskResult.transcript) {
@@ -1308,12 +1429,13 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
           result: classifyDispatchFailure(runnerError, backend),
           parsePath: "runner_error",
         }
-      : parseValidatorResponse(
+      : parseValidatorResponse({
           text,
-          backend,
-          taskResult.structuredOutput,
+          engine: backend,
+          authority,
+          structuredOutput: taskResult.structuredOutput,
           allowedTaskIds,
-        );
+        });
 
     if (resolved.strategy === "task") {
       const updatedRef =
@@ -1715,16 +1837,34 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         : {}),
     });
 
+    // One schema per dispatch, quoted in the role contract and enforced by the
+    // provider: the validator is told exactly the shape it will be held to.
+    const outputSchema = buildValidatorOutputSchema({
+      authority: input.validator.authority,
+      taskIds: allowedTaskIds,
+    });
+
     // Role contract first, the assignment's seeded lens after it. Composed here
     // — above both adapters — because the ORDER is the security property and a
     // per-adapter decision could invert it (R10).
+    //
+    // A blocking seat's authored instructions ride in the contract as its
+    // mandate; seeding leaves them out of that seat's profile block, so the
+    // text is delivered exactly once, at the one authority level it is meant to
+    // carry (D4). An advisory seat's instructions stay inside the block, where
+    // the snapshot already put them.
     const systemInstructions = composeWorkflowRoleInstructions({
-      roleContract: buildValidatorRoleContract({
-        verdictSchema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
-          string,
-          unknown
-        >,
-      }),
+      roleContract: buildValidatorRoleContract(
+        input.validator.authority === "advisory"
+          ? { authority: "advisory", verdictSchema: outputSchema }
+          : {
+              authority: "blocking",
+              verdictSchema: outputSchema,
+              ...(input.validator.focus === undefined
+                ? {}
+                : { mandate: input.validator.focus }),
+            },
+      ),
       profileBlock: input.validator.profileSnapshot.renderedInstructionBlock,
     });
 
@@ -1764,6 +1904,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         reasoningEffort: validatorPlan.reasoningEffort,
         contextLimitTokens,
         allowedTaskIds,
+        authority: input.validator.authority,
+        outputSchema,
         overrideWorktreePath,
         pinnedConversationId: input.resumeUserInput?.conversationId,
       });

@@ -59,6 +59,7 @@ function freshSpecialist(): GraphWorkflowValidationSpecialist {
     attempts: 0,
     summary: null,
     issues: [],
+    advisories: [],
     questionToken: null,
     sessionRef: null,
     reviewArtifact: null,

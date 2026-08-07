@@ -13,6 +13,7 @@ import {
   type ValidatorAssignment,
   type ValidatorCohort,
 } from "@/lib/workflow-graph/config-schemas";
+import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 import { CohortEditor, toggleCohortEnabled } from "./CohortEditor";
 
 afterEach(cleanup);
@@ -51,6 +52,7 @@ function assignment(
     id,
     profile: { tier: "builtin", id: "general-reviewer" },
     strategy: "conversation",
+    authority: "blocking",
     continuity: { enabled: true },
     agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     ...overrides,
@@ -137,7 +139,118 @@ describe("CohortEditor ordering", () => {
     renderCohort({
       value: { enabled: true, assignments: [assignment("general")] },
     });
-    expect(screen.getByLabelText("Remove general")).toBeDisabled();
+    const remove = screen.getByLabelText("Remove general");
+    expect(remove).toBeDisabled();
+    // The refusal has to say WHY, or a disabled button reads as a bug. The
+    // message is the schema's own reason, restated where the author can act.
+    expect(remove.getAttribute("title")).toContain("pass vacuously");
+    expect(
+      validatorCohortSchema.safeParse({ enabled: true, assignments: [] })
+        .success,
+    ).toBe(false);
+  });
+});
+
+/**
+ * R12.3: the roster carries the authority axis, and an advisory-only cohort is
+ * a legal roster rather than a validation error.
+ */
+describe("CohortEditor authority", () => {
+  function authorityBadges(): { id: string; text: string; tone: string }[] {
+    return screen.getAllByTestId(/^cohort-assignment-/).map((row) => {
+      const badge = within(row).getByTestId("cohort-authority-badge");
+      return {
+        id: row.getAttribute("data-assignment-id") ?? "",
+        text: badge.textContent ?? "",
+        tone: badge.getAttribute("data-authority") ?? "",
+      };
+    });
+  }
+
+  it("shows each roster member's authority as a badge distinct from its sibling's", () => {
+    renderCohort({
+      value: {
+        enabled: true,
+        assignments: [
+          assignment("general"),
+          assignment("security", { authority: "advisory" }),
+        ],
+      },
+    });
+    expect(authorityBadges()).toEqual([
+      { id: "general", text: "Blocking", tone: "blocking" },
+      { id: "security", text: "Advisory", tone: "advisory" },
+    ]);
+  });
+
+  it("tone-codes the two authorities differently", () => {
+    renderCohort({
+      value: {
+        enabled: true,
+        assignments: [
+          assignment("general"),
+          assignment("security", { authority: "advisory" }),
+        ],
+      },
+    });
+    const [blocking, advisory] = screen.getAllByTestId(
+      "cohort-authority-badge",
+    );
+    expect(blocking?.className).not.toBe(advisory?.className);
+  });
+
+  it("accepts an advisory-only roster without a validation error", () => {
+    const advisoryOnly: ValidatorCohort = {
+      enabled: true,
+      assignments: [
+        assignment("security", { authority: "advisory" }),
+        assignment("types", { authority: "advisory" }),
+      ],
+    };
+    renderCohort({ value: advisoryOnly });
+
+    expect(rowIds()).toEqual(["security", "types"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(validatorCohortSchema.safeParse(advisoryOnly).success).toBe(true);
+  });
+
+  it("switches one member's authority without touching its siblings", () => {
+    const { onChange } = renderCohort();
+    const row = screen.getByTestId("cohort-assignment-security");
+    fireEvent.click(
+      within(within(row).getByLabelText("Validator authority")).getByRole(
+        "radio",
+        { name: "advisory" },
+      ),
+    );
+    const next = onChange.mock.calls[0]?.[0] as ValidatorCohort;
+    expect(next.assignments[1]?.authority).toBe("advisory");
+    expect(next.assignments[0]).toEqual(COHORT.assignments[0]);
+  });
+
+  it("adds a new validator as advisory — blocking authority is authored, never inherited", () => {
+    const { onChange } = renderCohort();
+    fireEvent.click(screen.getByRole("button", { name: "Add validator" }));
+    const next = onChange.mock.calls[0]?.[0] as ValidatorCohort;
+    expect(next.assignments.at(-1)?.authority).toBe("advisory");
+    expect(validatorCohortSchema.safeParse(next).success).toBe(true);
+  });
+
+  it("renders the seeded acceptance-criteria verifier as blocking", () => {
+    const seeded = structuredClone(SEEDED_WORKFLOW_DEFAULTS.contextValidator);
+    renderCohort({ value: seeded });
+    const row = screen.getByTestId(
+      `cohort-assignment-${seeded.assignments[0]?.id}`,
+    );
+    expect(within(row).getByTestId("cohort-authority-badge").textContent).toBe(
+      "Blocking",
+    );
+    expect(
+      within(within(row).getByLabelText("Validator authority")).getByRole(
+        "radio",
+        { name: "blocking" },
+      ),
+    ).toBeChecked();
   });
 });
 
@@ -215,14 +328,36 @@ describe("CohortEditor cascade provenance", () => {
 });
 
 describe("CohortEditor per-assignment editing", () => {
-  it("edits one assignment's focus without touching its siblings", () => {
+  it("edits one assignment's instructions without touching its siblings", () => {
     const { onChange } = renderCohort();
-    fireEvent.change(screen.getByLabelText("Focus for security"), {
+    fireEvent.change(screen.getByLabelText("Mandate for security"), {
       target: { value: "auth boundaries" },
     });
     const next = onChange.mock.calls[0]?.[0] as ValidatorCohort;
     expect(next.assignments[1]?.focus).toBe("auth boundaries");
     expect(next.assignments[0]).toEqual(COHORT.assignments[0]);
+  });
+
+  // Clearing the field removes the steer; it does not store an empty one. The
+  // roster is the composition all three surfaces render, so the removal has to
+  // survive the wrapper between the textarea and the cohort the surface saves.
+  it("removes one assignment's instructions when the author clears the field", () => {
+    const { onChange } = renderCohort({
+      value: {
+        enabled: true,
+        assignments: [
+          assignment("general"),
+          assignment("security", { focus: "auth boundaries" }),
+        ],
+      },
+    });
+    fireEvent.change(screen.getByLabelText("Mandate for security"), {
+      target: { value: "" },
+    });
+    const next = onChange.mock.calls[0]?.[0] as ValidatorCohort;
+    expect(next.assignments[1]).not.toHaveProperty("focus");
+    expect(next.assignments[0]).toEqual(assignment("general"));
+    expect(validatorCohortSchema.safeParse(next).success).toBe(true);
   });
 
   it("edits one assignment's runtime without touching its siblings", () => {

@@ -99,6 +99,7 @@ const fullyConfiguredRaw: RawGlobalConfig = {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
           strategy: "task",
+          authority: "blocking",
           agent: {
             backend: "codex",
             model: "gpt-5.4",
@@ -155,6 +156,7 @@ const fullyConfiguredConfig: GlobalConfig = {
           id: "general",
           profile: { tier: "builtin", id: "general-reviewer" },
           strategy: "task",
+          authority: "blocking",
           agent: {
             backend: "codex",
             model: "gpt-5.4",

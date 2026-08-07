@@ -351,6 +351,7 @@ describe("WorkflowSection", () => {
       id: "security",
       profile: { tier: "global", id: "security-reviewer" },
       strategy: "task",
+      authority: "blocking",
       continuity: { enabled: true },
       agent: { backend: "codex", model: "gpt-5.4", reasoningEffort: "high" },
     };
@@ -359,6 +360,7 @@ describe("WorkflowSection", () => {
       id: "general",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
+      authority: "blocking",
       continuity: { enabled: true },
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     };
@@ -432,14 +434,14 @@ describe("WorkflowSection", () => {
       expect(new Set(ids).size).toBe(2);
     });
 
-    it("edits one assignment's focus and runtime", () => {
+    it("edits one assignment's instructions and runtime", () => {
       const { controller, getState } = makeController({
         workflowDefaults: cohortDefaults([GENERAL, SECURITY]),
       });
       const { container } = render(<WorkflowSection controller={controller} />);
       const block = validatorBlock(container);
 
-      fireEvent.change(within(block).getByLabelText("Focus for security"), {
+      fireEvent.change(within(block).getByLabelText("Mandate for security"), {
         target: { value: "auth boundaries" },
       });
       expect(
@@ -457,6 +459,76 @@ describe("WorkflowSection", () => {
         getState().workflowDefaults?.contextValidator?.assignments[0]?.agent
           .backend,
       ).toBe("codex");
+    });
+
+    it("clears one assignment's instructions", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([
+          GENERAL,
+          { ...SECURITY, focus: "auth boundaries" },
+        ]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+
+      fireEvent.change(
+        within(validatorBlock(container)).getByLabelText(
+          "Mandate for security",
+        ),
+        { target: { value: "" } },
+      );
+
+      expect(
+        getState().workflowDefaults?.contextValidator?.assignments[1],
+      ).not.toHaveProperty("focus");
+    });
+
+    /**
+     * R12.1/R12.2 on the Settings consumer: the axis reaches this surface
+     * because the shared editor carries it, not because Settings re-implements
+     * it. The same assertions run against the builder and the live Config tab.
+     */
+    it("exposes the authority axis through the shared editor", () => {
+      const { controller, getState } = makeController({
+        workflowDefaults: cohortDefaults([GENERAL, SECURITY]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      const block = validatorBlock(container);
+
+      expect(
+        within(block)
+          .getAllByTestId("cohort-authority-badge")
+          .map((badge) => badge.getAttribute("data-authority")),
+      ).toEqual(["blocking", "blocking"]);
+
+      const row = within(block).getByTestId("cohort-assignment-security");
+      fireEvent.click(
+        within(within(row).getByLabelText("Validator authority")).getByRole(
+          "radio",
+          { name: "advisory" },
+        ),
+      );
+      expect(
+        getState().workflowDefaults?.contextValidator?.assignments[1]
+          ?.authority,
+      ).toBe("advisory");
+    });
+
+    it("labels the instructions field from each seat's authority", () => {
+      const { controller } = makeController({
+        workflowDefaults: cohortDefaults([
+          GENERAL,
+          { ...SECURITY, authority: "advisory" },
+        ]),
+      });
+      const { container } = render(<WorkflowSection controller={controller} />);
+      const block = validatorBlock(container);
+
+      expect(
+        within(block).getByLabelText("Mandate for general"),
+      ).toBeInTheDocument();
+      expect(
+        within(block).getByLabelText("Focus for security"),
+      ).toBeInTheDocument();
     });
 
     it("names the tier the global cohort is in use at", () => {

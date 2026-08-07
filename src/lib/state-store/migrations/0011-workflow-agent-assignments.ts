@@ -446,6 +446,11 @@ function migrateSingletonValidator(
         id: VALIDATOR_ASSIGNMENT_ID,
         profile: VALIDATOR_PROFILE,
         ...assignment,
+        // The legacy singleton WAS the acceptance-criteria verifier and it
+        // blocked. Written explicitly, exactly as the seed writes it, because
+        // the schema default is advisory: without this a migrated workflow
+        // would silently stop being able to fail a context.
+        authority: "blocking",
         continuity: legacy.data.continuity,
       },
     ],

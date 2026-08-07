@@ -16,6 +16,32 @@ function read(relativePath: string): string {
   return readFileSync(resolve(root, relativePath), "utf8");
 }
 
+/** The env vars Vitest reads worker limits from, ranked above any caller. */
+const FORK_LIMIT_ENV_VARS = ["VITEST_MAX_FORKS", "VITEST_MIN_FORKS"] as const;
+
+/**
+ * Clear the fork-limit env for one resolution, restoring exactly what was there.
+ *
+ * A cleared var must come back ABSENT rather than as the string "undefined",
+ * which is what assigning `undefined` to `process.env` would leave behind — the
+ * outer runner keeps reading these after this test finishes.
+ */
+function withoutForkEnv(): { restore: () => void } {
+  const saved = FORK_LIMIT_ENV_VARS.map(
+    (name) => [name, process.env[name]] as const,
+  );
+  for (const [name] of saved) delete process.env[name];
+
+  return {
+    restore: () => {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    },
+  };
+}
+
 describe("agent instruction and canonical documentation contracts", () => {
   it("keeps tool-agnostic instructions canonical and Claude guidance additive", () => {
     const agents = read("AGENTS.md");
@@ -66,6 +92,22 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(structured).not.toContain(
       "src/lib/workflows/collaboration/schemas.test.ts",
     );
+  });
+
+  it("documents validator authority, the advisory loop, and the uncertified posture", () => {
+    const workflows = read(".kiro/steering/workflows.md");
+
+    // The authority axis and where it is authored.
+    expect(workflows).toContain('"authority"');
+    expect(workflows).toContain("validatorAuthoritySchema");
+    // The loop an advisory travels: delivery, disposition, re-certification.
+    expect(workflows).toContain("advisory_response");
+    expect(workflows).toContain("addressed");
+    expect(workflows).toContain("declined");
+    expect(workflows).toContain("deferred");
+    // The posture an advisory-only cohort ships under.
+    expect(workflows).toContain("uncertified");
+    expect(workflows).toContain("validator-less context");
   });
 
   it("labels completed and historical documents truthfully", () => {
@@ -227,6 +269,15 @@ describe("agent instruction and canonical documentation contracts", () => {
       };`,
     );
 
+    // The claim under test is programmatic-options-beat-candidate-file. Vitest
+    // applies VITEST_MAX_FORKS/VITEST_MIN_FORKS AFTER both — and
+    // scripts/validate/test.sh exports them, so the wrapper running this suite
+    // would decide the nested resolution below and the assertions would read
+    // the outer run's worker count instead of the precedence under test. The
+    // fixture already isolates the root and the config file; the env is the
+    // third ambient input, withheld here and restored afterwards.
+    const forkEnv = withoutForkEnv();
+
     try {
       const { vitestConfig } = await resolveVitestConfig({
         root: fixtureRoot,
@@ -248,6 +299,7 @@ describe("agent instruction and canonical documentation contracts", () => {
         "--max-old-space-size=2048",
       ]);
     } finally {
+      forkEnv.restore();
       rmSync(fixtureRoot, { recursive: true, force: true });
     }
   });

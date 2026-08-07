@@ -12,6 +12,7 @@ import {
 } from "@/lib/workflow-graph/config-schemas";
 import type {
   GraphWorkflowResolvedContext,
+  WorkflowValidatorAdvisory,
   WorkflowValidatorIssue,
 } from "@/lib/workflow-graph/definition-schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -25,6 +26,7 @@ import {
   type CohortLane,
   type CohortLaneProgress,
   type CohortParkedLane,
+  type RetainedCohortLane,
 } from "./validation-cohort";
 import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";
@@ -116,7 +118,7 @@ export interface ValidationRoundDispatch extends ValidationRoundToken {
    * re-review work its cohort had already judged, or re-ask a lane whose
    * question the human has not answered yet.
    */
-  retained?: Readonly<Record<string, CohortLane>>;
+  retained?: Readonly<Record<string, RetainedCohortLane>>;
   /**
    * What each UNSETTLED lane already spent in this round. A round outlives the
    * process running it, so a pass that started every lane at zero would reset
@@ -216,8 +218,18 @@ export interface CohortSpecialistVerdict {
   reviewArtifact: GraphWorkflowValidationReviewArtifact | null;
 }
 
+/**
+ * A lane's own advisories, carried on its settlement.
+ *
+ * Present on ONE LANE's outcome and absent from the round's aggregate: an
+ * advisory belongs to the specialist that raised it, and an aggregate that
+ * flattened the cohort's advisories into one list would lose the attribution the
+ * engine stamps its identity from.
+ */
+type LaneAdvisories = { advisories?: WorkflowValidatorAdvisory[] };
+
 export type GraphWorkflowContextValidationOutcome =
-  | {
+  | ({
       kind: "pass";
       summary: string;
       feedback: string;
@@ -227,8 +239,8 @@ export type GraphWorkflowContextValidationOutcome =
       reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
       /** Each member's own verdict, in cohort order. */
       specialists?: CohortSpecialistVerdict[];
-    }
-  | {
+    } & LaneAdvisories)
+  | ({
       kind: "fail";
       summary: string;
       feedback: string;
@@ -238,7 +250,7 @@ export type GraphWorkflowContextValidationOutcome =
       reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
       /** Each member's own verdict, in cohort order. */
       specialists?: CohortSpecialistVerdict[];
-    }
+    } & LaneAdvisories)
   // One specialist spent every admitted attempt on infrastructure failures. Not
   // a verdict: the round it belongs to cannot conclude on it, so the engine
   // halts resumably with the settled verdicts retained rather than publishing an
@@ -375,6 +387,7 @@ function mapRunnerOutcomeToContextOutcome(
       summary,
       feedback: formatFeedback("Context validation passed.", summary, [], []),
       issues: [],
+      advisories: outcome.advisories,
       reopenTaskIds: [],
       sessionRef: metadata.sessionRef,
       reviewArtifact: metadata.reviewArtifact,
@@ -400,6 +413,7 @@ function mapRunnerOutcomeToContextOutcome(
         outcome.reopenTaskIds,
       ),
       issues,
+      advisories: outcome.advisories,
       reopenTaskIds: outcome.reopenTaskIds,
       sessionRef: metadata.sessionRef,
       reviewArtifact: metadata.reviewArtifact,
@@ -553,7 +567,10 @@ export function createGraphWorkflowValidationService(
       assignments.map((assignment) => [assignment.id, assignment]),
     );
     const lanes = await runCohortLanes({
-      assignmentIds: assignments.map((assignment) => assignment.id),
+      roster: assignments.map((assignment) => ({
+        assignmentId: assignment.id,
+        authority: assignment.authority,
+      })),
       ...(input.round?.retained ? { retained: input.round.retained } : {}),
       ...(input.round?.carried ? { carried: input.round.carried } : {}),
       ...(input.onSpecialistProgress

@@ -27,6 +27,19 @@ beforeEach(async () => {
 
 afterAll(() => {
   if (VITEST_CONFIG_DIR.startsWith(VITEST_TMP_PREFIX)) {
-    rmSync(VITEST_CONFIG_DIR, { recursive: true, force: true });
+    // Retried, because this directory can gain an entry while it is being
+    // removed. `CC_CONFIG_DIR` is per WORKER (it lives in `process.env`) while
+    // this hook is per TEST FILE, so a worker running several files removes the
+    // same directory once per file — and a SQLite handle from the file that is
+    // finishing can still flush a `-wal`/`-shm` sidecar into it between the
+    // readdir and the rmdir, which fails as ENOTEMPTY. `force` does not cover
+    // that (it only swallows ENOENT); `maxRetries` is the documented answer,
+    // retrying ENOTEMPTY with a linear backoff until the writer settles.
+    rmSync(VITEST_CONFIG_DIR, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 20,
+    });
   }
 });

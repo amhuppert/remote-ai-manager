@@ -208,8 +208,15 @@ export function renderProfileBlock(
  * The focus as it will be rendered, or null when there is none. Applies the
  * same containment and size rules the authoring schema applies, so a focus that
  * reached storage through any other path still cannot escape its block here.
+ *
+ * Exported because a blocking validator's focus is rendered as its mandate
+ * ABOVE the block instead of inside it (workflow-graph/role-instructions.ts).
+ * The delimiter and fence rules hold there for the same reason they hold here —
+ * both texts travel in one privileged payload, which Codex frames in a fenced
+ * block — so both render sites ask the same function rather than keeping two
+ * opinions about what authored text may contain.
  */
-function renderableFocus(raw: string | undefined): string | null {
+export function renderableFocus(raw: string | undefined): string | null {
   if (raw === undefined) return null;
 
   const focus = normalizeAssignmentFocus(raw);

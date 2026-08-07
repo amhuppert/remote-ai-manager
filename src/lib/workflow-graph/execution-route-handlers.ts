@@ -122,6 +122,7 @@ import type { ValidationCandidateTreeResolution } from "@/lib/workflow-graph/val
 import { createGraphLaneContinuity } from "@/lib/workflow-graph/lane-continuity";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createGraphWorkflowOutputCaptureRunner } from "./context-output-capture-runner";
+import { createGraphWorkflowAdvisoryResponseRunner } from "./advisory-response-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import { createSharedDocumentStore } from "./shared-document-store";
 import { createWorkflowDocumentMaterializer } from "./document-materialization";
@@ -294,6 +295,12 @@ const validatorRunner = createValidatorRunner({
 });
 const implementerRunner = createGraphWorkflowImplementerRunner();
 const outputCaptureRunner = createGraphWorkflowOutputCaptureRunner({
+  async resolveTimeoutMs(backend) {
+    const config = await readConfig();
+    return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
+  },
+});
+const advisoryResponseRunner = createGraphWorkflowAdvisoryResponseRunner({
   async resolveTimeoutMs(backend) {
     const config = await readConfig();
     return resolveConfiguredAgentBackendDefaults(config, backend).timeoutMs;
@@ -482,6 +489,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   scriptValidatorService,
   validationRoundService,
   outputCaptureService: outputCaptureRunner,
+  advisoryResponseService: advisoryResponseRunner,
   readConversationTelemetry: (conversationId) =>
     readConversationTelemetry(conversationId),
 });

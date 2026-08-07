@@ -12,6 +12,7 @@ import {
   withOpenRound,
   type Harness,
 } from "@/lib/workflow-graph/testing/cohort-engine-harness";
+import { makeSeededValidatorAssignment } from "@/lib/workflow-graph/test-fixtures";
 import type { ResumeUserInputContext } from "./user-input-gate";
 import { evaluatePlanRepairTrigger } from "./plan-repair/trigger";
 import { isResumableHalt } from "./lifecycle-classifier";
@@ -271,6 +272,7 @@ describe("cohort conclusion precedence (R5.4)", () => {
                     description: "The rollback path is undocumented.",
                   },
                 ],
+                advisories: [],
                 reopenTaskIds: ["task-plan-1"],
               },
         metadata: metadata(),
@@ -399,6 +401,209 @@ describe("circuit-breaker accounting is cohort-size invariant (R5.2)", () => {
     expect(cohortHarness.repository.read().haltReason).toEqual(
       soloHarness.repository.read().haltReason,
     );
+  });
+});
+
+/**
+ * R10.2: blocking authority is only as good as what backs it. The circuit
+ * breaker and the plan-repair agent are that backing, and they reach a failing
+ * blocking specialist only because its rejection walks the same failed-round
+ * path the seeded acceptance-criteria verifier's does.
+ *
+ * Pinned by comparing the two, seat for seat, rather than by asserting a number
+ * on one of them: a refactor that gave authored specialists their own accounting
+ * would leave both assertions individually true and this comparison false.
+ */
+describe("a blocking specialist feeds the breaker as the AC verifier does (R10.2)", () => {
+  // The seeded verifier authors no instructions — its mandate IS the context's
+  // acceptance criteria. An authored specialist carries its own.
+  const AC_VERIFIER = makeSeededValidatorAssignment({
+    id: "general",
+    authority: "blocking",
+  });
+  const AUTHORED_SPECIALIST = makeSeededValidatorAssignment({
+    id: "security-reviewer",
+    authority: "blocking",
+    focus: "Judge the auth boundary against the threat model.",
+  });
+
+  function soloRejection(
+    assignment: typeof AC_VERIFIER,
+    consecutiveFailureCount: number,
+  ): Harness {
+    return createHarness({
+      execution: createCohortExecution({
+        assignments: [assignment],
+        consecutiveFailureCount,
+      }),
+      runContextValidator: async (input) => ({
+        result: failResult(input.validator.id, ["task-plan-1"]),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+    });
+  }
+
+  it("charges the same consecutive failure for either seat's rejection", async () => {
+    const verifier = soloRejection(AC_VERIFIER, 1);
+    const specialist = soloRejection(AUTHORED_SPECIALIST, 1);
+
+    await verifier.run();
+    await specialist.run();
+
+    expect(specialist.contextState()?.consecutiveFailureCount).toBe(2);
+    expect(specialist.contextState()?.consecutiveFailureCount).toBe(
+      verifier.contextState()?.consecutiveFailureCount,
+    );
+  });
+
+  it("trips the breaker at the same round, with the same halt reason", async () => {
+    const verifier = soloRejection(AC_VERIFIER, 2);
+    const specialist = soloRejection(AUTHORED_SPECIALIST, 2);
+
+    await verifier.run();
+    await specialist.run();
+
+    expect(specialist.repository.read().haltReason).toMatchObject({
+      type: "circuit_breaker",
+      condition: "retry_exhaustion",
+      failureCount: 3,
+    });
+    expect(specialist.repository.read().haltReason).toEqual(
+      verifier.repository.read().haltReason,
+    );
+  });
+
+  it("clears the streak the same way when either seat passes", async () => {
+    const harnesses = [AC_VERIFIER, AUTHORED_SPECIALIST].map((assignment) =>
+      createHarness({
+        execution: createCohortExecution({
+          assignments: [assignment],
+          consecutiveFailureCount: 2,
+        }),
+        runContextValidator: async (input) => ({
+          result: passResult(input.validator.id),
+          metadata: metadata(),
+          roundToken: input.roundToken ?? null,
+        }),
+      }),
+    );
+
+    for (const harness of harnesses) await harness.run();
+
+    expect(
+      harnesses.map((h) => h.contextState()?.consecutiveFailureCount),
+    ).toEqual([0, 0]);
+  });
+});
+
+/**
+ * R5.1 through the real engine: the round record and the published aggregate,
+ * not just the conclusion function. What an advisory lane costs a round has to
+ * be visible where an operator reads it — the lane's own record — and nowhere
+ * else.
+ */
+describe("advisory lanes settle without gating (R5.1)", () => {
+  function advisoryCohort(ids: readonly string[], blockingIds: string[] = []) {
+    return createCohortExecution({
+      assignments: ids.map((id) =>
+        makeSeededValidatorAssignment({
+          id,
+          authority: blockingIds.includes(id) ? "blocking" : "advisory",
+        }),
+      ),
+    });
+  }
+
+  it("records an exhausted advisory lane's infra failure on its lane and still concludes the round", async () => {
+    const harness = createHarness({
+      execution: advisoryCohort(["general", "advisor"], ["general"]),
+      runContextValidator: async (input) => ({
+        result:
+          input.validator.id === "advisor"
+            ? INFRA_RESULT
+            : passResult(input.validator.id),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+    });
+
+    await harness.run();
+
+    // It still retried its own trouble and still spent its budget — an
+    // advisory lane is not a lane that gets less care, only one whose silence
+    // nobody is waiting on.
+    expect(
+      harness.runContextValidator.mock.calls.filter(
+        (call) => call[0].validator.id === "advisor",
+      ),
+    ).toHaveLength(3);
+
+    const persisted = harness.repository.read();
+    expect(persisted.status).not.toBe("halted");
+    expect(harness.results()[0]!.event).toMatchObject({ pass: true });
+
+    // The failure is filed against the lane that suffered it, with the reason
+    // intact, rather than vanishing because it changed nothing.
+    const round = harness.contextState()?.validationRound;
+    expect(round?.specialists["advisor"]).toMatchObject({
+      state: "infra_failed",
+      attempts: 3,
+      lastInfraFailure: {
+        reason: "exception",
+        message: "provider unavailable",
+        engine: "claude",
+      },
+    });
+  });
+
+  it("passes an advisory-only cohort once the script gate passes and its lanes settle", async () => {
+    const harness = createHarness({
+      execution: advisoryCohort(["advisor-a", "advisor-b"]),
+      runContextValidator: async (input) => ({
+        result:
+          input.validator.id === "advisor-b"
+            ? INFRA_RESULT
+            : passResult(input.validator.id),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+    });
+
+    await harness.run();
+
+    const persisted = harness.repository.read();
+    expect(persisted.status).not.toBe("halted");
+    expect(harness.results()[0]!.event).toMatchObject({ pass: true });
+    expect(persisted.contextStates["context-plan"]?.status).toBe("completed");
+  });
+
+  it("does not let an advisory-only cohort excuse a failing script gate", async () => {
+    // "Concludes passed once the script gate passes" is a conjunction: with no
+    // blocking specialist the deterministic gate is the only thing left that
+    // can reject, so it must still reject.
+    const harness = createHarness({
+      execution: advisoryCohort(["advisor-a", "advisor-b"]),
+      runContextValidator: async (input) => ({
+        result: passResult(input.validator.id),
+        metadata: metadata(),
+        roundToken: input.roundToken ?? null,
+      }),
+      scriptValidatorOutcome: async () => ({
+        kind: "fail",
+        summary: "typecheck failed",
+        logFilePath: "/wt/.cc/workflow/execution-1/pre-merge.log",
+        logRelativePath: ".cc/workflow/execution-1/pre-merge.log",
+        timedOut: false,
+        treeState: { headSha: "head-1", dirty: true },
+        command: "bun run pre-merge",
+      }),
+    });
+
+    await harness.run();
+
+    expect(harness.runContextValidator).not.toHaveBeenCalled();
+    expect(harness.contextState()?.status).not.toBe("completed");
   });
 });
 

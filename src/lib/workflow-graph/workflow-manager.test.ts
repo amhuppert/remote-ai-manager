@@ -3074,6 +3074,7 @@ describe("graph workflow manager", () => {
           attempts: 1,
           summary: "general is satisfied.",
           issues: [],
+          advisories: [],
           questionToken: null,
           sessionRef: null,
           reviewArtifact: null,
@@ -3084,6 +3085,7 @@ describe("graph workflow manager", () => {
           attempts: 3,
           summary: null,
           issues: [],
+          advisories: [],
           questionToken: null,
           sessionRef: null,
           reviewArtifact: null,
@@ -8251,6 +8253,7 @@ describe("graph workflow manager", () => {
                       id: "general",
                       profile: { tier: "builtin", id: "general-reviewer" },
                       strategy: "task",
+                      authority: "blocking",
                       agent: {
                         backend: "codex",
                         model: "gpt-5.4",

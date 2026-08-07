@@ -2651,6 +2651,7 @@ describe("task validation failure handling (circuit breaker)", () => {
       assignmentId,
       profile: { tier: "builtin", id, revision: 1 },
       resolvedInstructionHash: `sha256:${"b".repeat(64)}`,
+      advisories: [],
       pass,
       summary: `${assignmentId} reported`,
       issues: [],
@@ -2875,6 +2876,7 @@ describe("task validation failure handling (circuit breaker)", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "opus",
@@ -2936,6 +2938,7 @@ describe("task validation failure handling (circuit breaker)", () => {
           profile: { tier: "builtin", id: "general-reviewer" },
           profileSnapshot: makeProfileSnapshot(),
           strategy: "conversation",
+          authority: "blocking",
           agent: {
             backend: "claude",
             model: "opus",

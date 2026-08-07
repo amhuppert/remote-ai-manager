@@ -29,8 +29,8 @@ import type { GraphWorkflowContextOutputCaptureOutcome } from "@/lib/workflow-gr
 import {
   COHORT_SPECIALIST_ATTEMPTS,
   type CohortCarriedProgress,
-  type CohortLane,
   type CohortLaneProgress,
+  type RetainedCohortLane,
 } from "@/lib/workflow-graph/validation-cohort";
 import { resolveConsecutiveFailureThreshold } from "./constants";
 import type { ConversationTelemetrySummary } from "./conversation-telemetry";
@@ -63,14 +63,30 @@ import {
   isValidationRoundOpen,
   openValidationRound,
   reconcileValidationRoster,
+  selectRecertificationAssignments,
   type ValidationCandidateTreeResolution,
   type ValidationRoundOutcome,
 } from "@/lib/workflow-graph/validation-round";
 import type {
+  GraphWorkflowAdvisoryResponsePhase,
   GraphWorkflowExecutionContextState,
+  GraphWorkflowValidationAdvisory,
   GraphWorkflowValidationCandidate,
   GraphWorkflowValidationRound,
 } from "@/lib/workflow-graph/schemas";
+import type { WorkflowAdvisoryIdentity } from "@/lib/workflow-graph/definition-schemas";
+import {
+  advisoryIdentityKey,
+  buildAdvisoryFailureAppendix,
+  collectFreshAdvisories,
+  stampAdvisoryIdentities,
+  type RecordedAdvisoryDisposition,
+} from "@/lib/workflow-graph/advisory-delivery";
+import { indexAdvisoriesForSeat } from "@/lib/workflow-graph/advisory-index";
+import type {
+  GraphWorkflowAdvisoryResponseInput,
+  GraphWorkflowAdvisoryResponseOutcome,
+} from "@/lib/workflow-graph/advisory-response-runner";
 import {
   createGraphWorkflowExecutionEventPublisher,
   type GraphWorkflowEventDelivery,
@@ -275,6 +291,12 @@ interface IterationOrchestratorOutputCaptureService {
   ): Promise<GraphWorkflowContextOutputCaptureOutcome>;
 }
 
+interface IterationOrchestratorAdvisoryResponseService {
+  runAdvisoryResponse(
+    input: GraphWorkflowAdvisoryResponseInput,
+  ): Promise<GraphWorkflowAdvisoryResponseOutcome>;
+}
+
 export interface GraphWorkflowIterationOrchestratorDeps {
   executionRepository: GraphWorkflowIterationExecutionRepository;
   /**
@@ -325,6 +347,13 @@ export interface GraphWorkflowIterationOrchestratorDeps {
    * evaluator exactly as it was — the context finalizes on validator pass.
    */
   outputCaptureService?: IterationOrchestratorOutputCaptureService;
+  /**
+   * Dispatches the advisory-response turn a passing round with fresh advisories
+   * owes the implementer (D6). Absent leaves a passing round's advisories
+   * undelivered rather than marking them delivered to a turn nobody ran; the
+   * failing path is unaffected, since it rides messages the engine already sends.
+   */
+  advisoryResponseService?: IterationOrchestratorAdvisoryResponseService;
   approvalGateService?: ApprovalGateService;
   /**
    * Gate that owns the `pendingUserInputs` lifecycle. The orchestrator calls
@@ -685,10 +714,22 @@ function buildLatestContextValidationFailureFeedback(
   };
 }
 
+/**
+ * The per-task remediation messages a rejected round sends back, plus the
+ * round's fresh advisories.
+ *
+ * The advisories ride the FIRST reopened task's message rather than every one of
+ * them: the seed prompt renders each reopened task's failure message in the same
+ * turn, so repeating a context-level, non-binding list once per task would
+ * restate it N times in one prompt. Which task carries it is arbitrary and the
+ * heading says so — `reopenTaskIds` is deterministic (cohort order, deduped), so
+ * the choice at least never varies between two runs of the same round.
+ */
 function buildTaskFailureMessages(input: {
   summary: string;
   issues: readonly GraphWorkflowValidationIssue[];
   reopenTaskIds: string[];
+  advisories?: readonly GraphWorkflowValidationAdvisory[];
 }): Record<string, string> {
   const scopedIssuesByTaskId = new Map<
     string,
@@ -716,19 +757,75 @@ function buildTaskFailureMessages(input: {
       ? `- [${issue.assignmentId}] ${issue.title}: ${issue.description}`
       : `- ${issue.title}: ${issue.description}`;
 
+  const advisories = input.advisories ?? [];
+  const advisoryCarrier = advisories.length > 0 ? input.reopenTaskIds[0] : null;
+
   return Object.fromEntries(
     input.reopenTaskIds.map((taskId) => {
-      const scopedIssues = scopedIssuesByTaskId.get(taskId);
-      if (!scopedIssues || scopedIssues.length === 0) {
-        return [taskId, input.summary];
-      }
-
+      const scopedIssues = scopedIssuesByTaskId.get(taskId) ?? [];
+      const appendix =
+        taskId === advisoryCarrier
+          ? [buildAdvisoryFailureAppendix(advisories)]
+          : [];
       return [
         taskId,
-        [input.summary, ...scopedIssues.map(renderIssue)].join("\n"),
+        [input.summary, ...scopedIssues.map(renderIssue), ...appendix].join(
+          "\n",
+        ),
       ];
     }),
   );
+}
+
+/**
+ * Stamp the named advisories delivered, in place, on an open round record.
+ *
+ * Keyed by identity rather than by position because the caller holds identities
+ * read before the mutation, and the record it writes into is the one loaded
+ * inside it. An identity the round does not carry is skipped in silence: it
+ * belongs to a round this one superseded, and the enclosing mutation's own
+ * supersession guard is what decides whether the write survives at all.
+ */
+function markAdvisoriesDelivered(
+  round: GraphWorkflowValidationRound | null,
+  identities: readonly WorkflowAdvisoryIdentity[],
+  deliveredAt: string,
+): void {
+  if (round === null || identities.length === 0) return;
+  const keys = new Set(identities.map(advisoryIdentityKey));
+  for (const specialist of Object.values(round.specialists)) {
+    for (const advisory of specialist.advisories) {
+      if (!keys.has(advisoryIdentityKey(advisory.identity))) continue;
+      advisory.deliveredAt = deliveredAt;
+    }
+  }
+}
+
+/**
+ * Write the implementer's answers onto the advisories they answer, in place.
+ *
+ * On the advisory itself rather than in a ledger beside it: a disposition is a
+ * fact about one advisory, and the pair can then only be read together (R7).
+ */
+function recordAdvisoryDispositions(
+  round: GraphWorkflowValidationRound,
+  dispositions: readonly RecordedAdvisoryDisposition[],
+  recordedAt: string,
+): void {
+  const byIdentity = new Map(
+    dispositions.map((entry) => [advisoryIdentityKey(entry.identity), entry]),
+  );
+  for (const specialist of Object.values(round.specialists)) {
+    for (const advisory of specialist.advisories) {
+      const entry = byIdentity.get(advisoryIdentityKey(advisory.identity));
+      if (entry === undefined) continue;
+      advisory.disposition = {
+        outcome: entry.disposition,
+        reason: entry.reason,
+        recordedAt,
+      };
+    }
+  }
 }
 
 const logger = createLogger("graph-workflow-iteration");
@@ -997,6 +1094,13 @@ export function createGraphWorkflowIterationOrchestrator(
     contextId: string;
     reopenTaskIds: string[];
     taskFailureMessages: Record<string, string>;
+    /**
+     * Advisories this rejection's messages carry. Stamped delivered in the same
+     * mutation that writes those messages, because the two are one act: a
+     * separate write could leave a round whose advisories are marked delivered
+     * on a reopen that was refused, and the implementer would never see them.
+     */
+    deliveredAdvisories?: readonly WorkflowAdvisoryIdentity[];
     publishValidationEvent?: (
       execution: GraphWorkflowExecution,
     ) => GraphWorkflowEventDelivery;
@@ -1071,6 +1175,11 @@ export function createGraphWorkflowIterationOrchestrator(
           );
           contextState.consecutiveFailureCount =
             (contextState.consecutiveFailureCount ?? 0) + 1;
+          markAdvisoriesDelivered(
+            contextState.validationRound ?? null,
+            input.deliveredAdvisories ?? [],
+            failureTimestamp,
+          );
         }
 
         nextExecution.machineSnapshot = buildLifecycleSnapshot(nextExecution, {
@@ -1534,6 +1643,16 @@ export function createGraphWorkflowIterationOrchestrator(
   async function writeValidationRound(
     input: GraphWorkflowIterationInput,
     round: GraphWorkflowValidationRound | null,
+    options: {
+      /**
+       * Retires the advisory-response phase in the same write that opens the
+       * round it asked for. One mutation rather than two because the pair is one
+       * act: a clear that landed without the round would let the next pass open
+       * an ordinary round with the advisory lanes back in it, and a round opened
+       * without the clear would be re-opened as a re-certification forever.
+       */
+      clearAdvisoryResponse?: boolean;
+    } = {},
   ): Promise<void> {
     await deps.executionRepository.mutateActive(
       input.projectPath,
@@ -1543,10 +1662,61 @@ export function createGraphWorkflowIterationOrchestrator(
         const contextState = next.contextStates[input.contextId];
         if (contextState) {
           contextState.validationRound = round;
+          if (options.clearAdvisoryResponse) {
+            contextState.advisoryResponse = null;
+          }
         }
         return next;
       },
     );
+  }
+
+  /**
+   * Move the context into, or out of, the advisory-response phase (D8).
+   *
+   * Its own write rather than a field folded into a neighbouring mutation: the
+   * phase is entered after the round's verdict is already published and left
+   * after a turn that may have failed, so there is no other write it reliably
+   * shares a moment with.
+   */
+  async function writeAdvisoryResponsePhase(
+    input: GraphWorkflowIterationInput,
+    phase: GraphWorkflowAdvisoryResponsePhase | null,
+  ): Promise<GraphWorkflowExecution> {
+    return await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const contextState = next.contextStates[input.contextId];
+        if (contextState) {
+          contextState.advisoryResponse = phase;
+        }
+        return next;
+      },
+    );
+  }
+
+  /**
+   * This round as the DURABLE record holds it, or null if the context has since
+   * moved to another round.
+   *
+   * The record rather than the in-memory round the pass has been carrying: every
+   * lane wrote its verdict and its identity-stamped advisories there, including
+   * the lanes a resumed round carried forward without re-running them, so the
+   * in-memory copy knows nothing about either.
+   */
+  async function loadCurrentRoundRecord(
+    input: GraphWorkflowIterationInput,
+    round: GraphWorkflowValidationRound | null,
+  ): Promise<GraphWorkflowValidationRound | null> {
+    if (round === null) return null;
+    const current = (
+      await loadCurrentExecution(input.projectPath, input.sessionName)
+    ).contextStates[input.contextId]?.validationRound;
+    if (current === null || current === undefined) return null;
+    if (current.seq !== round.seq) return null;
+    return current;
   }
 
   /**
@@ -1597,6 +1767,28 @@ export function createGraphWorkflowIterationOrchestrator(
         specialist.attempts = update.attempts;
         if (update.summary !== undefined) specialist.summary = update.summary;
         if (update.issues !== undefined) specialist.issues = [...update.issues];
+        // Identity is stamped HERE, at the only write that knows all three of
+        // its components: the round this lane answered into (fenced above), the
+        // seat that answered, and the position of each advisory in that seat's
+        // own report. A validator never names its own advisories.
+        if (update.advisories !== undefined) {
+          specialist.advisories = stampAdvisoryIdentities({
+            roundSeq: round.seq,
+            assignmentId: update.assignmentId,
+            advisories: update.advisories,
+          });
+          // Projected in the same write that stamps them, so the long-lived
+          // kinds are readable from the execution however the round ends — a
+          // plan or out-of-scope observation is no less true for the round that
+          // raised it having failed (D9).
+          next.advisoryIndex = indexAdvisoriesForSeat({
+            index: next.advisoryIndex,
+            contextId: input.contextId,
+            roundSeq: round.seq,
+            assignmentId: update.assignmentId,
+            advisories: specialist.advisories,
+          });
+        }
         if (update.questionToken !== undefined) {
           specialist.questionToken = update.questionToken;
         }
@@ -1765,6 +1957,12 @@ export function createGraphWorkflowIterationOrchestrator(
       pass: verdict.pass,
       summary: verdict.summary,
       issues: verdict.issues,
+      // From the round RECORD, not from the verdict: the record is where the
+      // engine stamped each advisory's identity, and it is the only place a
+      // resumed round's carried-forward lane has any (R9).
+      advisories: [
+        ...(round.specialists[verdict.assignmentId]?.advisories ?? []),
+      ],
       sessionRef: verdict.sessionRef,
       reviewArtifact: verdict.reviewArtifact,
       usage: deriveGraphWorkflowValidationSpecialistUsage(
@@ -1812,8 +2010,8 @@ export function createGraphWorkflowIterationOrchestrator(
     round: GraphWorkflowValidationRound,
     contextState: GraphWorkflowExecutionContextState | undefined,
     input: GraphWorkflowIterationInput,
-  ): Record<string, CohortLane> {
-    const retained: Record<string, CohortLane> = {};
+  ): Record<string, RetainedCohortLane> {
+    const retained: Record<string, RetainedCohortLane> = {};
     for (const seat of round.roster) {
       const specialist = round.specialists[seat.assignmentId];
       if (!specialist) continue;
@@ -1892,7 +2090,7 @@ export function createGraphWorkflowIterationOrchestrator(
     assignmentId: string,
     contextState: GraphWorkflowExecutionContextState | undefined,
     input: GraphWorkflowIterationInput,
-  ): CohortLane | null {
+  ): RetainedCohortLane | null {
     const round = contextState?.validationRound;
     if (!contextState || !round) return null;
     const laneKey = laneStateKey("context_validator", assignmentId);
@@ -2108,13 +2306,33 @@ export function createGraphWorkflowIterationOrchestrator(
       return null;
     }
 
+    // The advisory-response phase owns the context between a certification and
+    // the turn that answers for it. Opening a round here would re-review a
+    // candidate this context has already certified — the one thing R8 exists to
+    // prevent — so the round machinery stands down and `processAdvisoryResponse`
+    // takes the context from here.
+    const advisoryPhase =
+      preContextValidationExecution.contextStates[input.contextId]
+        ?.advisoryResponse ?? null;
+    if (advisoryPhase?.phase === "awaiting_response") {
+      return null;
+    }
+    const recertification = advisoryPhase?.phase === "recertifying";
+
     const contextDefinition = getContextDefinition(
       preContextValidationExecution,
       input.contextId,
     );
-    const cohortAssignments = selectRunnableCohortAssignments(
-      contextDefinition.contextValidator,
-    );
+    // A re-certification asks only whether the changed candidate is still
+    // certified, so it runs the script gate and the blocking lanes; the advisory
+    // lanes are filtered out of the cohort BEFORE the roster is frozen, which is
+    // what makes them structurally absent from the round rather than merely
+    // ignored inside it (R8.2).
+    const cohortAssignments = recertification
+      ? selectRecertificationAssignments(
+          selectRunnableCohortAssignments(contextDefinition.contextValidator),
+        )
+      : selectRunnableCohortAssignments(contextDefinition.contextValidator);
     // A round exists to freeze what someone will review. With no script
     // validator and an empty cohort there is nothing to review with, so the
     // context takes the unchanged "validation is not enabled" path.
@@ -2123,6 +2341,10 @@ export function createGraphWorkflowIterationOrchestrator(
       cohortAssignments.length > 0;
 
     if (!roundApplies) {
+      // Nothing can re-certify an advisory-only cohort with no script gate, so
+      // the phase is retired here rather than left standing over a context that
+      // is about to finish.
+      if (recertification) await writeAdvisoryResponsePhase(input, null);
       return runContextValidationStages({
         input,
         execLogger,
@@ -2219,7 +2441,17 @@ export function createGraphWorkflowIterationOrchestrator(
           input,
         )
       : undefined;
-    if (!resumable) await writeValidationRound(input, round);
+    if (!resumable) {
+      await writeValidationRound(input, round, {
+        clearAdvisoryResponse: recertification,
+      });
+    } else if (recertification) {
+      // A resumable round and a pending re-certification cannot both be true —
+      // the phase is only ever entered over a concluded round — but the phase is
+      // durable, so it is retired on every path that answers it rather than only
+      // on the one expected to.
+      await writeAdvisoryResponsePhase(input, null);
+    }
     const journal: RoundJournal = { outcome: null };
 
     execLogger?.validation(
@@ -2228,6 +2460,7 @@ export function createGraphWorkflowIterationOrchestrator(
       {
         roundSeq: round.seq,
         rosterSize: round.roster.length,
+        ...(recertification ? { recertification: true } : {}),
         candidateTreeHash: round.candidate.candidateTreeHash,
         headSha: round.candidate.headSha,
         taskStateHash: round.candidate.taskStateHash,
@@ -2248,6 +2481,7 @@ export function createGraphWorkflowIterationOrchestrator(
         preContextValidationExecution,
         round,
         journal,
+        recertification,
         ...(retained ? { retained } : {}),
       });
     } finally {
@@ -2293,8 +2527,15 @@ export function createGraphWorkflowIterationOrchestrator(
     preContextValidationExecution: GraphWorkflowExecution;
     round: GraphWorkflowValidationRound | null;
     journal: RoundJournal;
+    /**
+     * Whether this round is the blocking-only re-certification of a candidate
+     * the advisory-response turn moved. Carried down rather than re-read from
+     * the context state, which the round's own opening write has already
+     * retired.
+     */
+    recertification?: boolean;
     /** Verdicts a resumed round carries forward; absent on a fresh round. */
-    retained?: Record<string, CohortLane>;
+    retained?: Record<string, RetainedCohortLane>;
   }): Promise<GraphWorkflowIterationResult | null> {
     const {
       input,
@@ -2304,6 +2545,7 @@ export function createGraphWorkflowIterationOrchestrator(
       preContextValidationExecution,
       round,
       journal,
+      recertification = false,
       retained,
     } = params;
 
@@ -2360,12 +2602,19 @@ export function createGraphWorkflowIterationOrchestrator(
       // now. A live edit between freeze and dispatch is legal — it belongs to
       // the next round — but running it here would mean the cohort that
       // reviewed the candidate is not the one recorded as owning it.
+      const configuredNow = selectRunnableCohortAssignments(
+        getContextDefinition(executionForAgentValidation, input.contextId)
+          .contextValidator,
+      );
       const reconciled = reconcileValidationRoster(
         round.roster,
-        selectRunnableCohortAssignments(
-          getContextDefinition(executionForAgentValidation, input.contextId)
-            .contextValidator,
-        ),
+        // The same filter the freeze applied. Reconciling a re-certification
+        // against the WHOLE cohort would read its own deliberately-absent
+        // advisory lanes as seats added since the freeze, and every
+        // re-certification of a mixed cohort would die of roster drift.
+        recertification
+          ? selectRecertificationAssignments(configuredNow)
+          : configuredNow,
       );
       if (reconciled.kind === "drift") {
         return await concludeRoundOnIncident({
@@ -2699,8 +2948,12 @@ export function createGraphWorkflowIterationOrchestrator(
       validation.kind === "pass" || validation.kind === "fail"
         ? validation
         : null;
+    // Fenced to this round's `seq`, so a record a newer round has already
+    // replaced contributes nothing — its advisories belong to that round's
+    // delivery, and its verdicts to that round's aggregate.
+    const roundRecord = await loadCurrentRoundRecord(input, round);
     const specialistEntries = buildSpecialistEntries(
-      round,
+      roundRecord ?? round,
       verdict?.specialists,
     );
     const aggregateRefs =
@@ -2710,6 +2963,9 @@ export function createGraphWorkflowIterationOrchestrator(
             sessionRef: verdict?.sessionRef ?? null,
             reviewArtifact: verdict?.reviewArtifact ?? null,
           };
+
+    const freshAdvisories =
+      roundRecord === null ? [] : collectFreshAdvisories(roundRecord);
 
     if (validation.kind === "fail") {
       execLogger?.validation(input.contextId, "context.validation_reopened", {
@@ -2726,7 +2982,15 @@ export function createGraphWorkflowIterationOrchestrator(
         summary: validation.summary,
         issues: validation.issues,
         reopenTaskIds: validation.reopenTaskIds,
+        advisories: freshAdvisories,
       });
+      // Delivered only where a message actually carried them. A rejection with
+      // nothing to reopen sends no message, so its advisories stay fresh rather
+      // than being marked delivered to a turn that never happened.
+      const deliveredAdvisories =
+        validation.reopenTaskIds.length > 0
+          ? freshAdvisories.map((advisory) => advisory.identity)
+          : [];
 
       const executionWithValidationEvent =
         await reopenTasksAfterContextValidationFailure({
@@ -2735,6 +2999,7 @@ export function createGraphWorkflowIterationOrchestrator(
           contextId: input.contextId,
           reopenTaskIds: validation.reopenTaskIds,
           taskFailureMessages,
+          deliveredAdvisories,
           ...(round !== null
             ? {
                 refuseIfSuperseded: (execution) =>
@@ -2872,9 +3137,257 @@ export function createGraphWorkflowIterationOrchestrator(
       return abandonSupersededConclusion({ input, execLogger, round, journal });
     }
 
+    // Banked BEFORE the advisory turn: the round's verdict is settled and
+    // published by here, so a turn that fails afterwards must still leave the
+    // round concluded as what it was, not as an outcome nobody rendered.
     journal.outcome = "passed";
+
+    // The round passed and its specialists still had something to say. The
+    // context does NOT finish here: it enters the advisory-response phase, which
+    // owes the implementer one turn (R6) and then owes R8 an answer to whether
+    // that turn left the certified candidate where it found it. The phase is
+    // written durably before the turn runs, so a process that dies inside the
+    // turn comes back owing the same turn rather than owing a fresh round.
+    if (round !== null && freshAdvisories.length > 0) {
+      await writeAdvisoryResponsePhase(input, {
+        roundSeq: round.seq,
+        phase: "awaiting_response",
+        enteredAt: getNow(deps),
+      });
+      execLogger?.validation(input.contextId, "advisory_response.entered", {
+        roundSeq: round.seq,
+        advisoryCount: freshAdvisories.length,
+      });
+    }
+
     logRoundConcluded(input, execLogger, round, "passed");
     return null;
+  }
+
+  /**
+   * The advisory-response phase, from the turn the implementer is owed to the
+   * hash that decides what the context does next (R8, D8).
+   *
+   * The hash decides, and only the hash. A disposition is a claim about
+   * intention — an implementer may decline every advisory and edit the tree
+   * anyway, or address them all in prose and touch nothing — so certifying on
+   * what the turn SAID would either ship a changed candidate nobody reviewed or
+   * re-run a cohort over a candidate byte-identical to the one it just passed.
+   * The candidate identity is a fact about the work, so it is what the engine
+   * acts on.
+   *
+   * Identical: the context completes on the certification the round already
+   * rendered. Nothing runs — not the script gate, not one validator lane — and
+   * the dispositions are the only new record the turn produced.
+   *
+   * Changed: the phase becomes `recertifying` and the iteration ends asking to
+   * continue in this context. The re-certification opens through the ordinary
+   * round machinery on the next pass, which is what keeps the loop's own
+   * fences — pending halts, the breaker, max iterations — between the two
+   * rounds instead of inside a private loop that none of them can see.
+   */
+  async function processAdvisoryResponse(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    conversationId: string;
+    /**
+     * The implementer lane conversation this iteration ran on, when it had one.
+     * The response turn rides it so the advisories are answered by the lane that
+     * did the work; undefined on the validation-only path, whose
+     * `conversationId` is bookkeeping rather than a live lane.
+     */
+    laneConversationId?: string;
+  }): Promise<GraphWorkflowIterationResult | null> {
+    const { input, execLogger, conversationId, laneConversationId } = params;
+    const execution = await loadCurrentExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    // The response turn is a lane turn like any other: an execution that was
+    // aborted, paused, or halted while it ran resumes into this same check.
+    if (execution.status !== "running") return null;
+
+    const contextState = execution.contextStates[input.contextId];
+    if (contextState?.advisoryResponse?.phase !== "awaiting_response") {
+      return null;
+    }
+    const phase = contextState.advisoryResponse;
+
+    const round = contextState.validationRound ?? null;
+    if (round === null || round.seq !== phase.roundSeq) {
+      // The certification this phase belongs to is not the round the context is
+      // on. Nothing here can be answered against a round that is gone, so the
+      // phase is retired rather than left blocking every future round.
+      logger.warn("graph-workflow.advisory_response.phase_orphaned", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        phaseRoundSeq: phase.roundSeq,
+        roundSeq: round?.seq ?? null,
+      });
+      await writeAdvisoryResponsePhase(input, null);
+      return null;
+    }
+
+    // Read back off the record, so a phase resumed after the turn already ran
+    // (and was recorded) asks for nothing a second time and goes straight to
+    // the comparison the turn is still owed.
+    const advisories = collectFreshAdvisories(round);
+    if (advisories.length > 0) {
+      await deliverAdvisoryResponse({
+        input,
+        execLogger,
+        laneConversationId,
+        round,
+        advisories,
+      });
+    }
+
+    const observed = await observeCandidate(
+      input,
+      await loadCurrentExecution(input.projectPath, input.sessionName),
+    );
+    if (
+      observed.kind === "resolved" &&
+      candidateIdentityMatches(round.candidate, observed.candidate)
+    ) {
+      await writeAdvisoryResponsePhase(input, null);
+      execLogger?.validation(
+        input.contextId,
+        "advisory_response.candidate_unchanged",
+        { roundSeq: round.seq },
+      );
+      logger.info("graph-workflow.advisory_response.candidate_unchanged", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        roundSeq: round.seq,
+      });
+      return null;
+    }
+
+    // An unreadable tree lands here with the drift: the phase cannot prove the
+    // candidate is the one that was certified, and "cannot prove" is the same
+    // answer as "is not" when the alternative is completing on a certification
+    // that may no longer describe the work.
+    const drift =
+      observed.kind === "resolved"
+        ? describeCandidateDrift(round.candidate, observed.candidate)
+        : `candidate unreadable (${observed.reason})`;
+    const recertifying = await writeAdvisoryResponsePhase(input, {
+      roundSeq: round.seq,
+      phase: "recertifying",
+      enteredAt: getNow(deps),
+    });
+    execLogger?.validation(
+      input.contextId,
+      "advisory_response.recertification_required",
+      { roundSeq: round.seq, drift },
+    );
+    logger.info("graph-workflow.advisory_response.recertification_required", {
+      executionId: execution.id,
+      contextId: input.contextId,
+      roundSeq: round.seq,
+      drift,
+    });
+    return {
+      conversationId,
+      execution: recertifying,
+      // The context is NOT done: the next pass opens the blocking-only round
+      // that decides whether the changed candidate is still certified.
+      shouldContinueInContext: true,
+    };
+  }
+
+  /**
+   * Deliver a passing round's advisories and record what came back.
+   *
+   * Ordered deliver-then-record because only the turn's return proves delivery
+   * happened: marking first would let a turn that never dispatched leave the
+   * round claiming the implementer had seen advisories it never received. The
+   * reverse risk — a crash between the turn and the write — costs at most a
+   * re-delivery inside a round that this call is about to conclude anyway.
+   *
+   * A turn that produces no gate-validated disposition set throws, so it never
+   * reaches the write at all: the batch stays undelivered and undisposed, the
+   * round still concludes as the `passed` it was, and the failure surfaces as a
+   * halt rather than as a context completed over an advisory nobody answered.
+   */
+  async function deliverAdvisoryResponse(params: {
+    input: GraphWorkflowIterationInput;
+    execLogger: ReturnType<typeof getExecutionLogger>;
+    laneConversationId: string | undefined;
+    round: GraphWorkflowValidationRound | null;
+    advisories: readonly GraphWorkflowValidationAdvisory[];
+  }): Promise<void> {
+    const { input, execLogger, laneConversationId, round, advisories } = params;
+    if (!deps.advisoryResponseService || round === null) return;
+
+    const execution = await loadCurrentExecution(
+      input.projectPath,
+      input.sessionName,
+    );
+    const contextDefinition = getContextDefinition(execution, input.contextId);
+    const conversationId = await resolveImplementerTurnConversationId({
+      input,
+      execution,
+      laneConversationId,
+      backend: contextDefinition.implementer.agent.backend,
+    });
+
+    execLogger?.iteration(input.contextId, "advisory_response.started", {
+      roundSeq: round.seq,
+      conversationId,
+      advisoryCount: advisories.length,
+    });
+
+    const outcome = await deps.advisoryResponseService.runAdvisoryResponse({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      execution,
+      contextId: input.contextId,
+      conversationId,
+      advisories,
+      ...(input.executionTarget !== undefined
+        ? { executionTarget: input.executionTarget }
+        : {}),
+    });
+
+    // Delivered and disposed of are one write, never two: the turn returns a
+    // gate-validated disposition for every advisory in the batch or it throws,
+    // so this is the only state either field can reach. A record where delivery
+    // landed and the answers did not would be the state R7 forbids, and here it
+    // is unreachable rather than merely avoided.
+    const recordedAt = getNow(deps);
+    await deps.executionRepository.mutateActive(
+      input.projectPath,
+      input.sessionName,
+      (latest) => {
+        const next = cloneExecution(latest);
+        const current =
+          next.contextStates[input.contextId]?.validationRound ?? null;
+        // Fenced to the round that raised them: a newer round's advisories are
+        // its own to deliver, and stamping them here would silence a batch
+        // nobody has seen.
+        if (current === null || current.seq !== round.seq) return latest;
+        markAdvisoriesDelivered(
+          current,
+          advisories.map((advisory) => advisory.identity),
+          recordedAt,
+        );
+        recordAdvisoryDispositions(current, outcome.dispositions, recordedAt);
+        return next;
+      },
+    );
+
+    execLogger?.iteration(input.contextId, "advisory_response.recorded", {
+      roundSeq: round.seq,
+      dispositions: outcome.dispositions.map((entry) => entry.disposition),
+    });
+    logger.info("graph-workflow.advisory_response.recorded", {
+      executionId: execution.id,
+      contextId: input.contextId,
+      roundSeq: round.seq,
+      dispositionCount: outcome.dispositions.length,
+    });
   }
 
   /**
@@ -2984,7 +3497,8 @@ export function createGraphWorkflowIterationOrchestrator(
    * byte the pre-D2 behavior.
    */
   /**
-   * The conversation the format turn runs on.
+   * The conversation an engine-dispatched implementer turn runs on — the D2
+   * format turn, and the advisory-response turn (D6).
    *
    * D3 puts the turn on the context's EXISTING implementer lane conversation so
    * the payload is restated from the work that conversation already did, so the
@@ -3003,7 +3517,7 @@ export function createGraphWorkflowIterationOrchestrator(
    * degenerate path has no work to carry forward anyway (a retry re-reads its
    * previous rejection from the recorded validation failure).
    */
-  async function resolveOutputCaptureConversationId(params: {
+  async function resolveImplementerTurnConversationId(params: {
     input: GraphWorkflowIterationInput;
     execution: GraphWorkflowExecution;
     laneConversationId: string | undefined;
@@ -3081,7 +3595,7 @@ export function createGraphWorkflowIterationOrchestrator(
       return null;
     }
 
-    const captureConversationId = await resolveOutputCaptureConversationId({
+    const captureConversationId = await resolveImplementerTurnConversationId({
       input,
       execution,
       laneConversationId,
@@ -3555,6 +4069,17 @@ export function createGraphWorkflowIterationOrchestrator(
         conversationId,
         onHalt: signalHaltOnly,
       });
+      if (parkedResult === null) {
+        // Between validation and capture: the phase decides whether this
+        // context is certified at all, and a context that still owes a
+        // re-certification must not be asked for its declared output.
+        parkedResult = await processAdvisoryResponse({
+          input,
+          execLogger,
+          conversationId,
+          laneConversationId: undefined,
+        });
+      }
       if (parkedResult === null) {
         parkedResult = await processContextOutputCapture({
           input,
@@ -4455,6 +4980,17 @@ export function createGraphWorkflowIterationOrchestrator(
           execLogger,
           conversationId: conversation.id,
           onHalt: haltIteration,
+        });
+      }
+
+      if (!stoppedForCollaboration && parkedResult === null) {
+        // See the validation-only path: the advisory-response phase stands
+        // between a passing round and the context being finished with.
+        parkedResult = await processAdvisoryResponse({
+          input,
+          execLogger,
+          conversationId: conversation.id,
+          laneConversationId: conversation.id,
         });
       }
 

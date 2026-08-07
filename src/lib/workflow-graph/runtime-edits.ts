@@ -2,11 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { assertNever } from "@/lib/shared/assert-never";
 import type { AgentProfileSnapshot } from "@/lib/agent-profiles/schemas";
-import type {
-  AgentAssignment,
-  SeededValidatorCohort,
-  ValidatorCohort,
-} from "./config-schemas";
+import type { SeededValidatorCohort, ValidatorCohort } from "./config-schemas";
 import {
   createExecutionIndex,
   type ExecutionIndex,
@@ -61,6 +57,7 @@ import {
 } from "@/lib/workflows/charter-schemas";
 import { CHARTER_CONTENT_EDIT_FIELDS } from "@/lib/workflows/edit-schemas";
 import type { GraphExecutionContract } from "./execution-contract-port";
+import type { PlaceableAssignment } from "./live-edit-preparation";
 
 export interface AgentAddedTask {
   slug?: string;
@@ -351,7 +348,7 @@ export interface LiveEditDeps {
    * cannot resolve, which fails the edit rather than storing an assignment with
    * no bytes behind it.
    */
-  snapshotFor(assignment: AgentAssignment): AgentProfileSnapshot;
+  snapshotFor(assignment: PlaceableAssignment): AgentProfileSnapshot;
   /** ISO timestamp source for `amend-charter` amendment-log entries. */
   now(): string;
   executionContract?: GraphExecutionContract;
@@ -828,7 +825,7 @@ function freezeAgentValidationSnapshot(
  * boundary: past this point the working definition is snapshot-bearing, and
  * nothing downstream of it consults the library.
  */
-function seedLiveAssignment<T extends AgentAssignment>(
+function seedLiveAssignment<T extends PlaceableAssignment>(
   assignment: T,
   deps: LiveEditDeps,
 ): T & { profileSnapshot: AgentProfileSnapshot } {

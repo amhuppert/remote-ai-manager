@@ -20,6 +20,13 @@ export type ContextWaitState =
   | { kind: "ready" }
   | { kind: "running" }
   | { kind: "validating" }
+  /**
+   * Blocking validation passed and the implementer owes the round's advisories
+   * one non-binding turn (R6.3). Distinct from `validating` because the cohort
+   * has already released the candidate, and from `completed` because the
+   * context may not finish until the turn lands.
+   */
+  | { kind: "advisory-response" }
   | { kind: "awaiting-approval" }
   | { kind: "awaiting-user-input" }
   | { kind: "merging"; targetBranch: string | null }
@@ -55,6 +62,13 @@ export function deriveContextWaitState(input: {
   }
 
   if (ctxState.status === "running") {
+    // Ahead of the task-count check, which would otherwise read a certified
+    // context as still under review. `recertifying` deliberately falls through:
+    // the response turn moved the candidate, so a blocking round IS what runs
+    // next.
+    if (ctxState.advisoryResponse?.phase === "awaiting_response") {
+      return { kind: "advisory-response" };
+    }
     if (
       ctxState.totalTaskCount > 0 &&
       ctxState.completedTaskCount >= ctxState.totalTaskCount

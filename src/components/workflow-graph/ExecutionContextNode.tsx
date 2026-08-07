@@ -45,6 +45,10 @@ const STATUS_UNSELECTED: Partial<Record<WaitKind, string>> = {
     "[--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   validating:
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a30)] [border-top-color:var(--cc-amber-a55)] [animation:pulse-node_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  // Cyan, not amber: the cohort has released the candidate and the IMPLEMENTER
+  // is the lane that runs. The slower pulse keeps it apart from `running`.
+  "advisory-response":
+    "[--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   "awaiting-approval":
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   "awaiting-user-input":
@@ -65,6 +69,8 @@ const STATUS_SELECTED: Partial<Record<WaitKind, string>> = {
     "[--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a40)] [animation:pulse-node-selected_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   validating:
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a45)] [animation:pulse-node-validating-selected_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  "advisory-response":
+    "[--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a40)] [animation:pulse-node-selected_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   "awaiting-approval":
     "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
   "awaiting-user-input":
@@ -98,6 +104,8 @@ const BADGE_VARIANT: Record<string, string> = {
     "border border-solid border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a08)] text-cyan",
   validating:
     "border border-solid border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] text-amber",
+  "advisory-response":
+    "border border-dashed border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a08)] text-cyan",
   completed:
     "border border-solid border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green",
   halted:
@@ -117,6 +125,7 @@ const PROGRESS_FILL_VARIANT: Record<string, string> = {
   pending: "bg-border-default",
   running: "bg-cyan shadow-[0_0_6px_var(--cyan-glow)]",
   validating: "bg-amber shadow-[0_0_6px_var(--amber-glow)]",
+  "advisory-response": "bg-cyan shadow-[0_0_6px_var(--cyan-glow)]",
   completed: "bg-green shadow-[0_0_6px_var(--green-glow)]",
   halted: "bg-red",
   merging:
@@ -126,6 +135,7 @@ const PROGRESS_FILL_VARIANT: Record<string, string> = {
 const FOOTER_COLOR: Partial<Record<WaitKind, string>> = {
   running: "text-text-secondary",
   validating: "text-amber",
+  "advisory-response": "text-cyan",
   "awaiting-user-input": "text-violet",
   completed: "text-text-secondary",
   halted: "text-text-secondary",
@@ -170,6 +180,8 @@ function getStatusBadge(
       return { label: "Running", className: "running" };
     case "validating":
       return { label: "Validating", className: "validating" };
+    case "advisory-response":
+      return { label: "Advisory Response", className: "advisory-response" };
     case "merging":
       return { label: "Merging", className: "merging" };
     case "completed":
@@ -227,6 +239,8 @@ function getFooterText(
       return `Running task ${(completedCount ?? 0) + 1}/${totalCount ?? taskCount}`;
     case "validating":
       return "Validating context";
+    case "advisory-response":
+      return "Awaiting advisory response";
     case "awaiting-approval":
       return "Awaiting your approval";
     case "awaiting-user-input":

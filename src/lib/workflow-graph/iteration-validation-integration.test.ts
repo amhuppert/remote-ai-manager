@@ -119,6 +119,7 @@ function createContextValidatorExecution(
                   profile: { tier: "builtin", id: "general-reviewer" },
                   profileSnapshot: makeProfileSnapshot(),
                   strategy: "conversation",
+                  authority: "blocking",
                   agent: {
                     backend: "claude",
                     model: "sonnet",

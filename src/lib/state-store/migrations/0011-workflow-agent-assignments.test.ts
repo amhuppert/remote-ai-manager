@@ -905,6 +905,9 @@ describe("0011-workflow-agent-assignments", () => {
             id: "general",
             profile: { tier: "builtin", id: "general-reviewer" },
             strategy: "conversation",
+            // The pre-cutover validator blocked, so the migration writes
+            // blocking rather than letting it decay to the advisory default.
+            authority: "blocking",
             agent: {
               backend: "claude",
               model: "sonnet",
@@ -929,6 +932,7 @@ describe("0011-workflow-agent-assignments", () => {
             id: "general",
             profile: { tier: "builtin", id: "general-reviewer" },
             strategy: "task",
+            authority: "blocking",
             // Explicit legacy values are copied VERBATIM, never re-derived.
             agent: {
               backend: "codex",

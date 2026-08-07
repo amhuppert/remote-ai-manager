@@ -333,6 +333,10 @@ function buildMaximalExecution(): unknown {
                 profile: { tier: "project", id: "security-reviewer" },
                 focus: "auth boundaries",
                 strategy: "conversation",
+                // Non-default authority: an authored blocking specialist must
+                // reload as blocking rather than decaying to the advisory
+                // default.
+                authority: "blocking",
                 agent: {
                   backend: "claude",
                   model: "sonnet",
@@ -564,6 +568,25 @@ function buildMaximalExecution(): unknown {
                   description: "Document how to revert the migration.",
                 },
               ],
+              advisories: [
+                {
+                  kind: "plan",
+                  title: "The rollback step belongs in its own task",
+                  description:
+                    "Reverting the migration is work in its own right.",
+                  identity: {
+                    roundSeq: 4,
+                    assignmentId: "general",
+                    ordinal: 1,
+                  },
+                  deliveredAt: "2026-01-01T00:04:00.000Z",
+                  disposition: {
+                    outcome: "deferred",
+                    reason: "Worth doing, but not inside this context.",
+                    recordedAt: "2026-01-01T00:05:00.000Z",
+                  },
+                },
+              ],
               questionToken: "qb-general-1",
               sessionRef: {
                 backend: "claude",
@@ -589,6 +612,14 @@ function buildMaximalExecution(): unknown {
           phase: "concluded",
           outcome: "failed",
           startedAt: "2026-01-01T00:03:00.000Z",
+        },
+        // The advisory-response phase, archived under the same superimposition
+        // rule as the records above: every persisted key path, not a reachable
+        // combination of them.
+        advisoryResponse: {
+          roundSeq: 4,
+          phase: "recertifying",
+          enteredAt: "2026-01-01T00:06:00.000Z",
         },
       },
     },
@@ -644,6 +675,17 @@ function buildMaximalExecution(): unknown {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
         lastUpdatedByConversationId: "conv-doc-1",
+      },
+    ],
+    // Projected from the round record above: an archived run is the only copy
+    // its audience has left, so the long-lived advisories have to survive the
+    // move out of the active slot along with the rounds that raised them.
+    advisoryIndex: [
+      {
+        identity: { roundSeq: 4, assignmentId: "general", ordinal: 1 },
+        kind: "plan",
+        title: "The rollback step belongs in its own task",
+        contextId: "ctx-1",
       },
     ],
     laneStates: {

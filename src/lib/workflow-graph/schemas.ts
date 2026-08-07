@@ -35,6 +35,8 @@ import {
   graphWorkflowStatusSchema,
   graphWorkflowTaskStatusSchema,
   resolvedWorkflowSemanticDefinitionSchema,
+  workflowAdvisoryIdentitySchema,
+  workflowValidatorAdvisorySchema,
   workflowValidatorIssueSchema,
 } from "./definition-schemas";
 import { agentProfileRefSchema } from "@/lib/agent-profiles/schemas";
@@ -633,12 +635,59 @@ export const graphWorkflowValidationInfraReasonSchema = z.enum([
   "schema_mismatch",
 ]);
 
+/**
+ * One advisory as the round RECORD holds it: what was observed, the identity the
+ * engine stamped on it, and everything that has since happened to it.
+ *
+ * Delivery and disposition live on the advisory itself rather than in a parallel
+ * ledger because they are facts ABOUT this advisory, and a ledger keyed by
+ * identity would be a second place for them to disagree. `deliveredAt` is what
+ * makes delivery exactly-once: the engine delivers the advisories of this round
+ * that carry none, and stamps them in the same mutation that delivers them.
+ */
+export const graphWorkflowValidationAdvisorySchema =
+  workflowValidatorAdvisorySchema.extend({
+    identity: workflowAdvisoryIdentitySchema,
+    /** When the implementer was shown it. Null until it has been delivered. */
+    deliveredAt: z.string().nullable().default(null),
+    /**
+     * What the implementer did with it. Null before the response turn, and null
+     * forever for an advisory delivered on a failing round — that round's
+     * remediation turn answers with work, not with a disposition record.
+     *
+     * Only ever the response turn's gate-validated answer (R7/D7). Nothing else
+     * may write here: an outcome the engine chose because the turn produced none
+     * would be a decision no one made, recorded as one somebody did. So a batch
+     * delivered by the response turn is stamped delivered and disposed in one
+     * mutation, and a turn that cannot produce a valid set fails instead.
+     */
+    disposition: z
+      .object({
+        outcome: z.enum(["addressed", "declined", "deferred"]),
+        reason: z.string().nullable().default(null),
+        recordedAt: z.string(),
+      })
+      .strict()
+      .nullable()
+      .default(null),
+  });
+export type GraphWorkflowValidationAdvisory = z.infer<
+  typeof graphWorkflowValidationAdvisorySchema
+>;
+
 export const graphWorkflowValidationSpecialistSchema = z
   .object({
     state: graphWorkflowValidationSpecialistStateSchema,
     attempts: z.number().int().min(0).default(0),
     summary: z.string().nullable().default(null),
     issues: z.array(workflowValidatorIssueSchema).default([]),
+    /**
+     * This lane's non-blocking observations, in the order it reported them.
+     * Written when the lane's verdict is accepted, so a round resumed after a
+     * crash carries forward the advisories of every lane that already settled
+     * rather than delivering only what the final pass happened to re-run.
+     */
+    advisories: z.array(graphWorkflowValidationAdvisorySchema).default([]),
     /**
      * The parked question batch this specialist is waiting on. Per-lane, so
      * several specialists in one context can be parked at once.
@@ -716,6 +765,68 @@ export type GraphWorkflowValidationRound = z.infer<
   typeof graphWorkflowValidationRoundSchema
 >;
 
+/**
+ * The context's advisory-response phase: what a passing round with fresh
+ * advisories owes before the context may finish (R8, D8).
+ *
+ * A phase of the CONTEXT rather than of the round, because the round is over by
+ * the time it starts. The round concluded on its verdict, the cohort released
+ * the candidate, and it is the implementer that is about to run — the exact
+ * opposite of what an open round means. Two states, and the field's absence is
+ * the third:
+ *
+ * - `awaiting_response`: the round certified the candidate and its advisories
+ *   owe the implementer one turn. Nothing opens a new round while this stands,
+ *   so a restart mid-turn resumes the turn instead of re-reviewing a candidate
+ *   that was already certified.
+ * - `recertifying`: the response turn moved the candidate out from under that
+ *   certification. The next round is a blocking-only re-certification, and this
+ *   record is what makes that survive a restart — a phase held only in memory
+ *   would come back as an ordinary round with the advisory lanes in it.
+ *
+ * `roundSeq` names the certification the phase belongs to; the candidate itself
+ * is read from that round rather than copied here, so there is one recorded
+ * answer to "what was certified" and not two that can disagree.
+ */
+export const graphWorkflowAdvisoryResponsePhaseSchema = z
+  .object({
+    roundSeq: z.number().int().positive(),
+    phase: z.enum(["awaiting_response", "recertifying"]),
+    enteredAt: z.string().trim().min(1),
+  })
+  .strict();
+export type GraphWorkflowAdvisoryResponsePhase = z.infer<
+  typeof graphWorkflowAdvisoryResponsePhaseSchema
+>;
+
+/**
+ * One long-lived advisory as the execution-level index projects it (D9).
+ *
+ * Only `plan` and `out_of_scope` are indexed: an `implementation` advisory is
+ * about the work of the round that raised it and is answered there, while these
+ * two outlive it — their audience is the human reading the run today and the
+ * owning agent of roadmap D8 tomorrow, neither of whom should have to open
+ * every round of every context to find them.
+ *
+ * A projection, not a second copy: the advisory itself — description, delivery,
+ * disposition — stays on the round record, and this carries only what a reader
+ * needs to recognise one and go to it. The origin round is `identity.roundSeq`
+ * and the origin seat is `identity.assignmentId`; repeating either beside the
+ * identity would be a second place for them to disagree. `contextId` is here
+ * because identity alone does not carry it — round numbering is per context.
+ */
+export const graphWorkflowAdvisoryIndexEntrySchema = z
+  .object({
+    identity: workflowAdvisoryIdentitySchema,
+    kind: z.enum(["plan", "out_of_scope"]),
+    title: z.string().trim().min(1),
+    contextId: z.string().trim().min(1),
+  })
+  .strict();
+export type GraphWorkflowAdvisoryIndexEntry = z.infer<
+  typeof graphWorkflowAdvisoryIndexEntrySchema
+>;
+
 // ============================================================
 // Graph Workflow Context + Task State
 // ============================================================
@@ -777,6 +888,14 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
    * and rows written before the field existed already make it correctly.
    */
   validationRound: graphWorkflowValidationRoundSchema.nullable().optional(),
+  /**
+   * The advisory-response phase this context is in, or absent/null when it is in
+   * none. Optional for the same reason as `validationRound`: absent and null are
+   * one claim, and every row written before the field existed already makes it.
+   */
+  advisoryResponse: graphWorkflowAdvisoryResponsePhaseSchema
+    .nullable()
+    .optional(),
 });
 export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
@@ -1039,6 +1158,14 @@ export const graphWorkflowExecutionSchema = z.object({
     .record(z.string(), graphWorkflowContextOutputSchema)
     .default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
+  // Every `plan` and `out_of_scope` advisory raised anywhere in this execution,
+  // projected out of the per-round records so its audience reads one list
+  // instead of opening rounds (R9, D9). Maintained as each lane's advisories are
+  // stamped, so a round that later fails still contributes what it observed.
+  // Persisted in the runtime tier; rows written before the field existed parse
+  // as `[]`, which is also the steady state for a run whose validators raised
+  // nothing that outlives its round.
+  advisoryIndex: z.array(graphWorkflowAdvisoryIndexEntrySchema).default([]),
   laneStates: z
     .record(
       z.string(),
