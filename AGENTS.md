@@ -16,11 +16,14 @@ bun run dev
 cctl validate list
 cctl validate run test --wait
 cctl validate run test --wait -- scripts/instruction-docs.test.ts
+cctl validate run test-full-suite --wait
 cctl validate run typecheck --wait
 cctl validate run lint --wait
 cctl validate run build --wait
 cctl validate run seams --wait
 ```
+
+`test` narrows to the diff against the target branch, so a green run speaks for the changed files rather than the branch; use `test-full-suite` when the claim is that the whole branch passes.
 
 Registered command names are project configuration; use `cctl validate list` when a name above is absent. Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, builds, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
 

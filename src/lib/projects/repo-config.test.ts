@@ -50,6 +50,14 @@ describe("readRepoConfig", () => {
           description: "Run affected unit tests with eight workers",
           scopeArgs: "paths",
         },
+        "test-full-suite": {
+          command: "scripts/validate/test-full-suite.sh",
+          cost: 8,
+          timeoutMs: 3_600_000,
+          description:
+            "Run the full unit test suite with eight workers, unscoped and without bail",
+          scopeArgs: "forbid",
+        },
       },
       preMerge: ["format", "lint", "typecheck", "test"],
       laneMerge: ["typecheck", "test"],
