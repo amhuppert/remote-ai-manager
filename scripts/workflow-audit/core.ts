@@ -147,6 +147,18 @@ const auditJoinStateSchema = z.object({
     })
     .nullish()
     .default(null),
+  // Conflicts the merge machinery auto-resolved (smart-merge sub-turn or the
+  // runner's clean retry) — a succeeded join carrying these is NOT a clean
+  // merge, and the positives detector must distinguish the two.
+  resolvedConflicts: z
+    .array(
+      z.object({
+        sourceLaneId: z.string().default(""),
+        files: z.array(z.string()).default([]),
+        resolution: z.string().default("unknown"),
+      }),
+    )
+    .default([]),
   sourceLaneIds: z.array(z.string()).default([]),
   completedAt: z.string().nullish().default(null),
 });
@@ -258,6 +270,7 @@ export type GapClassification =
   | "halt_wait"
   | "hung_turn"
   | "validation_compute"
+  | "join_compute"
   | "unexplained";
 
 /** One halted→resumed pair from lifecycle.jsonl; resumedAt null while halted. */
@@ -530,11 +543,12 @@ function parseIso(value: string | null): number | null {
  * transcript qualitatively.
  *
  * The cost rule mirrors `summarizeTranscriptTelemetry`
- * (src/lib/workflow-graph/conversation-telemetry.ts): the SDK's
- * `result.total_cost_usd` is CUMULATIVE per session lineage, so the true
- * conversation cost is the sum of each lineage's FINAL value. Historical DB
- * rows written before the accrual fix consumed cumulatives as deltas and are
- * inflated — the `cost_mismatch` detector exists to surface exactly that.
+ * (src/lib/workflow-graph/conversation-telemetry.ts): Claude's
+ * `result.total_cost_usd` is CUMULATIVE per session lineage and codex result
+ * frames' `costUsd` is CUMULATIVE per thread, so the true conversation cost
+ * is the sum of each lineage's FINAL value. Historical DB rows written before
+ * the accrual fixes consumed cumulatives as deltas and are inflated — the
+ * `cost_mismatch` detector exists to surface exactly that.
  * Standalone rather than imported per this module's header: the audit CLI
  * must stay dependency-free and tolerant of transcripts from other builds.
  */
@@ -584,20 +598,45 @@ export function scanTranscriptText(jsonlText: string): TranscriptScan {
     if (entry === null) continue;
     const raw = asRecord(entry.raw);
 
-    if (raw !== null && typeof raw.total_cost_usd === "number") {
-      const lineageId = String(raw.session_id ?? "unknown");
+    // Claude result frames report `total_cost_usd` cumulative per SDK session
+    // lineage; codex result frames report `costUsd` cumulative per thread
+    // (`backendRef.ref`). Both reduce to final-cumulative-per-lineage.
+    const lineageUsage =
+      raw === null
+        ? null
+        : typeof raw.total_cost_usd === "number"
+          ? {
+              lineageId: String(raw.session_id ?? "unknown"),
+              cumulativeCostUsd: raw.total_cost_usd,
+              numTurns:
+                typeof raw.num_turns === "number" ? raw.num_turns : null,
+            }
+          : raw.backend === "codex" && typeof raw.costUsd === "number"
+            ? {
+                lineageId: String(
+                  asRecord(raw.backendRef)?.ref ?? "codex-unknown",
+                ),
+                cumulativeCostUsd: raw.costUsd,
+                numTurns:
+                  typeof raw.numTurns === "number" ? raw.numTurns : null,
+              }
+            : null;
+    if (lineageUsage !== null) {
       // Cumulative per lineage — the last result in file order is the final.
       // A restarted subprocess can resume the SAME session id with its
       // cumulative reset; the drop is the lineage boundary, so bank the
       // finished lineage's final before tracking the new one.
-      const previous = lineageFinalCost.get(lineageId);
-      if (previous !== undefined && raw.total_cost_usd < previous) {
+      const previous = lineageFinalCost.get(lineageUsage.lineageId);
+      if (previous !== undefined && lineageUsage.cumulativeCostUsd < previous) {
         committedLineageCost += previous;
         lineageRestarts += 1;
       }
-      lineageFinalCost.set(lineageId, raw.total_cost_usd);
-      if (typeof raw.num_turns === "number") {
-        apiTurns = (apiTurns ?? 0) + raw.num_turns;
+      lineageFinalCost.set(
+        lineageUsage.lineageId,
+        lineageUsage.cumulativeCostUsd,
+      );
+      if (lineageUsage.numTurns !== null) {
+        apiTurns = (apiTurns ?? 0) + lineageUsage.numTurns;
       }
     }
 
@@ -1439,6 +1478,21 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       .map((row) => row.id),
   );
   let validators: AuditReport["cost"]["validators"] = null;
+  // Codex validator threads report thread-CUMULATIVE usage on every decision
+  // (a resumed run's counters include all prior runs), so per-thread the true
+  // spend is the latest cumulative, not the snapshot sum. A counter drop under
+  // the same thread is a thread restart: bank the finished lineage's final and
+  // track the new one — mirroring the transcript lineage rule above. Claude
+  // task runs restart their cumulative per process, so their per-event usage
+  // is already per-run and sums directly.
+  interface ValidatorUsageSnapshot {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    costUsd: number | null;
+  }
+  const codexThreadFinalUsage = new Map<string, ValidatorUsageSnapshot>();
+  const summedUsage: ValidatorUsageSnapshot[] = [];
   for (const event of events) {
     if (event.type !== "graph-workflow-validation-result") continue;
     const artifact = asRecord(event.fields.reviewArtifact);
@@ -1458,14 +1512,41 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       unpricedEventCount: 0,
     };
     validators.usageEventCount += 1;
-    validators.inputTokens += fieldNum(usage, "inputTokens") ?? 0;
-    validators.cachedInputTokens += fieldNum(usage, "cachedInputTokens") ?? 0;
-    validators.outputTokens += fieldNum(usage, "outputTokens") ?? 0;
-    const costUsd = fieldNum(usage, "costUsd");
-    if (costUsd === null) {
+    const snapshot: ValidatorUsageSnapshot = {
+      inputTokens: fieldNum(usage, "inputTokens") ?? 0,
+      cachedInputTokens: fieldNum(usage, "cachedInputTokens") ?? 0,
+      outputTokens: fieldNum(usage, "outputTokens") ?? 0,
+      costUsd: fieldNum(usage, "costUsd"),
+    };
+    if (snapshot.costUsd === null) {
       validators.unpricedEventCount += 1;
+    }
+    const backendName =
+      fieldStr(artifact, "backend") ?? fieldStr(artifact, "engine");
+    const threadRef =
+      fieldStr(artifact, "ref") ?? fieldStr(artifact, "threadId");
+    if (backendName === "codex" && threadRef !== null) {
+      const previous = codexThreadFinalUsage.get(threadRef);
+      const dropped =
+        previous !== undefined &&
+        (snapshot.inputTokens < previous.inputTokens ||
+          (snapshot.costUsd !== null &&
+            previous.costUsd !== null &&
+            snapshot.costUsd < previous.costUsd));
+      if (dropped && previous !== undefined) summedUsage.push(previous);
+      codexThreadFinalUsage.set(threadRef, snapshot);
     } else {
-      validators.estimatedUsd += costUsd;
+      summedUsage.push(snapshot);
+    }
+  }
+  if (validators !== null) {
+    for (const usage of [...summedUsage, ...codexThreadFinalUsage.values()]) {
+      validators.inputTokens += usage.inputTokens;
+      validators.cachedInputTokens += usage.cachedInputTokens;
+      validators.outputTokens += usage.outputTokens;
+      if (usage.costUsd !== null) {
+        validators.estimatedUsd += usage.costUsd;
+      }
     }
   }
 
@@ -1527,6 +1608,38 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     }
   }
 
+  // Join windows from lifecycle join.started → join.completed/failed pairs.
+  // Serialized per-lane merges, pre-merge validation, and conflict sub-turns
+  // all run inside these brackets with no per-context log records, so without
+  // this class every join surfaced as an "unexplained" stall (audit 1beec403:
+  // 52 minutes / 22% of wall clock).
+  const joinIntervals: Interval[] = [];
+  const openJoinStarts = new Map<string, number>();
+  for (const record of lifecycle) {
+    const at = parseIso(record.timestamp);
+    if (at === null) continue;
+    const joinId = fieldStr(record.fields, "joinId") ?? "unknown";
+    if (record.event === "join.started") {
+      openJoinStarts.set(joinId, at);
+    } else if (
+      record.event === "join.completed" ||
+      record.event === "join.failed"
+    ) {
+      const start = openJoinStarts.get(joinId);
+      openJoinStarts.delete(joinId);
+      if (start !== undefined && at > start) {
+        joinIntervals.push({ start, end: at });
+      }
+    }
+  }
+  // A join still open at the end of the data idles the execution like an
+  // unresolved halt does.
+  for (const start of openJoinStarts.values()) {
+    if (lastActivityMs !== null && lastActivityMs > start) {
+      joinIntervals.push({ start, end: lastActivityMs });
+    }
+  }
+
   const points: TimelinePoint[] = [];
   if (startedMs !== null)
     points.push({ at: startedMs, label: "execution.started" });
@@ -1554,6 +1667,7 @@ export function buildAuditReport(input: AuditInput): AuditReport {
   const mergedHalt = mergeIntervals(haltIntervals);
   const mergedHung = mergeIntervals(hungIntervals);
   const mergedValidationCompute = mergeIntervals(validationComputeIntervals);
+  const mergedJoinCompute = mergeIntervals(joinIntervals);
   const gaps: GapReport[] = [];
   for (let i = 0; i < points.length - 1; i++) {
     const from = points[i];
@@ -1573,6 +1687,8 @@ export function buildAuditReport(input: AuditInput): AuditReport {
       classification = "hung_turn";
     } else if (overlapMs(gap, mergedValidationCompute) / gapMs > 0.5) {
       classification = "validation_compute";
+    } else if (overlapMs(gap, mergedJoinCompute) / gapMs > 0.5) {
+      classification = "join_compute";
     } else if (overlapMs(gap, mergedWork) / gapMs > 0.5) {
       classification = "agent_work";
     } else {
@@ -1951,7 +2067,32 @@ export function buildAuditReport(input: AuditInput): AuditReport {
     haltRecoveries.some((recovery) =>
       MERGE_CLASS_HALT_TYPES.has(recovery.haltType),
     );
-  if (joinEntries.length > 0 && !anyMergeTrouble) {
+  const joinsWithAutoResolved = Object.entries(execution.joins).filter(
+    ([, join]) => join.resolvedConflicts.length > 0,
+  );
+  if (joinsWithAutoResolved.length > 0) {
+    const detail = joinsWithAutoResolved
+      .map(([joinId, join]) =>
+        join.resolvedConflicts
+          .map(
+            (conflict) =>
+              `${joinId}: ${conflict.files.join(", ") || "(files unrecorded)"} (${conflict.resolution})`,
+          )
+          .join("; "),
+      )
+      .join("; ");
+    positives.push({
+      kind: "conflicts_auto_resolved",
+      severity: "info",
+      contextId: null,
+      summary: `${joinsWithAutoResolved.length} join(s) had conflicts the merge machinery auto-resolved — ${detail}`,
+    });
+  }
+  if (
+    joinEntries.length > 0 &&
+    !anyMergeTrouble &&
+    joinsWithAutoResolved.length === 0
+  ) {
     positives.push({
       kind: "clean_merges",
       severity: "info",

@@ -19,7 +19,7 @@ import { _createTestDb, _createTestDbAtPath } from "./state-db";
 import { createProjectsRepo, type ProjectsRepo } from "./projects-repo";
 import { createStateStore, type StateStore } from "./store";
 import { createWriteQueue } from "./write-queue";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import {
   readWholeStateForTest,
@@ -47,7 +47,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: "conv-1",
     transcriptPath: null,
     status: "idle",

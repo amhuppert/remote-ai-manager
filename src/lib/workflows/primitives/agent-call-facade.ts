@@ -1024,6 +1024,12 @@ function mergeUsage(
         ? { contextWindowMax: initial.contextWindowMax }
         : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
+    // Cumulative snapshot: latest wins, like contextTokens.
+    ...(repair.cumulativeCostUsd !== undefined
+      ? { cumulativeCostUsd: repair.cumulativeCostUsd }
+      : initial.cumulativeCostUsd !== undefined
+        ? { cumulativeCostUsd: initial.cumulativeCostUsd }
+        : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
   };
 }

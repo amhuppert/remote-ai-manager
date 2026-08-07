@@ -10,6 +10,7 @@ import {
 import ProjectDetailView from "./ProjectDetailView";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { TicketListItem } from "@/lib/tickets/schemas";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
@@ -151,42 +152,18 @@ const makeSessions = (count: number): SessionListItem[] =>
 
 const makeProjectConversation = (
   overrides: Partial<ConversationState> = {},
-): ConversationState => ({
-  profileSnapshot: null,
-  profileLockedAt: null,
-  id: "project-convo-1",
-  scope: "project",
-  nameOrigin: "default",
-  name: "Project conversation",
-  transcriptPath: null,
-  status: "awaiting",
-  promptCount: 0,
-  createdAt: now,
-  lastActivityAt: now,
-  source: "cc",
-  summary: null,
-  archived: false,
-  open: true,
-  totalCostUsd: null,
-  totalDurationMs: null,
-  totalTurns: null,
-  pendingQuestionId: null,
-  pendingQuestions: null,
-  pendingPromptText: null,
-  unread: false,
-  pendingQueue: [],
-  forkedFrom: null,
-  role: null,
-  activeTurnSource: null,
-  contextTokens: null,
-  contextWindowMax: null,
-  debugMode: null,
-  agentBackend: "claude",
-  backendRef: null,
-  lastSeenAlignmentVersion: null,
-  pendingAgentNotices: [],
-  ...overrides,
-});
+): ConversationState =>
+  makeConversationState({
+    profileSnapshot: null,
+    id: "project-convo-1",
+    scope: "project",
+    name: "Project conversation",
+    status: "awaiting",
+    createdAt: now,
+    lastActivityAt: now,
+    open: true,
+    ...overrides,
+  });
 
 /** Render the view with the project-conversation list pre-seeded in cache (the
  * PLC list query then reads the cache instead of the network). */

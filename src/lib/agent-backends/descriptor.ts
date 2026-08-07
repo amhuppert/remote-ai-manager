@@ -111,7 +111,14 @@ export interface BackendTurnResultProjectionInput {
   numTurns: number | null;
   contextTokens: number | null;
   contextWindowMax: number | null;
+  /** Per-turn attributed cost (consumers sum these). */
   costUsd: number | null;
+  /**
+   * Lineage-cumulative cost as of this turn, for backends whose provider
+   * counters are cumulative; null for the rest. Persisted frames prefer this
+   * so transcripts stay lossless w.r.t. the provider's own accounting.
+   */
+  cumulativeCostUsd: number | null;
   aborted: boolean;
   error: string | null;
 }

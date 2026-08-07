@@ -249,6 +249,13 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of that source context's outgoing edges.",
       "event.omittedEdgeIds":
         "bounded: subset of that source context's outgoing edges.",
+      // --- join conflict records ---
+      "event.resolvedConflicts":
+        "bounded: at most one record per source lane of one author-fixed join, appended only as that join merges its lanes and cleared when the join is reset for retry.",
+      "event.resolvedConflicts[].files":
+        "bounded: the conflicted paths of one lane merge, as reported by git for that single merge.",
+      "event.resolvedConflicts[].analysis":
+        "bounded: one resolver verdict per conflicted file of that same single lane merge, written once when the merge concludes.",
       // --- validation verdicts ---
       "event.reopenTaskIds":
         "bounded: subset of the validated context's tasks.",

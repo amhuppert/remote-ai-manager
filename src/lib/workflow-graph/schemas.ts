@@ -385,6 +385,20 @@ export const graphWorkflowExecutionJoinConflictDetailSchema = z.object({
 export type GraphWorkflowExecutionJoinConflictDetail = z.infer<
   typeof graphWorkflowExecutionJoinConflictDetailSchema
 >;
+// A conflict the merge machinery resolved WITHOUT failing the join: either a
+// smart-merge LLM sub-turn merged the conflicted files, or the runner's one
+// clean retry merged cleanly after a failed resolution attempt. Recorded so a
+// "succeeded" join is distinguishable from a conflict-free one — audit
+// tooling must not report clean merges when any of these exist.
+export const graphWorkflowExecutionJoinResolvedConflictSchema = z.object({
+  sourceLaneId: graphWorkflowExecutionLaneIdSchema,
+  files: z.array(z.string().trim().min(1)).default([]),
+  resolution: z.enum(["sub_turn", "clean_retry"]),
+  analysis: z.array(conflictEntrySchema).nullable().default(null),
+});
+export type GraphWorkflowExecutionJoinResolvedConflict = z.infer<
+  typeof graphWorkflowExecutionJoinResolvedConflictSchema
+>;
 export const graphWorkflowExecutionJoinStateSchema = z.object({
   joinId: graphWorkflowExecutionJoinIdSchema,
   kind: graphWorkflowExecutionJoinKindSchema,
@@ -407,6 +421,11 @@ export const graphWorkflowExecutionJoinStateSchema = z.object({
   conflicts: graphWorkflowExecutionJoinConflictDetailSchema
     .nullable()
     .default(null),
+  // Optional (not defaulted) so pre-existing states and fixtures stay valid
+  // without churn; absent means "no auto-resolved conflicts recorded".
+  resolvedConflicts: z
+    .array(graphWorkflowExecutionJoinResolvedConflictSchema)
+    .optional(),
   // Operator guidance attached when a failed join is reset for retry; consumed
   // as per-file decisions by the next conflict-resolution attempt and cleared
   // when the join concludes.

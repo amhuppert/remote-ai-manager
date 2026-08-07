@@ -9,7 +9,8 @@ import {
   createProjectAbortHandlers,
 } from "./abort-route-handlers";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
-import { conversationStateSchema, type ConversationState } from "./schemas";
+import type { ConversationState } from "./schemas";
+import { makeConversationState } from "./testing/conversation-state-fixture";
 
 /**
  * Stop for a project conversation (R5.1 / R5.2 / D13).
@@ -33,15 +34,13 @@ const SESSION = "auth";
 const CONV = "conv-1";
 
 function conversation(id: string): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id,
     scope: "project",
-    transcriptPath: null,
     status: "running",
     promptCount: 1,
     createdAt: ts,
     lastActivityAt: ts,
-    agentBackend: "claude",
   });
 }
 

@@ -14,7 +14,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import type { ConversationState } from "@/lib/conversations/schemas";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 
@@ -68,17 +68,14 @@ function textBlock(text: string): MessageContentBlock {
 
 /**
  * A running Codex conversation with an empty durable queue, built through the
- * real `conversationStateSchema` so `pendingQueue` defaults correctly and the
- * service exercises real persistence semantics (no hand-rolled shape).
+ * real stored schema (via the shared factory) so `pendingQueue` defaults
+ * correctly and the service exercises real persistence semantics (no
+ * hand-rolled shape).
  */
 function makeRunningConversation(): ConversationState {
-  return conversationStateSchema.parse({
-    id: "conv-1",
-    transcriptPath: null,
+  return makeConversationState({
     status: "running",
-    role: null,
     agentBackend: "codex",
-    promptCount: 0,
     createdAt: NOW,
     lastActivityAt: NOW,
   });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationBackendFactory } from "@/lib/agent-backends/conversation";
@@ -76,41 +77,15 @@ const mockActor = {
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     id: "conv-123",
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
     transcriptPath: null,
-    status: "new" as const,
+    status: "new",
     promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "cc" as const,
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-    pendingQueue: [],
     ...overrides,
-  };
+  });
 }
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {

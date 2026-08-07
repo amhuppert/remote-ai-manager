@@ -7,48 +7,33 @@ import {
 } from "./project-conversations-repo";
 import { PersistenceError } from "../shared/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 type Db = InstanceType<typeof Database>;
 
 function makeProjectConversation(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  // Honors exactly the override fields the original hand-written helper
+  // honored (no blanket spread), so call-site semantics are unchanged.
+  return makeConversationState({
     id: overrides.id,
     scope: "project",
-    nameOrigin: "default",
     name: overrides.name ?? null,
     transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",
     promptCount: overrides.promptCount ?? 0,
     createdAt: overrides.createdAt ?? "2025-01-01T00:00:00.000Z",
     lastActivityAt: overrides.lastActivityAt ?? "2025-01-01T00:00:00.000Z",
-    source: "cc",
     summary: overrides.summary ?? null,
     archived: overrides.archived ?? false,
     open: overrides.open ?? true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
     pendingPromptText: overrides.pendingPromptText ?? null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     spawnedSessionIds: overrides.spawnedSessionIds,
-  };
+  });
 }
 
 describe("ProjectConversationsRepo", () => {

@@ -6,11 +6,11 @@ import {
 } from "./route-handlers";
 import { activeConversationsResponseSchema } from "./schemas";
 import {
-  conversationStateSchema,
   type AskQuestionItem,
   type ConversationBackgroundActivity,
   type ConversationState,
 } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type {
   TranscriptMessage,
   ConversationStatus,
@@ -62,29 +62,8 @@ const STRUCTURED_QUESTIONS: AskQuestionItem[] = [
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return conversationStateSchema.parse({
-    id: "conv-1",
-    name: null,
-    transcriptPath: null,
+  return makeConversationState({
     status: "new",
-    promptCount: 0,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
     ...overrides,
   });
 }

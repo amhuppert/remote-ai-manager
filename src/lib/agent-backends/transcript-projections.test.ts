@@ -163,4 +163,52 @@ describe("projectTranscriptUsage", () => {
     expect(projectTranscriptUsage({ raw: null })).toBeNull();
     expect(projectTranscriptUsage({})).toBeNull();
   });
+
+  it("projects a Codex result frame's thread-cumulative counters", () => {
+    // The exact raw shape codexConversationTranscriptProjection persists.
+    const usage = projectTranscriptUsage({
+      raw: {
+        backend: "codex",
+        backendRef: { backend: "codex", ref: "thread-abc" },
+        durationMs: 568715,
+        numTurns: 1,
+        contextTokens: 5854973,
+        contextWindowMax: null,
+        costUsd: 4.373131,
+        aborted: false,
+        error: null,
+      },
+    });
+    expect(usage).toEqual({
+      lineageId: "thread-abc",
+      cumulativeCostUsd: 4.373131,
+      numTurns: 1,
+    });
+  });
+
+  it("declines Codex frames without a thread ref or numeric cost", () => {
+    expect(
+      projectTranscriptUsage({
+        raw: { backend: "codex", backendRef: null, costUsd: 1.5 },
+      }),
+    ).toBeNull();
+    expect(
+      projectTranscriptUsage({
+        raw: {
+          backend: "codex",
+          backendRef: { backend: "codex", ref: "thread-abc" },
+          costUsd: null,
+        },
+      }),
+    ).toBeNull();
+    expect(
+      projectTranscriptUsage({
+        raw: {
+          subtype: "init",
+          backend: "codex",
+          thread_id: "thread-abc",
+        },
+      }),
+    ).toBeNull();
+  });
 });

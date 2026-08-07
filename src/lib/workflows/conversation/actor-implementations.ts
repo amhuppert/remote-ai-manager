@@ -2092,6 +2092,7 @@ export async function executePromptForMachine(
       contextTokens: callResult.usage.contextTokens ?? null,
       contextWindowMax: callResult.usage.contextWindowMax ?? null,
       costUsd: callResult.usage.costUsd ?? null,
+      cumulativeCostUsd: callResult.usage.cumulativeCostUsd ?? null,
       aborted: turnAborted,
       error: effectiveError,
     });

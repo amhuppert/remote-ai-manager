@@ -10,9 +10,9 @@ import {
 } from "@/lib/conversations/ask-route-handlers";
 import {
   askQuestionItemSchema,
-  conversationStateSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { createCapturingLogger } from "@/lib/shared/testing/capturing-logger";
 
 import { runCli } from "../core";
@@ -35,10 +35,8 @@ const TOKEN = "contract-token";
 const ts = "2025-01-01T00:00:00.000Z";
 
 function conv(overrides: Partial<ConversationState> = {}): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: CONVERSATION_ID,
-    scope: "session",
-    transcriptPath: null,
     status: "running",
     promptCount: 1,
     createdAt: ts,

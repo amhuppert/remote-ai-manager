@@ -4,10 +4,8 @@ import { _createTestDb } from "./state-db";
 import { createStateStore } from "./store";
 import { seedWholeState } from "@/lib/shared/testing/whole-state-fixture";
 import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 type Db = InstanceType<typeof Database>;
 
@@ -15,7 +13,7 @@ const PROJECT = "/repo";
 const PLC_ID = "plc-1";
 
 function makeSessionConversation(id: string): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id,
     scope: "session",
     transcriptPath: null,
@@ -38,7 +36,7 @@ function makeSession(name: string): SessionState {
 }
 
 function makePlc(): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: PLC_ID,
     scope: "project",
     transcriptPath: null,

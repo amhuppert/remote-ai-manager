@@ -44,6 +44,15 @@ function buildCharterSection(
     [
       "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `cctl workflow task complete` summary.",
       "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
+      // Validators already carry a per-invariant check instruction; without
+      // this implementer-side twin, invariant violations surface only as
+      // NO-GO cycles (audit 1beec403: 2 of 4 NO-GOs were invariant breaches
+      // in new test code, one copied verbatim from a violating exemplar).
+      ...((charter.invariants ?? []).length > 0
+        ? [
+            "Verify every applicable charter invariant against your new and changed code with a concrete check (for example, grep for a banned pattern) before running `cctl workflow task complete` — especially on the final task. Do not assume existing code you were told to mirror satisfies the invariants: an exemplar can itself violate one, and copying it faithfully still fails validation.",
+          ]
+        : []),
     ],
     amendments,
   );

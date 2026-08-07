@@ -24,6 +24,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 const PROJECT_PATH = "/repo";
 const SESSION_NAME = "sess-1";
@@ -32,41 +33,14 @@ const CONVERSATION_ID = "conv-1";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
+  return makeConversationState({
     profileSnapshot: null,
-    profileLockedAt: null,
     id: CONVERSATION_ID,
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
-    transcriptPath: null,
     status: "awaiting",
-    promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude" as const,
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 interface RefOccurrence {

@@ -118,7 +118,20 @@ export interface ConversationBackendTurnInput {
 
 export interface ConversationBackendTurnResult {
   backendRef: AgentSessionRef | null;
+  /**
+   * Cost attributed to THIS turn. Consumers sum per-turn values, so a backend
+   * whose provider reports lineage-cumulative counters must convert to a
+   * delta before reporting here.
+   */
   costUsd: number | null;
+  /**
+   * Lineage-cumulative cost as of this turn, for backends whose provider
+   * reports cumulative counters (Codex threads). Feeds the transcript result
+   * frame so persisted frames stay cumulative (lossless w.r.t. the provider
+   * and consistent with pre-existing transcripts); never summed by consumers.
+   * Omitted by backends without a cumulative counter.
+   */
+  cumulativeCostUsd?: number | null;
   durationMs: number | null;
   numTurns: number | null;
   contextTokens: number | null;

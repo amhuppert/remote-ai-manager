@@ -6,6 +6,7 @@ import DebugModeToggle from "@/components/session/DebugModeToggle";
 import DebugStatusStrip from "@/components/session/DebugStatusStrip";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 // ---------------------------------------------------------------------------
 // Shared fixture helpers
 // ---------------------------------------------------------------------------
@@ -13,13 +14,9 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
+  return makeConversationState({
     profileSnapshot: null,
-    profileLockedAt: null,
     id: "conv-123",
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
     status: "awaiting",
     transcriptPath: "/tmp/test.jsonl",
     totalCostUsd: 0,
@@ -28,26 +25,8 @@ function makeConversation(
     promptCount: 2,
     createdAt: new Date().toISOString(),
     lastActivityAt: new Date().toISOString(),
-    source: "cc",
-    summary: null,
-    archived: false,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude" as const,
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 const debugModeActive = {

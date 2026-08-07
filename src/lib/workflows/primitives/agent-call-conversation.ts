@@ -343,6 +343,9 @@ function buildUsageMetrics(
     usage.contextWindowMax = result.contextWindowMax;
   }
   if (result.costUsd != null) usage.costUsd = result.costUsd;
+  if (result.cumulativeCostUsd != null) {
+    usage.cumulativeCostUsd = result.cumulativeCostUsd;
+  }
   if (result.durationMs != null) usage.durationMs = result.durationMs;
   return usage;
 }

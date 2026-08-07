@@ -101,6 +101,7 @@ Implementer test access stays enabled even when the script gate also runs tests.
 3. Define contracts before tasks.
    - For each context, state what it produces, what it consumes from upstream contexts, and what it must not decide privately.
    - Put shared contracts in an upstream context when later contexts need the same state machine, support matrix, route contract, or data shape.
+   - Cross-context contract schemas (a shared request/response schema in a domain's `schemas.ts`, a shared type both sides validate against) get their canonical home in a context every consumer depends on — a predecessor both parallel siblings build on, never one of the siblings. Homing the canonical file in sibling A while parallel sibling B consumes it forces B to invent a local copy, take a NO-GO, and collide at the join (audited: a shared response schema homed in a later batch while an earlier parallel batch needed it caused exactly that NO-GO → both-sides-added conflict → post-merge test fix chain).
    - Do not split work so a downstream agent needs hidden assumptions from a different execution context.
 
 4. Close capability ownership (producer and consumer).
@@ -124,6 +125,8 @@ Implementer test access stays enabled even when the script gate also runs tests.
    - Include what to change, why it matters, likely files/modules, and how the implementer can verify locally.
    - Include required documents the implementer must read, not just files to edit.
    - State upstream artifacts that are authoritative for this context.
+   - Before writing "mirror file X" in instructions, check X against the charter invariants: faithful implementers copy precedent verbatim, including its violations. If the exemplar itself breaches an invariant (banned type escapes in an existing test are the audited case), say so and name exactly what to deviate from.
+   - When the charter bans code patterns (type escapes, forbidden imports), give the implementer a concrete pre-completion check in the instructions — e.g. grep new/changed test code for `as unknown|as object|!\.|@ts-ignore` before the final task-complete. One grep is cheaper than the validator NO-GO cycle it prevents.
 
 8. Add dependency edges deliberately.
    - Use edges for hard dependencies and for helpful foundation dependencies when prior work materially reduces ambiguity.
@@ -143,6 +146,7 @@ Good acceptance criteria:
 - Fit entirely inside the context's scope.
 - Give the validator enough specificity to pass or reopen a task without inventing new edge cases.
 - Require **runtime reachability** for every capability the context introduces: name the production composition site (route handler, service factory, listener registration, UI control) and demand evidence through it — a composition-level smoke test or a typed wiring deliverable. If the wiring intentionally lands downstream, name the owning context in the criterion.
+- Preserve **deferral integrity**: an obligation one context defers ("verified in context X") is only validly deferred when X's acceptance criteria contain the matching obligation. Audit every deferral chain at planning time — each "verified later" claim must terminate in a criterion that states it. A deferral whose target lacks the criterion silently drops the obligation (audited: "live verification deferred to final-verification" dead-ended because final-verification's criteria required only static code tracing, and the feature shipped never having run end to end).
 - Number their clauses when a context has several independently-failable criteria, so validator issues and remediation can cite exact clauses. If the clause count grows past a handful, treat that as the signal to split the context (one coherent validation thesis).
 
 Do not write acceptance criteria that:
@@ -242,6 +246,7 @@ Before creating or replacing a workflow, check every context:
 - Every task has enough context to satisfy the criteria without relying on conversation-only knowledge.
 - Validator scope cannot require downstream integration work to already be done.
 - Any wiring intentionally deferred downstream is named in the acceptance criteria — validators fail existence-only evidence for a capability whose wiring has no named owner.
+- Every deferral declared anywhere in the plan ("deferred to context X", "verified in final verification") has a matching acceptance criterion in the receiving context. A validator GO that records a deferral whose target never carried the obligation is an invalid GO.
 - A failed criterion can reopen a specific task in the same context.
 
 If the validator would need the whole design to judge a narrow context, either add a context-local design summary task or move that criterion to a final verification context.
@@ -542,6 +547,8 @@ Guard against these before starting execution:
 - Script validator deadlock: deterministic commands are selected for a context that intentionally ends in an invalid intermediate state.
 - Unowned wiring: a capability's consumer is fully specified while no context's criteria require the production caller — every context passes locally and the composed runtime path is dead until (at best) final verification.
 - Invariants by rediscovery: cross-cutting rules live only in deep spec documents, so each implementer independently misses them and validators re-teach the same lesson context after context. Declare them once in `charter.invariants`.
+- Deferral dead-end: a validator GO records "deferred to context X" but X's acceptance criteria never carried the obligation, so it evaporates and the workflow completes without it — most dangerously for live end-to-end verification, which no per-context validation replaces.
+- Charter-violating exemplar: a task says "mirror file X" and X itself violates a charter invariant, so the implementer faithfully reproduces the violation and burns a NO-GO cycle on precedent the plan pointed them at.
 - Guard on an unpublished shape: an edge guards on a field the source's `outputSchema` never declares. Refused at accept time, but the same mistake made loosely — guarding on a field the source declares and never populates — passes validation and silently routes nowhere.
 - Prose verdicts: a loop's exit or a classifier emits a free-form recommendation instead of a machine-checkable field, so `until` and the guards can never be satisfied. The verdict is a `const`/`enum`/bounded number; the narrative goes in a separate handoff field.
 - Criteria written against a known branch count: a Generate-And-Filter consumer whose acceptance criteria say "the three candidates" fails the moment the generator picks two.
@@ -557,6 +564,7 @@ The final context should:
 - Verify that each implemented surface is connected to the runtime path the user will exercise.
 - Check that gated or unavailable behavior is honestly represented.
 - Select `scriptValidator.commands` only if the whole workflow should satisfy those checks at that point.
+- Own live end-to-end verification explicitly when the workflow ships user-visible or end-to-end behavior: a task plus an acceptance criterion that require driving the real running feature (dev server, real agent/LLM calls where that is the feature — the `cc-live-feature-test` shape), not static code tracing. Static tracing plus deterministic gates cannot absorb a "live verification deferred here" obligation; if no context owns a live pass, the plan is declaring the feature will ship untested end to end — make that trade-off consciously, not by omission.
 
 The final verification context is **defense in depth** for reachability, not the primary proof — each capability context proves its own production wiring or names its downstream owner (Planning Procedure step 4). Bound the review's acceptance criteria: enumerate the surfaces to check rather than writing "every implemented surface", and route large gaps into remediation tasks with their own bounded criteria. An unbounded audit-and-remediate predicate is a scope ratchet — each fix adds new surface to which the same standard applies — and a fixed circuit-breaker threshold will eventually halt a converging loop.
 

@@ -114,8 +114,17 @@ function appendStructuredOutputContract(
  * Default hard ceiling for the background-task wait barrier. Decoupled from the
  * 5-minute idle TTL (which is suppressed while waitable tasks are in flight) so
  * a long-running build/test can settle without the wait timing out prematurely.
+ *
+ * 30 minutes: the only production opt-in is the graph-workflow implementer
+ * turn, whose backgrounded full-suite runs routinely exceed 10 minutes — a
+ * 741s suite blew the previous 600s ceiling, the timeout permanently demoted
+ * the task from the waitable set, and the engine burned both "incomplete
+ * task" follow-ups polling for a completion the barrier had abandoned (audit
+ * 1beec403 friction 7). Settlement resolves the barrier early, so the
+ * ceiling only bounds genuinely hung tasks; it stays below the 60-minute
+ * workflow-lane idle TTL so the subprocess outlives the wait.
  */
-const DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * Idle TTL for workflow-lane sessions. Graph-workflow inter-iteration gaps

@@ -42,7 +42,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, type PropsWithChildren } from "react";
 
 import type { ConversationState } from "@/lib/conversations/schemas";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type {
@@ -86,17 +86,14 @@ const IMAGE: ImagePayload = imagePayloadSchema.parse({
 
 /**
  * A running CLAUDE conversation with an empty durable queue, built through the
- * real `conversationStateSchema` so `pendingQueue` defaults correctly and the
- * service exercises real persistence semantics (no hand-rolled shape).
+ * real stored-conversation schema (via the shared factory) so `pendingQueue`
+ * defaults correctly and the service exercises real persistence semantics.
  */
 function makeRunningClaudeConversation(): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: "conv-1",
-    transcriptPath: null,
     status: "running",
-    role: null,
     agentBackend: "claude",
-    promptCount: 0,
     createdAt: NOW,
     lastActivityAt: NOW,
   });

@@ -4,6 +4,7 @@ import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { Logger } from "@/lib/logging";
 import type { ManagerState } from "@/lib/projects/schemas";
 import {
@@ -42,41 +43,16 @@ function createSqlHarness() {
 }
 
 function projectConversation(id: string): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     id,
     scope: "project",
-    nameOrigin: "default",
-    name: null,
     transcriptPath: null,
     status: "awaiting",
     promptCount: 0,
     createdAt: "2026-04-21T00:00:00.000Z",
     lastActivityAt: "2026-04-21T00:00:00.000Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-    pendingQueue: [],
-  };
+  });
 }
 
 function stateWithAllScopes(): ManagerState {
@@ -94,40 +70,15 @@ function stateWithAllScopes(): ManagerState {
             archived: false,
             finished: false,
             conversations: [
-              {
-                profileSnapshot: null,
-                profileLockedAt: null,
+              makeConversationState({
                 id: CONVERSATION_ID,
-                scope: "session",
-                nameOrigin: "default",
-                name: null,
                 transcriptPath: null,
                 status: "awaiting",
                 promptCount: 0,
                 createdAt: "2026-04-21T00:00:00.000Z",
                 lastActivityAt: "2026-04-21T00:00:00.000Z",
-                source: "cc",
-                summary: null,
-                archived: false,
-                totalCostUsd: null,
-                totalDurationMs: null,
-                totalTurns: null,
-                pendingQuestionId: null,
-                pendingQuestions: null,
-                pendingPromptText: null,
-                forkedFrom: null,
                 role: "iteration",
-                activeTurnSource: null,
-                contextTokens: null,
-                contextWindowMax: null,
-                debugMode: null,
-                agentBackend: "claude",
-                backendRef: null,
-                unread: false,
-                lastSeenAlignmentVersion: null,
-                pendingAgentNotices: [],
-                pendingQueue: [],
-              },
+              }),
             ],
             source: "cc",
             creationMode: "normal",

@@ -568,6 +568,38 @@ describe("buildAuditReport", () => {
     expect(firstTry?.summary).not.toContain("impl");
   });
 
+  it("reports auto-resolved conflicts instead of clean merges when a succeeded join carries them", () => {
+    // Audit 1beec403: join 2's schemas.ts conflict was resolved by a
+    // smart-merge sub-turn, yet the report claimed "all joins merged without
+    // conflicts". A succeeded join with resolvedConflicts is NOT clean.
+    const raw = baseExecutionRaw();
+    (raw.joins as Record<string, unknown>)["join-1"] = {
+      joinId: "join-1",
+      kind: "context_merge",
+      status: "succeeded",
+      sourceLaneIds: ["lane-impl"],
+      conflicts: null,
+      resolvedConflicts: [
+        {
+          sourceLaneId: "lane-impl",
+          files: ["src/lib/naming/schemas.ts"],
+          resolution: "sub_turn",
+        },
+      ],
+    };
+    const input = { ...baseInput(), execution: mustParseExecution(raw) };
+
+    const report = buildAuditReport(input);
+    const kinds = report.positives.map((p) => p.kind);
+    expect(kinds).not.toContain("clean_merges");
+    const autoResolved = report.positives.find(
+      (p) => p.kind === "conflicts_auto_resolved",
+    );
+    expect(autoResolved?.summary).toContain("join-1");
+    expect(autoResolved?.summary).toContain("src/lib/naming/schemas.ts");
+    expect(autoResolved?.summary).toContain("sub_turn");
+  });
+
   it("emits a high-severity infrastructure halt finding for halted runs", () => {
     const raw = {
       ...baseExecutionRaw(),
@@ -708,6 +740,67 @@ describe("validator cost rollup", () => {
     expect(report.cost.validators?.usageEventCount).toBe(1);
   });
 
+  it("accrues latest cumulative per codex validator thread instead of summing snapshots", () => {
+    // A resumed codex validator thread reports thread-CUMULATIVE usage on
+    // every decision (audit 1beec403); summing the snapshots inflates the
+    // validator estimate exactly like the conversation-row bug.
+    const input = baseInput();
+    input.events.push(
+      evt(T("11:20:00"), {
+        type: "graph-workflow-validation-result",
+        executionId: "exec-1",
+        contextId: "impl",
+        validatorType: "context",
+        pass: false,
+        summary: "NO-GO",
+        reopenTaskIds: [],
+        issues: [],
+        reviewArtifact: {
+          backend: "codex",
+          kind: "response",
+          ref: "th-resumed",
+          response: "{}",
+          usage: {
+            inputTokens: 4_030_000,
+            cachedInputTokens: 3_000_000,
+            outputTokens: 40_000,
+            costUsd: 3.186902,
+          },
+        },
+      }),
+      evt(T("11:40:00"), {
+        type: "graph-workflow-validation-result",
+        executionId: "exec-1",
+        contextId: "impl",
+        validatorType: "context",
+        pass: true,
+        summary: "GO",
+        reopenTaskIds: [],
+        issues: [],
+        reviewArtifact: {
+          backend: "codex",
+          kind: "response",
+          ref: "th-resumed",
+          response: "{}",
+          usage: {
+            inputTokens: 5_470_000,
+            cachedInputTokens: 4_100_000,
+            outputTokens: 55_000,
+            costUsd: 4.072798,
+          },
+        },
+      }),
+    );
+
+    const report = buildAuditReport(input);
+    expect(report.cost.validators?.estimatedUsd).toBeCloseTo(4.072798, 6);
+    expect(report.cost.validators?.inputTokens).toBe(5_470_000);
+    expect(report.cost.validators?.cachedInputTokens).toBe(4_100_000);
+    expect(report.cost.validators?.outputTokens).toBe(55_000);
+    expect(report.cost.validators?.usageEventCount).toBe(2);
+    expect(report.cost.validators?.unpricedEventCount).toBe(0);
+  });
+
   it("counts conversation-artifact usage only when the conversation row is unpriced", () => {
     const input = baseInput();
     input.events.push(
@@ -820,6 +913,63 @@ describe("scanTranscriptText", () => {
     ].join("\n");
     const scan = scanTranscriptText(text);
     expect(scan.costUsd).toBeCloseTo(115.64);
+    expect(scan.lineageCount).toBe(2);
+  });
+
+  it("takes the final cumulative per codex thread, never the sum of snapshots", () => {
+    // Audit 1beec403: regenerate-api's DB row $7.2597 was exactly the sum of
+    // its two thread-cumulative snapshots. True thread cost is the final one.
+    const text = [
+      transcriptLine({
+        type: "result",
+        raw: {
+          backend: "codex",
+          backendRef: { backend: "codex", ref: "thread-1" },
+          costUsd: 3.186902,
+          numTurns: 1,
+          contextTokens: 4_030_000,
+        },
+      }),
+      transcriptLine({
+        type: "result",
+        raw: {
+          backend: "codex",
+          backendRef: { backend: "codex", ref: "thread-1" },
+          costUsd: 4.072798,
+          numTurns: 1,
+          contextTokens: 5_470_000,
+        },
+      }),
+    ].join("\n");
+    const scan = scanTranscriptText(text);
+    expect(scan.costUsd).toBeCloseTo(4.072798, 6);
+    expect(scan.lineageCount).toBe(1);
+    expect(scan.apiTurns).toBe(2);
+  });
+
+  it("sums final cumulatives across distinct codex threads", () => {
+    const text = [
+      transcriptLine({
+        type: "result",
+        raw: {
+          backend: "codex",
+          backendRef: { backend: "codex", ref: "thread-1" },
+          costUsd: 2.5,
+          numTurns: 1,
+        },
+      }),
+      transcriptLine({
+        type: "result",
+        raw: {
+          backend: "codex",
+          backendRef: { backend: "codex", ref: "thread-2" },
+          costUsd: 1.25,
+          numTurns: 1,
+        },
+      }),
+    ].join("\n");
+    const scan = scanTranscriptText(text);
+    expect(scan.costUsd).toBeCloseTo(3.75, 6);
     expect(scan.lineageCount).toBe(2);
   });
 
@@ -1182,6 +1332,38 @@ describe("halt recovery and operator wait", () => {
     const gap = report.time.gaps.find((g) => g.startedAt === T("11:32:00"));
     expect(gap?.classification).toBe("halt_wait");
     expect(report.friction.some((f) => f.kind === "stall_gap")).toBe(false);
+  });
+
+  it("classifies gaps inside a join window as join_compute, not stall", () => {
+    // Audit 1beec403: 52 minutes (22% of wall clock) sat inside joins with
+    // zero telemetry and surfaced as "unexplained" stall gaps. The lifecycle
+    // log already brackets every join with join.started/join.completed.
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:32:00"), "join.started", {
+        joinId: "join-1",
+        kind: "context_merge",
+      }),
+      rec(T("11:52:00"), "join.completed", { joinId: "join-1" }),
+    ];
+    const report = buildAuditReport(input);
+    const gap = report.time.gaps.find((g) => g.startedAt === T("11:32:00"));
+    expect(gap?.classification).toBe("join_compute");
+    expect(report.friction.some((f) => f.kind === "stall_gap")).toBe(false);
+  });
+
+  it("bounds an unmatched join window at the failure record", () => {
+    const input = baseInput();
+    input.lifecycle = [
+      rec(T("11:32:00"), "join.started", {
+        joinId: "join-1",
+        kind: "context_merge",
+      }),
+      rec(T("11:52:00"), "join.failed", { joinId: "join-1" }),
+    ];
+    const report = buildAuditReport(input);
+    const gap = report.time.gaps.find((g) => g.startedAt === T("11:32:00"));
+    expect(gap?.classification).toBe("join_compute");
   });
 
   it("reports an unresolved trailing halt with a null wait", () => {

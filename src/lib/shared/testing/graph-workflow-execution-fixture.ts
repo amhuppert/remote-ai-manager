@@ -1064,6 +1064,21 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
             },
           ],
         },
+        resolvedConflicts: [
+          {
+            sourceLaneId: "lane-2",
+            files: ["schemas.ts"],
+            resolution: "sub_turn",
+            analysis: [
+              {
+                file: "schemas.ts",
+                description: "both sides added the file",
+                resolution: "merged complementary schemas",
+                rationale: "additions are disjoint",
+              },
+            ],
+          },
+        ],
         conflictGuidance: [
           { file: "foo.ts", decision: "rejected", feedback: "keep both hunks" },
         ],

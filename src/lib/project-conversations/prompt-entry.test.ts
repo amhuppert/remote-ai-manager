@@ -11,6 +11,7 @@ import {
 } from "@/lib/prompt/sdk-driver";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
@@ -18,44 +19,23 @@ import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager"
 function makeConv(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  // Deliberately honors only the override fields the original hand-written
+  // helper honored (no blanket spread), so call-site semantics are unchanged.
+  return makeConversationState({
     id: overrides.id,
     scope: "project",
-    nameOrigin: "default",
     name: overrides.name ?? "Repo chat",
     transcriptPath: null,
     status: overrides.status ?? "new",
     promptCount: overrides.promptCount ?? 0,
     createdAt: "2025-01-01T00:00:00.000Z",
     lastActivityAt: "2025-01-01T00:00:00.000Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
     agentBackend: overrides.agentBackend ?? "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...(overrides.creationRequestId !== undefined
       ? { creationRequestId: overrides.creationRequestId }
       : {}),
-  };
+  });
 }
 
 interface ExecCall {

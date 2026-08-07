@@ -676,6 +676,45 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
   });
 
+  it("instructs the implementer to verify charter invariants before completing tasks", () => {
+    // Audit 1beec403: 2 of 4 NO-GOs were charter type-escape violations in
+    // NEW test code — once from faithfully mirroring an exemplar that itself
+    // violated the invariant. Validators already get an explicit per-invariant
+    // check instruction; the implementer needs the obligation up front.
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: makeCharter({
+        invariants: [
+          {
+            id: "no-type-escapes",
+            statement: "New code must not use `as unknown` or `@ts-ignore`.",
+          },
+        ],
+      }),
+    });
+
+    expect(prompt).toContain("Verify every applicable charter invariant");
+    expect(prompt).toContain("concrete check");
+    expect(prompt).toContain("mirror");
+  });
+
+  it("omits the invariant-check instruction when the charter declares none", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: makeCharter({ invariants: [] }),
+    });
+
+    expect(prompt).not.toContain("Verify every applicable charter invariant");
+  });
+
   it("renders the amendment log in the charter section when the run has amendments", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

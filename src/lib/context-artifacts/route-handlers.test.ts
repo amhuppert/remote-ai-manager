@@ -35,6 +35,7 @@ import {
   type PersistenceFixture,
 } from "@/lib/shared/testing/persistence-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   TranscriptEntriesResult,
@@ -49,41 +50,15 @@ import type {
 function makeConvo(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     id: "convo-1",
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
     transcriptPath: "/tmp/convo-1.jsonl",
     status: "new",
     promptCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 function makeSession(conversations: ConversationState[]): SessionState {

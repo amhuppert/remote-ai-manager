@@ -158,6 +158,9 @@ const agentCallUsageMetricsSchema = z.object({
   contextTokens: z.number().int().nonnegative().optional(),
   contextWindowMax: z.number().int().positive().optional(),
   costUsd: z.number().nonnegative().optional(),
+  /** Lineage-cumulative cost snapshot (never summed); backend-cumulative
+   * providers only. */
+  cumulativeCostUsd: z.number().nonnegative().optional(),
   durationMs: z.number().int().nonnegative().optional(),
 });
 export type AgentCallUsageMetrics = z.infer<typeof agentCallUsageMetricsSchema>;

@@ -25,6 +25,7 @@ import {
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
@@ -62,42 +63,18 @@ function makeConversation(
   id: string,
   o: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
+  return makeConversationState({
     profileSnapshot: null,
-    profileLockedAt: null,
     id,
     scope: "project",
-    nameOrigin: "default",
     name: id,
-    transcriptPath: null,
     status: "new",
     promptCount: 2,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    unread: false,
-    pendingQueue: [],
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...o,
-  };
+  });
 }
 
 /** A conversation as the server reports it while an agent waits for an answer. */

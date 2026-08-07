@@ -1185,6 +1185,296 @@ describe("join-runner", () => {
     expect(finalJoin.conflicts).toBeNull();
   });
 
+  it("records a sub-turn-resolved conflict on the join when the merge completes after resolution", async () => {
+    // Audit 1beec403: join 2 resolved a schemas.ts both-sides-added conflict
+    // via a smart-merge sub-turn, but the join recorded conflicts: null and
+    // the audit reported a false "merged without conflicts" positive.
+    const analysis = [
+      {
+        file: "src/lib/naming/schemas.ts",
+        description: "both sides added the file",
+        resolution: "merged complementary request + response schemas",
+        rationale: "additions are disjoint",
+      },
+    ];
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+      },
+    );
+    const observed: GraphMergeRunnerInput[] = [];
+    const mergeRunner = fakeMergeRunner(
+      new Map([
+        [
+          "csm/lane-b",
+          {
+            ...completed("hash-b"),
+            conflictFiles: ["src/lib/naming/schemas.ts"],
+            conflictAnalysis: analysis,
+          },
+        ],
+      ]),
+      observed,
+    );
+
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      abortInProgressMerge: async () => false,
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result.status).toBe("succeeded");
+    const finalJoin = persist.read().joins["join-1"]!;
+    expect(finalJoin.status).toBe("succeeded");
+    // The merge succeeded, so `conflicts` (terminal failure detail) stays
+    // null — the resolved conflict is recorded separately.
+    expect(finalJoin.conflicts).toBeNull();
+    expect(finalJoin.resolvedConflicts).toEqual([
+      {
+        sourceLaneId: "lane-b",
+        files: ["src/lib/naming/schemas.ts"],
+        resolution: "sub_turn",
+        analysis,
+      },
+    ]);
+  });
+
+  it("emits per-lane lifecycle sub-step records so join time is attributable", async () => {
+    // Audit 1beec403: joins ran up to 27 minutes with only join.started /
+    // join.completed brackets — per-lane merges, validation deferral, and
+    // sub-turn conflict resolution were invisible to the lifecycle log.
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b", "lane-c"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+        "lane-c": makeLane({
+          laneId: "lane-c",
+          branchName: "csm/lane-c",
+          worktreePath: "/tmp/lane-c",
+        }),
+      },
+    );
+    const observed: GraphMergeRunnerInput[] = [];
+    const mergeRunner = fakeMergeRunner(
+      new Map([
+        [
+          "csm/lane-b",
+          {
+            ...completed("hash-b"),
+            conflictFiles: ["src/x.ts"],
+            conflictAnalysis: null,
+          },
+        ],
+        ["csm/lane-c", completed("hash-c")],
+      ]),
+      observed,
+    );
+    const lifecycle: Array<{ event: string; fields: Record<string, unknown> }> =
+      [];
+
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      abortInProgressMerge: async () => false,
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+      lifecycle: (event, fields) => lifecycle.push({ event, fields }),
+    });
+
+    expect(result.status).toBe("succeeded");
+    const started = lifecycle.filter(
+      (r) => r.event === "join.lane_merge.started",
+    );
+    const completedRecords = lifecycle.filter(
+      (r) => r.event === "join.lane_merge.completed",
+    );
+    expect(started.map((r) => r.fields.sourceLaneId)).toEqual([
+      "lane-b",
+      "lane-c",
+    ]);
+    expect(completedRecords.map((r) => r.fields.sourceLaneId)).toEqual([
+      "lane-b",
+      "lane-c",
+    ]);
+    const laneB = completedRecords[0]!.fields;
+    expect(laneB.joinId).toBe("join-1");
+    expect(laneB.conflictResolution).toBe("sub_turn");
+    expect(laneB.conflictFileCount).toBe(1);
+    const laneC = completedRecords[1]!.fields;
+    expect(laneC.conflictResolution).toBeNull();
+  });
+
+  it("emits a lifecycle record when a lane merge fails", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+      },
+    );
+    const mergeRunner = fakeMergeRunner(
+      new Map([["csm/lane-b", failed("validation exhausted")]]),
+      [],
+    );
+    const lifecycle: Array<{ event: string; fields: Record<string, unknown> }> =
+      [];
+
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      abortInProgressMerge: async () => false,
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+      lifecycle: (event, fields) => lifecycle.push({ event, fields }),
+    });
+
+    const failedRecord = lifecycle.find(
+      (r) => r.event === "join.lane_merge.failed",
+    );
+    expect(failedRecord?.fields.sourceLaneId).toBe("lane-b");
+    expect(failedRecord?.fields.mergeStatus).toBe("failed");
+  });
+
+  it("records a clean-retry-resolved conflict with the first attempt's files", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+        }),
+      },
+    );
+    const observed: GraphMergeRunnerInput[] = [];
+    const mergeRunner = sequencedMergeRunner(
+      new Map([
+        [
+          "csm/lane-b",
+          [failed("resolution failed", ["src/foo.ts"]), completed("hash-b")],
+        ],
+      ]),
+      observed,
+    );
+
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      abortInProgressMerge: async () => true,
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result.status).toBe("succeeded");
+    const finalJoin = persist.read().joins["join-1"]!;
+    expect(finalJoin.resolvedConflicts).toEqual([
+      {
+        sourceLaneId: "lane-b",
+        files: ["src/foo.ts"],
+        resolution: "clean_retry",
+        analysis: null,
+      },
+    ]);
+  });
+
   it("does not retry a non-conflict merge failure", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({

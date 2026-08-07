@@ -9,8 +9,8 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -23,7 +23,7 @@ const CONVERSATION_ID = "c1";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: CONVERSATION_ID,
     transcriptPath: null,
     status: "new",

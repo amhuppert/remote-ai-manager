@@ -16,6 +16,7 @@ import {
 import { graphWorkflowCircuitBreakerConditionSchema } from "./config-schemas";
 import {
   graphWorkflowExecutionJoinConflictDetailSchema,
+  graphWorkflowExecutionJoinResolvedConflictSchema,
   graphWorkflowExecutionJoinKindSchema,
   graphWorkflowExecutionJoinStatusSchema,
   graphWorkflowHaltReasonSchema,
@@ -521,6 +522,12 @@ export const graphWorkflowJoinStatusEventSchema = z.object({
   targetLaneId: graphWorkflowExecutionLaneIdSchema,
   errorMessage: z.string().nullable(),
   conflicts: graphWorkflowExecutionJoinConflictDetailSchema.nullable(),
+  // Conflicts auto-resolved without failing the join (smart-merge sub-turn /
+  // clean retry). Optional so events persisted before the field existed stay
+  // parseable; absent means none recorded.
+  resolvedConflicts: z
+    .array(graphWorkflowExecutionJoinResolvedConflictSchema)
+    .optional(),
 });
 export type GraphWorkflowJoinStatusEvent = z.infer<
   typeof graphWorkflowJoinStatusEventSchema

@@ -10,38 +10,19 @@ import {
 } from "@/lib/conversations/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
-    id: "conv-1",
-    name: null,
+  return makeConversationState({
     transcriptPath: "/tmp/conv-1.jsonl",
     status: "new",
-    promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
     profileSnapshot: null,
-    profileLockedAt: null,
     ...overrides,
-  } as ConversationState;
+  });
 }
 
 function makeSession(conversations: ConversationState[] = []): SessionState {

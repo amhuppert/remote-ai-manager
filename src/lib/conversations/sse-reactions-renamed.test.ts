@@ -9,10 +9,10 @@ import { conversationKeys } from "./query-keys";
 import { registerConversationSseReactions } from "./sse-reactions";
 import {
   conversationRenamedEventSchema,
-  conversationStateSchema,
   type ConversationRenamedEvent,
   type ConversationState,
 } from "./schemas";
+import { makeConversationState } from "./testing/conversation-state-fixture";
 
 function makeActiveRow(
   id: string,
@@ -50,16 +50,12 @@ function makeListRow(
   id: string,
   name: string | null = null,
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id,
-    scope: "session",
     name,
-    transcriptPath: null,
-    status: "awaiting",
     promptCount: 1,
     createdAt: "2026-07-28T09:00:00.000Z",
     lastActivityAt: "2026-07-28T09:00:00.000Z",
-    forkedFrom: null,
   });
 }
 

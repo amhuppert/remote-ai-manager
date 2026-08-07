@@ -3048,6 +3048,7 @@ export function createGraphWorkflowExecutionLoop(
             input.sessionName,
             mutator,
           ),
+        lifecycle: (event, fields) => execLogger?.lifecycle(event, fields),
       });
 
       await refreshExecution();

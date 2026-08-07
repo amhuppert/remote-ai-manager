@@ -8,45 +8,24 @@ import { ProjectCollaborationUnsupportedError } from "./prompt-entry";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 function makeConv(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  // Deliberately honors only `id` and `name` from overrides, exactly like the
+  // hand-written helper it replaced (no blanket spread).
+  return makeConversationState({
     id: overrides.id,
     scope: "project",
-    nameOrigin: "default",
     name: overrides.name ?? "Repo chat",
     transcriptPath: "/tmp/project-conv.jsonl",
     status: "new",
     promptCount: 0,
     createdAt: "2025-01-01T00:00:00.000Z",
     lastActivityAt: "2025-01-01T00:00:00.000Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-  };
+  });
 }
 
 function ctx(params: Record<string, string>) {

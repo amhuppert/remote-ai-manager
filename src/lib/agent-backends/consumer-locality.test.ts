@@ -34,6 +34,7 @@ import { fromPromise } from "xstate";
 
 import { agentSessionRefSchema } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import {
@@ -158,39 +159,11 @@ function makeConversationRecord(
   id: string,
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
+  // "testfake" fails the stored schema's agentBackend enum, so it is applied
+  // after the parse rather than passed through makeConversationState.
   return {
-    profileSnapshot: null,
-    profileLockedAt: null,
-    id,
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
-    transcriptPath: null,
-    status: "awaiting",
-    promptCount: 0,
-    createdAt: NOW,
-    lastActivityAt: NOW,
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
+    ...makeConversationState({ id, createdAt: NOW, lastActivityAt: NOW }),
     agentBackend: TESTFAKE_BACKEND_ID,
-    backendRef: null,
-    unread: false,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-    pendingQueue: [],
     ...overrides,
   };
 }

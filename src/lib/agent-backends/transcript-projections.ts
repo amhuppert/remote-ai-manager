@@ -3,6 +3,7 @@ import {
   projectClaudeStoredToolResultBlocks,
   projectClaudeUsageFrame,
 } from "./claude/transcript-projections";
+import { projectCodexUsageFrame } from "./codex/transcript-projections";
 
 /**
  * Neutral projections over persisted transcript frames. Conversation JSONL
@@ -48,7 +49,10 @@ const TOOL_RESULT_PROJECTORS: readonly ToolResultProjector[] = [
   projectClaudeStoredToolResultBlocks,
 ];
 
-const USAGE_PROJECTORS: readonly UsageProjector[] = [projectClaudeUsageFrame];
+const USAGE_PROJECTORS: readonly UsageProjector[] = [
+  projectClaudeUsageFrame,
+  projectCodexUsageFrame,
+];
 
 /**
  * Project a stored `{type:"tool_result"}` frame's payload into neutral

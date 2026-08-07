@@ -16,10 +16,8 @@ import {
   createMarkReadRouteHandlers,
   type MarkReadRouteDeps,
 } from "./mark-read-route-handlers";
-import {
-  conversationUnreadEventSchema,
-  conversationStateSchema,
-} from "@/lib/conversations/schemas";
+import { conversationUnreadEventSchema } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
@@ -36,10 +34,8 @@ const CONVERSATION_ID = "conv-1";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: CONVERSATION_ID,
-    transcriptPath: null,
-    status: "awaiting",
     promptCount: 1,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:01:00Z",

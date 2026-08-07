@@ -34,6 +34,7 @@ import type {
 import type { McpConfigMutationService } from "@/lib/mcp/config-mutation-service";
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import {
   createConversationMcpConfigHandlers,
@@ -946,11 +947,7 @@ function mkSession(
 }
 
 function mkConversation(id: string): ConversationState {
-  return {
-    id,
-    createdAt: new Date().toISOString(),
-    title: "test",
-  } as unknown as ConversationState;
+  return makeConversationState({ id, createdAt: new Date().toISOString() });
 }
 
 describe("createSessionMcpConfigHandlers", () => {

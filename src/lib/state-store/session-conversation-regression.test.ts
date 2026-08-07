@@ -3,17 +3,15 @@ import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import { createConversationsRepo } from "./conversations-repo";
 import { createProjectConversationsRepo } from "./project-conversations-repo";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 type Db = InstanceType<typeof Database>;
 
 const ts = "2025-01-01T00:00:00.000Z";
 
 function sessionConversation(id: string): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id,
     transcriptPath: null,
     status: "awaiting",

@@ -34,10 +34,8 @@ import {
 } from "@/lib/shared/testing/capturing-logger";
 import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 import { readAllForStartupFromDb } from "@/lib/state-store/startup-reader";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
 import {
@@ -72,9 +70,7 @@ function fakeSnapshot(parts: {
 function conv(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return conversationStateSchema.parse({
-    scope: "session",
-    transcriptPath: null,
+  return makeConversationState({
     status: "awaiting",
     promptCount: 1,
     createdAt: ts,

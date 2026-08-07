@@ -150,6 +150,7 @@ export function createFakeCodexProvider(
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
     listNativeCodexMcpServers: async () => [],
     getCodexPricingOverrides: async () => null,
+    readPersistedCostBaseline: async () => null,
     now: () => Date.now(),
   };
 

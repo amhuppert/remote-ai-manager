@@ -6,6 +6,7 @@ import {
 } from "./cross-project-list";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import type { ConversationState } from "./schemas";
+import { makeConversationState } from "./testing/conversation-state-fixture";
 import type { ContextArtifactRow } from "@/lib/context-artifacts/schemas";
 import type { SessionConversationListItem } from "@/lib/state-store";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
@@ -43,40 +44,13 @@ function stateToListDeps(
 function makeConversation(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
+  return makeConversationState({
+    status: "new",
+    createdAt: "2024-01-01T00:00:00Z",
+    lastActivityAt: "2024-01-01T00:00:00Z",
     profileSnapshot: null,
-    profileLockedAt: null,
-    id: overrides.id,
-    scope: overrides.scope ?? "session",
-    nameOrigin: "default",
-    name: overrides.name ?? null,
-    transcriptPath: overrides.transcriptPath ?? null,
-    status: overrides.status ?? "new",
-    promptCount: overrides.promptCount ?? 0,
-    createdAt: overrides.createdAt ?? "2024-01-01T00:00:00Z",
-    lastActivityAt: overrides.lastActivityAt ?? "2024-01-01T00:00:00Z",
-    source: overrides.source ?? "cc",
-    summary: overrides.summary ?? null,
-    archived: overrides.archived ?? false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: overrides.role ?? null,
-    activeTurnSource: overrides.activeTurnSource ?? null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: overrides.debugMode ?? null,
-    agentBackend: overrides.agentBackend ?? "claude",
-    backendRef: overrides.backendRef ?? null,
-    unread: overrides.unread ?? false,
-    pendingQueue: overrides.pendingQueue ?? [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-  };
+    ...overrides,
+  });
 }
 
 function makeSession(

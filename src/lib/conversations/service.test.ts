@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createConfigReader } from "../config/loader";
 import { createStateStore as createStateManager } from "../state-store";
@@ -170,41 +171,14 @@ function assistantEntryNoUuid(
 function makeConvo(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     id: crypto.randomUUID(),
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
-    transcriptPath: null,
     status: "new",
-    promptCount: 0,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude" as const,
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
+    profileSnapshot: null,
     ...overrides,
-  };
+  });
 }
 
 function makeSessionWith(

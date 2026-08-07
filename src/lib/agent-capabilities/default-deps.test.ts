@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityDiagnostic,
@@ -50,42 +51,18 @@ const NOW = "2026-06-07T12:00:00.000Z";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     id: "plc-1",
     scope: "project",
-    nameOrigin: "default",
     name: "Project chat",
     transcriptPath: null,
     status: "new",
     promptCount: 0,
     createdAt: NOW,
     lastActivityAt: NOW,
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    unread: false,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-    pendingQueue: [],
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
     ...overrides,
-  };
+  });
 }
 
 function codexSkill(itemId: string): AgentCapabilityDiscoveredItem {

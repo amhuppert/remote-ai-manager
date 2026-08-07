@@ -47,7 +47,7 @@ import { queueMessage } from "@/lib/prompt/queue";
 import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
 import { queuedBatchToSubmitPrompt } from "@/lib/conversations/message-queue-drain";
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { CollaborationManager } from "@/lib/workflows/collaboration/manager";
 import type {
@@ -97,13 +97,9 @@ function makeConversation(
   id: string,
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id,
-    transcriptPath: null,
-    status: "awaiting",
-    role: null,
     agentBackend: "codex",
-    promptCount: 0,
     createdAt: NOW,
     lastActivityAt: NOW,
     ...overrides,

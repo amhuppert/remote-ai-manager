@@ -4,37 +4,18 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { DebugModePhase } from "@/lib/debug-log/schemas";
 function makeConversation(
   phase: DebugModePhase,
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
+  return makeConversationState({
     profileSnapshot: null,
-    profileLockedAt: null,
-    id: "conv-1",
-    scope: "session",
-    nameOrigin: "default",
-    name: null,
-    transcriptPath: null,
     status: "awaiting",
     promptCount: 1,
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
     debugMode: {
       active: true,
       recording: true,
@@ -48,14 +29,8 @@ function makeConversation(
       verificationSteps: [],
       lastTurnFailed: false,
     },
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 describe("DebugActionCard button visibility", () => {

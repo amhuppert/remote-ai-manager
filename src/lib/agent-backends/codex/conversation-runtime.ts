@@ -69,6 +69,10 @@ import {
   ensureCodexManagedSkillsBridgeForLaunch,
   type CodexManagedSkillsBridgeResult,
 } from "./managed-skills-bridge";
+import {
+  readCodexPersistedCostBaseline,
+  type CodexPersistedCostBaseline,
+} from "./cost-baseline";
 
 const logger = createLogger("codex:conversation-runtime");
 
@@ -110,6 +114,15 @@ export interface CodexConversationRuntimeDeps {
   }): Promise<NativeCodexMcpServer[]>;
   /** Per-model rate overrides from the Codex backend profile; null when unset. */
   getCodexPricingOverrides(): Promise<CodexPricingTable | null>;
+  /**
+   * Latest persisted cumulative cost for the resumed thread, recovered from
+   * the conversation's own transcript. Seeds per-turn cost attribution after
+   * a server restart loses the in-memory baseline.
+   */
+  readPersistedCostBaseline(
+    conversationId: string,
+    threadRef: string,
+  ): Promise<CodexPersistedCostBaseline | null>;
   /** Reconciles the managed skill bundle link in the launch checkout. */
   ensureManagedSkillsBridge(
     checkoutPath: string,
@@ -128,6 +141,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   listNativeCodexMcpServers,
   getCodexPricingOverrides: async () =>
     resolveConfiguredCodexPricingOverrides(await readConfig()),
+  readPersistedCostBaseline: readCodexPersistedCostBaseline,
   ensureManagedSkillsBridge: ensureCodexManagedSkillsBridgeForLaunch,
   now: () => Date.now(),
 };
@@ -173,6 +187,20 @@ export class CodexConversationRuntime
   private readonly workflowContextId: string | undefined;
   private readonly workflowLaneCapability: string | undefined;
   private readonly deps: CodexConversationRuntimeDeps;
+  /**
+   * Codex `turn.completed` usage is CUMULATIVE for the thread (across exec
+   * process invocations), so each turn's attributable cost is the delta
+   * against the last cumulative estimate. Summing raw snapshots instead
+   * inflated recorded conversation costs by up to ~4x (audit 1beec403).
+   */
+  private attributedCostBaseline: {
+    threadId: string;
+    cumulativeCostUsd: number;
+  } | null = null;
+  /** Thread ref this runtime resumed from, if any — the only case where a
+   * persisted baseline can exist in the transcript. */
+  private readonly persistedBaselineRef: string | null;
+  private persistedBaselineChecked = false;
 
   constructor(
     input: ConversationBackendCreateInput,
@@ -181,6 +209,7 @@ export class CodexConversationRuntime
     this.threadId =
       input.persistedRef?.backend === "codex" ? input.persistedRef.ref : null;
     this.isFirstTurn = this.threadId == null;
+    this.persistedBaselineRef = this.threadId;
     this.stagedPortableMcp = input.tooling.portableMcp ?? null;
     this.stagedCapabilityConfig = input.tooling.capabilities
       ? translateCodexRuntimeCapabilities(input.tooling.capabilities)
@@ -416,9 +445,16 @@ export class CodexConversationRuntime
       ? { backend: "codex" as const, ref: acc.knownThreadId }
       : null;
 
+    const cumulativeCostUsd = await this.estimateTurnCost(acc.usage);
+    const costUsd = await this.attributeTurnCost(
+      acc.knownThreadId ?? this.threadId,
+      cumulativeCostUsd,
+    );
+
     const result: ConversationBackendTurnResult = {
       backendRef,
-      costUsd: await this.estimateTurnCost(acc.usage),
+      costUsd,
+      cumulativeCostUsd,
       durationMs: this.deps.now() - startedAt,
       numTurns: 1,
       contextTokens: acc.usage?.input_tokens ?? null,
@@ -441,12 +477,66 @@ export class CodexConversationRuntime
       continuationDisposition: result.continuationDisposition,
       contentBlockCount: contentBlocks.length,
       costUsd: result.costUsd,
+      cumulativeCostUsd,
       // Codex reports CUMULATIVE processed input tokens for the thread, not
       // window occupancy — that is why contextWindowMax stays null.
       cumulativeInputTokens: acc.usage?.input_tokens ?? null,
     });
 
     return result;
+  }
+
+  /**
+   * Convert the thread-cumulative cost estimate into this turn's attributable
+   * delta. The baseline advances only when a turn actually reports a cost, so
+   * an unpriced turn's spend rides into the next attributed one. A cumulative
+   * below the baseline means the thread's counters reset (server-side thread
+   * restart) — the new cumulative is attributed in full. After a CC restart
+   * the in-memory baseline is recovered from the conversation transcript's
+   * last codex result frame for the resumed thread.
+   */
+  private async attributeTurnCost(
+    threadId: string | null,
+    cumulativeCostUsd: number | null,
+  ): Promise<number | null> {
+    if (cumulativeCostUsd === null) return null;
+    if (threadId === null) return cumulativeCostUsd;
+
+    if (
+      this.attributedCostBaseline === null &&
+      !this.persistedBaselineChecked &&
+      this.persistedBaselineRef !== null
+    ) {
+      this.persistedBaselineChecked = true;
+      try {
+        const persisted = await this.deps.readPersistedCostBaseline(
+          this.conversationId,
+          this.persistedBaselineRef,
+        );
+        if (persisted !== null && persisted.threadRef === threadId) {
+          this.attributedCostBaseline = {
+            threadId: persisted.threadRef,
+            cumulativeCostUsd: persisted.cumulativeCostUsd,
+          };
+        }
+      } catch (err) {
+        logger.warn("codex-runtime.cost_baseline_unavailable", {
+          conversationId: this.conversationId,
+          threadId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
+    const baseline = this.attributedCostBaseline;
+    const delta =
+      baseline !== null &&
+      baseline.threadId === threadId &&
+      cumulativeCostUsd >= baseline.cumulativeCostUsd
+        ? cumulativeCostUsd - baseline.cumulativeCostUsd
+        : cumulativeCostUsd;
+    this.attributedCostBaseline = { threadId, cumulativeCostUsd };
+    return delta;
   }
 
   /**

@@ -9,6 +9,7 @@ import {
 } from "./route-handlers";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type {
   QueueCancellationResponse,
@@ -30,41 +31,17 @@ const ts = "2026-01-01T00:00:00.000Z";
 function makeConv(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     scope: "project",
-    nameOrigin: "default",
     name: "Repo chat",
     transcriptPath: null,
     status: "running",
     promptCount: 1,
     createdAt: ts,
     lastActivityAt: ts,
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 function ctx(params: Record<string, string>) {

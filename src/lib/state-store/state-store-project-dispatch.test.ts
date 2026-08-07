@@ -8,6 +8,7 @@ import {
 } from "./project-conversations-repo";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 type Db = InstanceType<typeof Database>;
 
@@ -16,41 +17,20 @@ const SENTINEL = PROJECT_CONVERSATION_SESSION_SENTINEL;
 function makeProjectConversation(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  // Honors exactly the override fields the original hand-written helper
+  // honored (id, name, status, promptCount, archived, open).
+  return makeConversationState({
     id: overrides.id,
     scope: "project",
-    nameOrigin: "default",
     name: overrides.name ?? null,
     transcriptPath: null,
     status: overrides.status ?? "new",
     promptCount: overrides.promptCount ?? 0,
     createdAt: "2025-01-01T00:00:00.000Z",
     lastActivityAt: "2025-01-01T00:00:00.000Z",
-    source: "cc",
-    summary: null,
     archived: overrides.archived ?? false,
     open: overrides.open ?? true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-  };
+  });
 }
 
 function sessionRowCount(db: Db): number {

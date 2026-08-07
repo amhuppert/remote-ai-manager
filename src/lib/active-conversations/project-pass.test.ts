@@ -4,10 +4,8 @@ import {
   type ActiveConversationsRouteDeps,
 } from "./route-handlers";
 import { activeConversationsResponseSchema } from "./schemas";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
 import type { SessionConversationListItem } from "@/lib/state-store";
@@ -43,10 +41,8 @@ function stateToActiveDeps(
 const ts = "2025-01-01T00:00:00.000Z";
 
 function sessionConv(): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: "s1",
-    transcriptPath: null,
-    status: "awaiting",
     promptCount: 1,
     createdAt: ts,
     lastActivityAt: "2025-01-01T00:00:01.000Z",
@@ -57,11 +53,9 @@ function projectConv(
   id: string,
   opts: { open: boolean; archived: boolean },
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id,
     scope: "project",
-    transcriptPath: null,
-    status: "awaiting",
     promptCount: 1,
     createdAt: ts,
     lastActivityAt: ts,

@@ -23,10 +23,8 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import type { ConversationState } from "@/lib/conversations/schemas";
-import {
-  askQuestionItemSchema,
-  conversationStateSchema,
-} from "@/lib/conversations/schemas";
+import { askQuestionItemSchema } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import type {
   PendingQueuedMessage,
@@ -634,11 +632,8 @@ interface FakeStore {
 }
 
 function makeConversation(): ConversationState {
-  return conversationStateSchema.parse({
-    id: "conv-1",
-    transcriptPath: null,
+  return makeConversationState({
     status: "running",
-    promptCount: 0,
     createdAt: NOW,
     lastActivityAt: NOW,
   });

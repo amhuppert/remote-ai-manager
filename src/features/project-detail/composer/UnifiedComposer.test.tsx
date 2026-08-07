@@ -13,6 +13,7 @@ import UnifiedComposer, {
   type UnifiedComposerProps,
 } from "./UnifiedComposer";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { BackendSelectionDefaultsById } from "@/lib/agent-backends/conversation-policy";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -29,42 +30,17 @@ const BACKEND_DEFAULTS: BackendSelectionDefaultsById = {
 function makeConversation(
   o: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
+  return makeConversationState({
     profileSnapshot: null,
-    profileLockedAt: null,
     id: "plc-1",
     scope: "project",
-    nameOrigin: "default",
     name: "chat",
-    transcriptPath: null,
     status: "new",
-    promptCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    unread: false,
-    pendingQueue: [],
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...o,
-  };
+  });
 }
 
 const runningSession: SessionListItem = {

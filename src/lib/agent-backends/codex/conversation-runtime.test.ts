@@ -382,6 +382,7 @@ describe("CodexConversationRuntime", () => {
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
       listNativeCodexMcpServers: vi.fn().mockResolvedValue([]),
       getCodexPricingOverrides: vi.fn().mockResolvedValue(null),
+      readPersistedCostBaseline: vi.fn().mockResolvedValue(null),
       ensureManagedSkillsBridge: vi
         .fn()
         .mockResolvedValue({ status: "skipped", reason: "no_bundle" }),
@@ -1735,6 +1736,147 @@ describe("CodexConversationRuntime", () => {
       const result = await runtime.sendTurn(makeTurnInput());
 
       expect(result.costUsd).toBeCloseTo(0.0009775, 10);
+    });
+  });
+
+  describe("sendTurn — cumulative cost attribution", () => {
+    // Codex `turn.completed` usage is CUMULATIVE for the thread (across
+    // separate exec processes), so per-turn cost must be the delta between
+    // consecutive cumulative estimates — summing snapshots inflates totals
+    // (audit 1beec403: regenerate-api DB row = sum of its two cumulative
+    // snapshots, ~1.8x real).
+    const cumulativeUsage1: Usage = {
+      input_tokens: 100,
+      cached_input_tokens: 10,
+      output_tokens: 50,
+      reasoning_output_tokens: 0,
+    };
+    // Cumulative totals as of turn 2 (turn itself: 200 in / 20 cached / 70 out)
+    const cumulativeUsage2: Usage = {
+      input_tokens: 300,
+      cached_input_tokens: 30,
+      output_tokens: 120,
+      reasoning_output_tokens: 0,
+    };
+    // gpt-5.4 default rates: $2.50 / $0.25 / $15 per 1M
+    const COST_1 = 0.0009775; // 90*2.5 + 10*0.25 + 50*15 (per 1M)
+    const COST_2 = 0.0024825; // 270*2.5 + 30*0.25 + 120*15 (per 1M)
+
+    it("attributes only the delta when a later turn reports thread-cumulative usage", async () => {
+      setupThread([
+        threadStarted("thread-123"),
+        agentMessageCompleted("first"),
+        turnCompleted(cumulativeUsage1),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const first = await runtime.sendTurn(makeTurnInput());
+      expect(first.costUsd).toBeCloseTo(COST_1, 10);
+
+      resumeThreadFn.mockReturnValue(
+        makeThread([
+          threadStarted("thread-123"),
+          agentMessageCompleted("second"),
+          turnCompleted(cumulativeUsage2),
+        ]),
+      );
+      const second = await runtime.sendTurn(makeTurnInput());
+
+      expect(second.costUsd).toBeCloseTo(COST_2 - COST_1, 10);
+    });
+
+    it("reports the thread-cumulative estimate separately on each result", async () => {
+      setupThread([
+        threadStarted("thread-123"),
+        agentMessageCompleted("first"),
+        turnCompleted(cumulativeUsage1),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const first = await runtime.sendTurn(makeTurnInput());
+      expect(first.cumulativeCostUsd).toBeCloseTo(COST_1, 10);
+
+      resumeThreadFn.mockReturnValue(
+        makeThread([
+          threadStarted("thread-123"),
+          agentMessageCompleted("second"),
+          turnCompleted(cumulativeUsage2),
+        ]),
+      );
+      const second = await runtime.sendTurn(makeTurnInput());
+
+      expect(second.cumulativeCostUsd).toBeCloseTo(COST_2, 10);
+      expect(second.costUsd).toBeCloseTo(COST_2 - COST_1, 10);
+    });
+
+    it("re-attributes in full when the thread's cumulative counters reset", async () => {
+      setupThread([
+        threadStarted("thread-123"),
+        agentMessageCompleted("first"),
+        turnCompleted(cumulativeUsage2),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const first = await runtime.sendTurn(makeTurnInput());
+      expect(first.costUsd).toBeCloseTo(COST_2, 10);
+
+      // Cumulative DROPPED below the baseline — thread restarted server-side.
+      resumeThreadFn.mockReturnValue(
+        makeThread([
+          threadStarted("thread-123"),
+          agentMessageCompleted("second"),
+          turnCompleted(cumulativeUsage1),
+        ]),
+      );
+      const second = await runtime.sendTurn(makeTurnInput());
+
+      expect(second.costUsd).toBeCloseTo(COST_1, 10);
+    });
+
+    it("seeds the baseline from the persisted cost record when resuming a prior thread", async () => {
+      deps.readPersistedCostBaseline = vi.fn().mockResolvedValue({
+        threadRef: "thread-existing",
+        cumulativeCostUsd: COST_1,
+      });
+      setupThread([
+        threadStarted("thread-existing"),
+        agentMessageCompleted("resumed"),
+        turnCompleted(cumulativeUsage2),
+      ]);
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          persistedRef: { backend: "codex", ref: "thread-existing" },
+        }),
+        deps,
+      );
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(deps.readPersistedCostBaseline).toHaveBeenCalledWith(
+        "conv-123",
+        "thread-existing",
+      );
+      expect(result.costUsd).toBeCloseTo(COST_2 - COST_1, 10);
+      expect(result.cumulativeCostUsd).toBeCloseTo(COST_2, 10);
+    });
+
+    it("ignores a persisted cost record for a different thread", async () => {
+      deps.readPersistedCostBaseline = vi.fn().mockResolvedValue({
+        threadRef: "some-other-thread",
+        cumulativeCostUsd: COST_1,
+      });
+      setupThread([
+        threadStarted("thread-existing"),
+        agentMessageCompleted("resumed"),
+        turnCompleted(cumulativeUsage2),
+      ]);
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          persistedRef: { backend: "codex", ref: "thread-existing" },
+        }),
+        deps,
+      );
+
+      const result = await runtime.sendTurn(makeTurnInput());
+
+      expect(result.costUsd).toBeCloseTo(COST_2, 10);
     });
   });
 

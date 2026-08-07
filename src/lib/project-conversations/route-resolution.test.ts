@@ -4,9 +4,10 @@ import {
   type ProjectConversationResolveDeps,
 } from "./route-resolution";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 function makeConversation(id: string): ConversationState {
-  return { id } as unknown as ConversationState;
+  return makeConversationState({ id });
 }
 
 function context(params: Record<string, string>) {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { DiscoveredProject } from "@/lib/projects/schemas";
 import {
   _resetValidationServiceForTesting,
@@ -27,7 +28,7 @@ const CONVERSATION_ID = "conv-1";
 const SESSION_NAME = "feature";
 
 function conversation(): ConversationState {
-  return { id: CONVERSATION_ID } as unknown as ConversationState;
+  return makeConversationState({ id: CONVERSATION_ID });
 }
 
 function auth(): AgentAuth {

@@ -4,6 +4,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
+  GraphWorkflowExecutionJoinResolvedConflict,
 } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowContextStatus,
@@ -299,6 +300,9 @@ export interface ApplyJoinProgressPatch {
   clearValidationDebt?: boolean;
   errorMessage?: string | null;
   conflicts?: GraphWorkflowExecutionJoinState["conflicts"];
+  /** Append one auto-resolved conflict record (smart-merge sub-turn or clean
+   * retry) — survives later patches; only a join reset clears it. */
+  addResolvedConflict?: GraphWorkflowExecutionJoinResolvedConflict;
   conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"];
 }
 
@@ -348,6 +352,14 @@ export function applyJoinProgress(
             : join.errorMessage,
         conflicts:
           patch.conflicts !== undefined ? patch.conflicts : join.conflicts,
+        ...(patch.addResolvedConflict
+          ? {
+              resolvedConflicts: [
+                ...(join.resolvedConflicts ?? []),
+                patch.addResolvedConflict,
+              ],
+            }
+          : {}),
         conflictGuidance:
           patch.conflictGuidance !== undefined
             ? patch.conflictGuidance

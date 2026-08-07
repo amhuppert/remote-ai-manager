@@ -587,7 +587,9 @@ function joinFieldsChanged(
     JSON.stringify(previous.sourceLaneIds) !==
       JSON.stringify(next.sourceLaneIds) ||
     previous.targetLaneId !== next.targetLaneId ||
-    JSON.stringify(previous.conflicts) !== JSON.stringify(next.conflicts)
+    JSON.stringify(previous.conflicts) !== JSON.stringify(next.conflicts) ||
+    JSON.stringify(previous.resolvedConflicts ?? []) !==
+      JSON.stringify(next.resolvedConflicts ?? [])
   );
 }
 
@@ -1118,6 +1120,9 @@ export function createGraphWorkflowExecutionEventPublisher(
         targetLaneId: nextJoin.targetLaneId,
         errorMessage: nextJoin.errorMessage,
         conflicts: nextJoin.conflicts,
+        ...(nextJoin.resolvedConflicts !== undefined
+          ? { resolvedConflicts: nextJoin.resolvedConflicts }
+          : {}),
       } satisfies GraphWorkflowJoinStatusEvent);
     }
 

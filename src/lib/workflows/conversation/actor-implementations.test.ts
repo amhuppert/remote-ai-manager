@@ -14,7 +14,7 @@ import type {
   ConversationBackgroundActivity,
   ConversationState,
 } from "@/lib/conversations/schemas";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { makeConversationState as makeSharedConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { getBackgroundActivityChannel } from "@/lib/conversations/background-activity";
 import type { ResolvedCapabilityCascade } from "@/lib/agent-backends/runtime-config";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -4817,11 +4817,8 @@ describe("executePromptForMachine pending agent notices", () => {
   function makeConversationState(
     overrides: Partial<ConversationState> = {},
   ): ConversationState {
-    return conversationStateSchema.parse({
-      id: "conv-1",
-      transcriptPath: null,
+    return makeSharedConversationState({
       status: "idle",
-      promptCount: 0,
       createdAt: "2026-01-01T00:00:00Z",
       lastActivityAt: "2026-01-01T00:00:00Z",
       ...overrides,

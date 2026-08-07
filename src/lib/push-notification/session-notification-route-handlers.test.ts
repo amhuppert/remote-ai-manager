@@ -2,10 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
 import { withTracing } from "@/lib/logging";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { projectConversationTarget } from "@/lib/conversations/conversation-target";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { AgentNotificationOutcome } from "./dispatcher";
@@ -53,14 +51,11 @@ function authDenies(): AgentAuth {
 }
 
 function projectConversation(): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: "conv-1",
     scope: "project",
-    transcriptPath: null,
     status: "running",
     promptCount: 1,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
   });
 }
 

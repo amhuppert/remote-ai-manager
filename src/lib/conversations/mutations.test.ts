@@ -22,6 +22,7 @@ import type {
   AskQuestionItem,
   ConversationState,
 } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type {
   ActiveConversation,
   ProjectActiveConversation,
@@ -122,42 +123,13 @@ function jsonResponse(body: unknown, status = 200): Response {
 function conversation(
   overrides: Partial<ConversationState> & { id: string },
 ): ConversationState {
-  return {
+  return makeConversationState({
+    status: "new",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    lastActivityAt: "2025-01-01T00:00:00.000Z",
     profileSnapshot: null,
-    profileLockedAt: null,
-    id: overrides.id,
-    scope: overrides.scope ?? "session",
-    nameOrigin: "default",
-    name: overrides.name ?? null,
-    transcriptPath: overrides.transcriptPath ?? null,
-    status: overrides.status ?? "new",
-    promptCount: overrides.promptCount ?? 0,
-    createdAt: overrides.createdAt ?? "2025-01-01T00:00:00.000Z",
-    lastActivityAt: overrides.lastActivityAt ?? "2025-01-01T00:00:00.000Z",
-    source: overrides.source ?? "cc",
-    summary: overrides.summary ?? null,
-    archived: overrides.archived ?? false,
-    totalCostUsd: overrides.totalCostUsd ?? null,
-    totalDurationMs: overrides.totalDurationMs ?? null,
-    totalTurns: overrides.totalTurns ?? null,
-    pendingQuestionId: overrides.pendingQuestionId ?? null,
-    pendingQuestions: overrides.pendingQuestions ?? null,
-    pendingPromptText: overrides.pendingPromptText ?? null,
-    forkedFrom: overrides.forkedFrom ?? null,
-    role: overrides.role ?? null,
-    activeTurnSource: overrides.activeTurnSource ?? null,
-    contextTokens: overrides.contextTokens ?? null,
-    contextWindowMax: overrides.contextWindowMax ?? null,
-    debugMode: overrides.debugMode ?? null,
-    agentBackend: overrides.agentBackend ?? "claude",
-    backendRef: overrides.backendRef ?? null,
-    unread: overrides.unread ?? false,
-    pendingQueue: overrides.pendingQueue ?? [],
-    lastSeenAlignmentVersion: overrides.lastSeenAlignmentVersion ?? null,
-    pendingAgentNotices: [],
-    mcpOverrides: overrides.mcpOverrides,
-    mcpRuntime: overrides.mcpRuntime,
-  };
+    ...overrides,
+  });
 }
 
 describe("useRenameConversationMutation", () => {

@@ -15,6 +15,7 @@ vi.mock("@/lib/shared/sdk-env", () => ({}));
 
 import {
   claudeConversationBackendFactory,
+  DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS,
   resolveIdleTtlMs,
 } from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "./runtime-config/agent-suppression";
@@ -1939,6 +1940,18 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     expect(result.backgroundWait).toBeUndefined();
 
     runtime.close();
+  });
+
+  it("keeps the default wait ceiling above long full-suite runs", () => {
+    // Contract pin, not a config echo: the graph-workflow implementer turn
+    // relies on this default (nothing upstream supplies an override), and a
+    // ceiling below real suite durations re-creates audit 1beec403 friction 7
+    // — a 741s suite outliving a 600s barrier, permanent demotion from the
+    // waitable set, and burned follow-up nudges. Lower this only together
+    // with an explicit workflow-side override.
+    expect(DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS).toBeGreaterThanOrEqual(
+      30 * 60 * 1000,
+    );
   });
 
   it("resolves with timedOut: true when a waitable task never settles within the bound (4.1, 4.2)", async () => {

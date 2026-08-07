@@ -37,6 +37,7 @@ import {
   type CollaborationStopRegistry,
 } from "./manager";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import {
   CollaborationCharterCaptureError,
   EMPTY_COLLABORATION_SESSION_CONTEXT,
@@ -137,14 +138,13 @@ function makeStubSliceDeps(): AsymmetricCollaborationSliceDeps {
 
 describe("collaboration start persistence", () => {
   function makeConversation(): ConversationState {
-    return {
+    return makeConversationState({
       id: "conv-1",
       name: "Conversation",
       status: "awaiting",
       promptCount: 4,
-      transcriptPath: null,
       lastActivityAt: "2026-07-13T12:00:00.000Z",
-    } as ConversationState;
+    });
   }
 
   it("rejects a stale concurrent start before appending its transcript", async () => {

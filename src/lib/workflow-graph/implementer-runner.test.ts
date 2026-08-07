@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";
@@ -28,41 +29,15 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
+  return makeConversationState({
     profileSnapshot: null,
-    profileLockedAt: null,
     id: "conversation-1",
-    scope: "session",
-    nameOrigin: "default",
     name: "Conversation 1",
-    transcriptPath: null,
     status: "new",
-    promptCount: 0,
     createdAt: "2026-03-27T12:00:00.000Z",
     lastActivityAt: "2026-03-27T12:00:00.000Z",
-    source: "cc",
-    summary: null,
-    archived: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
     ...overrides,
-  };
+  });
 }
 
 describe("graph workflow implementer runner", () => {

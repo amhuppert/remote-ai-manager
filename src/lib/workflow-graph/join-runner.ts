@@ -32,6 +32,13 @@ interface JoinRunnerRunInput {
   sessionName: string;
   joinId: string;
   mutateActive: JoinRunnerMutateActive;
+  /**
+   * Execution lifecycle sink (execution-loop's execLogger). Sub-step records
+   * (per-lane merge start/end, validation deferral, conflict retry) make join
+   * wall clock attributable — without them a join is a single opaque
+   * started→completed bracket. Optional: a missing sink only loses telemetry.
+   */
+  lifecycle?(event: string, fields: Record<string, unknown>): void;
 }
 
 type JoinRunResult =
@@ -71,8 +78,14 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
 
   return {
     async run(input): Promise<JoinRunResult> {
-      const { projectPath, projectName, sessionName, joinId, mutateActive } =
-        input;
+      const {
+        projectPath,
+        projectName,
+        sessionName,
+        joinId,
+        mutateActive,
+        lifecycle,
+      } = input;
 
       let execution = await mutateActive((e) =>
         applyJoinProgress(e, joinId, now(), { status: "running" }),
@@ -163,6 +176,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           };
         }
 
+        const laneMergeStartedMs = Date.parse(now());
+        lifecycle?.("join.lane_merge.started", {
+          joinId,
+          sourceLaneId,
+          remaining: remaining.length,
+        });
+
         let mergeStatus:
           | "completed"
           | "failed"
@@ -174,6 +194,12 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         let mergeConflictAnalysis: ConflictEntry[] | null = null;
         let mergeHaltReason: DeliveryGateHaltReason | null = null;
         let completedMergeValidationMode: MergeValidationMode | null = null;
+        // First-attempt conflict detail when the clean retry succeeds — the
+        // retry's own output no longer knows the merge was ever conflicted.
+        let cleanRetryConflicts: {
+          files: string[];
+          analysis: ConflictEntry[] | null;
+        } | null = null;
 
         const sourceWorktreePath = sourceLane.worktreePath;
         const conversationId =
@@ -206,7 +232,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
               coveredLaneIds,
             ) ?? undefined;
 
-          const output = await deps.mergeMutex.withMergeMutex(
+          const mergeCall = await deps.mergeMutex.withMergeMutex(
             { projectPath, sessionName },
             () =>
               deps.sessionGitLock.withSessionGitLock(
@@ -237,9 +263,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                     selectedValidationMode.mode === "run"
                       ? { ...selectedValidationMode, coveredLaneIds }
                       : selectedValidationMode;
-                  completedMergeValidationMode = validationMode;
                   if (validationMode.mode === "skip") {
                     logger.info("graph-workflow.join.validation_deferred", {
+                      joinId,
+                      sourceLaneId,
+                      remaining: remaining.length,
+                    });
+                    lifecycle?.("join.validation_deferred", {
                       joinId,
                       sourceLaneId,
                       remaining: remaining.length,
@@ -278,7 +308,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                     });
 
                   const first = await runMerge();
-                  if (first.status !== "conflicts") return first;
+                  if (first.status !== "conflicts") {
+                    return {
+                      output: first,
+                      retriedConflicts: null,
+                      validationMode,
+                    };
+                  }
 
                   // One clean retry before surfacing the conflict: failed
                   // resolutions are frequently transient (structured-output
@@ -290,16 +326,30 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
                     sourceLaneId,
                     conflictFiles: first.conflictFiles.length,
                   });
+                  lifecycle?.("join.conflict_retry", {
+                    joinId,
+                    sourceLaneId,
+                    conflictFileCount: first.conflictFiles.length,
+                  });
                   await abortInProgressMerge(sourceWorktreePath);
-                  return runMerge();
+                  return {
+                    output: await runMerge(),
+                    retriedConflicts: {
+                      files: first.conflictFiles,
+                      analysis: first.conflictAnalysis,
+                    },
+                    validationMode,
+                  };
                 },
               ),
           );
-          mergeStatus = output.status;
-          mergeError = output.error;
-          mergeConflictFiles = output.conflictFiles;
-          mergeConflictAnalysis = output.conflictAnalysis;
-          mergeHaltReason = output.haltReason;
+          mergeStatus = mergeCall.output.status;
+          mergeError = mergeCall.output.error;
+          mergeConflictFiles = mergeCall.output.conflictFiles;
+          mergeConflictAnalysis = mergeCall.output.conflictAnalysis;
+          mergeHaltReason = mergeCall.output.haltReason;
+          cleanRetryConflicts = mergeCall.retriedConflicts;
+          completedMergeValidationMode = mergeCall.validationMode;
         } catch (err) {
           mergeStatus = "failed";
           mergeError = getErrorMessage(err);
@@ -308,10 +358,42 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         }
 
         if (mergeStatus === "completed") {
+          // A completed merge that carries conflict detail was resolved by a
+          // smart-merge sub-turn; one resolved by the clean retry surfaces
+          // only through the captured first-attempt detail. Either way the
+          // join must not present as conflict-free (audit 1beec403 false
+          // "clean merges" positive).
+          const resolvedConflict =
+            mergeConflictFiles.length > 0
+              ? {
+                  sourceLaneId,
+                  files: mergeConflictFiles,
+                  resolution: "sub_turn" as const,
+                  analysis: mergeConflictAnalysis,
+                }
+              : cleanRetryConflicts !== null
+                ? {
+                    sourceLaneId,
+                    files: cleanRetryConflicts.files,
+                    resolution: "clean_retry" as const,
+                    analysis: cleanRetryConflicts.analysis,
+                  }
+                : null;
+          lifecycle?.("join.lane_merge.completed", {
+            joinId,
+            sourceLaneId,
+            durationMs: Math.max(0, Date.parse(now()) - laneMergeStartedMs),
+            validationMode: completedMergeValidationMode?.mode ?? null,
+            conflictResolution: resolvedConflict?.resolution ?? null,
+            conflictFileCount: resolvedConflict?.files.length ?? 0,
+          });
           execution = await mutateActive((e) =>
             applyJoinProgress(e, joinId, now(), {
               status: "running",
               addMergedSourceLaneId: sourceLaneId,
+              ...(resolvedConflict
+                ? { addResolvedConflict: resolvedConflict }
+                : {}),
               ...(completedMergeValidationMode?.mode === "run"
                 ? { clearValidationDebt: true }
                 : { addValidationDebtSourceLaneId: sourceLaneId }),
@@ -341,6 +423,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
 
         const failureStatus =
           mergeStatus === "conflicts" ? "conflicts" : "failed";
+        lifecycle?.("join.lane_merge.failed", {
+          joinId,
+          sourceLaneId,
+          durationMs: Math.max(0, Date.parse(now()) - laneMergeStartedMs),
+          mergeStatus: failureStatus,
+          conflictFileCount: mergeConflictFiles.length,
+        });
         const message =
           mergeError ??
           (mergeStatus === "ready-to-land"

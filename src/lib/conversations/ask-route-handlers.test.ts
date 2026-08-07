@@ -2,10 +2,8 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { NextResponse } from "next/server";
 import { fromPromise } from "xstate";
 import type { AgentAuth } from "@/lib/agent-gateway/token";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import { type ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import { conversationMachine } from "@/lib/workflows/conversation/machine";
 import {
   sendConversationEvent,
@@ -32,10 +30,8 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-sc
 const ts = "2025-01-01T00:00:00.000Z";
 
 function conv(overrides: Partial<ConversationState> = {}): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: "conv-1",
-    scope: "session",
-    transcriptPath: null,
     status: "running",
     promptCount: 1,
     createdAt: ts,

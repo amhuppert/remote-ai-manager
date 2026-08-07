@@ -96,7 +96,10 @@ export const codexConversationTranscriptProjection: BackendConversationTranscrip
         numTurns: input.numTurns,
         contextTokens: input.contextTokens,
         contextWindowMax: input.contextWindowMax,
-        costUsd: input.costUsd,
+        // Thread-cumulative, matching every pre-existing codex frame — the
+        // usage projector reads this as cumulative-per-lineage.
+        costUsd: input.cumulativeCostUsd ?? input.costUsd,
+        turnCostUsd: input.costUsd,
         aborted: input.aborted,
         error: input.error,
       },

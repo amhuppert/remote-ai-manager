@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 
 /**
  * Pins the process-wide identity of the default state store.
@@ -18,41 +19,16 @@ import type { ConversationState } from "@/lib/conversations/schemas";
  */
 
 function makeProjectConversation(id: string): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     id,
     scope: "project",
-    nameOrigin: "default",
-    name: null,
     transcriptPath: null,
     status: "new",
     promptCount: 0,
     createdAt: "2025-01-01T00:00:00.000Z",
     lastActivityAt: "2025-01-01T00:00:00.000Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     open: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQueue: [],
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-  };
+  });
 }
 
 async function resetGlobals(): Promise<void> {

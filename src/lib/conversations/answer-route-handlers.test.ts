@@ -20,11 +20,8 @@ import {
 import { createMessageQueueService } from "./message-queue-service";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "./project-conversation-scope";
 import { parseQuestionAnswersBlock } from "./question-answers-block";
-import {
-  conversationStateSchema,
-  type AskQuestionAnswer,
-  type ConversationState,
-} from "./schemas";
+import { type AskQuestionAnswer, type ConversationState } from "./schemas";
+import { makeConversationState } from "./testing/conversation-state-fixture";
 
 const ts = "2026-01-01T00:00:00.000Z";
 const PROJECT = "/repo";
@@ -43,15 +40,12 @@ const answers: Record<string, AskQuestionAnswer> = {
 function seedConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return conversationStateSchema.parse({
+  return makeConversationState({
     id: CONV,
-    scope: "session",
-    transcriptPath: null,
     status: "waiting_for_input",
     promptCount: 1,
     createdAt: ts,
     lastActivityAt: ts,
-    agentBackend: "claude",
     pendingQuestionId: "q_b1",
     pendingQuestions: [
       {

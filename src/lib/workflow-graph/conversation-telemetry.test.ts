@@ -18,6 +18,24 @@ function resultLine(
   });
 }
 
+function codexResultLine(threadRef: string, cumulativeCostUsd: number): string {
+  return JSON.stringify({
+    timestamp: "2026-08-04T18:14:22.991Z",
+    type: "result",
+    raw: {
+      backend: "codex",
+      backendRef: { backend: "codex", ref: threadRef },
+      durationMs: 1000,
+      numTurns: 1,
+      contextTokens: 1_000_000,
+      contextWindowMax: null,
+      costUsd: cumulativeCostUsd,
+      aborted: false,
+      error: null,
+    },
+  });
+}
+
 function assistantReadLine(...filePaths: string[]): string {
   return JSON.stringify({
     id: `entry-read-${filePaths.join(",")}`,
@@ -78,6 +96,35 @@ describe("summarizeTranscriptTelemetry", () => {
     );
 
     expect(summary.costUsd).toBeCloseTo(115.64, 5);
+    expect(summary.lineageCount).toBe(2);
+  });
+
+  it("takes the final cumulative per Codex thread, not the sum of snapshots", () => {
+    // Audit 1beec403: regenerate-api's DB row ($7.26) was exactly the sum of
+    // its two thread-cumulative snapshots (3.186902 + 4.072798); the true
+    // thread cost is the final cumulative.
+    const summary = summarizeTranscriptTelemetry(
+      [
+        codexResultLine("thread-regen", 3.186902),
+        codexResultLine("thread-regen", 4.072798),
+      ].join("\n"),
+    );
+
+    expect(summary.costUsd).toBeCloseTo(4.072798, 6);
+    expect(summary.lineageCount).toBe(1);
+    expect(summary.apiTurns).toBe(2);
+  });
+
+  it("sums final cumulatives across distinct Codex threads", () => {
+    const summary = summarizeTranscriptTelemetry(
+      [
+        codexResultLine("thread-a", 1.5),
+        codexResultLine("thread-a", 2.25),
+        codexResultLine("thread-b", 0.75),
+      ].join("\n"),
+    );
+
+    expect(summary.costUsd).toBeCloseTo(3.0, 6);
     expect(summary.lineageCount).toBe(2);
   });
 

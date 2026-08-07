@@ -1,8 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-  conversationStateSchema,
-  type ConversationState,
-} from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import {
   MAX_PENDING_AGENT_NOTICES,
@@ -28,11 +26,8 @@ const identity = {
 };
 
 function makeConversation(pendingAgentNotices: string[]): ConversationState {
-  return conversationStateSchema.parse({
-    id: "conv-1",
-    transcriptPath: null,
+  return makeConversationState({
     status: "idle",
-    promptCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
     pendingAgentNotices,

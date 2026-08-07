@@ -47,6 +47,7 @@ function makeStaleResumeDeps(): CodexConversationRuntimeDeps {
     translatePortableMcpToCodex: () => ({ mcpServers: {}, droppedFields: [] }),
     listNativeCodexMcpServers: async () => [],
     getCodexPricingOverrides: async () => null,
+    readPersistedCostBaseline: async () => null,
     now: () => 1000,
   };
 }

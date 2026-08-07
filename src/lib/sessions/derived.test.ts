@@ -7,45 +7,23 @@ import {
   isReservedSessionName,
 } from "./derived";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 function makeConversation(
   overrides: Partial<ConversationState> & {
     id: string;
     status: ConversationState["status"];
   },
 ): ConversationState {
-  return {
-    profileSnapshot: null,
-    profileLockedAt: null,
+  return makeConversationState({
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
     promptCount: 0,
-    scope: "session",
-    nameOrigin: "default",
-    role: null,
-    activeTurnSource: null,
-    name: null,
-    summary: null,
     transcriptPath: null,
     totalCostUsd: 0,
     totalDurationMs: 0,
     totalTurns: 0,
-    source: "cc",
-    agentBackend: "claude",
-    backendRef: null,
-    unread: false,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    archived: false,
-    lastSeenAlignmentVersion: null,
-    pendingAgentNotices: [],
-    pendingQueue: [],
     ...overrides,
-  };
+  });
 }
 
 describe("findBusyOtherConversations", () => {

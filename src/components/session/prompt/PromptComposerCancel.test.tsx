@@ -12,8 +12,8 @@ import {
 function inFlight() {
   return selectInFlightFor(useSessionDetailStore.getState(), "conv-1");
 }
-import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { makeConversationState } from "@/lib/conversations/testing/conversation-state-fixture";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { PromptEditorHandle } from "@/components/session/prompt/PromptEditor";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
@@ -41,9 +41,7 @@ function makeQueueEntry(
 function makeConversation(
   pendingQueue: PendingQueuedMessage[],
 ): ConversationState {
-  return conversationStateSchema.parse({
-    id: "conv-1",
-    transcriptPath: null,
+  return makeConversationState({
     status: "running",
     promptCount: 1,
     createdAt: "2026-06-08T00:00:00.000Z",
