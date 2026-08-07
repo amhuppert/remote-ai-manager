@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  resolvedWorkflowSemanticDefinitionSchema,
+  cascadeWorkflowSemanticDefinitionSchema,
   workflowDefinitionRecordSchema,
 } from "@/lib/workflow-graph/definition-schemas";
 
@@ -23,5 +23,5 @@ export const workflowDefinitionMutationResponseSchema = z.object({
 
 export const workflowDefinitionGetResponseSchema = z.object({
   item: workflowDefinitionRecordSchema,
-  resolved: resolvedWorkflowSemanticDefinitionSchema,
+  resolved: cascadeWorkflowSemanticDefinitionSchema,
 });

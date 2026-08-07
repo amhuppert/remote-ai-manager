@@ -6,6 +6,7 @@ import {
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { workflowDefinitionGetResponseSchema } from "@/lib/workflow-definitions/schemas";
 import { createWorkflowDefinitionRouteHandlers } from "./definition-route-handlers";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
@@ -159,10 +160,14 @@ describe("workflow definition route handlers", () => {
       MOCK_CONFIG,
       expectedRecord.definition,
     );
-    await expect(getResponse.json()).resolves.toEqual({
+    const getPayload = await getResponse.json();
+    expect(getPayload).toEqual({
       item: expectedRecord,
       resolved: expectedResolved,
     });
+    expect(() =>
+      workflowDefinitionGetResponseSchema.parse(getPayload),
+    ).not.toThrow();
 
     const putResponse = await handlers.UPDATE(
       makeRequest("/api/projects/repo/workflows/workflow-1", "PUT", {

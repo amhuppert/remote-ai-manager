@@ -8,11 +8,12 @@ import type {
   GraphWorkflowExecution,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import {
-  createResolvedWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
+import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import {
   deriveApprovalGateStanding,
   useApprovalGate,
@@ -21,6 +22,24 @@ import {
 const GATED_CONVERSATION_ID = "conv-gated";
 const GATED_CONTEXT_ID = "context-implement";
 const REQUESTED_AT = "2026-06-10T09:00:00.000Z";
+const TEST_CONFIG: GlobalConfig = {
+  baseDir: "/projects",
+  ignorePatterns: [],
+  agentBackends: {
+    claude: {
+      model: "opus",
+      reasoningEffort: "high",
+      timeoutMs: 3_600_000,
+    },
+    codex: {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      fastMode: false,
+      timeoutMs: null,
+    },
+  },
+  defaultAgentBackend: "claude",
+};
 
 function gatedExecution(
   opts: {
@@ -119,9 +138,10 @@ describe("useApprovalGate", () => {
           return Response.json({ recorded: true });
         }
         if (url.includes("/workflows/")) {
+          const item = createWorkflowDefinitionRecord({ name: "Review Flow" });
           return Response.json({
-            item: createWorkflowDefinitionRecord({ name: "Review Flow" }),
-            resolved: createResolvedWorkflowDefinition(),
+            item,
+            resolved: resolveWorkflowDefinition(TEST_CONFIG, item.definition),
           });
         }
         throw new Error(`unexpected fetch: ${url}`);
