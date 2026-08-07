@@ -523,10 +523,13 @@ without obligation, and every one gets a durable disposition:
   `advisory_response` phase instead of completing. The implementer lane gets one
   structured turn carrying the batch with explicit non-binding framing, and
   returns one disposition per delivered advisory: `addressed`, `declined`
-  (reason required by the schema), or `deferred`. Dispositions come back through
-  the existing structured-output gate, keyed by the engine-stamped identity; a
-  set that does not cover exactly the delivered batch is a schema failure and
-  retries.
+  (which owes a reason), or `deferred`. Dispositions come back through the
+  existing structured-output gate, keyed by the engine-stamped identity. The
+  dispatched schema states the shape and the batch size — everything a schema a
+  provider-native backend accepts can say, so no `oneOf` and no optional
+  property. The two rules it cannot carry are checked when the payload is parsed:
+  a decline without a reason, and a set that does not cover exactly the delivered
+  batch. Both are reported as the same retryable failure as a schema rejection.
 - **Re-certification** — once the dispositions land, the engine recomputes the
   candidate identity (`headSha` + `trackedDiffHash` + `taskStateHash`).
   Identical: the context completes on the certification it already earned — no

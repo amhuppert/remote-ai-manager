@@ -730,39 +730,30 @@ export type WorkflowAdvisoryIdentity = z.infer<
   typeof workflowAdvisoryIdentitySchema
 >;
 
+/** What the implementer may do with an advisory. */
+export const ADVISORY_DISPOSITION_VALUES = [
+  "addressed",
+  "declined",
+  "deferred",
+] as const;
+
 /**
- * What the implementer may do with an advisory. `declined` is the reason this is
- * a union rather than an enum: declining is the one answer that owes an
- * explanation, and requiring it in the SCHEMA means the structured-output gate
- * refuses a bare decline and retries, instead of the engine recording a refusal
- * nobody can read later.
+ * One disposition as the advisory-response turn returns it.
+ *
+ * A flat object rather than a union discriminated on `disposition`, and a
+ * nullable `reason` rather than an absent one, because this is the parse twin of
+ * a dispatched schema that must stay inside what a provider-native backend
+ * accepts — no `oneOf`, no optional property. Declining still owes an
+ * explanation; that rule is enforced in `parseAdvisoryDispositions`, which is
+ * already where the checks no schema can carry are reported.
  */
-export const workflowAdvisoryDispositionEntrySchema = z.discriminatedUnion(
-  "disposition",
-  [
-    z
-      .object({
-        identity: workflowAdvisoryIdentitySchema,
-        disposition: z.literal("addressed"),
-        reason: z.string().trim().min(1).nullish(),
-      })
-      .strict(),
-    z
-      .object({
-        identity: workflowAdvisoryIdentitySchema,
-        disposition: z.literal("declined"),
-        reason: z.string().trim().min(1),
-      })
-      .strict(),
-    z
-      .object({
-        identity: workflowAdvisoryIdentitySchema,
-        disposition: z.literal("deferred"),
-        reason: z.string().trim().min(1).nullish(),
-      })
-      .strict(),
-  ],
-);
+export const workflowAdvisoryDispositionEntrySchema = z
+  .object({
+    identity: workflowAdvisoryIdentitySchema,
+    disposition: z.enum(ADVISORY_DISPOSITION_VALUES),
+    reason: z.string().nullable(),
+  })
+  .strict();
 export type WorkflowAdvisoryDispositionEntry = z.infer<
   typeof workflowAdvisoryDispositionEntrySchema
 >;

@@ -17,14 +17,16 @@
  * raises none to deliver.
  *
  * Third, the answer is a contract, not a courtesy. The dispositions come back
- * through the same structured-output gate every other engine capture uses, with
- * `declined` owing a reason IN THE SCHEMA so the gate refuses a bare decline and
- * retries. What the schema cannot say — that the returned set is exactly the
- * delivered set, no advisory missed, invented, or answered twice — is checked
- * here, and reported as the same kind of failure so the same retry answers it.
- * Nothing else may produce a disposition: a delivered advisory carries the
- * turn's gate-validated answer or the turn failed, because the only value the
- * engine could write in its place is one no one decided.
+ * through the same structured-output gate every other engine capture uses. The
+ * dispatched schema says the shape and the batch size — as much as a schema a
+ * provider-native backend will accept can say. What it cannot say is checked in
+ * {@link parseAdvisoryDispositions}: that the returned set is exactly the
+ * delivered set, no advisory missed, invented, or answered twice, and that a
+ * decline carries its reason. Each is reported as the same kind of failure as a
+ * schema rejection, so the same retry answers it. Nothing else may produce a
+ * disposition: a delivered advisory carries the turn's validated answer or the
+ * turn failed, because the only value the engine could write in its place is one
+ * no one decided.
  *
  * Pure: prompts, schemas, and set arithmetic only. The turn that carries them is
  * `advisory-response-runner.ts`, and the round record they are written to is the
@@ -32,6 +34,7 @@
  */
 
 import {
+  ADVISORY_DISPOSITION_VALUES,
   workflowAdvisoryDispositionsResultSchema,
   type WorkflowAdvisoryDispositionEntry,
   type WorkflowAdvisoryIdentity,
@@ -166,6 +169,8 @@ export function buildAdvisoryResponsePrompt(input: {
     "- `addressed`: you changed the work in response to it.",
     "- `declined`: you are not acting on it. A one-line `reason` is required.",
     "- `deferred`: worth doing, but not as part of this execution context.",
+    "",
+    "Every disposition carries a `reason` field: the one-line explanation when you decline, and `null` otherwise.",
   ].join("\n");
 }
 
@@ -202,39 +207,24 @@ const IDENTITY_SCHEMA_PROPERTIES = {
   ordinal: { type: "integer" },
 } as const;
 
-function dispositionBranch(
-  disposition: "addressed" | "declined" | "deferred",
-): Record<string, unknown> {
-  const reasonRequired = disposition === "declined";
-  return {
-    type: "object",
-    properties: {
-      identity: {
-        type: "object",
-        properties: IDENTITY_SCHEMA_PROPERTIES,
-        required: ["roundSeq", "assignmentId", "ordinal"],
-        additionalProperties: false,
-      },
-      disposition: { const: disposition },
-      reason: { type: "string", minLength: 1 },
-    },
-    required: reasonRequired
-      ? ["identity", "disposition", "reason"]
-      : ["identity", "disposition"],
-    additionalProperties: false,
-  };
-}
-
 /**
  * The dispositions schema for one delivered batch.
  *
- * `oneOf` over the three dispositions is what makes `declined` owe a reason at
- * the GATE: the branches are mutually exclusive on the `disposition` const, so a
- * bare decline matches none of them and the gate's own repair loop asks again.
- * The item count is pinned to the batch size for the same reason — the cheapest
- * half of "exactly one per delivered advisory" the subset can express. Which
- * advisories they name is checked in {@link parseAdvisoryDispositions}, because
- * no schema in this subset can require a set of values to appear exactly once.
+ * Every keyword here is one a provider-native backend will accept: no `oneOf`
+ * over the three dispositions, no property left out of `required`, and no
+ * `const` without a `type`. Codex dispatches this schema to OpenAI's strict
+ * structured-output validator verbatim, which refuses all three and fails the
+ * turn with HTTP 400 before it runs — a halt the engine cannot retry its way
+ * out of. So the schema states the SHAPE, and the two rules it can no longer
+ * carry — that a decline owes a reason, and that the entries name the delivered
+ * set exactly once each — are checked in {@link parseAdvisoryDispositions},
+ * which reports them as the same retryable issues.
+ *
+ * `reason` is nullable rather than absent for the same reason: a strict subset
+ * has no optional properties, so "nothing to say" has to be a value.
+ *
+ * The item count is pinned to the batch size because that much of "exactly one
+ * per delivered advisory" a portable schema can still say.
  */
 export function buildAdvisoryDispositionsOutputSchema(
   advisories: readonly GraphWorkflowValidationAdvisory[],
@@ -247,11 +237,22 @@ export function buildAdvisoryDispositionsOutputSchema(
         minItems: advisories.length,
         maxItems: advisories.length,
         items: {
-          oneOf: [
-            dispositionBranch("addressed"),
-            dispositionBranch("declined"),
-            dispositionBranch("deferred"),
-          ],
+          type: "object",
+          properties: {
+            identity: {
+              type: "object",
+              properties: IDENTITY_SCHEMA_PROPERTIES,
+              required: ["roundSeq", "assignmentId", "ordinal"],
+              additionalProperties: false,
+            },
+            disposition: {
+              type: "string",
+              enum: [...ADVISORY_DISPOSITION_VALUES],
+            },
+            reason: { type: ["string", "null"] },
+          },
+          required: ["identity", "disposition", "reason"],
+          additionalProperties: false,
         },
       },
     },
@@ -275,11 +276,14 @@ export type ParsedAdvisoryDispositions =
  * Read the response turn's payload as one disposition per delivered advisory.
  *
  * Coverage is checked as a SET, not as a sequence: an implementer answering in
- * its own order is answering correctly, so only three things are wrong — an
- * advisory left unanswered, an identity nobody delivered, and one answered
- * twice. Each is reported by identity so the retry prompt can name it, and each
- * is the same kind of failure as a schema rejection, because a disposition set
- * that does not cover the batch is not a partial answer the engine may keep.
+ * its own order is answering correctly, so only three things are wrong about a
+ * set — an advisory left unanswered, an identity nobody delivered, and one
+ * answered twice. A bare decline is the fourth, and it lives here rather than in
+ * the dispatched schema because the shape a provider-native backend accepts
+ * cannot make one field's presence depend on another's value. Each is reported
+ * by identity so the retry prompt can name it, and each is the same kind of
+ * failure as a schema rejection, because a disposition set that does not cover
+ * the batch is not a partial answer the engine may keep.
  */
 export function parseAdvisoryDispositions(input: {
   structuredOutput: unknown;
@@ -318,11 +322,20 @@ export function parseAdvisoryDispositions(input: {
       issues.push(`Advisory ${key} was given more than one disposition.`);
       continue;
     }
+    const reason = entry.reason?.trim() ?? "";
+    // Recorded before the decline check so a bare decline reads as one defect:
+    // an entry left out of `answered` would also be reported as an advisory that
+    // received no disposition, which is not what the turn did wrong.
     answered.set(key, {
       identity: entry.identity,
       disposition: entry.disposition,
-      reason: entry.reason ?? null,
+      reason: reason.length > 0 ? reason : null,
     });
+    if (entry.disposition === "declined" && reason.length === 0) {
+      issues.push(
+        `Advisory ${key} was declined without a reason. A decline owes a one-line reason.`,
+      );
+    }
   }
 
   for (const key of expected.keys()) {

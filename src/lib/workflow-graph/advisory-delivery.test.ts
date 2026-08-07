@@ -207,6 +207,62 @@ describe("non-binding framing", () => {
   });
 });
 
+/**
+ * The keyword rules OpenAI's strict structured-output validator enforces on the
+ * schema Codex dispatches as `codex_output_schema`, verified against the live
+ * provider: `oneOf` is refused outright, every declared property must appear in
+ * `required`, and a `const`/`enum` node must carry a `type`. A schema that
+ * breaks any of them is rejected with HTTP 400 before the turn runs, which the
+ * engine can only surface as a halt.
+ */
+function findProviderStrictViolations(
+  node: unknown,
+  path = "$",
+  violations: string[] = [],
+): string[] {
+  if (typeof node !== "object" || node === null || Array.isArray(node)) {
+    return violations;
+  }
+  const schema: Record<string, unknown> = { ...node };
+
+  if ("oneOf" in schema) {
+    violations.push(`${path}.oneOf is not permitted by the provider`);
+  }
+  if (("const" in schema || "enum" in schema) && !("type" in schema)) {
+    violations.push(`${path} declares const/enum without a type`);
+  }
+
+  const properties = schema.properties;
+  if (typeof properties === "object" && properties !== null) {
+    if (schema.additionalProperties !== false) {
+      violations.push(`${path} must declare additionalProperties: false`);
+    }
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    for (const key of Object.keys(properties)) {
+      if (!required.includes(key)) {
+        violations.push(`${path}.required is missing ${JSON.stringify(key)}`);
+      }
+      findProviderStrictViolations(
+        (properties as Record<string, unknown>)[key],
+        `${path}.properties.${key}`,
+        violations,
+      );
+    }
+  }
+
+  if ("items" in schema) {
+    findProviderStrictViolations(schema.items, `${path}.items`, violations);
+  }
+  for (const [index, branch] of (Array.isArray(schema.anyOf)
+    ? schema.anyOf
+    : []
+  ).entries()) {
+    findProviderStrictViolations(branch, `${path}.anyOf[${index}]`, violations);
+  }
+
+  return violations;
+}
+
 describe("dispositions output schema", () => {
   const advisories = stampAdvisoryIdentities({
     roundSeq: 4,
@@ -215,6 +271,10 @@ describe("dispositions output schema", () => {
   });
   const schema = buildAdvisoryDispositionsOutputSchema(advisories);
 
+  it("stays inside the strict subset a provider-native backend accepts", () => {
+    expect(findProviderStrictViolations(schema)).toEqual([]);
+  });
+
   function validate(dispositions: unknown[]): { valid: boolean } {
     return validateJsonSchemaSubset(schema, { dispositions });
   }
@@ -222,20 +282,20 @@ describe("dispositions output schema", () => {
   const identityOne = { roundSeq: 4, assignmentId: "general", ordinal: 1 };
   const identityTwo = { roundSeq: 4, assignmentId: "general", ordinal: 2 };
 
-  it("accepts addressed and deferred entries without a reason", () => {
+  it("accepts addressed and deferred entries carrying a null reason", () => {
     expect(
       validate([
-        { identity: identityOne, disposition: "addressed" },
-        { identity: identityTwo, disposition: "deferred" },
+        { identity: identityOne, disposition: "addressed", reason: null },
+        { identity: identityTwo, disposition: "deferred", reason: null },
       ]).valid,
     ).toBe(true);
   });
 
-  it("refuses a declined entry with no reason", () => {
+  it("refuses an entry that omits the reason field", () => {
     expect(
       validate([
-        { identity: identityOne, disposition: "declined" },
-        { identity: identityTwo, disposition: "addressed" },
+        { identity: identityOne, disposition: "addressed" },
+        { identity: identityTwo, disposition: "deferred", reason: null },
       ]).valid,
     ).toBe(false);
   });
@@ -248,22 +308,24 @@ describe("dispositions output schema", () => {
           disposition: "declined",
           reason: "The duplication is deliberate.",
         },
-        { identity: identityTwo, disposition: "addressed" },
+        { identity: identityTwo, disposition: "addressed", reason: null },
       ]).valid,
     ).toBe(true);
   });
 
   it("refuses an entry count other than one per delivered advisory", () => {
     expect(
-      validate([{ identity: identityOne, disposition: "addressed" }]).valid,
+      validate([
+        { identity: identityOne, disposition: "addressed", reason: null },
+      ]).valid,
     ).toBe(false);
   });
 
   it("refuses a disposition outside the approved vocabulary", () => {
     expect(
       validate([
-        { identity: identityOne, disposition: "acknowledged" },
-        { identity: identityTwo, disposition: "addressed" },
+        { identity: identityOne, disposition: "acknowledged", reason: null },
+        { identity: identityTwo, disposition: "addressed", reason: null },
       ]).valid,
     ).toBe(false);
   });
@@ -282,7 +344,7 @@ describe("parseAdvisoryDispositions", () => {
     const parsed = parseAdvisoryDispositions({
       structuredOutput: {
         dispositions: [
-          { identity: identityTwo, disposition: "deferred" },
+          { identity: identityTwo, disposition: "deferred", reason: null },
           {
             identity: identityOne,
             disposition: "declined",
@@ -308,7 +370,9 @@ describe("parseAdvisoryDispositions", () => {
   it("refuses a set that misses a delivered advisory", () => {
     const parsed = parseAdvisoryDispositions({
       structuredOutput: {
-        dispositions: [{ identity: identityOne, disposition: "addressed" }],
+        dispositions: [
+          { identity: identityOne, disposition: "addressed", reason: null },
+        ],
       },
       delivered,
     });
@@ -322,11 +386,12 @@ describe("parseAdvisoryDispositions", () => {
     const parsed = parseAdvisoryDispositions({
       structuredOutput: {
         dispositions: [
-          { identity: identityOne, disposition: "addressed" },
-          { identity: identityTwo, disposition: "addressed" },
+          { identity: identityOne, disposition: "addressed", reason: null },
+          { identity: identityTwo, disposition: "addressed", reason: null },
           {
             identity: { roundSeq: 5, assignmentId: "general", ordinal: 3 },
             disposition: "addressed",
+            reason: null,
           },
         ],
       },
@@ -342,8 +407,8 @@ describe("parseAdvisoryDispositions", () => {
     const parsed = parseAdvisoryDispositions({
       structuredOutput: {
         dispositions: [
-          { identity: identityOne, disposition: "addressed" },
-          { identity: identityOne, disposition: "deferred" },
+          { identity: identityOne, disposition: "addressed", reason: null },
+          { identity: identityOne, disposition: "deferred", reason: null },
         ],
       },
       delivered,
@@ -354,18 +419,64 @@ describe("parseAdvisoryDispositions", () => {
     expect(parsed.issues.join(" ")).toContain("5:general:1");
   });
 
-  it("refuses a declined disposition with no reason", () => {
+  it("refuses a declined disposition with no reason, naming only that advisory", () => {
     const parsed = parseAdvisoryDispositions({
       structuredOutput: {
         dispositions: [
-          { identity: identityOne, disposition: "declined" },
-          { identity: identityTwo, disposition: "addressed" },
+          { identity: identityOne, disposition: "declined", reason: null },
+          { identity: identityTwo, disposition: "addressed", reason: null },
         ],
       },
       delivered,
     });
 
     expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.issues).toHaveLength(1);
+    expect(parsed.issues[0]).toContain("5:general:1");
+  });
+
+  it("refuses a declined disposition whose reason is blank", () => {
+    const parsed = parseAdvisoryDispositions({
+      structuredOutput: {
+        dispositions: [
+          { identity: identityOne, disposition: "declined", reason: "   " },
+          { identity: identityTwo, disposition: "addressed", reason: null },
+        ],
+      },
+      delivered,
+    });
+
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.issues[0]).toContain("5:general:1");
+  });
+
+  it("records a reason trimmed, and a blank one as none", () => {
+    const parsed = parseAdvisoryDispositions({
+      structuredOutput: {
+        dispositions: [
+          {
+            identity: identityOne,
+            disposition: "declined",
+            reason: "  Deliberate duplication.  ",
+          },
+          { identity: identityTwo, disposition: "addressed", reason: "" },
+        ],
+      },
+      delivered,
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.dispositions).toEqual([
+      {
+        identity: identityOne,
+        disposition: "declined",
+        reason: "Deliberate duplication.",
+      },
+      { identity: identityTwo, disposition: "addressed", reason: null },
+    ]);
   });
 
   it("refuses a payload that is not the dispositions envelope", () => {

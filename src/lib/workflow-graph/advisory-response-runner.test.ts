@@ -85,8 +85,8 @@ describe("advisory-response turn", () => {
   it("dispatches with the dispositions schema as the turn's output contract", async () => {
     const runner = run([
       structured([
-        { identity: IDENTITY_ONE, disposition: "addressed" },
-        { identity: IDENTITY_TWO, disposition: "deferred" },
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+        { identity: IDENTITY_TWO, disposition: "deferred", reason: null },
       ]),
     ]);
 
@@ -109,7 +109,7 @@ describe("advisory-response turn", () => {
           disposition: "declined",
           reason: "Deliberate.",
         },
-        { identity: IDENTITY_TWO, disposition: "deferred" },
+        { identity: IDENTITY_TWO, disposition: "deferred", reason: null },
       ]),
     ]);
 
@@ -129,10 +129,12 @@ describe("advisory-response turn", () => {
 
   it("re-asks when the reply misses a delivered advisory, naming the one it missed", async () => {
     const runner = run([
-      structured([{ identity: IDENTITY_ONE, disposition: "addressed" }]),
       structured([
-        { identity: IDENTITY_ONE, disposition: "addressed" },
-        { identity: IDENTITY_TWO, disposition: "addressed" },
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+      ]),
+      structured([
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+        { identity: IDENTITY_TWO, disposition: "addressed", reason: null },
       ]),
     ]);
 
@@ -148,12 +150,12 @@ describe("advisory-response turn", () => {
   it("re-asks when the reply declines without a reason", async () => {
     const runner = run([
       structured([
-        { identity: IDENTITY_ONE, disposition: "declined" },
-        { identity: IDENTITY_TWO, disposition: "addressed" },
+        { identity: IDENTITY_ONE, disposition: "declined", reason: null },
+        { identity: IDENTITY_TWO, disposition: "addressed", reason: null },
       ]),
       structured([
         { identity: IDENTITY_ONE, disposition: "declined", reason: "No." },
-        { identity: IDENTITY_TWO, disposition: "addressed" },
+        { identity: IDENTITY_TWO, disposition: "addressed", reason: null },
       ]),
     ]);
 
@@ -176,8 +178,8 @@ describe("advisory-response turn", () => {
         continuationDisposition: "retain",
       },
       structured([
-        { identity: IDENTITY_ONE, disposition: "addressed" },
-        { identity: IDENTITY_TWO, disposition: "addressed" },
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+        { identity: IDENTITY_TWO, disposition: "addressed", reason: null },
       ]),
     ]);
 
@@ -189,7 +191,9 @@ describe("advisory-response turn", () => {
 
   it("fails the turn once its attempts are spent rather than returning a set the gate never validated", async () => {
     const runner = run([
-      structured([{ identity: IDENTITY_ONE, disposition: "addressed" }]),
+      structured([
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+      ]),
     ]);
 
     await expect(runner.runAdvisoryResponse(input())).rejects.toBeInstanceOf(
@@ -202,7 +206,9 @@ describe("advisory-response turn", () => {
 
   it("names the coverage violation in the failure it raises", async () => {
     const runner = run([
-      structured([{ identity: IDENTITY_ONE, disposition: "addressed" }]),
+      structured([
+        { identity: IDENTITY_ONE, disposition: "addressed", reason: null },
+      ]),
     ]);
 
     await expect(runner.runAdvisoryResponse(input())).rejects.toThrow(
