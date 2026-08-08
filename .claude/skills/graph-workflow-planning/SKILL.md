@@ -14,6 +14,7 @@ This skill is the source of truth for planning graph workflows. Use it before au
 - Tasks inside one context run sequentially, in array order, inside that same agent session.
 - Each task should be achievable in roughly 10-30 minutes of focused work.
 - Dependency edges make one context wait for another context to complete.
+- Every context declares where it runs and what it may write: a lane, a grade, and — for an owning context — its owned paths. Several contexts can share one lane. See [Lane Placement and File Ownership](#lane-placement-and-file-ownership).
 - Context IDs and task IDs should be stable, kebab-case, and content-specific, such as `runtime-apply-contracts` or `wire-route-handlers`.
 - The executing agent sees the workflow definition and codebase, **not the planning conversation**. Task instructions must be self-contained.
 
@@ -24,6 +25,7 @@ Create workflows with default implementer and validator settings unless the user
 - Omit top-level `workflowConfig` unless non-default workflow-wide settings are requested.
 - Omit per-context `implementer`, `contextValidator`, `scriptValidator`, `agentValidation`, `iterationPolicy`, `circuitBreaker`, and `mutability` unless a non-default value is intentionally required.
 - `acceptanceCriteria` is required on every execution context and must live on the context, not on the validator.
+- `placement` is required on every execution context too, and it does not default or cascade — decide it deliberately per context (see [Lane Placement and File Ownership](#lane-placement-and-file-ownership)).
 - Minimal payloads are preferred because global and workflow defaults cascade into each context at execution seed time.
 - To opt out of inherited agent validation for a context, set `contextValidator: { "enabled": false, "assignments": [] }`.
 - To staff a context's reviewers explicitly, set `contextValidator` to an enabled cohort of assignments — see [Staffing Assignments](#staffing-assignments-from-the-agent-profile-library).
@@ -87,6 +89,8 @@ Implementer test access stays enabled even when the script gate also runs tests.
 
 `strategy` is `final-only` by default, which defers validation until the last merge in a serial join; `every-merge` validates each source-lane merge. `{ "mode": "project" }` uses the project's `validation.laneMerge` selection or falls back to `validation.preMerge`. `{ "mode": "only", "commands": [...] }` supplies a workflow-specific selection, and an empty `commands` list disables lane-merge validation.
 
+This selection is also the **barrier** for every enveloped context: those contexts run no whole-repo checks of their own, so the lane's join is where the plan's deterministic verification actually happens. An enveloped context's `scriptValidator.commands` must be empty or a subset of it — see [Lane Placement and File Ownership](#lane-placement-and-file-ownership).
+
 ## Planning Procedure
 
 1. Read the governing context.
@@ -132,6 +136,11 @@ Implementer test access stays enabled even when the script gate also runs tests.
    - Use edges for hard dependencies and for helpful foundation dependencies when prior work materially reduces ambiguity.
    - Do not add edges between truly independent contexts.
    - Prefer a short foundation context before parallel branches when multiple implementers need the same contract.
+
+9. Place every context on a lane.
+   - Decide each context's grade and, for owning contexts, its `ownedPaths` — see [Lane Placement and File Ownership](#lane-placement-and-file-ownership). Placement is required and never inferred.
+   - Group contexts that implement disjoint blocks of one change onto a shared lane; keep same-file competition, dependency-mutating work, and self-verifying contexts on their own.
+   - Do this AFTER the edges exist: the disjointness requirement applies only to same-lane members that nothing orders, so a dependency edge is often the cheaper fix for an overlap.
 
 Steps 4 and 5 encode an audited failure mode: in a 21-context execution, three release blockers (a gate with no production grant path, events no production code ever published, notification adapters no runtime component imported) shipped past green per-context validation because every acceptance criterion was satisfiable by exported, unit-tested code — and five NO-GO classes recurred independently across contexts because the shared rules lived only in deep spec documents.
 
@@ -251,15 +260,104 @@ Before creating or replacing a workflow, check every context:
 
 If the validator would need the whole design to judge a narrow context, either add a context-local design summary task or move that criterion to a final verification context.
 
+## Lane Placement and File Ownership
+
+Every execution context declares `placement`: which **lane** it runs on, and what it may write there. There is no default and no inference — a plan whose contexts do not all carry placement is refused.
+
+A lane is one git worktree on one branch, and several contexts may share it. That is the point: a lane hosting N contexts costs **one worktree and one fan-in join** for the whole group, where N single-member lanes cost N of each. Read-only contexts on the `session` lane cost nothing at all — a fan-out with eight readers provisions no worktrees and produces no merges.
+
+### The three placement grades
+
+```jsonc
+{ "id": "judge", "title": "Judge the candidates", "acceptanceCriteria": "…",
+  "placement": { "lane": "session", "mode": "readOnly" },
+  "outputSchema": { "type": "object", "properties": { "winner": { "type": "string" } }, "required": ["winner"] } }
+
+{ "id": "persistence", "title": "Persist the new fields", "acceptanceCriteria": "…",
+  "placement": { "lane": "impl", "mode": "owned",
+                 "ownedPaths": ["src/lib/state-store", "docs/persistence.md"] } }
+
+{ "id": "dependency-bump", "title": "Bump the SDK", "acceptanceCriteria": "…",
+  "placement": { "lane": "sdk-bump", "mode": "full" } }
+```
+
+| grade | substrate | may write | costs | use for |
+|---|---|---|---|---|
+| `readOnly` | the session worktree (`"lane": "session"`), or a group lane to read that lane's tree | nothing in the repository — its own scratch only | no worktree, no landing commit, no join | fan-out readers, judges, classifiers, reviewers, triage |
+| `owned` | its lane's worktree, shared with the lane's other members | exactly its `ownedPaths`, each covering itself and everything beneath it | one worktree and one join, shared with the whole lane | disjoint implementation blocks that should run at the same time |
+| `full` | its lane's worktree | the whole tree | one worktree and one join, but the lane to itself while it runs | work whose write surface cannot be enumerated up front |
+
+`readOnly` requires `outputSchema`: a reader produces no commit and no join, so captured structured output is the only thing it can deliver (`placement-readonly-missing-output-schema`).
+
+### Choosing a grade
+
+Default to a **shared, ownership-disjoint lane** when several contexts implement disjoint blocks of one change. They run concurrently in one worktree, each writing only its own prefixes, and the whole group verifies and lands once.
+
+Give a context an **isolated single-member lane** when sharing would be wrong rather than merely inconvenient:
+
+- **Same-file competition.** Tournament candidates, competing refactors, two designs of one module — anything whose whole point is that both write the same paths. Ownership cannot be disjoint there, so separate lanes are the answer and the LLM resolver handles the overlap at the joins.
+- **Dependency-mutating work.** A lockfile update, a dependency bump, a codegen or barrel regeneration, a migration that renumbers — work whose effects are not confined to the paths it names. A member that reinstalls dependencies changes what its lane-mates are building against mid-flight.
+- **A lane that must run its own verification.** Whole-repo verification runs once per lane, at its join. A context that needs `typecheck` or `test` green at ITS OWN boundary — because a later context depends on that fact — needs a lane whose barrier it owns.
+- **`mode: "full"` at all.** A full-access member has no declared surface to be disjoint from, so it must be dependency-ordered against every other write-capable member of its lane (`placement-full-access-concurrency`). In practice: give it its own lane, or sequence it behind the members it would otherwise race.
+
+Put readers on the `session` lane. Fan-out readers, judges, and synthesis inputs need to see the repository, not change it, and a write-capable placement buys them a worktree and a merge for nothing. Put a reader on a GROUP lane only when it must read that lane's in-progress tree — a reviewer of work its lane-mates have not published yet.
+
+### Ownership is literal and directory-grain
+
+An `ownedPaths` entry is a normalized repo-relative POSIX path covering itself and everything beneath it, compared at segment boundaries — `src/lib` does not swallow the sibling `src/libraries`. There are no globs: a metacharacter is an ordinary filename character here, and the write-policy adapter refuses one outright.
+
+Prefer **directory-grain ownership** over file lists. An implementer working red-green creates files that did not exist when you wrote the plan — the new test beside the module, a new schema file — and a file-grain entry denies exactly those writes at the tool boundary, mid-task. Own `src/lib/state-store`, not eleven paths inside it.
+
+Rules a plan is checked against:
+
+- Lane names become branch and worktree path segments: `/^[A-Za-z0-9_.-]+$/`, no leading `.` or `-`, no `..`, no trailing `.`, `-`, or `.lock` (`placement-lane-name-invalid`).
+- `session` is the reserved authored name for the session worktree and admits read-only contexts only (`placement-session-lane-write-capable`). The engine's internal `__session__` is never an authored name (`placement-reserved-lane-name`).
+- `.git` is denied and `.cc` is reserved. Never author either.
+- The repository root is not an ownership entry — name the directories the context owns.
+
+### Sequencing shared surfaces
+
+A barrel or index file, a lockfile, a shared `schemas.ts`, a migration registry, a generated snapshot — one surface several blocks must touch — has exactly one owner. Two concurrent same-lane members claiming overlapping prefixes is refused at accept time (`placement-owned-paths-overlap`), not discovered at the join.
+
+Two ways to resolve it, in preference order:
+
+1. **Home it upstream.** Land the shared surface in a context every member depends on (Planning Procedure step 3), and let the members own only their own blocks. This is the same rule that stops parallel siblings from inventing competing copies of a shared schema.
+2. **Order it inside the lane.** Dependency-ordered same-lane members may share paths freely — the disjointness rule tests ordering first, and only unordered pairs must be disjoint. So a "wire the barrel" context that depends on every block it exports can own the barrel plus its siblings' prefixes; nothing runs concurrently with it.
+
+What does not work: handing the shared surface to whichever member needs it first, or splitting one file's ownership by intent. Ownership is by path.
+
+### What the envelope changes about the agents you are planning
+
+Placement is enforced mechanically, per turn, at the tool boundary — not by prompt discipline. Plan around it:
+
+- **No agent commits.** `.git` is denied, so an implementer **cannot commit, branch, or reset**; the engine lands each member's owned prefixes for it. Never write task instructions that ask an implementer to commit, stash, rebase, or clean the tree.
+- **No per-context whole-repo validation.** Whole-repo verification runs once per lane, at its join, through `laneMergeValidation`. For a placed, enveloped context `cctl validate run` resolves as a no-op and the script gate does not run, so its `scriptValidator.commands` must be empty or a subset of the lane's barrier selection — anything else is refused rather than silently discarded. Put the deterministic thesis on the barrier, and keep a context that genuinely owns a check on its own lane.
+- **Scratch and payloads.** An owning member writes `cctl … --file` payloads to its **payload directory** under the worktree's `.cc` namespace, and has a **per-context scratch** root besides. A session reader has no payload directory: its **per-context scratch** root is the only place it can write, and its prompt points `--file` there. Either way a plan never authors ownership of `.cc`.
+- **Unattributed writes halt the lane.** A write in a shared worktree that no member's ownership covers raises `ownership_violation`. It is recoverable through plan repair, but it is a halt — a context whose real write surface is wider than its declared one fails loudly instead of corrupting a sibling.
+
+### Accept-time refusals
+
+| code | what to fix |
+|---|---|
+| `placement-lane-name-invalid` | the lane name is not spliceable into a branch name and a path |
+| `placement-reserved-lane-name` | the plan authored `__session__`; write `session` |
+| `placement-session-lane-write-capable` | a write-capable context sits on `session`; move it to a group lane |
+| `placement-readonly-missing-output-schema` | a read-only context declares no `outputSchema`, so it can deliver nothing |
+| `placement-full-access-concurrency` | a `full` member shares its lane with a write-capable member it is not ordered against |
+| `placement-owned-paths-overlap` | two concurrent same-lane members claim overlapping prefixes |
+
 ## Parallelization Guidance
 
-Parallel contexts run in isolated git worktrees, one branch per context, so they cannot interfere with each other mid-flight. Branches are merged automatically at join points and at final publish, and merge conflicts are **resolved automatically** by an LLM resolver (the same machinery as Smart Merge). Lane-merge validation follows `laneMergeValidation`: the default `final-only` strategy validates the integrated tree on the last merge in a serial join, while `every-merge` validates each source-lane merge. Do not plan as if all merge conflicts must be avoided.
+Contexts on **different** lanes run in isolated git worktrees on separate branches, so they cannot interfere with each other mid-flight. Branches are merged automatically at join points and at final publish, and merge conflicts are **resolved automatically** by an LLM resolver (the same machinery as Smart Merge). Lane-merge validation follows `laneMergeValidation`: the default `final-only` strategy validates the integrated tree on the last merge in a serial join, while `every-merge` validates each source-lane merge. Do not plan as if all merge conflicts must be avoided.
 
-Plan for aligned intent, not file disjointness:
+Contexts **sharing** a lane are a different regime: one worktree, no merge between them, and the ownership envelope rather than the resolver is what keeps them apart. There, disjointness is a hard accept-time requirement — see [Lane Placement and File Ownership](#lane-placement-and-file-ownership).
 
-- Two contexts needing to touch the same file does **not** by itself preclude running them in parallel. Logically independent edits to a shared file merge cleanly or resolve straightforwardly.
-- Do not serialize contexts merely to avoid merge conflicts, and do not contort context boundaries to keep write surfaces disjoint.
+Across lanes, plan for aligned intent rather than file disjointness:
+
+- Two contexts on different lanes needing to touch the same file does **not** by itself preclude running them in parallel. Logically independent edits to a shared file merge cleanly or resolve straightforwardly.
+- Do not serialize contexts on separate lanes merely to avoid merge conflicts.
 - What parallel contexts must share is intent: contracts, conventions, and vocabulary declared up front — in the charter or a short foundation context — so their changes compose.
+- When the same overlap sits inside one lane, it is not a merge question at all: separate the lanes, make the ownership disjoint, or order the members.
 
 Parallelize when all of these are true:
 
@@ -553,6 +651,10 @@ Guard against these before starting execution:
 - Prose verdicts: a loop's exit or a classifier emits a free-form recommendation instead of a machine-checkable field, so `until` and the guards can never be satisfied. The verdict is a `const`/`enum`/bounded number; the narrative goes in a separate handoff field.
 - Criteria written against a known branch count: a Generate-And-Filter consumer whose acceptance criteria say "the three candidates" fails the moment the generator picks two.
 - Unbounded loops by optimism: `maxPasses` set high "just in case". Exhaustion is a halt, so a generous cap converts a converging loop's failure into a late, expensive one; set it to the number of passes the work should plausibly need.
+- File-grain ownership: `ownedPaths` lists the files that exist today, so the first new test file the implementer creates is denied at the tool boundary. Own the directory.
+- A shared surface with two concurrent owners: two same-lane members both claim the barrel, the lockfile, or the shared `schemas.ts`. Refused at accept time — home it upstream or order the members.
+- Verification asked of an enveloped context: `scriptValidator.commands` selected for a context that shares a lane, where the checks resolve as a no-op and the barrier is the join. Either put the thesis on `laneMergeValidation` or give that context its own lane.
+- Instructions that ask an implementer to commit: `.git` is denied under the envelope, so "commit your work", "rebase onto main", or "stash first" are impossible instructions the agent will burn a turn discovering.
 
 ## Final Verification Context
 
@@ -588,7 +690,8 @@ A plan is a JSON object the validate, create, and replace endpoints all accept:
     },
     "parameters": [],
     "executionContexts": [
-      { "id": "auth-setup", "title": "Authentication Setup", "acceptanceCriteria": "…" }
+      { "id": "auth-setup", "title": "Authentication Setup", "acceptanceCriteria": "…",
+        "placement": { "lane": "auth", "mode": "owned", "ownedPaths": ["src/lib/auth"] } }
     ],
     "tasks": [
       { "id": "create-user-schema", "contextId": "auth-setup", "order": 1, "title": "…", "instructions": "…" }
@@ -603,6 +706,7 @@ A plan is a JSON object the validate, create, and replace endpoints all accept:
 
 - `definition.charter` is required: a non-empty `mission` plus a ranked `sourcesOfTruth` list (each entry: `rank`, `id`, `label`, `type`, `locator`, `description`, `accessPolicy`) declaring the source-of-truth precedence hierarchy.
 - `definition.charter.invariants` is optional but expected for multi-context plans (Planning Procedure step 5): a list of `{ "id", "statement" }` entries with unique kebab-case ids. Invariants render into every implementer and validator prompt, and validators check each applicable invariant, citing its id in issues.
+- Every execution context needs `placement` — `{ "lane", "mode" }`, plus `ownedPaths` when `mode` is `owned`. It has no default: a context without it is refused.
 - Each task needs an explicit `order` (1-based, per context, in the sequence tasks should run inside that context) and a unique `id`. Each edge needs a unique `id`.
 - The dynamic-control-flow declarations are all optional and all omitted by default: `edges[].when` (guards), per-context `routing.cardinality`, per-context `outputSchema`, per-context `mutability.allowAgentContextAdd`, and `definition.loopGroups`. Omit each unless the plan actually needs it — see [Dynamic Control Flow](#dynamic-control-flow).
 - `schemaVersion`, `workflowConfig`, `parameters`, `prerequisites`, and every optional per-context/per-task field default when omitted — keep the payload minimal (see [Defaults and Payloads](#defaults-and-payloads)).
@@ -639,6 +743,10 @@ Use `cctl workflow replace <id> --file .cc/temp/plan.json` only for a **wholesal
 - `laneMergeValidation` is set only at the workflow tier when the project-level lane-merge policy is not appropriate.
 - Essential context is included in task instructions or produced as an upstream shared artifact.
 - Parallel branches are truly independent or have an explicit foundation edge.
+- Every context carries `placement`, every read-only context also carries an `outputSchema`, and no write-capable context sits on the `session` lane.
+- Same-lane members that nothing orders own pairwise-disjoint, directory-grain prefixes; shared surfaces (barrels, lockfiles, schema files) have exactly one owner or live in an upstream context.
+- Any `scriptValidator.commands` on an enveloped context is empty or a subset of the lane's `laneMergeValidation` selection, and every check the plan relies on is owned either by a barrier or by a single-member lane.
+- No task instruction asks an implementer to commit, stash, rebase, or clean the tree.
 - Every guarded edge's source declares an `outputSchema`, and every guard reads a field that source actually populates.
 - Every conditional fan-out either covers its source's whole value set or carries an `else` edge, and no acceptance criterion's only covering context sits behind a guard.
 - Every loop group has a machine-checkable exit verdict, a `maxPasses` matched to the work, and a handoff field on each body context the next pass builds on.

@@ -114,6 +114,7 @@ One row per shared concept: where the canonical implementation lives, who actual
 | AgentCall (normalized agent execution) | `primitives/agent-call-facade.ts` + `agent-call-vocabulary.ts` (conversation + task-run adapters) | conversation actor (`conversation/actors.ts`, `actor-implementations.ts`, `execute-workflow-task-run.ts`); collaboration (`collaboration/agent-caller-production.ts`); graph (`workflow-graph/implementer-runner.ts`, `workflow-collaborator-caller.ts`); `shared/optimistic.ts` | supported | — | — |
 | Lane (agent continuity + scheduling) | `primitives/{lane-vocabulary,lane-service,lane-scheduler,lane-store}.ts`, composed by `primitives/workflow-agent-caller.ts` | Collaboration lanes; graph implementer/validator lanes via `LaneService` over the durable `workflow-graph/graph-lane-store.ts`, composed in `workflow-graph/lane-continuity.ts` | supported | — | — |
 | Graph lane identity (who a lane belongs to) | `workflow-graph/lane-identity.ts` — `laneStateKey` (the `laneStates[contextId]` inner key: `implementer` \| `context_validator:<assignmentId>`), `graphLaneId`/`parseGraphLaneId` (primitive lane id, NUL-joined `lane`/`contextId`/`assignment`), `assignmentFingerprint` (what a lane must be rebuilt for) | `graph-lane-store.ts`, `lane-continuity.ts`, `validator-runner.ts`; per-assignment artifacts in `execution-logger.ts` | supported | — | — |
+| Context placement (authored lane + file ownership) | `workflow-graph/definition-schemas.ts` (`contextPlacementSchema`, `ownedPathSchema`) for shape; `workflow-graph/placement-validation.ts` for accept-time semantics — lane grammar, the session lane's read-only restriction, the read-only output contract, same-lane ownership disjointness | every authoring surface through `validateAuthoredDefinition` (`cctl workflow validate`/`create`/`replace`, the saved- and live-edit appliers, the builder); lane provisioning, scheduler admission, the implementer write envelope, ownership-scoped landing | supported | placement-less STORED definitions and archived executions, inflated by the legacy transformer at the stored-load boundary | Delete the inflate-boundary transformer when no persisted definition, saved template, or archived execution predates placement. Never re-add a runtime default — an optional `placement` silently resurrects deterministic seed-time assignment |
 | Typed SSE publication + lifecycle projection | `events/publication.ts` (`publishEvent`, `PublishFn`, `publishEventBestEffort`, `publishScopedStatus`) + private `events/{status-bus,lifecycle-projection}.ts` implementation | all server event publishers, including dev-server, graph, collaboration, conversation, jobs, notifications, prompts, and route modules | publication is supported; `subscribeLifecycle` remains **experimental** with zero production subscribers | raw `events/broadcaster` is restricted to `publication.ts` and the SSE transport | Keep the direct-import ratchet at zero. Land a production lifecycle subscriber or delete the dormant subscription/projection interface under the adopt-or-delete rule. |
 | ArtifactRegistry | `primitives/artifact-registry.ts` (+ `default-session-artifact-registry.ts`) | graph `shared-documents.ts`, `script-validator-runner.ts`, `charter/service.ts`; `agent-runs/` service + routes; conversation actor (focus memory) | supported | — | — |
 | WorkflowEnvelope (durable workflow lifecycle) | `primitives/workflow-envelope-{vocabulary,store,repository}.ts` + `recover-workflow-envelopes.ts` | Collaboration runs (restart discovery + recovery) | supported | `BackgroundJob`, `AgentRunRecord`, and `GraphWorkflowExecution` remain separate lifecycle vocabularies by decision | None now — four-way convergence explicitly deferred (plan D15) |
@@ -409,7 +410,8 @@ Codex validator lanes have no real CC conversation and never see the tool.
 Use the `graph-workflow-planning` Codex skill before creating, replacing, or
 diagnosing graph workflow plans. That skill owns the rules for decomposition,
 acceptance criteria, validator alignment, script validator eligibility, context
-sharing, defaults, and parallelization.
+sharing, defaults, lane-placement judgment (which grade, which lane, which owned
+paths), and parallelization.
 
 This steering section is runtime/config reference only.
 
@@ -444,6 +446,12 @@ ordered `commands` selection through `ValidationService` before agent
 validation and writes failures to
 `.cc/workflow/<executionId>/<command>-<timestamp>-<runId>.log`. An unknown
 registered command halts with `script_validator_unknown_command`.
+
+For an enveloped context the script gate does not run and agent-facing
+registered validation resolves as a no-op: verification for that context is its
+lane's join barrier (see "Lane placement and file ownership"). Definition
+validation refuses such a context's command selection unless it is empty or a
+subset of the barrier set, so commands are never silently discarded.
 
 Per-context validator overrides:
 
@@ -559,17 +567,37 @@ goes through the channel the verdict gives it, and everything else becomes an
 advisory of the matching kind. Their prose names no blocking field, because one
 profile is legal on either seat.
 
+## Lane placement and file ownership
+
+Where an execution context runs, and what it may write there, is AUTHORED on the context as `placement` — `contextPlacementSchema` in `src/lib/workflow-graph/definition-schemas.ts`, required with no runtime default. Deterministic seed-time lane assignment does not exist: a stored definition carrying no placement is a legacy shape migrated at its inflate boundary, never a shape defaulted at accept time. An optional `placement` would silently resurrect the replaced mechanism, so it stays required.
+
+Three grades, discriminated on `mode`:
+
+- `readOnly` — no repository write surface. On the reserved authored lane name `session` it runs on the session worktree itself: no worktree provisioned, no landing commit, no join. Its captured `outputSchema` payload is its only delivery channel, which is why an absent one is refused.
+- `owned` — a non-empty `ownedPaths` set of normalized repo-relative POSIX prefixes, each covering itself and everything beneath it at segment boundaries (`src/lib` does not swallow `src/libraries`). Entries are literal, never globs. The set does double duty: write envelope during the turn, commit scope at landing.
+- `full` — the whole tree, and therefore exclusive occupancy of its lane while it runs.
+
+Accept-time semantics live in `src/lib/workflow-graph/placement-validation.ts`, reached by every authoring surface through `validateAuthoredDefinition`: the lane-name grammar (`lane-identity.ts`, since a lane name becomes a branch and a worktree path segment), the session lane's read-only restriction, the read-only output contract, and pairwise ownership disjointness for same-lane members that no dependency path orders. Those checks are LEXICAL over declared strings; the symlink-resolved canonical re-check before two members are admitted concurrently belongs to the scheduler, because two prefixes that look distinct here can still resolve into one another on disk.
+
+Consequences to hold when touching lane code:
+
+- A lane hosts N members for one worktree and one fan-in join. Nothing may assume `laneId === contextId`, and no surface may infer a lane from a context id.
+- The write envelope is mechanical and fail-closed, not prompt discipline. `<worktree>/.git` is denied, so an agent cannot commit, branch, or reset; landing is the engine's, scoped to the member's frozen prefixes. Any hop that cannot carry or natively establish a present policy fails the turn — it never dispatches unrestricted.
+- `.cc` is reserved from authored ownership. The writable set is the member's per-context scratch root, its owned prefixes, its payload directory under the worktree's `.cc` namespace, and tmp; a session reader gets scratch and tmp only.
+- Whole-repo verification is a per-lane barrier at the join (`laneMergeValidation`), not a per-context gate. For an enveloped context, registered validation resolves as a no-op and automatic script validation is skipped, and definition validation refuses a `scriptValidator` command selection that is neither empty nor a subset of the barrier set rather than discarding it. Barrier coverage is recorded against the lane's member set frozen at join intent, so evidence names exactly which members one run covered.
+- A post-landing write in a shared worktree that no member's ownership or reserved namespace covers raises `ownership_violation` — resumable, and accepted by the plan-repair trigger.
+
 ## Land-gate invariant
 
-Scheduler eligibility for a worktree-isolation context's dependents requires the upstream's `mergeStatus === "merged-success"`. A completed-but-unmerged side branch does not satisfy a downstream context's dependency, because the downstream may fan out from a base that does not yet include the upstream's work.
+Scheduler eligibility requires an upstream's work to be VISIBLE from the lane the downstream will run on, not merely completed. A completed-but-unpublished upstream does not satisfy a downstream dependency, because the downstream may fan out from a base that does not yet include the upstream's work.
 
-The canonical check is `isContextLanded` in `src/lib/workflow-graph/validation.ts`:
+Visibility is lane-relative, and that is precisely what makes a shared lane cheap:
 
-- `status !== "completed"` → not landed.
-- `isolation === "session"` → landed when completed (no fan-in merge needed — work is visible in the session branch directly).
-- `isolation === "worktree"` → landed only when `mergeStatus === "merged-success"`.
+- Same lane — a landed upstream is visible to its lane-mates immediately, with no join at all. A same-lane downstream is schedulable as soon as its upstream's owned prefixes are committed.
+- Cross lane — the upstream's lane must have published through a join before its dependents run.
+- Read-only upstreams commit nothing; their contribution is the captured output payload, so completion alone satisfies a dependent.
 
-`getEligibleContextIds` uses `isContextLanded` for every upstream of every candidate context. A failed fan-in halts with `merge_precondition_failed` (or `merge_failure`) and persists `mergeStatus === "merged-failed"` on the side-branch context, which `resume()` queues for retry via `pendingMergeRetry` (loop-owned, manager-persisted intent).
+`isUpstreamVisibleToDownstream` and `isContextOutputCommittedToLane` (`src/lib/workflow-graph/lane-readiness.ts`) are the lane-aware predicates `getEligibleContextIds` composes. `isContextLanded` in `src/lib/workflow-graph/validation.ts` survives for the legacy pre-lane shapes only — a context with no lane assignment, publishing either straight to the session worktree or through a per-context fan-in merge — and a lane-aware caller must not reach for it. A failed fan-in halts with `merge_precondition_failed` (or `merge_failure`) and persists `mergeStatus === "merged-failed"` on the side-branch context, which `resume()` queues for retry via `pendingMergeRetry` (loop-owned, manager-persisted intent).
 
 Join merges (context_merge / final_publish) run the Smart Merge machine with `autoResolve: true`, so conflicts get LLM resolution + pre-merge validation per pairwise lane merge. The join runner aborts any unconcluded merge in the source lane worktree before merging (self-healing preflight) and retries a conflicted merge once from a clean tree before failing. A `join_failure` halt is recoverable: `resume()` resets concluded-failed joins to `pending` (per-lane `mergedSourceLaneIds` progress survives), optionally attaching per-file `conflictGuidance` (resume body → join state → merge machine `decisions`), and the join's persisted `conflicts.analysis` powers the retry-with-guidance UI (`JoinConflictRecoveryCard`). An operator who resolves manually must **commit** the merge in the lane worktree — an uncommitted mid-merge state is aborted by the preflight on retry.
 
@@ -577,7 +605,7 @@ Context-join scheduling distinguishes dependency eligibility from lane schedulab
 
 ## Lane publication and the delivery boundary
 
-Every provisioned worktree context is assigned an execution lane — terminal contexts included. Lane work publishes exclusively through join merges (`context_merge`, and the quiescence-synthesized `final_publish`); the legacy `laneId: null` fan-in path is **migration-only**, retained solely so resumed executions persisted before lanes can still land their contexts. Never route new scheduling through it.
+Every write-capable context is a member of exactly one authored lane — terminal contexts included — and several members may share one. A member's work reaches its lane through an ownership-scoped landing commit; the lane's work reaches the session branch exclusively through join merges (`context_merge`, and the quiescence-synthesized `final_publish`). Read-only contexts publish no commit: a session reader is assigned no lane at all and resolves through an explicit sentinel ahead of any lane-row lookup, while a group-lane reader is accounted for at its lane's join by a no-commit inclusion marker rather than a commit snapshot. The legacy `laneId: null` fan-in path is **migration-only**, retained solely so resumed executions persisted before lanes can still land their contexts. Never route new scheduling through it.
 
 `final_publish` joins target the session lane and stamp `executionId` with `finalPublish: false`: the delivery gate enforces the per-criterion proof floor at the session boundary (a refusal halts the workflow), but delivery itself — `finalPublish: true` and a linked spec execution transitioning to Delivered — belongs solely to the gated merge that lands on the project's delivery target. Fresh user merges resolve their spec-execution association once, at dispatch, through the registered merge-association port (`src/lib/workflows/merge/association-port.ts`; resolver policy in `src/lib/specs/merge-association.ts`); conflict retries copy provenance from the prior job, and merges of sessions hosting no active spec execution remain pass-through.
 
