@@ -272,8 +272,13 @@ export function compileSpecExecutionPlan(
       group,
       members.map(({ task }) => task),
     );
+    const contextId = requiredMapValue(
+      contextIdsByGroupId,
+      group.id,
+      "execution context",
+    );
     return {
-      id: requiredMapValue(contextIdsByGroupId, group.id, "execution context"),
+      id: contextId,
       title,
       description: contextDescription(
         group,
@@ -282,6 +287,11 @@ export function compileSpecExecutionPlan(
       acceptanceCriteria: contextAcceptanceCriteria(
         members.map(({ criterionBriefs }) => criterionBriefs),
       ),
+      // A single-member lane named after the context, which is byte-for-byte
+      // the lane a compiled context ran on before placement was authored. An
+      // element id that cannot be a lane name now fails definition validation
+      // with a located issue instead of crashing at worktree provisioning.
+      placement: { lane: contextId, mode: "full" as const },
       origin: {
         sourceUri: revisionSourceUri,
         label: `${input.spec.slug} ${title}`,

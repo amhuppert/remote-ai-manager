@@ -17,6 +17,7 @@ import { resolveBranchPrefix } from "@/lib/config/cascade";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import { parseDirtyPaths } from "@/lib/git/worktree";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import { validateLaneId } from "@/lib/workflow-graph/lane-identity";
 
 type ExecFileAsync = (
   cmd: string,
@@ -28,8 +29,6 @@ const defaultExecFileAsync: ExecFileAsync = (cmd, args, opts) =>
   timedExecFile(cmd, args, { ...opts, eventPrefix: "init-script" });
 
 const defaultLogger = createLogger("graph-workflow-parallel-worktrees");
-
-const LANE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 export interface ProvisionInput {
   projectPath: string;
@@ -115,54 +114,6 @@ export interface ParallelWorktreesDeps {
     projectPath: string;
     worktreePath: string;
   }): Promise<void>;
-}
-
-/**
- * Validate that a lane id is safe to splice into a git branch name and a
- * filesystem path. Lane ids and per-context ids share the same constraints —
- * one-context lanes have laneId === contextId, so this single validator
- * covers both. The validator is exported under a context-named alias so
- * existing callers continue to compile while the workflow generalizes to
- * lanes.
- */
-export function validateLaneId(laneId: string): void {
-  if (!LANE_ID_PATTERN.test(laneId)) {
-    throw new Error(
-      `Invalid laneId ${JSON.stringify(laneId)}: must match /^[A-Za-z0-9_.-]+$/`,
-    );
-  }
-  if (laneId.startsWith(".") || laneId.startsWith("-")) {
-    throw new Error(
-      `Invalid laneId ${JSON.stringify(laneId)}: must not start with '.' or '-'`,
-    );
-  }
-  if (laneId.includes("..")) {
-    throw new Error(
-      `Invalid laneId ${JSON.stringify(laneId)}: must not contain '..'`,
-    );
-  }
-  if (laneId.endsWith(".") || laneId.endsWith("-")) {
-    throw new Error(
-      `Invalid laneId ${JSON.stringify(laneId)}: must not end with '.' or '-'`,
-    );
-  }
-  if (laneId.endsWith(".lock")) {
-    throw new Error(
-      `Invalid laneId ${JSON.stringify(laneId)}: must not end with '.lock'`,
-    );
-  }
-}
-
-/** Backward-compatible alias retained while callers migrate to validateLaneId. */
-export function validateContextId(contextId: string): void {
-  try {
-    validateLaneId(contextId);
-  } catch (err) {
-    if (err instanceof Error) {
-      throw new Error(err.message.replace(/laneId/g, "contextId"));
-    }
-    throw err;
-  }
 }
 
 /**

@@ -224,6 +224,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         title: "Implement the thing",
         description: "Detailed description of the context",
         acceptanceCriteria: "All tests pass and the build is green",
+        placement: { lane: "ctx-1", mode: "full" },
         origin: {
           sourceUri: "workflow-source:maximal/context/ctx-1",
           label: "Maximal context source",
@@ -330,6 +331,7 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         id: "ctx-2",
         title: "Downstream context",
         acceptanceCriteria: "Downstream criteria satisfied",
+        placement: { lane: "ctx-2", mode: "full" },
       },
       // A worker + independent-judge loop body. Both contexts stay minimal
       // apart from the judge's outputSchema, which the loop's `until` predicate
@@ -338,11 +340,13 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         id: "ctx-loop-worker",
         title: "Loop worker",
         acceptanceCriteria: "Worker produced a revision",
+        placement: { lane: "ctx-loop-worker", mode: "full" },
       },
       {
         id: "ctx-loop-judge",
         title: "Loop judge",
         acceptanceCriteria: "Judge recorded a verdict",
+        placement: { lane: "ctx-loop-judge", mode: "full" },
         outputSchema: {
           type: "object",
           properties: { verdict: { type: "string", enum: ["pass", "fail"] } },

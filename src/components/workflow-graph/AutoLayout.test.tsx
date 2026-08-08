@@ -23,6 +23,7 @@ function makeContext(id: string) {
     id,
     title: id,
     acceptanceCriteria: "TBD",
+    placement: { lane: id, mode: "full" as const },
     implementer: {
       id: "implementer",
       profile: { tier: "builtin" as const, id: "general-implementer" },

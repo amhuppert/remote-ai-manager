@@ -122,6 +122,11 @@ export function addExecutionContext(
     id: contextId,
     title: `Execution Context ${contextNumber}`,
     acceptanceCriteria: "",
+    // A single-member lane of its own: the safest placement to hand a context
+    // nobody has scoped yet, and the one that matches what the builder produced
+    // before placement was authorable. The sequential id is charset-legal by
+    // construction, so the lane name is always a valid branch/worktree segment.
+    placement: { lane: contextId, mode: "full" },
   });
 
   layout.contextPositions[contextId] = {

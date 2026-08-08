@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { type GitClient } from "@/lib/git/client";
+import { validateLaneId } from "./lane-identity";
 import {
   createParallelWorktrees,
   deriveLaneTargets,
-  validateLaneId,
 } from "./parallel-worktrees";
 
 function makeFakeClient(

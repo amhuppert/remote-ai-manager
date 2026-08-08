@@ -405,6 +405,11 @@ function applyOperation(
         id: operation.id,
         title: operation.title,
         acceptanceCriteria: operation.acceptanceCriteria,
+        // A single-member lane of its own, matching the one-worktree-per-context
+        // shape an added context had before placement was authored. The
+        // resulting definition is re-validated below, so an id that cannot be a
+        // lane name is refused with a located issue.
+        placement: { lane: operation.id, mode: "full" },
         ...(operation.description !== undefined
           ? { description: operation.description }
           : {}),

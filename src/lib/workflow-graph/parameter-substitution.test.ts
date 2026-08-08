@@ -52,6 +52,7 @@ function definition(
         title: "Build {{inputs.feature}}",
         description: "Context for {{inputs.feature}}",
         acceptanceCriteria: "{{inputs.feature}} works",
+        placement: { lane: "ctx-1", mode: "full" },
       },
     ],
     tasks: [
@@ -153,6 +154,7 @@ describe("substituteContent", () => {
             id: "ctx-1",
             title: "Build {{inputs.feature}}",
             acceptanceCriteria: "Works",
+            placement: { lane: "ctx-1", mode: "full" },
             scriptValidator: { commands: ["pre-merge"] },
             humanApprovalGate: { enabled: true },
           },
@@ -205,7 +207,12 @@ describe("substituteContent", () => {
           },
         ],
         executionContexts: [
-          { id: "ctx-1", title: "Ctx", acceptanceCriteria: "ok" },
+          {
+            id: "ctx-1",
+            title: "Ctx",
+            acceptanceCriteria: "ok",
+            placement: { lane: "ctx-1", mode: "full" },
+          },
         ],
         charter: {
           mission: "Build it",
@@ -246,7 +253,12 @@ describe("substituteContent", () => {
           },
         ],
         executionContexts: [
-          { id: "ctx-1", title: "Ctx", acceptanceCriteria: "ok" },
+          {
+            id: "ctx-1",
+            title: "Ctx",
+            acceptanceCriteria: "ok",
+            placement: { lane: "ctx-1", mode: "full" },
+          },
         ],
         charter: {
           mission: "Build it",
@@ -292,7 +304,12 @@ describe("substituteContent", () => {
           },
         ],
         executionContexts: [
-          { id: "ctx-1", title: "Ctx", acceptanceCriteria: "ok" },
+          {
+            id: "ctx-1",
+            title: "Ctx",
+            acceptanceCriteria: "ok",
+            placement: { lane: "ctx-1", mode: "full" },
+          },
         ],
         charter: {
           mission: "Build it",
@@ -397,7 +414,12 @@ describe("substituteContent", () => {
           ],
         },
         executionContexts: [
-          { id: "ctx-1", title: "Plain", acceptanceCriteria: "ok" },
+          {
+            id: "ctx-1",
+            title: "Plain",
+            acceptanceCriteria: "ok",
+            placement: { lane: "ctx-1", mode: "full" },
+          },
         ],
         tasks: [
           {
@@ -449,6 +471,7 @@ describe("mapScannedFields is pinned to forEachScannedField", () => {
           title: "SENTINEL_title",
           description: "SENTINEL_ctxDescription",
           acceptanceCriteria: "SENTINEL_acceptanceCriteria",
+          placement: { lane: "ctx-1", mode: "full" },
         },
       ],
       tasks: [

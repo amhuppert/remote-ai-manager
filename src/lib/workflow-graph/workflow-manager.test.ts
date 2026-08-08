@@ -8452,6 +8452,7 @@ describe("graph workflow manager", () => {
                 id: "ctx-1",
                 title: "One",
                 acceptanceCriteria: "ok",
+                placement: { lane: "ctx-1", mode: "full" },
                 implementer: {
                   id: "implementer",
                   profile: { tier: "builtin", id: "general-implementer" },
@@ -8475,6 +8476,7 @@ describe("graph workflow manager", () => {
                 id: "ctx-2",
                 title: "Two",
                 acceptanceCriteria: "ok",
+                placement: { lane: "ctx-2", mode: "full" },
                 implementer: {
                   id: "implementer",
                   profile: { tier: "builtin", id: "general-implementer" },

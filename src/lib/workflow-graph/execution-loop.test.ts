@@ -77,6 +77,7 @@ function createSingleContextDefinition(
         title: "Do work",
         description: "Single context",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-1", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -410,6 +411,7 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         title: "Context one",
         description: "First",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-1", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -428,6 +430,7 @@ function createTwoParkedContextDefinition(): WorkflowSemanticDefinition {
         title: "Context two",
         description: "Second",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-2", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },

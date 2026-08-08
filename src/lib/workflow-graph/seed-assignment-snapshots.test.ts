@@ -174,6 +174,7 @@ describe("seedAssignmentSnapshots (R4)", () => {
           id: "worker",
           title: "Worker",
           acceptanceCriteria: "The worker emits a verdict",
+          placement: { lane: "worker", mode: "full" },
           outputSchema: {
             type: "object",
             properties: { verdict: { type: "string" } },

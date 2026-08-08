@@ -280,6 +280,7 @@ function createParallelDefinition(
       title: `Context ${id}`,
       description: `${id} description`,
       acceptanceCriteria: "TBD",
+      placement: { lane: id, mode: "full" as const },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -1776,6 +1777,7 @@ describe("execution loop — parallel integration", () => {
         title: `Context ${id}`,
         description: `${id} description`,
         acceptanceCriteria: "TBD",
+        placement: { lane: id, mode: "full" as const },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -1955,6 +1957,7 @@ describe("execution loop — parallel integration", () => {
         title: `Context ${id}`,
         description: `${id} description`,
         acceptanceCriteria: "TBD",
+        placement: { lane: id, mode: "full" as const },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },

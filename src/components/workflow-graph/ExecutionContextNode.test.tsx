@@ -14,6 +14,7 @@ function makeData(
       id: "ctx-1",
       title: "Triage the failure report",
       acceptanceCriteria: "A verdict is recorded.",
+      placement: { lane: "ctx-1", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },

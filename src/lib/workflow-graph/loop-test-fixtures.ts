@@ -143,6 +143,7 @@ export function context(
     id,
     title: id,
     acceptanceCriteria: `${id} is done`,
+    placement: { lane: id, mode: "full" },
     ...overrides,
   };
 }

@@ -20,6 +20,7 @@ function makeContext(
     description:
       "Implement REST API endpoints for user management with authentication and validation.",
     acceptanceCriteria: "All REST endpoints exist and pass integration tests.",
+    placement: { lane: "ctx-1", mode: "full" },
     implementer: {
       id: "implementer",
       profile: { tier: "builtin", id: "general-implementer" },

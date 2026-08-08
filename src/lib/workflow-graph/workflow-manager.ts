@@ -36,10 +36,10 @@ import {
   resetExecutionContextAssignment,
 } from "@/lib/workflow-graph/reset-assignment";
 import {
-  validateContextId,
   type ParallelWorktrees,
   type ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
+import { validateContextId } from "@/lib/workflow-graph/lane-identity";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";

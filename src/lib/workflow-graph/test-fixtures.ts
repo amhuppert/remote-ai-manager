@@ -203,6 +203,7 @@ export function createWorkflowDefinition(
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "Plan is documented",
+        placement: { lane: "plan", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
           model: "opus",
@@ -223,6 +224,7 @@ export function createWorkflowDefinition(
         title: "Implement",
         description: "Implement the feature",
         acceptanceCriteria: "Feature implemented",
+        placement: { lane: "implement", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
           model: "sonnet",
@@ -252,6 +254,7 @@ export function createWorkflowDefinition(
         title: "Verify",
         description: "Verify the result",
         acceptanceCriteria: "Verification passes",
+        placement: { lane: "verify", mode: "full" },
         implementer: makeImplementerAssignment({
           backend: "claude",
           model: "opus",

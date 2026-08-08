@@ -5,6 +5,8 @@
  * A context is reviewed by an ordered cohort of validator assignments, so lane
  * KIND alone no longer identifies a lane. This module owns the one encoding
  * every addressing surface shares:
+ *  - `laneIdViolation` / `validateLaneId` — the charset an authored lane name
+ *    must satisfy to be spliceable into a branch name and a worktree path;
  *  - `laneStateKey` — the `execution.laneStates[contextId]` inner key;
  *  - `graphLaneId` / `parseGraphLaneId` — the primitive-layer lane id the
  *    shared `LaneStore`/`LaneService` stack addresses lanes by;
@@ -27,6 +29,72 @@ import {
 
 const LANE_ID_SEPARATOR = "\u0000";
 const ASSIGNMENT_SEPARATOR = ":";
+
+const LANE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
+
+/**
+ * The authored spelling of the session lane: the session worktree itself,
+ * which hosts read-only contexts and is never provisioned as a group lane.
+ *
+ * The internal id the lane machinery addresses it by is `SESSION_LANE_ID`
+ * (`lane-join.ts`). Both spellings are refused as authored GROUP lane names —
+ * `session` because it denotes the session worktree rather than a provisioned
+ * lane, `__session__` because an author writes `session`.
+ */
+export const SESSION_LANE_NAME = "session";
+
+/**
+ * Why `laneId` is unsafe to splice into a git branch name and a filesystem
+ * path, or null when it is safe.
+ *
+ * The reason is RETURNED rather than thrown so definition validation can locate
+ * an illegal authored lane name on the context that declared it, while the
+ * provisioning callers keep the throwing form below. Lane ids and per-context
+ * ids share these constraints — a single-context lane's id is its context id —
+ * so this one grammar covers both.
+ */
+export function laneIdViolation(laneId: string): string | null {
+  if (!LANE_ID_PATTERN.test(laneId)) {
+    return "must match /^[A-Za-z0-9_.-]+$/";
+  }
+  if (laneId.startsWith(".") || laneId.startsWith("-")) {
+    return "must not start with '.' or '-'";
+  }
+  if (laneId.includes("..")) {
+    return "must not contain '..'";
+  }
+  if (laneId.endsWith(".") || laneId.endsWith("-")) {
+    return "must not end with '.' or '-'";
+  }
+  if (laneId.endsWith(".lock")) {
+    return "must not end with '.lock'";
+  }
+  return null;
+}
+
+/**
+ * Validate that a lane id is safe to splice into a git branch name and a
+ * filesystem path. The validator is exported under a context-named alias below
+ * so callers that still address per-context lanes keep reading naturally.
+ */
+export function validateLaneId(laneId: string): void {
+  const violation = laneIdViolation(laneId);
+  if (violation !== null) {
+    throw new Error(`Invalid laneId ${JSON.stringify(laneId)}: ${violation}`);
+  }
+}
+
+/** Backward-compatible alias retained while callers migrate to validateLaneId. */
+export function validateContextId(contextId: string): void {
+  try {
+    validateLaneId(contextId);
+  } catch (err) {
+    if (err instanceof Error) {
+      throw new Error(err.message.replace(/laneId/g, "contextId"));
+    }
+    throw err;
+  }
+}
 
 /** Lane kinds whose lanes are per-assignment rather than per-context. */
 const ASSIGNMENT_SCOPED_LANES: ReadonlySet<GraphWorkflowLaneKind> = new Set([

@@ -28,6 +28,7 @@ import {
   lintParameterReferences,
   validateParameterDeclarations,
 } from "./parameter-validation";
+import { validatePlacements } from "./placement-validation";
 import { validatePrerequisites } from "./prerequisite-validation";
 import { activeDependencySourceIds, routeVerdict } from "./route-projection";
 import { projectExecutionRoutes } from "./execution-routes";
@@ -286,6 +287,14 @@ export function validateWorkflowDefinition(
  * Prerequisite shape checks (`validatePrerequisites`) compose here ALONGSIDE the
  * parameter checks — neither owns the other — so both author paths and both
  * tiers reject an invalid prerequisite at the same choke point (gwt R4.4, R4.6).
+ *
+ * Placement checks (`validatePlacements`) compose here rather than inside
+ * `validateWorkflowDefinition` for the mirror of the reason `outputSchema` goes
+ * the other way: `placement` is an AUTHORED field with no counterpart on the
+ * resolved shape, so a tier-shared check would report every resolved context as
+ * placement-less. The authored composite is nonetheless the choke point that
+ * matters for lwp R1 — validate, create, replace, and the saved-edit applier
+ * all arrive here.
  */
 export function validateAuthoredDefinition(
   definition: WorkflowSemanticDefinition,
@@ -295,6 +304,7 @@ export function validateAuthoredDefinition(
     ...validatePrerequisites(definition.prerequisites),
     ...validateParameterDeclarations(definition.parameters),
     ...lintParameterReferences(definition),
+    ...validatePlacements(definition),
     ...validateWorkflowDefinition(definition, deps).errors,
   ];
 

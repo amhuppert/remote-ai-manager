@@ -107,6 +107,101 @@ export type GraphWorkflowContextRoutingPolicy = z.infer<
   typeof graphWorkflowContextRoutingPolicySchema
 >;
 
+/**
+ * One authored ownership entry: a normalized repo-relative POSIX path that
+ * covers itself and everything beneath it (R1).
+ *
+ * The normalization rules mirror the specs `touchedPath` schema rather than
+ * importing it. Ownership is a workflow-graph concept the spec compiler maps
+ * `touchedPaths` ONTO, so the two are free to diverge — and this one already
+ * does: it additionally denies the repository root and git metadata. That
+ * denial is unconditional because an agent able to write `.git` could commit,
+ * branch, or reset the lane out from under the engine, which is precisely what
+ * the ownership envelope exists to make impossible. The `.git` comparison folds
+ * case: a case-insensitive filesystem resolves `.GIT` to the same directory, so
+ * a literal-only refusal would be bypassable on macOS.
+ *
+ * An entry is a LITERAL path, never a glob (spec non-goal) — a metacharacter is
+ * read as an ordinary filename character here, and the write-policy adapter is
+ * what refuses one, because that is the layer that knows what the backend can
+ * actually enforce. Directory-grain entries cover the need a glob would.
+ */
+export const ownedPathSchema = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    const reject = (message: string): void => {
+      ctx.addIssue({ code: "custom", message });
+    };
+    if (value === "." || value === "./") {
+      reject(
+        `owned path "${value}" names the repository root; declare the directories the context owns instead`,
+      );
+      return;
+    }
+    const segments = value.split("/");
+    if (
+      value !== value.trim() ||
+      value.startsWith("/") ||
+      /^[A-Za-z]:/.test(value) ||
+      value.includes("\\") ||
+      value.endsWith("/") ||
+      segments.some(
+        (segment) =>
+          segment.length === 0 || segment === "." || segment === "..",
+      )
+    ) {
+      reject(
+        `owned path "${value}" must be a normalized repo-relative POSIX path without parent segments or trailing separators`,
+      );
+      return;
+    }
+    if (segments[0]?.toLowerCase() === ".git") {
+      reject(
+        `owned path "${value}" names repository metadata; .git is denied regardless of authored ownership`,
+      );
+    }
+  });
+export type OwnedPath = z.infer<typeof ownedPathSchema>;
+
+const placementLaneShape = {
+  /**
+   * The authored lane name. Grammar (charset, reserved session identifiers,
+   * the session lane's read-only restriction) is checked in
+   * `placement-validation.ts` rather than here, so the refusal can name the
+   * context that declared it — the same reason `outputSchema` parses
+   * permissively and is refused at accept time.
+   */
+  lane: z.string().trim().min(1),
+};
+
+/**
+ * Where an execution context runs and what it may write (R1, decision D1).
+ *
+ * Discriminated on `mode` so the three grades carry exactly their own
+ * obligations: `owned` requires a non-empty prefix set, and both other grades
+ * forbid one — `.strict()` turns a stray `ownedPaths` on a full-access or
+ * read-only placement into a located refusal rather than a silently ignored
+ * declaration of intent. An empty array is invalid by construction: `readOnly`
+ * is the explicit grade for a context with no write surface, so an empty
+ * `ownedPaths` would be a second, ambiguous spelling of it.
+ */
+export const contextPlacementSchema = z.discriminatedUnion("mode", [
+  z.object({ ...placementLaneShape, mode: z.literal("full") }).strict(),
+  z
+    .object({
+      ...placementLaneShape,
+      mode: z.literal("owned"),
+      ownedPaths: z.array(ownedPathSchema).min(1, {
+        message:
+          'an owning placement must declare at least one owned path; use mode "readOnly" for a context with no write surface',
+      }),
+    })
+    .strict(),
+  z.object({ ...placementLaneShape, mode: z.literal("readOnly") }).strict(),
+]);
+export type ContextPlacement = z.infer<typeof contextPlacementSchema>;
+
 export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
@@ -115,6 +210,11 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
     z.string().trim().min(1).optional(),
   ),
   acceptanceCriteria: z.string().trim().min(1),
+  // Required, with no runtime default: deterministic seed-time lane assignment
+  // is fully replaced by authored placement (locked fork F1), and an optional
+  // field would silently resurrect it. Stored definitions written before
+  // placement existed are migrated at their inflate boundary, never here.
+  placement: contextPlacementSchema,
   outputSchema: contextOutputSchemaSchema.optional(),
   routing: graphWorkflowContextRoutingPolicySchema.optional(),
   implementer: agentAssignmentSchema.optional(),

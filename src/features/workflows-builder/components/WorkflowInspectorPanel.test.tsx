@@ -1097,6 +1097,7 @@ function bareContextDefinition(
         id: "context-plan",
         title: "Plan",
         acceptanceCriteria: "Plan is documented",
+        placement: { lane: "context-plan", mode: "full" },
         ...(outputSchema ? { outputSchema } : {}),
       },
     ],

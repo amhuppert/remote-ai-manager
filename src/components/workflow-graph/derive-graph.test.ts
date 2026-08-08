@@ -95,6 +95,7 @@ describe("deriveNodes", () => {
           title: "My Context",
           description: "desc",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-1", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -131,6 +132,7 @@ describe("deriveNodes", () => {
           id: "ctx-1",
           title: "A",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-1", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -148,6 +150,7 @@ describe("deriveNodes", () => {
           id: "ctx-2",
           title: "B",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-2", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -183,6 +186,7 @@ describe("deriveNodes", () => {
           id: "ctx-1",
           title: "A",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-1", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -245,6 +249,7 @@ describe("deriveNodes", () => {
           id: "ctx-1",
           title: "A",
           acceptanceCriteria: "TBD",
+          placement: { lane: "ctx-1", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -325,6 +330,7 @@ describe("deriveNodes wait state attachment", () => {
       id,
       title: id,
       acceptanceCriteria: "TBD",
+      placement: { lane: id, mode: "full" as const },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -663,6 +669,7 @@ describe("getDisplayValidators", () => {
       id: "ctx-1",
       title: "Ctx",
       acceptanceCriteria: "AC",
+      placement: { lane: "ctx-1", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin" as const, id: "general-implementer" },
@@ -945,6 +952,7 @@ describe("getDisplayApprovalGate", () => {
       id: "ctx-1",
       title: "Ctx",
       acceptanceCriteria: "AC",
+      placement: { lane: "ctx-1", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin" as const, id: "general-implementer" },
