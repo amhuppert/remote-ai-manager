@@ -3086,6 +3086,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           model: input.model,
           reasoningEffort: input.reasoningEffort,
           toolServer: input.toolServer,
+          placement: { lane: "build", mode: "full" },
         });
       },
       now: () => "2026-03-27T16:00:00.000Z",
@@ -3164,6 +3165,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           model: input.model,
           reasoningEffort: input.reasoningEffort,
           toolServer: input.toolServer,
+          placement: { lane: "build", mode: "full" },
         });
       },
       now: () => "2026-03-27T16:00:00.000Z",

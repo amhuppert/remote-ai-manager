@@ -24,6 +24,7 @@ import type {
   ReadyResult,
 } from "../conversation";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
+import type { FsWritePolicy } from "../task";
 import type {
   ClaudeCapabilityApplyResult,
   ClaudeCapabilityApplyTarget,
@@ -190,6 +191,8 @@ class ClaudeConversationRuntime
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
   readonly alignmentVersion: number | null;
+  /** The write envelope this session was established under; undefined when unrestricted. */
+  readonly fsWritePolicy: FsWritePolicy | undefined;
 
   private _status: "alive" | "dead" = "alive";
   private querySession: QuerySession;
@@ -207,6 +210,7 @@ class ClaudeConversationRuntime
       reasoningEffort?: string;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
       alignmentVersion?: number | null;
+      fsWritePolicy?: FsWritePolicy;
       onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
       /**
        * Mid-session capability apply hook. Production wires this to
@@ -225,6 +229,7 @@ class ClaudeConversationRuntime
     this.reasoningEffort = opts.reasoningEffort;
     this.outputFormat = opts.outputFormat;
     this.alignmentVersion = opts.alignmentVersion ?? null;
+    this.fsWritePolicy = opts.fsWritePolicy;
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
     this.onCapabilityConfigApplied =
       opts.onCapabilityConfigApplied ?? (async () => {});
@@ -895,6 +900,15 @@ const claudeConversationBackendFactory = {
       plugins: managedSkills.plugins,
       settingSources: ["user", "project", "local"],
       disallowedTools: ["AskUserQuestion"],
+      // The session refuses to be created when it cannot establish this, so an
+      // implementer confined to its owned prefixes never degrades to an
+      // unconfined session.
+      ...(input.fsWritePolicy !== undefined
+        ? {
+            fsWritePolicy: input.fsWritePolicy,
+            mcpServerKeys: Object.keys(translatedServers),
+          }
+        : {}),
       externalTurnHandler,
       onBackgroundTasksLost: input.onBackgroundTasksLost,
       onBackgroundActivity: input.onBackgroundActivity,
@@ -909,6 +923,9 @@ const claudeConversationBackendFactory = {
       reasoningEffort: input.reasoningEffort,
       outputFormat: input.outputFormat,
       alignmentVersion: input.alignmentVersion ?? null,
+      ...(input.fsWritePolicy !== undefined
+        ? { fsWritePolicy: input.fsWritePolicy }
+        : {}),
       onPortableMcpApplied: (config) => {
         currentPortableConfig = config;
       },

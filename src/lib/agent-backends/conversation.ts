@@ -4,6 +4,7 @@ import type {
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId, AgentSessionRef } from "@/lib/shared/schemas";
+import type { FsWritePolicy } from "./task";
 import type { ConversationToolingOverrides } from "./types";
 import type {
   AgentFailureClassification,
@@ -202,6 +203,13 @@ export interface ConversationBackendRuntime {
    * version to decide whether the runtime must be recreated.
    */
   readonly alignmentVersion: number | null;
+  /**
+   * The write envelope baked into this runtime at creation, or undefined for an
+   * unrestricted one. Read by the caller's recreation check: an envelope is
+   * established when the backend session starts, so a turn whose policy differs
+   * from the live runtime's needs a new runtime rather than a new prompt.
+   */
+  readonly fsWritePolicy?: FsWritePolicy;
 
   sendTurn(
     input: ConversationBackendTurnInput,
@@ -288,6 +296,15 @@ export interface ConversationBackendCreateInput {
    * dispatch could mint one; a lane without it simply cannot expand the graph.
    */
   workflowLaneCapability?: string;
+  /**
+   * Server-derived filesystem-write envelope this runtime's turns execute under
+   * (see `fsWritePolicySchema`). Composed by the graph-workflow implementer
+   * dispatch path for a context that declares ownership, absent for every
+   * unrestricted conversation. A runtime that cannot establish a policy it was
+   * given REFUSES to be created: absent means unrestricted, so a factory that
+   * degraded to "created it anyway" would silently un-confine the lane.
+   */
+  fsWritePolicy?: FsWritePolicy;
   /**
    * Optional callback invoked by the backend runtime when SDK messages arrive
    * between caller-initiated turns — e.g. Claude Code's background-task

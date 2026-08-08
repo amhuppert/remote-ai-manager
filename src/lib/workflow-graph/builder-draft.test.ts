@@ -31,6 +31,8 @@ describe("workflow builder draft helpers", () => {
       id: "context-4",
       title: "Execution Context 4",
       acceptanceCriteria: "",
+      // A single-member lane of its own is what the builder can safely assume
+      // for a context nobody has placed yet.
       placement: { lane: "context-4", mode: "full" },
     });
     expect(result.layout.contextPositions["context-4"]).toEqual({

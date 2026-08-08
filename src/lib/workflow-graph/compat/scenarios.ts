@@ -50,6 +50,15 @@ function readJson(absolutePath: string): unknown {
   return JSON.parse(readFileSync(absolutePath, "utf8"));
 }
 
+/**
+ * The recorded pre-D4 definition exactly as captured, with nothing applied.
+ *
+ * Deliberately raw: these bytes are the evidence, and a reader that quietly
+ * migrated them would leave nothing able to prove a fixture is still
+ * placement-less. The migration every real load applies belongs to
+ * {@link inflateDefinitionFixture}, so a caller states which of the two it
+ * means.
+ */
 export function readDefinitionFixture(scenarioName: string): unknown {
   return readJson(fixturePath(`${scenarioName}.definition.json`));
 }

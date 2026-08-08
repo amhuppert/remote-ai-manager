@@ -458,7 +458,7 @@ describe("validateWorkflowPlan", () => {
         ).toBe(true);
       });
 
-      it("names the context as the use site for a non-assignment shape error", () => {
+      it("names the context, and no profile, for a non-assignment shape error", () => {
         const definition = createWorkflowDefinition();
         const result = validateWorkflowPlan(
           makePlan({
@@ -474,11 +474,14 @@ describe("validateWorkflowPlan", () => {
         const issue = result.issues.find(
           (i) => i.path === "definition.executionContexts.0.title",
         );
-        // The array index is not what an author calls the context, so a shape
-        // refusal mounted on the context itself is located by its id.
+        // A shape refusal mounted on the context reads identically wherever it
+        // was authored, and an array index is not what an author calls the
+        // context — so the use site is the context id. There is no assignment
+        // here, so there is no profile to name either.
         expect(issue?.message).toContain(
-          'Use site: the context "context-plan"',
+          `Use site: the context "${definition.executionContexts[0]?.id}"`,
         );
+        expect(issue?.message).not.toContain("agent profile");
       });
     });
   });

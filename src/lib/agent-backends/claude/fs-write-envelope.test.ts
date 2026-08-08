@@ -46,6 +46,17 @@ describe("buildClaudeFsWriteEnvelope", () => {
     });
   });
 
+  it("puts the run's working root at the head of the allowlist, never the worktree", () => {
+    // The sandbox's default writable set is the working directory AND its
+    // subdirectories, so the working root is part of the envelope rather than
+    // the caller's choice: a run whose cwd is the confined worktree can write
+    // anywhere in it however narrow the allowlist is.
+    const envelope = envelopeOf(policy());
+
+    expect(envelope.workingDirectory).toBe(SCRATCH);
+    expect(envelope.workingDirectory).not.toBe(WORKTREE);
+  });
+
   it("denies anything not pre-approved instead of prompting or bypassing", () => {
     const envelope = envelopeOf(policy());
 

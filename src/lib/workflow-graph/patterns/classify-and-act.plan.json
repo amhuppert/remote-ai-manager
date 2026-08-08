@@ -127,7 +127,7 @@
         "contextId": "ctx-triage",
         "order": 1,
         "title": "Classify the report's severity",
-        "instructions": "Read the bug report named by the rank-1 source of truth. Reproduce it if the steps allow, and note what you observed. Then classify it as exactly one of: 'blocker' (users are broken now, or data is at risk), 'defect' (wrong behavior on the normal path, with a workaround or limited blast radius), 'enhancement' (the software behaves as designed and the report asks for more), or 'not-a-bug' (the report is a misunderstanding, a duplicate, or not reproducible). Your final output must be the structured verdict: the severity plus a rationale citing the evidence you gathered. Do not start any remediation work — the verdict alone selects which branch runs next."
+        "instructions": "Read the bug report named by the rank-1 source of truth. Reproduce it if the steps allow, and note what you observed. Then classify it as exactly one of: 'blocker' (users are broken now, or data is at risk), 'defect' (wrong behavior on the normal path, with a workaround or limited blast radius), 'enhancement' (the software behaves as designed and the report asks for more), or 'not-a-bug' (the report is a misunderstanding, a duplicate, or not reproducible). Your final output must be the structured verdict: the severity plus a rationale citing the evidence you gathered. Do not start any remediation work \u2014 the verdict alone selects which branch runs next."
       },
       {
         "id": "task-hotfix",

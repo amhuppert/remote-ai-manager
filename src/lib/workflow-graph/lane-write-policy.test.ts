@@ -84,12 +84,13 @@ describe("composeValidatorLaneWriteEnvelope", () => {
     const envelope = composeWith({}, created);
 
     expect(created).toHaveLength(2);
+    // Each id contributes exactly one segment, in order. These ids are already
+    // path-safe, so the segment mapping is the identity on them and the lane's
+    // directory still reads as the lane it belongs to.
     expect(created[0]).toBe(
       `${SCRATCH_ROOT}/exec-1/context-build/security-reviewer`,
     );
-    expect(created[1]).toBe(
-      `${SCRATCH_ROOT}/exec-1/context-build/security-reviewer/tmp`,
-    );
+    expect(created[1]).toBe(`${created[0]}/tmp`);
     expect(envelope.laneScratchDir).toBe(`/private${created[0]}`);
   });
 

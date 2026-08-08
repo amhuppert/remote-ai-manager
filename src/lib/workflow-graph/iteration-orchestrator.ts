@@ -20,6 +20,7 @@ import {
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowCollaborationContinuation } from "@/lib/workflow-graph/collaboration-schemas";
 import type {
+  ContextPlacement,
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
@@ -198,6 +199,12 @@ export interface GraphWorkflowRunAgentIterationInput {
    * session instructions advertise the tool (Req 8.1-8.4).
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * The context's authored placement. Forwarded so the runner composes this
+   * turn's write envelope from the ownership the definition declared, before
+   * any dispatch decision (R6).
+   */
+  placement?: ContextPlacement;
 }
 
 export interface GraphWorkflowAgentIterationResult {
@@ -4522,6 +4529,11 @@ export function createGraphWorkflowIterationOrchestrator(
         toolServer: toolServer.server,
         executionTarget: input.executionTarget,
         askUserQuestionsEnabled: context.askUserQuestions.enabled,
+        // Absent only for an execution seeded before placement existed; every
+        // authored context declares one.
+        ...(context.placement !== undefined
+          ? { placement: context.placement }
+          : {}),
       } as const;
 
       async function recordTurnOutcome(

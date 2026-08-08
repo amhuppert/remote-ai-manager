@@ -12,7 +12,7 @@
         "Each pass carries what the last one learned in its `handoff` field. A pass that repeats a rejected approach has spent budget for nothing."
       ],
       "nonGoals": [
-        "Widening the exit bar mid-loop to make a draft pass — the bar is set in the brief and only an operator amendment changes it.",
+        "Widening the exit bar mid-loop to make a draft pass \u2014 the bar is set in the brief and only an operator amendment changes it.",
         "Perfecting the work beyond the bar: the judge approves the first draft that clears it, not the best draft imaginable."
       ],
       "invariants": [
@@ -42,7 +42,7 @@
           "label": "Repository engineering contract",
           "type": "document",
           "locator": "AGENTS.md",
-          "description": "The engineering contract every draft has to satisfy — typing, testing, and architecture boundaries.",
+          "description": "The engineering contract every draft has to satisfy \u2014 typing, testing, and architecture boundaries.",
           "appliesTo": "all execution contexts",
           "accessPolicy": "worktree-relative"
         }
@@ -83,7 +83,7 @@
         "id": "context-draft",
         "title": "Draft or revise the work",
         "description": "Produce the next revision: the first draft on pass 1, and on every later pass a revision that addresses the judge's blocking items.",
-        "acceptanceCriteria": "The revision addresses every blocking item the previous pass's judge recorded, or says explicitly why an item is not actionable. The work itself is complete enough to be judged — not a plan for work. The captured output summarizes what changed this pass and hands the next pass what it needs to know.",
+        "acceptanceCriteria": "The revision addresses every blocking item the previous pass's judge recorded, or says explicitly why an item is not actionable. The work itself is complete enough to be judged \u2014 not a plan for work. The captured output summarizes what changed this pass and hands the next pass what it needs to know.",
         "placement": {
           "lane": "context-draft",
           "mode": "full"
@@ -134,7 +134,7 @@
             },
             "handoff": {
               "type": "string",
-              "description": "Context for the next pass beyond the blocking list — what the judge looked at, and what would change its mind.",
+              "description": "Context for the next pass beyond the blocking list \u2014 what the judge looked at, and what would change its mind.",
               "minLength": 1
             }
           },
@@ -172,28 +172,28 @@
         "contextId": "context-brief",
         "order": 1,
         "title": "State the objective and the exit bar",
-        "instructions": "Read the loop brief named as rank 1 in the charter.\n\nRestate the objective in one sentence that names the OUTCOME, not the activity: \"the projection warms in under 200ms\" rather than \"improve the projection\". Then state the exit bar — the condition the judge will apply to every revision. A bar that cannot be checked without asking you a follow-up question is not a bar; rewrite it until a reviewer who has not seen this conversation could apply it.\n\nIf the brief leaves the bar genuinely ambiguous, choose the stricter reading and say so in the summary rather than leaving the loop to discover the ambiguity on pass 3.\n\nComplete this task with a summary naming the objective and the bar."
+        "instructions": "Read the loop brief named as rank 1 in the charter.\n\nRestate the objective in one sentence that names the OUTCOME, not the activity: \"the projection warms in under 200ms\" rather than \"improve the projection\". Then state the exit bar \u2014 the condition the judge will apply to every revision. A bar that cannot be checked without asking you a follow-up question is not a bar; rewrite it until a reviewer who has not seen this conversation could apply it.\n\nIf the brief leaves the bar genuinely ambiguous, choose the stricter reading and say so in the summary rather than leaving the loop to discover the ambiguity on pass 3.\n\nComplete this task with a summary naming the objective and the bar."
       },
       {
         "id": "task-draft-1",
         "contextId": "context-draft",
         "order": 1,
         "title": "Produce the next revision",
-        "instructions": "The objective and the exit bar are in the \"Inputs from upstream\" section of this prompt, as the brief's structured output.\n\nOn pass 2 and later, this prompt also carries a \"Loop History\" section with what earlier passes produced and how each was decided, and your incoming input is the previous pass's judge verdict. Read the blocking items FIRST and address each one; if an item is not actionable, say so explicitly and explain why rather than silently skipping it. Do not re-try an approach an earlier pass already had rejected — the history is there so the budget buys new information.\n\nDo the work itself, not a plan for the work: the judge inspects what you built.\n\nComplete this task with a summary of what this revision changed, and make the captured `handoff` useful to a pass that cannot see this conversation."
+        "instructions": "The objective and the exit bar are in the \"Inputs from upstream\" section of this prompt, as the brief's structured output.\n\nOn pass 2 and later, this prompt also carries a \"Loop History\" section with what earlier passes produced and how each was decided, and your incoming input is the previous pass's judge verdict. Read the blocking items FIRST and address each one; if an item is not actionable, say so explicitly and explain why rather than silently skipping it. Do not re-try an approach an earlier pass already had rejected \u2014 the history is there so the budget buys new information.\n\nDo the work itself, not a plan for the work: the judge inspects what you built.\n\nComplete this task with a summary of what this revision changed, and make the captured `handoff` useful to a pass that cannot see this conversation."
       },
       {
         "id": "task-review-1",
         "contextId": "context-review",
         "order": 1,
         "title": "Decide the verdict",
-        "instructions": "You are the loop's exit. Your captured `verdict` is what the engine reads to decide whether another pass runs, so it must reflect the work rather than the effort.\n\nThe exit bar is in the \"Inputs from upstream\" section, from the brief's structured output; the revision under review is the draft's output in the same section. INSPECT THE WORK — read the files, run what can be run. The draft's own summary is a claim, not evidence.\n\nDecide against the bar and nothing else. Do not withhold approval because you would have done it differently, and do not approve work that misses the bar because the budget is running low — an exhausted loop is a recoverable halt an operator can decide about, and a false approval is not.\n\nIf you return `revise`, name every blocking item concretely enough that the next draft can act on it without guessing: what is wrong, where, and what would satisfy you. If you return `approved`, leave `blocking` empty.\n\nDo not edit the work. Complete this task with a summary naming the verdict and its reasons."
+        "instructions": "You are the loop's exit. Your captured `verdict` is what the engine reads to decide whether another pass runs, so it must reflect the work rather than the effort.\n\nThe exit bar is in the \"Inputs from upstream\" section, from the brief's structured output; the revision under review is the draft's output in the same section. INSPECT THE WORK \u2014 read the files, run what can be run. The draft's own summary is a claim, not evidence.\n\nDecide against the bar and nothing else. Do not withhold approval because you would have done it differently, and do not approve work that misses the bar because the budget is running low \u2014 an exhausted loop is a recoverable halt an operator can decide about, and a false approval is not.\n\nIf you return `revise`, name every blocking item concretely enough that the next draft can act on it without guessing: what is wrong, where, and what would satisfy you. If you return `approved`, leave `blocking` empty.\n\nDo not edit the work. Complete this task with a summary naming the verdict and its reasons."
       },
       {
         "id": "task-publish-1",
         "contextId": "context-publish",
         "order": 1,
         "title": "Publish the approved result",
-        "instructions": "The approving pass's verdict is in the \"Inputs from upstream\" section of this prompt — the loop's outgoing edge resolves to the pass that actually concluded it, so what you see is the final revision's judgment and not an earlier one.\n\nRecord what was delivered in the objective's terms. The approval is settled; do not reopen it or re-review the work.\n\nComplete this task with a summary of the delivered outcome."
+        "instructions": "The approving pass's verdict is in the \"Inputs from upstream\" section of this prompt \u2014 the loop's outgoing edge resolves to the pass that actually concluded it, so what you see is the final revision's judgment and not an earlier one.\n\nRecord what was delivered in the objective's terms. The approval is settled; do not reopen it or re-review the work.\n\nComplete this task with a summary of the delivered outcome."
       }
     ],
     "edges": [

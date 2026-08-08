@@ -28,6 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import { isInsideLanePath, toLanePathSegment } from "./lane-path-segments";
 
 /** Root for every lane scratch directory CC creates. */
 const SCRATCH_ROOT_DIR_NAME = "cc-validator-lanes";
@@ -58,25 +59,6 @@ export interface LaneWriteEnvelopeDeps {
   realpath?(target: string): string;
 }
 
-/**
- * One path segment's worth of an authored id. Anything outside the safe set —
- * separators, traversal dots, control characters — collapses to `_`, so a
- * segment can only ever name a child of its parent.
- */
-function toPathSegment(rawId: string): string {
-  const sanitized = rawId.replace(/[^A-Za-z0-9._-]/g, "_");
-  return /^\.+$/.test(sanitized) || sanitized.length === 0 ? "_" : sanitized;
-}
-
-function isInside(parent: string, candidate: string): boolean {
-  const relative = path.relative(parent, candidate);
-  return (
-    relative.length > 0 &&
-    !relative.startsWith("..") &&
-    !path.isAbsolute(relative)
-  );
-}
-
 export function composeValidatorLaneWriteEnvelope(
   input: ComposeValidatorLaneWriteEnvelopeInput,
   deps: LaneWriteEnvelopeDeps = {},
@@ -89,11 +71,11 @@ export function composeValidatorLaneWriteEnvelope(
 
   const rawScratchDir = path.join(
     scratchRootDir,
-    toPathSegment(input.executionId),
-    toPathSegment(input.contextId),
-    toPathSegment(input.assignmentId),
+    toLanePathSegment(input.executionId),
+    toLanePathSegment(input.contextId),
+    toLanePathSegment(input.assignmentId),
   );
-  if (!isInside(scratchRootDir, rawScratchDir)) {
+  if (!isInsideLanePath(scratchRootDir, rawScratchDir)) {
     throw new Error(
       `Cannot establish the validator write envelope: lane scratch directory "${rawScratchDir}" escapes "${scratchRootDir}"`,
     );

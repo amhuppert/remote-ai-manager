@@ -277,6 +277,11 @@ export function resolveContext(
     // Same identity passthrough: the routing policy describes this context's own
     // outgoing edge set, so no cascade tier can meaningfully supply one.
     ...(context.routing !== undefined ? { routing: context.routing } : {}),
+    // Identity passthrough as well: placement is authored, and the write
+    // envelope composed from it must be the ownership the definition declared.
+    ...(context.placement !== undefined
+      ? { placement: context.placement }
+      : {}),
     implementer,
     contextValidator,
     scriptValidator,

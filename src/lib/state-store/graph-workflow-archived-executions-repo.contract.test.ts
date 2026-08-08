@@ -345,10 +345,14 @@ function maximalResolvedContext(): Record<string, unknown> {
     title: "Implement the thing",
     description: "Detailed description of the context",
     acceptanceCriteria: "All tests pass and the build is green",
-    placement: { lane: "ctx-1", mode: "full" },
     origin: {
       sourceUri: "spec://native-sdd/contexts/ctx-1",
       label: "Implementation context",
+    },
+    placement: {
+      lane: "build",
+      mode: "owned",
+      ownedPaths: ["src/lib/state-store", "docs/adr"],
     },
     implementer: {
       id: "implementer",
@@ -602,10 +606,14 @@ function buildMaximalExecution(): unknown {
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
-          placement: { lane: "ctx-1", mode: "full" },
           origin: {
             sourceUri: "spec://native-sdd/contexts/ctx-1",
             label: "Implementation context",
+          },
+          placement: {
+            lane: "build",
+            mode: "owned",
+            ownedPaths: ["src/lib/state-store", "docs/adr"],
           },
           implementer: {
             id: "implementer",

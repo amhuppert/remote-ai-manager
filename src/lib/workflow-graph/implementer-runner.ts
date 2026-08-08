@@ -1,4 +1,5 @@
 import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { mintImplementerLaneCapability as defaultMintImplementerLaneCapability } from "@/lib/agent-gateway/token";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import {
@@ -13,6 +14,14 @@ import type {
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import type { FsWriteRestrictionSupport } from "@/lib/agent-backends/descriptor";
+import { getConversationFsWriteRestrictionForBackend } from "@/lib/agent-backends/catalog";
+import type { ContextPlacement } from "@/lib/workflow-graph/definition-schemas";
+import {
+  composeImplementerLaneWriteEnvelope,
+  type ImplementerLaneWriteEnvelope,
+} from "@/lib/workflow-graph/implementer-lane-write-envelope";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 
 const logger = createLogger("graph-workflow-implementer-runner");
@@ -49,6 +58,7 @@ interface ExecutePromptStreamFn {
       waitForBackgroundTasks?: boolean;
       waitForConversationReady?: boolean;
       askUserQuestionsEnabled?: boolean;
+      fsWritePolicy?: FsWritePolicy;
     },
   ): Promise<PromptStreamResult>;
 }
@@ -56,6 +66,20 @@ interface ExecutePromptStreamFn {
 export interface GraphWorkflowImplementerRunnerDeps {
   executePromptStream?: ExecutePromptStreamFn;
   getConversation?: typeof defaultGetConversation;
+  /**
+   * Composes the turn's write envelope. Injected so a test can drive the
+   * dispatch path's fail-closed behavior without staging a worktree on disk;
+   * production binds the real composer.
+   */
+  composeWriteEnvelope?: typeof composeImplementerLaneWriteEnvelope;
+  /**
+   * The backend's declared conversation-facet confinement claim. Injected so a
+   * test can drive the refusal without registering a fake backend; production
+   * binds the catalog literal.
+   */
+  conversationFsWriteRestriction?(
+    backend: AgentBackendId,
+  ): FsWriteRestrictionSupport;
   /**
    * Mint the lane's signed expansion capability. Injected so a test can drive
    * the dispatch path without an instance token; production binds the gateway's
@@ -94,6 +118,46 @@ export interface RunIterationInput {
    * prompt-stream options so the session instructions advertise the tool.
    */
   askUserQuestionsEnabled?: boolean;
+  /**
+   * The context's authored placement (R1) — where the turn runs and what it may
+   * write. The envelope is composed from it before any dispatch decision.
+   *
+   * Optional only because a resolved context seeded BEFORE placement existed
+   * carries none, and that is exactly the case with no declared ownership to
+   * confine. An authored context always has one, so no live plan can reach here
+   * without it.
+   */
+  placement?: ContextPlacement;
+}
+
+/**
+ * What the agent has to be TOLD about its envelope, because the envelope itself
+ * only enforces.
+ *
+ * Two facts are not discoverable from inside a confined turn. The repository is
+ * no longer necessarily the working directory — a sandbox that makes its cwd
+ * writable by construction (Codex) has to be moved out of the worktree, so the
+ * repository is reached by absolute path. And the payload directory the `cctl
+ * … --file` guidance depends on is injected per context, so an agent writing
+ * to the `.cc/temp` path it would otherwise guess is writing somewhere else.
+ */
+function renderWriteEnvelopeBriefing(
+  envelope: ImplementerLaneWriteEnvelope,
+): string {
+  const owned =
+    envelope.ownedPrefixes.length > 0
+      ? envelope.ownedPrefixes.map((prefix) => `- ${prefix}`).join("\n")
+      : "- (none — this context writes no repository files)";
+  return [
+    "# Filesystem write envelope",
+    "",
+    `Repository: ${envelope.worktreeRoot}`,
+    `Scratch directory: ${envelope.contextScratchDir}`,
+    `Payload directory (write \`--file\` JSON and scratch files here): ${envelope.payloadDir}`,
+    "",
+    "Writable repository paths (everything else in the repository is read-only, enforced by the OS):",
+    owned,
+  ].join("\n");
 }
 
 export function createGraphWorkflowImplementerRunner(
@@ -104,6 +168,11 @@ export function createGraphWorkflowImplementerRunner(
   const getConversation = deps.getConversation ?? defaultGetConversation;
   const mintLaneCapability =
     deps.mintLaneCapability ?? defaultMintImplementerLaneCapability;
+  const composeWriteEnvelope =
+    deps.composeWriteEnvelope ?? composeImplementerLaneWriteEnvelope;
+  const conversationFsWriteRestriction =
+    deps.conversationFsWriteRestriction ??
+    getConversationFsWriteRestrictionForBackend;
 
   async function runIteration(input: RunIterationInput): Promise<{
     conversationId: string;
@@ -128,6 +197,63 @@ export function createGraphWorkflowImplementerRunner(
       conversationId: input.conversationId,
     });
 
+    // Composed BEFORE any dispatch decision (R6): an envelope that cannot be
+    // established is an infrastructure failure, and the only alternative — a
+    // turn dispatched without one — is the unrestricted run the envelope
+    // exists to prevent. A `full` placement declares no surface to be disjoint
+    // from and holds its lane alone, so it stays unconfined by design.
+    const worktreePath =
+      input.executionTarget?.worktreePath ?? input.session.worktreePath;
+    let envelope: ImplementerLaneWriteEnvelope | null = null;
+    if (input.placement !== undefined && input.placement.mode !== "full") {
+      // Gated on the DECLARED capability before any envelope work: a backend
+      // whose conversation runtime cannot natively confine writes would carry
+      // this policy as a suggestion, and a suggestion is not isolation. Refused
+      // as an infrastructure outcome rather than dispatched hopefully.
+      const restriction = conversationFsWriteRestriction(input.backend);
+      if (restriction !== "enforced") {
+        const message = `Backend "${input.backend}" cannot mechanically confine conversation writes (fsWriteRestriction: ${restriction}), so context "${input.contextId}" cannot run under a write envelope`;
+        logger.error("graph-workflow.implementer.write_envelope_unsupported", {
+          sessionName: input.session.sessionName,
+          conversationId: input.conversationId,
+          contextId: input.contextId,
+          backend: input.backend,
+          fsWriteRestriction: restriction,
+        });
+        throw new AgentTurnFailedError(message, {
+          contextId: input.contextId,
+          engine: input.backend,
+          cause: "unknown",
+          originalMessage: message,
+        });
+      }
+      try {
+        envelope = composeWriteEnvelope({
+          executionId: input.executionId,
+          contextId: input.contextId,
+          worktreePath,
+          ownedPaths:
+            input.placement.mode === "owned" ? input.placement.ownedPaths : [],
+        });
+      } catch (error) {
+        const message = `Cannot establish the implementer write envelope for context "${input.contextId}": ${getErrorMessage(error)}`;
+        logger.error("graph-workflow.implementer.write_envelope_failed", {
+          sessionName: input.session.sessionName,
+          conversationId: input.conversationId,
+          contextId: input.contextId,
+          backend: input.backend,
+          worktreePath,
+          error: getErrorMessage(error),
+        });
+        throw new AgentTurnFailedError(message, {
+          contextId: input.contextId,
+          engine: input.backend,
+          cause: "unknown",
+          originalMessage: message,
+        });
+      }
+    }
+
     // Intentionally free-form: no `outputFormat` passed in
     // `PromptStreamOptions`. The implementer is a tool-using coding turn that
     // produces code edits, file writes, and a natural-language summary
@@ -143,6 +269,7 @@ export function createGraphWorkflowImplementerRunner(
       waitForBackgroundTasks: boolean;
       waitForConversationReady: boolean;
       askUserQuestionsEnabled: boolean;
+      fsWritePolicy?: FsWritePolicy;
     } = {
       autonomous: true,
       backend: input.backend,
@@ -177,11 +304,16 @@ export function createGraphWorkflowImplementerRunner(
     if (input.executionTarget !== undefined) {
       promptOptions.executionTarget = input.executionTarget;
     }
+    if (envelope !== null) {
+      promptOptions.fsWritePolicy = envelope.policy;
+    }
 
     const result = await executePromptStream(
       input.projectPath,
       input.session,
-      input.prompt,
+      envelope === null
+        ? input.prompt
+        : `${renderWriteEnvelopeBriefing(envelope)}\n\n${input.prompt}`,
       () => {},
       input.conversationId,
       input.model,

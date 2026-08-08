@@ -67,6 +67,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     // Scoped to all three facts — the route refuses a capability whose
@@ -119,6 +120,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     // Fail-closed rather than fail-open: the lane still runs, it simply holds
@@ -178,6 +180,7 @@ describe("graph workflow implementer runner", () => {
           },
         ],
       },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(executePromptStream).toHaveBeenCalledWith(
@@ -256,6 +259,7 @@ describe("graph workflow implementer runner", () => {
           },
         ],
       },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(executePromptStream).toHaveBeenCalledWith(
@@ -313,6 +317,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
       executionTarget,
     });
 
@@ -355,6 +360,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(executePromptStream).toHaveBeenCalledTimes(1);
@@ -399,6 +405,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(executePromptStream).toHaveBeenCalledTimes(1);
@@ -439,6 +446,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(executePromptStream).toHaveBeenCalledWith(
@@ -481,6 +489,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
       askUserQuestionsEnabled: true,
     });
 
@@ -521,6 +530,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
       askUserQuestionsEnabled: false,
     });
 
@@ -572,6 +582,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(result).toEqual({
@@ -609,6 +620,7 @@ describe("graph workflow implementer runner", () => {
       model: "opus",
       reasoningEffort: "high",
       toolServer: { servers: [] },
+      placement: { lane: "build", mode: "full" },
     });
 
     expect(result).not.toHaveProperty("backgroundWait");
@@ -642,6 +654,7 @@ describe("graph workflow implementer runner", () => {
         model: "opus",
         reasoningEffort: "high",
         toolServer: { servers: [] },
+        placement: { lane: "build", mode: "full" },
       }),
     ).rejects.toThrow("SDK error: Claude API overloaded");
 
@@ -677,6 +690,7 @@ describe("graph workflow implementer runner", () => {
         model: "opus",
         reasoningEffort: "high",
         toolServer: { servers: [] },
+        placement: { lane: "build", mode: "full" },
       }),
     ).rejects.toMatchObject({
       cause: "timeout",
@@ -715,6 +729,7 @@ describe("graph workflow implementer runner", () => {
         model: "gpt-5.6-sol",
         reasoningEffort: "xhigh",
         toolServer: { servers: [] },
+        placement: { lane: "build", mode: "full" },
       }),
     ).rejects.toMatchObject({
       cause: "stall",
