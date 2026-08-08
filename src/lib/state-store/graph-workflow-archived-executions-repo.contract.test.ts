@@ -855,6 +855,12 @@ function buildMaximalExecution(): unknown {
         // path, so the maximal fixture carries a non-null value to prove it
         // survives the archived-execution round-trip.
         reservedByBatchId: "batch-1",
+        // The frozen write envelope the scheduler admitted this context under
+        // (decision D4) — persisted, so the archive has to carry it too.
+        reservedOwnership: {
+          mode: "owned",
+          canonicalPrefixes: ["/wt/lane-1/src/api", "/wt/lane-1/docs"],
+        },
         laneId: "lane-1",
         joinId: "join-1",
         mergeStatus: "in-progress",
@@ -1288,6 +1294,27 @@ function buildMaximalExecution(): unknown {
         ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T03:00:00Z",
+      },
+    },
+    laneReservations: {
+      "lane-2": {
+        laneId: "lane-2",
+        batchId: "batch-2",
+        provisioning: true,
+        members: [
+          {
+            contextId: "ctx-2",
+            ownership: {
+              mode: "owned",
+              canonicalPrefixes: ["/wt/lane-2/src/ui"],
+            },
+          },
+          {
+            contextId: "ctx-3",
+            ownership: { mode: "readOnly", canonicalPrefixes: [] },
+          },
+        ],
+        createdAt: "2026-01-02T04:00:00Z",
       },
     },
     joins: {

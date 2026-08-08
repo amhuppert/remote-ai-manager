@@ -11,18 +11,12 @@ import type {
 } from "@/lib/workflow-graph/definition-schemas";
 import { routeUpstreamContextIds } from "./execution-routes";
 import {
+  isUpstreamVisibleToLane,
   landGatedPublishSettlement,
   reachableLanesFrom,
 } from "./lane-readiness";
+import { SESSION_LANE_ID, SESSION_LANE_NAME } from "./lane-identity";
 import type { RoutePublishSettlement } from "./route-projection";
-
-/**
- * Stable identifier for the implicit "session" lane that represents the
- * session worktree itself. We materialize a lane record under this id when
- * planning final publish joins so the graph's lane-reachability machinery
- * uniformly recognizes the session worktree as a join target.
- */
-export const SESSION_LANE_ID = "__session__";
 
 type PlanningDefinition =
   | WorkflowSemanticDefinition
@@ -51,23 +45,32 @@ export interface MaterializeSessionLaneInput {
 }
 
 /**
- * Decide which existing source lane should become the target lane of a join.
- * The picker is deterministic so resumes and replays converge on the same
- * answer:
+ * Which lane a join merges INTO.
  *
- *  1. Prefer the source lane whose `updatedAt` is the most recent (we are
- *     most likely to find its worktree warm and its branch ahead).
- *  2. Break ties on lane id ascending.
+ * The authored target when the downstream's lane already exists: placement is
+ * the lane authority, so the join's job is to deliver the upstream work where
+ * the downstream is going to run, not to pick a convenient branch. Recency used
+ * to decide this, and recency is not an authority — it made the destination a
+ * function of when lanes happened to be touched (decision D5).
  *
- * Source lanes without a corresponding execution lane record are skipped.
- * Returns the first source lane id when nothing else applies.
+ * When the authored lane has no record yet there is nothing to merge into, so
+ * the sources converge on one of themselves and the new lane forks from the
+ * result. That choice is by lane id ascending, deterministic so a resume and a
+ * replay converge on the same answer.
  */
 export function pickJoinTarget(
   sourceLaneIds: readonly string[],
   execution: GraphWorkflowExecution,
+  authoredTargetLaneId?: string,
 ): string {
   if (sourceLaneIds.length === 0) {
     throw new Error("pickJoinTarget requires at least one source lane id");
+  }
+  if (
+    authoredTargetLaneId !== undefined &&
+    execution.executionLanes[authoredTargetLaneId] !== undefined
+  ) {
+    return authoredTargetLaneId;
   }
   const candidates = sourceLaneIds
     .map((laneId) => ({
@@ -82,19 +85,27 @@ export function pickJoinTarget(
     );
   if (candidates.length === 0) return sourceLaneIds[0]!;
 
-  candidates.sort((a, b) => {
-    if (a.lane.updatedAt < b.lane.updatedAt) return 1;
-    if (a.lane.updatedAt > b.lane.updatedAt) return -1;
-    return a.laneId < b.laneId ? -1 : a.laneId > b.laneId ? 1 : 0;
-  });
+  candidates.sort((a, b) =>
+    a.laneId < b.laneId ? -1 : a.laneId > b.laneId ? 1 : 0,
+  );
   return candidates[0]!.laneId;
 }
 
 /**
- * Plan a context-level join. Returns a pending join record when the
- * downstream context has two or more distinct upstream source lanes that do
- * not already reach a common target via a succeeded join. Returns null when
- * no join is required.
+ * Plan the join that makes a downstream's upstream work reachable from the lane
+ * it was AUTHORED onto (decision D5). Returns null when no merge is owed.
+ *
+ * Defined relative to the target, not to the count of sources. For an existing
+ * target lane, every upstream lane whose work is not already visible from that
+ * exact lane is a source — including a single one, which the old two-source
+ * minimum silently dropped, stranding a downstream whose one upstream ran
+ * somewhere else. An upstream that ran ON the target lane is already in the
+ * shared worktree and is never a source (R3.2): merging a branch into itself
+ * would buy the downstream nothing but a wait.
+ *
+ * For a target lane that does not exist yet, a join is owed only when several
+ * unmerged sources have to converge before the lane can fork from a branch that
+ * carries all of them; a single source is simply the fork base.
  *
  * Terminal downstreams (contexts with no outgoing graph edges) receive a
  * context_merge like any other fan-in, so their work runs on the converged
@@ -116,33 +127,68 @@ export function planContextJoin(
   // plan a join over work that is never going to arrive.
   const upstreamIds = routeUpstreamContextIds(execution, contextId, definition);
 
+  const authoredLane = definition.executionContexts.find(
+    (context) => context.id === contextId,
+  )?.placement.lane;
+  const authoredTargetLaneId =
+    authoredLane === undefined
+      ? undefined
+      : authoredLane === SESSION_LANE_NAME
+        ? SESSION_LANE_ID
+        : authoredLane;
+  const targetExists =
+    authoredTargetLaneId !== undefined &&
+    execution.executionLanes[authoredTargetLaneId] !== undefined;
+
   const sourceLaneIds = new Set<string>();
   for (const upstreamId of upstreamIds) {
     const upstream = execution.contextStates[upstreamId];
     if (!upstream || upstream.laneId === null) continue;
+    if (targetExists) {
+      // Reachable-lane intersection is a VISIBILITY predicate now, never a
+      // placement chooser: it says whether this source's work already sits in
+      // the target's history, and nothing about where the downstream runs.
+      if (upstream.laneId === authoredTargetLaneId) continue;
+      if (
+        isUpstreamVisibleToLane(upstreamId, authoredTargetLaneId, execution)
+      ) {
+        continue;
+      }
+    }
     sourceLaneIds.add(upstream.laneId);
   }
-  if (sourceLaneIds.size < 2) return null;
+  if (sourceLaneIds.size === 0) return null;
 
-  // If the source lanes already reach a common target via succeeded joins
-  // there is nothing to plan.
   const laneIdsArray = [...sourceLaneIds];
-  const [first, ...rest] = laneIdsArray;
-  if (!first) return null;
-  const firstReachable = reachableLanesFrom(first, execution);
-  const intersection = new Set<string>();
-  for (const candidate of firstReachable) {
-    if (
-      rest.every((laneId) =>
-        reachableLanesFrom(laneId, execution).has(candidate),
-      )
-    ) {
-      intersection.add(candidate);
+  if (!targetExists) {
+    // No lane to merge into: a single source is the fork base, so nothing is
+    // owed. Several sources converge only if no succeeded join already gives
+    // them a common reachable target for the fork to branch from.
+    if (laneIdsArray.length < 2) return null;
+    const [first, ...rest] = laneIdsArray;
+    if (!first) return null;
+    const firstReachable = reachableLanesFrom(first, execution);
+    for (const candidate of firstReachable) {
+      if (
+        rest.every((laneId) =>
+          reachableLanesFrom(laneId, execution).has(candidate),
+        )
+      ) {
+        return null;
+      }
     }
   }
-  if (intersection.size > 0) return null;
 
-  const targetLaneId = pickJoinTarget(laneIdsArray, execution);
+  const targetLaneId = pickJoinTarget(
+    laneIdsArray,
+    execution,
+    authoredTargetLaneId,
+  );
+  // The target is one of the join's own sources: `remainingSourceLanes` filters
+  // it back out for the merge itself, while `findBusyJoinSourceLaneIds` still
+  // sees it — a target holding a live turn must defer the merge like any other
+  // busy lane.
+  if (!laneIdsArray.includes(targetLaneId)) laneIdsArray.push(targetLaneId);
   const timestamp = now();
   return {
     joinId: generateJoinId(),

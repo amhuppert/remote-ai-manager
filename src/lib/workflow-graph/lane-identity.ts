@@ -36,12 +36,24 @@ const LANE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
  * The authored spelling of the session lane: the session worktree itself,
  * which hosts read-only contexts and is never provisioned as a group lane.
  *
- * The internal id the lane machinery addresses it by is `SESSION_LANE_ID`
- * (`lane-join.ts`). Both spellings are refused as authored GROUP lane names —
- * `session` because it denotes the session worktree rather than a provisioned
- * lane, `__session__` because an author writes `session`.
+ * The internal id the lane machinery addresses it by is
+ * {@link SESSION_LANE_ID}. Both spellings are refused as authored GROUP lane
+ * names — `session` because it denotes the session worktree rather than a
+ * provisioned lane, `__session__` because an author writes `session`.
  */
 export const SESSION_LANE_NAME = "session";
+
+/**
+ * The internal lane id for the session worktree itself. A lane record is
+ * materialized under it when planning final-publish joins, so the lane
+ * reachability machinery recognizes the session worktree as a join target like
+ * any other lane.
+ *
+ * Deliberately outside `laneIdViolation`'s charset intersection with authored
+ * names: an author writes {@link SESSION_LANE_NAME}, and this spelling is what
+ * the engine uses so the two can never be confused for one another.
+ */
+export const SESSION_LANE_ID = "__session__";
 
 /**
  * Why `laneId` is unsafe to splice into a git branch name and a filesystem

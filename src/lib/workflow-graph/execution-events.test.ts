@@ -878,6 +878,7 @@ describe("graph workflow execution event publisher", () => {
     const previousExecution = createWorkflowExecution({
       status: "running",
       executionLanes: {},
+      laneReservations: {},
     });
     const nextExecution = createWorkflowExecution({
       ...previousExecution,

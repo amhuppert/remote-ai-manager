@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
 } from "@/lib/workflow-graph/schemas";
+import type {
+  ContextPlacement,
+  ResolvedWorkflowSemanticDefinition,
+} from "@/lib/workflow-graph/definition-schemas";
 import {
   classifyContextSchedulability,
   contextsPresentInLane,
@@ -11,11 +16,34 @@ import {
   isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
 import {
+  SESSION_LANE_ID,
+  SESSION_LANE_NAME,
+} from "@/lib/workflow-graph/lane-identity";
+import {
+  createResolvedWorkflowDefinition,
   createWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
 
 const timestamp = "2026-03-27T12:00:00.000Z";
+
+/**
+ * Re-place named contexts of a definition. Placement is the only lane authority
+ * (R2), so nearly every scheduler case is expressed by moving a context onto a
+ * particular lane rather than by arranging where its upstream happened to land.
+ */
+function withPlacement<
+  T extends { executionContexts: readonly { id: string }[] },
+>(definition: T, placements: Record<string, ContextPlacement>): T {
+  return {
+    ...definition,
+    executionContexts: definition.executionContexts.map((context) =>
+      placements[context.id]
+        ? { ...context, placement: placements[context.id]! }
+        : context,
+    ),
+  };
+}
 
 function makeLane(
   overrides: Partial<GraphWorkflowExecutionLaneState> &
@@ -546,8 +574,10 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("returns schedulable on the session lane when the sole upstream landed in session and sessionLaneEnabled is opted in", () => {
-    const definition = createWorkflowDefinition();
+  it("keeps a context authored onto the session lane in the session worktree when sessionLaneEnabled is opted in", () => {
+    const definition = withPlacement(createWorkflowDefinition(), {
+      "context-implement": { lane: SESSION_LANE_NAME, mode: "readOnly" },
+    });
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -574,8 +604,10 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("requires fork by default when the sole upstream landed in session because sessionLaneEnabled defaults to false", () => {
-    const definition = createWorkflowDefinition();
+  it("holds a session-lane context back by default because sessionLaneEnabled defaults to false", () => {
+    const definition = withPlacement(createWorkflowDefinition(), {
+      "context-implement": { lane: SESSION_LANE_NAME, mode: "readOnly" },
+    });
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -594,14 +626,45 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    expect(result.kind).toBe("schedulable");
-    if (result.kind === "schedulable") {
-      expect(result.targetLaneId).toBeNull();
-      expect(result.requiresFork).toBe(true);
-    }
+    // The session lane is the session worktree: it is never forked into a lane
+    // of its own, so an un-opted-in caller means WAIT, not provision.
+    expect(result).toEqual({ kind: "wait-for-lane", laneId: SESSION_LANE_ID });
   });
 
-  it("returns schedulable with sole worktree source lane when that lane is idle", () => {
+  it("requires fork for a context authored onto a group lane even when its upstream landed in session", () => {
+    // Authored placement is the only lane authority (R2): a group lane always
+    // costs a worktree, whatever the caller opted into for the session lane.
+    const definition = createWorkflowDefinition();
+    const base = createWorkflowExecution();
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          isolation: "session",
+          mergeStatus: "not-applicable",
+        },
+      },
+    };
+    const result = classifyContextSchedulability({
+      contextId: "context-implement",
+      definition,
+      execution,
+      options: { sessionLaneEnabled: true },
+    });
+    expect(result).toEqual({
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: true,
+      forkFromLaneId: null,
+    });
+  });
+
+  it("forks the authored lane from the sole worktree lane the upstream landed on", () => {
+    // The upstream's lane is a fork BASE, never a destination: `context-plan`
+    // landed on `lane-a`, but `context-implement` is authored onto `implement`.
     const definition = createWorkflowDefinition();
     const base = createWorkflowExecution();
     const lane = makeLane({
@@ -629,20 +692,23 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    expect(result.kind).toBe("schedulable");
-    if (result.kind === "schedulable") {
-      expect(result.targetLaneId).toBe("lane-a");
-      expect(result.requiresFork).toBe(false);
-    }
+    expect(result).toEqual({
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: true,
+      forkFromLaneId: "lane-a",
+    });
   });
 
-  it("returns wait-for-lane when the sole source lane currently has a running context", () => {
+  it("mints the authored lane even while the fork parent is running another context", () => {
+    // The fork copies the parent's COMMITTED head, so a turn still in flight on
+    // the parent lane is no reason to hold the new lane back.
     const definition = createWorkflowDefinition();
     const base = createWorkflowExecution();
     const lane = makeLane({
       laneId: "lane-a",
       branchName: "csm/test-a",
-      includedContextIds: ["context-plan", "context-busy"],
+      includedContextIds: ["context-plan"],
       status: "active",
     });
     const execution: GraphWorkflowExecution = {
@@ -657,26 +723,11 @@ describe("classifyContextSchedulability", () => {
           laneId: "lane-a",
           mergeStatus: "merged-success",
         },
-        "context-busy": {
-          skipReason: null,
-          landingIntent: null,
-          pendingApproval: null,
-          pendingUserInputs: {},
-          contextId: "context-busy",
+        "context-verify": {
+          ...base.contextStates["context-verify"]!,
           status: "running",
-          totalTaskCount: 1,
-          completedTaskCount: 0,
-          iterationCount: 0,
-          consecutiveFailureCount: 0,
-          worktreePath: null,
-          branchName: null,
           isolation: "worktree",
-          batchId: null,
           laneId: "lane-a",
-          joinId: null,
-          mergeStatus: "not-applicable",
-          cleanupStatus: "not-applicable",
-          lastMergeError: null,
         },
       },
     };
@@ -685,10 +736,12 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    expect(result.kind).toBe("wait-for-lane");
-    if (result.kind === "wait-for-lane") {
-      expect(result.laneId).toBe("lane-a");
-    }
+    expect(result).toEqual({
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: true,
+      forkFromLaneId: "lane-a",
+    });
   });
 
   it("returns wait-for-join when two upstreams sit on different worktree lanes", () => {
@@ -749,8 +802,13 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("returns dependency-blocked when one upstream is committed but invisible to the downstream's lane", () => {
-    const definition = createWorkflowDefinition();
+  it("returns wait-for-join when one upstream landed on a lane its authored target cannot see", () => {
+    // Landed but invisible is a ROUTING gap, not a dependency one: a join into
+    // the authored target is exactly what closes it, so blocking the context on
+    // its dependency instead would leave nobody to plan that join.
+    const definition = withPlacement(createWorkflowDefinition(), {
+      "context-implement": { lane: "lane-down", mode: "full" },
+    });
     const base = createWorkflowExecution();
     const upstreamLane = makeLane({
       laneId: "lane-up",
@@ -784,10 +842,10 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    expect(result.kind).toBe("dependency-blocked");
-    if (result.kind === "dependency-blocked") {
-      expect(result.unmetUpstreamIds).toEqual(["context-plan"]);
-    }
+    expect(result).toEqual({
+      kind: "wait-for-join",
+      sourceLaneIds: ["lane-up"],
+    });
   });
 
   it("classifies a forked context as schedulable when its lane already includes the upstream output (post-interruption re-schedule)", () => {
@@ -797,7 +855,9 @@ describe("classifyContextSchedulability", () => {
     // not dependency-blocked, even though no join connects the parent lane to
     // the fork. Otherwise the scheduler strands it and the loop completes with
     // unfinished work.
-    const definition = createWorkflowDefinition();
+    const definition = withPlacement(createWorkflowDefinition(), {
+      "context-implement": { lane: "lane-down", mode: "full" },
+    });
     const base = createWorkflowExecution();
     const upstreamLane = makeLane({
       laneId: "lane-up",
@@ -928,21 +988,24 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("returns schedulable on the common target lane when both upstream lanes have been joined into it", () => {
-    const definition = createWorkflowDefinition({
-      edges: [
-        {
-          id: "edge-plan-verify",
-          sourceContextId: "context-plan",
-          targetContextId: "context-verify",
-        },
-        {
-          id: "edge-implement-verify",
-          sourceContextId: "context-implement",
-          targetContextId: "context-verify",
-        },
-      ],
-    });
+  it("mints the authored lane forked from the common target once both upstream lanes are joined into it", () => {
+    const definition = withPlacement(
+      createWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+          {
+            id: "edge-implement-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      }),
+      { "context-verify": { lane: "verify", mode: "full" } },
+    );
     const base = createWorkflowExecution();
     const laneA = makeLane({
       laneId: "lane-a",
@@ -995,11 +1058,12 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    expect(result.kind).toBe("schedulable");
-    if (result.kind === "schedulable") {
-      expect(result.targetLaneId).toBe("lane-target");
-      expect(result.requiresFork).toBe(false);
-    }
+    expect(result).toEqual({
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: true,
+      forkFromLaneId: "lane-target",
+    });
   });
 
   it("returns wait-for-join when only one of two upstream lanes has been joined into the candidate target", () => {
@@ -1075,47 +1139,45 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("returns wait-for-lane when post-join common target lane is currently running another context", () => {
-    const definition = createWorkflowDefinition({
-      edges: [
-        {
-          id: "edge-plan-verify",
-          sourceContextId: "context-plan",
-          targetContextId: "context-verify",
-        },
-        {
-          id: "edge-implement-verify",
-          sourceContextId: "context-implement",
-          targetContextId: "context-verify",
-        },
-      ],
-    });
+  it("returns wait-for-lane when the authored target lane is running a full-access member", () => {
+    const definition = withPlacement(
+      createWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      }),
+      {
+        // Both write-capable members share the target lane; the running one
+        // holds it exclusively because it declares full access.
+        "context-implement": { lane: "lane-target", mode: "full" },
+        "context-verify": { lane: "lane-target", mode: "full" },
+      },
+    );
     const base = createWorkflowExecution();
     const laneA = makeLane({
       laneId: "lane-a",
       branchName: "csm/test-a",
       includedContextIds: ["context-plan"],
     });
-    const laneB = makeLane({
-      laneId: "lane-b",
-      branchName: "csm/test-b",
-      includedContextIds: ["context-implement"],
-    });
     const laneTarget = makeLane({
       laneId: "lane-target",
       branchName: "csm/test-target",
+      includedContextIds: ["context-plan", "context-implement"],
     });
     const join = makeJoin({
       joinId: "join-1",
       targetLaneId: "lane-target",
-      sourceLaneIds: ["lane-a", "lane-b"],
+      sourceLaneIds: ["lane-a"],
       status: "succeeded",
     });
     const execution: GraphWorkflowExecution = {
       ...base,
       executionLanes: {
         "lane-a": laneA,
-        "lane-b": laneB,
         "lane-target": laneTarget,
       },
       joins: { "join-1": join },
@@ -1130,31 +1192,9 @@ describe("classifyContextSchedulability", () => {
         },
         "context-implement": {
           ...base.contextStates["context-implement"]!,
-          status: "completed",
-          isolation: "worktree",
-          laneId: "lane-b",
-          mergeStatus: "merged-success",
-        },
-        "context-busy": {
-          skipReason: null,
-          landingIntent: null,
-          pendingApproval: null,
-          pendingUserInputs: {},
-          contextId: "context-busy",
           status: "running",
-          totalTaskCount: 1,
-          completedTaskCount: 0,
-          iterationCount: 0,
-          consecutiveFailureCount: 0,
-          worktreePath: null,
-          branchName: null,
           isolation: "worktree",
-          batchId: null,
           laneId: "lane-target",
-          joinId: null,
-          mergeStatus: "not-applicable",
-          cleanupStatus: "not-applicable",
-          lastMergeError: null,
         },
       },
     };
@@ -1163,14 +1203,13 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    expect(result.kind).toBe("wait-for-lane");
-    if (result.kind === "wait-for-lane") {
-      expect(result.laneId).toBe("lane-target");
-    }
+    expect(result).toEqual({ kind: "wait-for-lane", laneId: "lane-target" });
   });
 
-  it("does not require fork when a worktree lane is already published into a session-kind lane via succeeded join", () => {
-    const definition = createWorkflowDefinition();
+  it("does not require fork for a session-lane context once every worktree lane is published into the session lane", () => {
+    const definition = withPlacement(createWorkflowDefinition(), {
+      "context-implement": { lane: SESSION_LANE_NAME, mode: "readOnly" },
+    });
     const base = createWorkflowExecution();
     const worktreeLane = makeLane({
       laneId: "lane-finished",
@@ -1227,23 +1266,26 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("a terminal verification context with multi-worktree-lane upstreams stays unschedulable until a final_publish join lands the lanes on the session lane", () => {
-    const definition = createWorkflowDefinition({
-      edges: [
-        {
-          id: "edge-plan-verify",
-          sourceContextId: "context-plan",
-          targetContextId: "context-verify",
-        },
-        {
-          id: "edge-implement-verify",
-          sourceContextId: "context-implement",
-          targetContextId: "context-verify",
-        },
-      ],
-    });
+  it("a terminal session-lane context with multi-worktree-lane upstreams stays unschedulable until a final_publish join lands the lanes on the session lane", () => {
+    const definition = withPlacement(
+      createWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+          {
+            id: "edge-implement-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      }),
+      { "context-verify": { lane: SESSION_LANE_NAME, mode: "readOnly" } },
+    );
     const base = createWorkflowExecution();
-    const sessionLaneId = "session-lane";
+    const sessionLaneId = SESSION_LANE_ID;
     const sessionLane = makeLane({
       laneId: sessionLaneId,
       branchName: "csm/test-session",
@@ -1318,6 +1360,294 @@ describe("classifyContextSchedulability", () => {
       expect(after.targetLaneId).toBe(sessionLaneId);
       expect(after.requiresFork).toBe(false);
     }
+  });
+
+  describe("authored placement drives the target lane (R2, R3, R5)", () => {
+    /**
+     * A two-member `impl` lane fed by `context-plan` on the `plan` lane. Each
+     * caller decides what the two members own and how far the upstream got, so
+     * one shape covers admission, same-lane visibility, and the cross-lane wait.
+     */
+    function makeLaneGroupFixture(input: {
+      implementPlacement: ContextPlacement;
+      verifyPlacement: ContextPlacement;
+      planLanded?: boolean;
+      implementStatus?: GraphWorkflowExecutionContextState["status"];
+      /**
+       * Whether the `impl` lane forked from `plan` and therefore already
+       * carries `context-plan`'s work. False isolates the cross-lane case where
+       * a join is genuinely still owed.
+       */
+      implInheritsPlan?: boolean;
+    }): {
+      definition: ResolvedWorkflowSemanticDefinition;
+      execution: GraphWorkflowExecution;
+    } {
+      const base = createResolvedWorkflowDefinition({
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-plan-verify",
+            sourceContextId: "context-plan",
+            targetContextId: "context-verify",
+          },
+        ],
+      });
+      const definition: ResolvedWorkflowSemanticDefinition = {
+        ...base,
+        executionContexts: base.executionContexts.map((context) => {
+          if (context.id === "context-implement") {
+            return { ...context, placement: input.implementPlacement };
+          }
+          if (context.id === "context-verify") {
+            return { ...context, placement: input.verifyPlacement };
+          }
+          return context;
+        }),
+      };
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: definition,
+      });
+      const planLanded = input.planLanded ?? true;
+      const execution: GraphWorkflowExecution = {
+        ...baseExecution,
+        executionLanes: {
+          plan: makeLane({
+            laneId: "plan",
+            branchName: "csm/test-plan",
+            includedContextIds: planLanded ? ["context-plan"] : [],
+          }),
+          impl: makeLane({
+            laneId: "impl",
+            branchName: "csm/test-impl",
+            includedContextIds:
+              (input.implInheritsPlan ?? true) && planLanded
+                ? ["context-plan"]
+                : [],
+          }),
+        },
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: planLanded ? "completed" : "running",
+            isolation: "worktree",
+            laneId: "plan",
+          },
+          "context-implement": {
+            ...baseExecution.contextStates["context-implement"]!,
+            status: input.implementStatus ?? "running",
+            isolation: "worktree",
+            laneId: "impl",
+          },
+        },
+      };
+      return { definition, execution };
+    }
+
+    it("admits an ownership-disjoint sibling onto a lane another member is already running on", () => {
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/api"],
+        },
+        verifyPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/ui"],
+        },
+      });
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution,
+      });
+
+      expect(result).toEqual({
+        kind: "schedulable",
+        targetLaneId: "impl",
+        requiresFork: false,
+        forkFromLaneId: null,
+      });
+    });
+
+    it("refuses a sibling whose owned prefix is nested inside a running member's", () => {
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src"],
+        },
+        verifyPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/ui"],
+        },
+      });
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution,
+      });
+
+      expect(result).toEqual({ kind: "wait-for-lane", laneId: "impl" });
+    });
+
+    it("never admits a full-access member alongside a running write-capable sibling", () => {
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/api"],
+        },
+        verifyPlacement: { lane: "impl", mode: "full" },
+      });
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution,
+      });
+
+      expect(result).toEqual({ kind: "wait-for-lane", laneId: "impl" });
+    });
+
+    it("admits a read-only member concurrently with a full-access member", () => {
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: { lane: "impl", mode: "full" },
+        verifyPlacement: { lane: "impl", mode: "readOnly" },
+      });
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution,
+      });
+
+      expect(result).toEqual({
+        kind: "schedulable",
+        targetLaneId: "impl",
+        requiresFork: false,
+        forkFromLaneId: null,
+      });
+    });
+
+    it("schedules a same-lane downstream as soon as its upstream lands on the shared lane, with no join", () => {
+      // R3.2: the upstream's commit is already in the shared worktree, so there
+      // is nothing to merge — the only thing a join would add is a wait.
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/api"],
+        },
+        verifyPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/ui"],
+        },
+        implementStatus: "completed",
+      });
+      const landed: GraphWorkflowExecution = {
+        ...execution,
+        executionLanes: {
+          ...execution.executionLanes,
+          impl: {
+            ...execution.executionLanes.impl!,
+            includedContextIds: ["context-implement"],
+          },
+        },
+      };
+      const chained: ResolvedWorkflowSemanticDefinition = {
+        ...definition,
+        edges: [
+          {
+            id: "edge-plan-implement",
+            sourceContextId: "context-plan",
+            targetContextId: "context-implement",
+          },
+          {
+            id: "edge-implement-verify",
+            sourceContextId: "context-implement",
+            targetContextId: "context-verify",
+          },
+        ],
+      };
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition: chained,
+        execution: { ...landed, workingDefinition: chained },
+      });
+
+      expect(result).toEqual({
+        kind: "schedulable",
+        targetLaneId: "impl",
+        requiresFork: false,
+        forkFromLaneId: null,
+      });
+    });
+
+    it("waits for a join when a single cross-lane upstream has not reached the authored target", () => {
+      // R3.2's other half, and the case planContextJoin's two-source minimum
+      // used to drop on the floor: ONE unmerged source into an existing target.
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/api"],
+        },
+        verifyPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/ui"],
+        },
+        implementStatus: "completed",
+        implInheritsPlan: false,
+      });
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution,
+      });
+
+      expect(result).toEqual({
+        kind: "wait-for-join",
+        sourceLaneIds: ["plan"],
+      });
+    });
+
+    it("forks the authored lane from its sole upstream lane when the lane does not exist yet", () => {
+      const { definition, execution } = makeLaneGroupFixture({
+        implementPlacement: {
+          lane: "impl",
+          mode: "owned",
+          ownedPaths: ["src/api"],
+        },
+        verifyPlacement: { lane: "review", mode: "full" },
+      });
+
+      const result = classifyContextSchedulability({
+        contextId: "context-verify",
+        definition,
+        execution,
+      });
+
+      expect(result).toEqual({
+        kind: "schedulable",
+        targetLaneId: null,
+        requiresFork: true,
+        forkFromLaneId: "plan",
+      });
+    });
   });
 });
 

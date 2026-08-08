@@ -17,7 +17,6 @@ import { validateEdgeGuards } from "./edge-guard-validation";
 import {
   isContextOutputCommittedToLane,
   isRouteSourceLanded,
-  isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
 import {
   collectLoopBoundaryContextIds,
@@ -336,7 +335,7 @@ export function getTerminalContextIds(
  * publish straight to the session worktree, and legacy per-context worktree
  * contexts publish via the fan-in squash merge (`mergeStatus === "merged-success"`).
  * Prefer {@link isContextOutputCommittedToLane} or
- * {@link isUpstreamVisibleToDownstream} for lane-aware callers.
+ * `isUpstreamVisibleToLane` for lane-aware callers.
  */
 export function isContextLanded(
   state: GraphWorkflowExecutionContextState,
@@ -362,6 +361,13 @@ export function isContextLanded(
  * sources of the ACTIVE incoming edges (decision D1). Reading
  * `edge.sourceContextId` directly would wait on branches the routing already
  * declined and, once loops land, on a declared exit that never runs.
+ *
+ * The LAND gate stops at "has it landed". WHERE it landed relative to this
+ * context's lane is `classifyContextSchedulability`'s call, and deliberately
+ * not repeated here: an upstream on a lane the target has not merged yet is
+ * joinable, not blocked, and the classifier's `wait-for-join` verdict is what
+ * plans that merge. Filtering the context out of eligibility would leave nobody
+ * to plan it (R3.2).
  */
 export function getEligibleContextIds(
   definition: ValidatableDefinition,
@@ -384,15 +390,7 @@ export function getEligibleContextIds(
       if (routeVerdict(projection, contextId).kind !== "eligible") return false;
 
       return activeDependencySourceIds(projection, contextId).every(
-        (upstreamId) => {
-          if (!isRouteSourceLanded(execution, upstreamId)) return false;
-          if (state.laneId === null) return true;
-          return isUpstreamVisibleToDownstream(
-            upstreamId,
-            contextId,
-            execution,
-          );
-        },
+        (upstreamId) => isRouteSourceLanded(execution, upstreamId),
       );
     });
 }

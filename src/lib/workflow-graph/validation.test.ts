@@ -7,6 +7,7 @@ import {
   makeProfileSnapshot,
   seedAssignment,
 } from "./test-fixtures";
+import { isUpstreamVisibleToDownstream } from "./lane-readiness";
 import {
   getEligibleContextIds,
   getEntryContextIds,
@@ -233,6 +234,53 @@ describe("workflow-graph validation", () => {
     ]);
   });
 
+  it("keeps a lane-placed downstream eligible when its upstream landed on a lane the join has not merged yet", () => {
+    // Eligibility answers "has every upstream landed"; WHERE it landed relative
+    // to this context's lane is the classifier's call (it answers wait-for-join,
+    // which is what plans the merge). Filtering the context out here instead
+    // would leave nobody to plan the join and strand it (R3.2).
+    const definition = createWorkflowDefinition();
+    const baseExecution = createWorkflowExecution();
+    const timestamp = "2026-03-27T12:00:00.000Z";
+    const makeLane = (laneId: string, includedContextIds: string[]) => ({
+      laneId,
+      kind: "worktree" as const,
+      status: "active" as const,
+      worktreePath: `/tmp/${laneId}`,
+      branchName: `csm/${laneId}`,
+      includedContextIds,
+      lastCommittingContextId: null,
+      commitSnapshots: [],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    const execution = createWorkflowExecution({
+      executionLanes: {
+        "lane-up": makeLane("lane-up", ["context-plan"]),
+        "lane-down": makeLane("lane-down", []),
+      },
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          status: "completed",
+          completedTaskCount: 1,
+          isolation: "worktree",
+          laneId: "lane-up",
+          mergeStatus: "merged-success",
+        },
+        "context-implement": {
+          ...baseExecution.contextStates["context-implement"]!,
+          laneId: "lane-down",
+        },
+      },
+    });
+
+    expect(getEligibleContextIds(definition, execution)).toEqual([
+      "context-implement",
+    ]);
+  });
+
   it("holds a guarded target while its completed source's merge is unresolved (D4 R2.5)", () => {
     const base = createWorkflowDefinition();
     const definition = {
@@ -346,58 +394,7 @@ describe("workflow-graph validation", () => {
     ).toBe(true);
   });
 
-  it("blocks a lane-pinned downstream when upstream output is on an unrelated worktree lane", () => {
-    const definition = createWorkflowDefinition();
-    const baseExecution = createWorkflowExecution();
-    const execution = createWorkflowExecution({
-      ...baseExecution,
-      executionLanes: {
-        "lane-up": {
-          laneId: "lane-up",
-          kind: "worktree",
-          status: "active",
-          worktreePath: "/tmp/up",
-          branchName: "csm/test-up",
-          includedContextIds: ["context-plan"],
-          lastCommittingContextId: "context-plan",
-          commitSnapshots: [],
-          createdAt: "2026-03-27T12:00:00.000Z",
-          updatedAt: "2026-03-27T12:00:00.000Z",
-        },
-        "lane-down": {
-          laneId: "lane-down",
-          kind: "worktree",
-          status: "active",
-          worktreePath: "/tmp/down",
-          branchName: "csm/test-down",
-          includedContextIds: [],
-          lastCommittingContextId: null,
-          commitSnapshots: [],
-          createdAt: "2026-03-27T12:00:00.000Z",
-          updatedAt: "2026-03-27T12:00:00.000Z",
-        },
-      },
-      contextStates: {
-        ...baseExecution.contextStates,
-        "context-plan": {
-          ...baseExecution.contextStates["context-plan"]!,
-          status: "completed",
-          isolation: "worktree",
-          laneId: "lane-up",
-          mergeStatus: "merged-success",
-          completedTaskCount: 1,
-        },
-        "context-implement": {
-          ...baseExecution.contextStates["context-implement"]!,
-          laneId: "lane-down",
-        },
-      },
-    });
-
-    expect(getEligibleContextIds(definition, execution)).toEqual([]);
-  });
-
-  it("unlocks a lane-pinned downstream once a join merges the upstream lane into the downstream lane", () => {
+  it("makes a lane-pinned downstream's upstream visible once a join merges the upstream lane into it", () => {
     const definition = createWorkflowDefinition();
     const baseExecution = createWorkflowExecution();
     const execution = createWorkflowExecution({
@@ -466,6 +463,15 @@ describe("workflow-graph validation", () => {
     expect(getEligibleContextIds(definition, execution)).toEqual([
       "context-implement",
     ]);
+    // Eligibility alone no longer proves the routing is satisfied — visibility
+    // is the classifier's call — so assert the predicate that decides it.
+    expect(
+      isUpstreamVisibleToDownstream(
+        "context-plan",
+        "context-implement",
+        execution,
+      ),
+    ).toBe(true);
   });
 });
 

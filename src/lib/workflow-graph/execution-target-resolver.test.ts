@@ -276,6 +276,7 @@ describe("ExecutionTargetResolver", () => {
         "context-plan": { ...existing, laneId: "lane-missing" },
       },
       executionLanes: {},
+      laneReservations: {},
     };
     const session = createSession();
     const resolver = createExecutionTargetResolver();

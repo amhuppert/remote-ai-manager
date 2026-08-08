@@ -552,6 +552,7 @@ export function createWorkflowExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
     machineSnapshot: null,
     startedAt: timestamp,

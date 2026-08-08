@@ -61,6 +61,7 @@ export const RUNTIME_TIER_KEYS = [
   "advisoryIndex",
   "laneStates",
   "executionLanes",
+  "laneReservations",
   "joins",
   "machineSnapshot",
   "completedAt",

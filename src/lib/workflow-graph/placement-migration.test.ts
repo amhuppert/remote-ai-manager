@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decodeGraphWorkflowExecution } from "@/lib/state-store/graph-workflow-execution-codec";
 import { validateWorkflowPlan } from "@/lib/workflows/plan-validation";
 import { laneIdViolation, SESSION_LANE_NAME } from "./lane-identity";
-import { SESSION_LANE_ID } from "./lane-join";
+import { SESSION_LANE_ID } from "./lane-identity";
 import { migrateRawDefinitionPlacement } from "./placement-migration";
 import { assertDefinitionRecordSupported } from "./schema-cutover-guard";
 import {

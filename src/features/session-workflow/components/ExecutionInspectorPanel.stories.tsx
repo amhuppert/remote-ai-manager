@@ -527,6 +527,7 @@ const createUserSchema = z.object({
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
     machineSnapshot: null,
     startedAt: "2026-03-30T09:00:00Z",

@@ -269,6 +269,7 @@ function makeGraphWorkflowExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
     machineSnapshot: null,
     history: [],

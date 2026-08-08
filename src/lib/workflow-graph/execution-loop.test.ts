@@ -180,6 +180,7 @@ function createRunningExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
     machineSnapshot: null,
     startedAt: "2026-03-27T12:00:00.000Z",

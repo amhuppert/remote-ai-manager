@@ -41,7 +41,10 @@ import type {
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
-import { SESSION_LANE_NAME } from "@/lib/workflow-graph/lane-identity";
+import {
+  SESSION_LANE_ID,
+  SESSION_LANE_NAME,
+} from "@/lib/workflow-graph/lane-identity";
 import {
   createGraphWorkflowManager,
   WorkflowDefinitionApprovalRequiredError,
@@ -6428,7 +6431,9 @@ describe("graph workflow manager", () => {
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
-    it("schedules onto the post-join common target lane when two upstreams have been joined into it", async () => {
+    it("forks the authored lane from the post-join common target once two upstreams are joined into it", async () => {
+      // Authored placement is the only lane authority: the converged lane is
+      // the fork BASE that carries both upstreams' work, never the destination.
       const branchedDefinition = createResolvedWorkflowDefinition({
         edges: [
           {
@@ -6564,12 +6569,22 @@ describe("graph workflow manager", () => {
 
       const verifyState = result.execution.contextStates["context-verify"];
       expect(verifyState?.status).toBe("running");
-      expect(verifyState?.laneId).toBe("lane-target");
+      expect(verifyState?.laneId).toBe("verify");
       expect(verifyState?.isolation).toBe("worktree");
-      expect(verifyState?.worktreePath).toBe(laneTarget.worktreePath);
-      expect(verifyState?.branchName).toBe(laneTarget.branchName);
 
-      expect(parallelWorktrees.provisionCalls).toEqual([]);
+      // One worktree, branched off the converged lane so both upstreams are in
+      // its history — and the fork inherits their context ids for visibility.
+      expect(
+        parallelWorktrees.provisionCalls.map((call) => ({
+          contextId: call.contextId,
+          sessionBranch: call.sessionBranch,
+        })),
+      ).toEqual([
+        { contextId: "verify", sessionBranch: laneTarget.branchName },
+      ]);
+      expect(
+        result.execution.executionLanes.verify?.includedContextIds.sort(),
+      ).toEqual(["context-implement", "context-plan"]);
     });
 
     it("returns kind 'none' when capacityRemaining is 0 even with eligible contexts", async () => {
@@ -7020,7 +7035,7 @@ describe("graph workflow manager", () => {
       }
     });
 
-    it("skips fork for a non-inheritor sibling whose parent lane is session-kind: only the inheritor is scheduled", async () => {
+    it("gives each fan-out sibling its own authored lane, both forked from the session-kind parent's branch", async () => {
       const fanOutDefinition = createResolvedWorkflowDefinition({
         edges: [
           {
@@ -7095,24 +7110,30 @@ describe("graph workflow manager", () => {
 
       expect(result.scheduled.kind).toBe("parallel");
       if (result.scheduled.kind !== "parallel") return;
-      expect(result.scheduled.contextIds).toEqual(["context-implement"]);
+      expect([...result.scheduled.contextIds].sort()).toEqual([
+        "context-implement",
+        "context-verify",
+      ]);
 
-      const inheritState = result.execution.contextStates["context-implement"];
-      expect(inheritState?.laneId).toBe("lane-session");
-      expect(inheritState?.isolation).toBe("session");
-
-      const sibling = result.execution.contextStates["context-verify"];
-      expect(sibling?.status).toBe("ready");
-      expect(sibling?.laneId).toBeNull();
-      expect(sibling?.worktreePath).toBeNull();
-
-      expect(result.execution.executionLanes["context-verify"]).toBeUndefined();
-      expect(parallelWorktrees.provisionCalls).toEqual([]);
+      // Authored placement, not a continuation contest: neither sibling
+      // inherits the parent lane, and each gets the lane it declared.
+      expect(result.execution.contextStates["context-implement"]?.laneId).toBe(
+        "implement",
+      );
+      expect(result.execution.contextStates["context-verify"]?.laneId).toBe(
+        "verify",
+      );
+      expect(
+        parallelWorktrees.provisionCalls.map((c) => c.contextId).sort(),
+      ).toEqual(["implement", "verify"]);
+      for (const call of parallelWorktrees.provisionCalls) {
+        expect(call.sessionBranch).toBe(sessionLane.branchName);
+      }
     });
 
-    it("routes a session-kind target lane with isolation=session and no worktree provisioning", async () => {
+    it("routes a context authored onto the session lane with isolation=session and no worktree provisioning", async () => {
       const sessionLane = {
-        laneId: "lane-session",
+        laneId: SESSION_LANE_ID,
         kind: "session" as const,
         status: "active" as const,
         worktreePath: null,
@@ -7123,19 +7144,42 @@ describe("graph workflow manager", () => {
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
-      const baseExecution = createWorkflowExecution();
+      const sessionPlacedDefinition = createResolvedWorkflowDefinition();
+      const definition = {
+        ...sessionPlacedDefinition,
+        executionContexts: sessionPlacedDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-implement"
+              ? {
+                  ...context,
+                  placement: {
+                    lane: SESSION_LANE_NAME,
+                    mode: "readOnly" as const,
+                  },
+                  outputSchema: {
+                    type: "object" as const,
+                    properties: { review: { type: "string" as const } },
+                  },
+                }
+              : context,
+        ),
+      };
+      const baseExecution = createWorkflowExecution({
+        workingDefinition: definition,
+      });
       const repository = createRepository(
         createWorkflowExecution({
           ...baseExecution,
           status: "running",
-          executionLanes: { "lane-session": sessionLane },
+          workingDefinition: definition,
+          executionLanes: { [SESSION_LANE_ID]: sessionLane },
           contextStates: {
             ...baseExecution.contextStates,
             "context-plan": {
               ...baseExecution.contextStates["context-plan"]!,
               status: "completed",
               isolation: "session",
-              laneId: "lane-session",
+              laneId: SESSION_LANE_ID,
               worktreePath: null,
               branchName: null,
               mergeStatus: "not-applicable",
@@ -7172,7 +7216,7 @@ describe("graph workflow manager", () => {
 
       const implState = result.execution.contextStates["context-implement"];
       expect(implState?.status).toBe("running");
-      expect(implState?.laneId).toBe("lane-session");
+      expect(implState?.laneId).toBe(SESSION_LANE_ID);
       expect(implState?.isolation).toBe("session");
       expect(implState?.worktreePath).toBeNull();
       expect(implState?.branchName).toBeNull();

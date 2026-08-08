@@ -1026,6 +1026,58 @@ export type GraphWorkflowLandingIntent = z.infer<
   typeof graphWorkflowLandingIntentSchema
 >;
 
+/**
+ * A placement's write surface as the scheduler FROZE it: symlink-resolved
+ * absolute paths under the lane worktree, decided once at admission.
+ *
+ * Persisted because it is load-bearing twice over. Admission compares a
+ * candidate against it, so a concurrent scheduler and a later pass judge
+ * collisions against the same bytes; and dispatch composes the turn's write
+ * envelope from it rather than re-resolving, so a symlink retargeted between
+ * admission and dispatch cannot widen what the turn may write.
+ *
+ * `canonicalPrefixes` is empty for both non-owning grades, which mean opposite
+ * things — `full` writes everywhere, `readOnly` writes nowhere — so the grade
+ * travels with the set instead of being inferred from it.
+ */
+export const graphWorkflowCanonicalOwnershipSchema = z.object({
+  mode: z.enum(["full", "owned", "readOnly"]),
+  canonicalPrefixes: z.array(z.string().min(1)).default([]),
+});
+export type GraphWorkflowCanonicalOwnership = z.infer<
+  typeof graphWorkflowCanonicalOwnershipSchema
+>;
+
+/**
+ * A lane claimed by a scheduling batch that has not finalized yet.
+ *
+ * Context-level reservation stamps alone cannot carry this: a stamped context
+ * has no `laneId` until finalize, so a concurrent scheduler cannot tell which
+ * lane it is about to occupy, nor that the lane's worktree is already being
+ * provisioned by someone else. Keying the claim by LANE answers both — later
+ * members of the same batch coalesce behind it, and a different batch waits
+ * rather than racing `git worktree add` for the same path (decision D5).
+ */
+export const graphWorkflowLaneReservationSchema = z.object({
+  laneId: z.string().trim().min(1),
+  /** The batch that owns this reservation; only it may finalize or release it. */
+  batchId: z.string().trim().min(1),
+  /** Whether the owning batch is provisioning this lane's worktree and branch. */
+  provisioning: z.boolean().default(false),
+  members: z
+    .array(
+      z.object({
+        contextId: z.string().trim().min(1),
+        ownership: graphWorkflowCanonicalOwnershipSchema,
+      }),
+    )
+    .default([]),
+  createdAt: z.string(),
+});
+export type GraphWorkflowLaneReservation = z.infer<
+  typeof graphWorkflowLaneReservationSchema
+>;
+
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
   status: graphWorkflowContextStatusSchema,
@@ -1047,6 +1099,14 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
    * leftover. Optional/absent means unreserved.
    */
   reservedByBatchId: z.string().nullable().optional(),
+  /**
+   * The write envelope this context was ADMITTED under, frozen at reservation
+   * and consumed unchanged by dispatch (decision D4). Null on a context that
+   * has never been admitted, and on every row written before the field existed.
+   */
+  reservedOwnership: graphWorkflowCanonicalOwnershipSchema
+    .nullable()
+    .optional(),
   laneId: graphWorkflowExecutionLaneIdSchema.nullable().default(null),
   joinId: graphWorkflowExecutionJoinIdSchema.nullable().default(null),
   mergeStatus: z
@@ -1734,6 +1794,14 @@ export const graphWorkflowExecutionSchema = z.object({
     .default({}),
   executionLanes: z
     .record(z.string(), graphWorkflowExecutionLaneStateSchema)
+    .default({}),
+  /**
+   * Lanes claimed by an in-flight scheduling batch, keyed by lane id. Empty in
+   * the steady state: a reservation exists only between a batch's reserve and
+   * its finalize (or its compensating release).
+   */
+  laneReservations: z
+    .record(z.string(), graphWorkflowLaneReservationSchema)
     .default({}),
   joins: z
     .record(z.string(), graphWorkflowExecutionJoinStateSchema)

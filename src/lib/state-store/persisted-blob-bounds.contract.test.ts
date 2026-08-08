@@ -190,6 +190,14 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
       "executionLanes.*.commitSnapshots":
         "tracked: grows one entry per lane commit with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
+      "contextStates.*.reservedOwnership.canonicalPrefixes":
+        "bounded: one canonical path per prefix the context's authored placement declares, so it is sized by the definition rather than by the run. In graph_workflow_executions.runtime_json.",
+      laneReservations:
+        "pruned: a lane claim exists only between a scheduling batch's reserve and its finalize (or its compensating release), which both delete every reservation the batch owns. In graph_workflow_executions.runtime_json.",
+      "laneReservations.*.members":
+        "bounded: the contexts one batch admitted onto that lane, at most the author-fixed execution-context count. In graph_workflow_executions.runtime_json.",
+      "laneReservations.*.members[].ownership.canonicalPrefixes":
+        "bounded: one canonical path per prefix that member's authored placement declares. In graph_workflow_executions.runtime_json.",
       "laneStates.**":
         "bounded: outer keys are author-fixed execution contexts; inner keys are the one implementer plus that context's author-fixed validator assignments. In graph_workflow_executions.runtime_json.",
       "joins.**":

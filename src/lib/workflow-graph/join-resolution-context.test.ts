@@ -6,7 +6,7 @@ import type {
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
-import { SESSION_LANE_ID } from "./lane-join";
+import { SESSION_LANE_ID } from "./lane-identity";
 import { buildJoinResolutionContext } from "./join-resolution-context";
 
 const t0 = "2026-03-27T12:00:00.000Z";

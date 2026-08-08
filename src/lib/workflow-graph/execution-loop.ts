@@ -76,8 +76,8 @@ import {
 import { buildDefaultLiveEditDeps } from "@/lib/workflow-graph/live-edit-apply";
 import type { LiveEditDeps } from "@/lib/workflow-graph/runtime-edits";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
 import {
-  SESSION_LANE_ID,
   appendPendingJoin,
   findActiveJoin,
   findBusyJoinSourceLaneIds,

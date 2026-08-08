@@ -128,6 +128,7 @@ function makeExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
     machineSnapshot: null,
     startedAt: new Date().toISOString(),

@@ -12,9 +12,14 @@ import {
   type RoutePublishSettlement,
 } from "@/lib/workflow-graph/route-projection";
 import type {
+  ContextPlacement,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
+import {
+  SESSION_LANE_ID,
+  SESSION_LANE_NAME,
+} from "@/lib/workflow-graph/lane-identity";
 type ReadinessDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;
@@ -65,9 +70,24 @@ export function isUpstreamVisibleToDownstream(
   downstreamId: string,
   execution: GraphWorkflowExecution,
 ): boolean {
-  const upstream = execution.contextStates[upstreamId];
   const downstream = execution.contextStates[downstreamId];
-  if (!upstream || !downstream) return false;
+  if (!downstream) return false;
+  return isUpstreamVisibleToLane(upstreamId, downstream.laneId, execution);
+}
+
+/**
+ * The same predicate addressed by LANE rather than by downstream context, for
+ * the scheduler: authored placement names the lane a context will run on before
+ * that context has been placed on it, so visibility has to be answerable
+ * against a lane the downstream has not joined yet.
+ */
+export function isUpstreamVisibleToLane(
+  upstreamId: string,
+  targetLaneId: string | null,
+  execution: GraphWorkflowExecution,
+): boolean {
+  const upstream = execution.contextStates[upstreamId];
+  if (!upstream) return false;
   if (!isContextOutputCommittedToLane(upstream, execution)) return false;
 
   // Fork ancestry: a downstream lane forked from the upstream's lane carries
@@ -77,29 +97,29 @@ export function isUpstreamVisibleToDownstream(
   // it, an interrupted forked context reset to `ready` is wrongly judged
   // dependency-blocked and stranded as ineligible, so the scheduler never
   // reschedules it and the loop completes with the work unfinished.
-  if (downstream.laneId !== null) {
-    const downstreamLane = execution.executionLanes[downstream.laneId];
-    if (downstreamLane?.includedContextIds.includes(upstreamId)) {
+  if (targetLaneId !== null) {
+    const targetLane = execution.executionLanes[targetLaneId];
+    if (targetLane?.includedContextIds.includes(upstreamId)) {
       return true;
     }
   }
 
   if (upstream.laneId === null) {
-    return downstream.laneId === null;
+    return targetLaneId === null;
   }
 
   const upstreamReachable = reachableLanesFrom(upstream.laneId, execution);
 
-  if (downstream.laneId === null) {
+  if (targetLaneId === null) {
     for (const reachedId of upstreamReachable) {
       if (execution.executionLanes[reachedId]?.kind === "session") return true;
     }
     return false;
   }
 
-  if (upstream.laneId === downstream.laneId) return true;
+  if (upstream.laneId === targetLaneId) return true;
 
-  return upstreamReachable.has(downstream.laneId);
+  return upstreamReachable.has(targetLaneId);
 }
 
 /**
@@ -304,6 +324,11 @@ export type ContextSchedulability =
       kind: "schedulable";
       targetLaneId: string | null;
       requiresFork: boolean;
+      /**
+       * The lane whose committed head a newly minted lane branches from, or
+       * null for the session branch. Meaningful only with `requiresFork`.
+       */
+      forkFromLaneId: string | null;
     }
   | { kind: "wait-for-join"; sourceLaneIds: string[] }
   | { kind: "wait-for-lane"; laneId: string }
@@ -335,21 +360,88 @@ interface ClassifySchedulabilityOptions {
 }
 
 /**
+ * The placement a context was authored with — the sole lane authority (R2).
+ *
+ * Throws rather than falling back to the context id when the definition does
+ * not carry the context: a lane name is spliced into a branch and a worktree
+ * path, and inventing one from an id is exactly the lexical fallback the
+ * ownership machinery forbids. Every caller classifies ids drawn from the same
+ * definition, so an absent context is a data-integrity failure, not an input.
+ */
+function placementOf(
+  definition: ReadinessDefinition,
+  contextId: string,
+): ContextPlacement {
+  const placement = definition.executionContexts.find(
+    (context) => context.id === contextId,
+  )?.placement;
+  if (placement === undefined) {
+    throw new Error(
+      `Context "${contextId}" is not present in the definition, so it has no authored lane placement`,
+    );
+  }
+  return placement;
+}
+
+/**
+ * The runtime lane id for an authored lane name, or null when no lane record
+ * exists for it yet (the caller must mint one).
+ */
+function resolveAuthoredLaneId(
+  laneName: string,
+  execution: GraphWorkflowExecution,
+): string | null {
+  const laneId = laneName === SESSION_LANE_NAME ? SESSION_LANE_ID : laneName;
+  return execution.executionLanes[laneId] ? laneId : null;
+}
+
+/**
+ * The upstream lanes whose work has NOT reached `targetLaneId` — the sources a
+ * join into that target still has to merge.
+ *
+ * Read off the visibility predicate rather than off lane reachability alone, so
+ * an upstream that is already present in the target's branch history — because
+ * it ran on that lane, or because the lane forked from a branch that carried it
+ * — is not counted as a missing source and does not plan a join over work that
+ * is already there (R3.2).
+ */
+function unreachedSourceLaneIds(
+  upstreamIds: readonly string[],
+  targetLaneId: string,
+  execution: GraphWorkflowExecution,
+): string[] {
+  const missing: string[] = [];
+  for (const upstreamId of upstreamIds) {
+    const laneId = execution.contextStates[upstreamId]?.laneId ?? null;
+    if (laneId === null || laneId === targetLaneId) continue;
+    if (missing.includes(laneId)) continue;
+    if (isUpstreamVisibleToLane(upstreamId, targetLaneId, execution)) continue;
+    missing.push(laneId);
+  }
+  return missing;
+}
+
+/**
  * Decide whether a single context can be scheduled now and, if so, what lane
  * target the scheduler should use. Pure: no I/O, no mutation of execution
  * state.
  *
- * The classifier separates dependency-readiness (all upstream output is
- * visible to the downstream's lane) from schedulability (the chosen lane is
- * idle, any required join has succeeded, and concurrency capacity allows it).
+ * The classifier separates dependency-readiness (every upstream has landed and
+ * is visible from the authored lane) from schedulability (the lane admits the
+ * context, any required join has succeeded, and concurrency capacity allows
+ * it). The lane is never inferred from where the upstream happened to land:
+ * authored placement is the only lane authority (R2), and an upstream's lane is
+ * at most a fork base.
  *
- * `targetLaneId` is the existing lane to consume (or `null` to use the
- * session worktree). `requiresFork` indicates that the context cannot share
- * the session worktree even though its upstream targets it — either because
- * session-lane participation is disabled by the caller or because another
- * worktree lane still has unpublished work that would conflict with
- * concurrent session activity. When `requiresFork` is true with
- * `targetLaneId === null`, the caller must provision a fresh worktree lane.
+ * `targetLaneId` is the existing lane to consume — `SESSION_LANE_ID` for the
+ * session worktree — or `null` when the authored lane has no record yet. With
+ * `requiresFork`, the caller must provision the authored lane from
+ * `forkFromLaneId`'s committed head (or the session branch when null).
+ *
+ * Admission here is LEXICAL, over declared owned prefixes. The canonical,
+ * symlink-resolved re-check happens in the reservation reducer
+ * (`lane-admission.ts`), which is the only place that can compare frozen sets
+ * atomically against co-candidates and a concurrent scheduler.
  */
 export function classifyContextSchedulability(
   input: ClassifySchedulabilityInput,
@@ -362,9 +454,7 @@ export function classifyContextSchedulability(
   // preconditions can opt in by passing `sessionLaneEnabled: true`.
   const sessionLaneEnabled = options?.sessionLaneEnabled ?? false;
   const capacityRemaining = options?.capacityRemaining;
-
-  const downstream = execution.contextStates[contextId];
-  const downstreamPlaced = downstream?.laneId ?? null;
+  const placement = placementOf(definition, contextId);
 
   // Projection-resolved rather than raw edges (decision D1): the lanes this
   // context must see are the lanes of the ACTIVE incoming edges' EFFECTIVE
@@ -373,23 +463,12 @@ export function classifyContextSchedulability(
   // planned.
   const upstreamIds = routeUpstreamContextIds(execution, contextId, definition);
 
-  // Phase 1: every upstream must have committed output somewhere. If the
-  // downstream has already been pinned to a lane, the upstream must also be
-  // visible from that lane; otherwise the scheduler is still free to pick a
-  // placement that makes the upstream visible.
-  const unmetUpstreamIds: string[] = [];
-  for (const upstreamId of upstreamIds) {
-    if (!isRouteSourceLanded(execution, upstreamId)) {
-      unmetUpstreamIds.push(upstreamId);
-      continue;
-    }
-    if (
-      downstreamPlaced !== null &&
-      !isUpstreamVisibleToDownstream(upstreamId, contextId, execution)
-    ) {
-      unmetUpstreamIds.push(upstreamId);
-    }
-  }
+  // Phase 1: every upstream must have landed somewhere. Where it landed
+  // relative to this context's lane is a routing question (phase 3), not a
+  // dependency one — an upstream on an unmerged lane is joinable, not unmet.
+  const unmetUpstreamIds = upstreamIds.filter(
+    (upstreamId) => !isRouteSourceLanded(execution, upstreamId),
+  );
   if (unmetUpstreamIds.length > 0) {
     return { kind: "dependency-blocked", unmetUpstreamIds };
   }
@@ -398,24 +477,74 @@ export function classifyContextSchedulability(
     return { kind: "wait-for-capacity" };
   }
 
-  // Phase 2: pick a target lane.
-  if (downstreamPlaced !== null) {
-    if (isLaneBusy(downstreamPlaced, execution, contextId)) {
-      return { kind: "wait-for-lane", laneId: downstreamPlaced };
+  // Phase 2: the authored lane already exists — run there.
+  const targetLaneId = resolveAuthoredLaneId(placement.lane, execution);
+  if (targetLaneId !== null) {
+    const missingSources = unreachedSourceLaneIds(
+      upstreamIds,
+      targetLaneId,
+      execution,
+    );
+    if (missingSources.length > 0) {
+      return { kind: "wait-for-join", sourceLaneIds: missingSources };
+    }
+    if (
+      !laneAdmits({ targetLaneId, contextId, placement, definition, execution })
+    ) {
+      return { kind: "wait-for-lane", laneId: targetLaneId };
     }
     return {
       kind: "schedulable",
-      targetLaneId: downstreamPlaced,
+      targetLaneId,
       requiresFork: false,
+      forkFromLaneId: null,
     };
   }
 
-  const sourceLaneIds = collectSourceLaneIds(upstreamIds, execution);
-  const workTreeSourceLaneIds = sourceLaneIds.filter(
-    (laneId): laneId is string => laneId !== null,
-  );
+  // The session lane is the session worktree itself: never provisioned, never
+  // forked. Until a lane record is materialized for it (final publish does
+  // that), a context authored there runs with no lane at all, and the caller's
+  // opt-in is what says the session worktree is safe to occupy.
+  if (placement.lane === SESSION_LANE_NAME) {
+    const unpublished = upstreamIds.filter(
+      (upstreamId) =>
+        execution.contextStates[upstreamId]?.laneId !== null &&
+        !isUpstreamVisibleToLane(upstreamId, null, execution),
+    );
+    if (unpublished.length > 0) {
+      return {
+        kind: "wait-for-join",
+        sourceLaneIds: [
+          ...new Set(
+            unpublished.map(
+              (upstreamId) => execution.contextStates[upstreamId]!.laneId!,
+            ),
+          ),
+        ],
+      };
+    }
+    if (!sessionLaneEnabled || hasUnpublishedUnrelatedWorktreeWork(execution)) {
+      return { kind: "wait-for-lane", laneId: SESSION_LANE_ID };
+    }
+    return {
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: false,
+      forkFromLaneId: null,
+    };
+  }
+
+  // Phase 3: the authored group lane has to be minted. It forks from the branch
+  // that already carries this context's upstream work, so the fork itself
+  // delivers the visibility a join would otherwise have to.
+  const workTreeSourceLaneIds = collectSourceLaneIds(
+    upstreamIds,
+    execution,
+  ).filter((laneId): laneId is string => laneId !== null);
 
   if (workTreeSourceLaneIds.length >= 2) {
+    // Several unmerged sources: no single branch carries all of the upstream
+    // work, so there is nothing to fork from until a join converges them.
     const commonTargets = intersectReachableLanes(
       workTreeSourceLaneIds,
       execution,
@@ -423,27 +552,86 @@ export function classifyContextSchedulability(
     if (commonTargets.length === 0) {
       return { kind: "wait-for-join", sourceLaneIds: workTreeSourceLaneIds };
     }
-    const idle = commonTargets.find(
-      (laneId) => !isLaneBusy(laneId, execution, contextId),
-    );
-    if (idle === undefined) {
-      return { kind: "wait-for-lane", laneId: commonTargets[0]! };
-    }
-    return { kind: "schedulable", targetLaneId: idle, requiresFork: false };
+    return {
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: true,
+      forkFromLaneId: commonTargets[0]!,
+    };
   }
 
   if (workTreeSourceLaneIds.length === 1) {
-    const laneId = workTreeSourceLaneIds[0]!;
-    if (isLaneBusy(laneId, execution, contextId)) {
-      return { kind: "wait-for-lane", laneId };
-    }
-    return { kind: "schedulable", targetLaneId: laneId, requiresFork: false };
+    return {
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: true,
+      forkFromLaneId: workTreeSourceLaneIds[0]!,
+    };
   }
 
-  // No worktree source lanes — all upstreams (if any) landed in session.
-  const requiresFork =
-    !sessionLaneEnabled || hasUnpublishedUnrelatedWorktreeWork(execution);
-  return { kind: "schedulable", targetLaneId: null, requiresFork };
+  // No worktree source lanes — every upstream (if any) landed in session, so
+  // the authored lane forks from the session branch.
+  return {
+    kind: "schedulable",
+    targetLaneId: null,
+    requiresFork: true,
+    forkFromLaneId: null,
+  };
+}
+
+/**
+ * Does `targetLaneId` admit this context alongside whoever is running on it?
+ *
+ * The lexical half of the admission rule (R5): read-only members collide with
+ * nobody, a full-access member on either side takes the lane exclusively, and
+ * two owning members are admissible exactly when their declared prefixes are
+ * pairwise disjoint. Occupancy is `running` only — a `ready` member holds no
+ * turn, and a reserved-but-not-started one is accounted for by the reservation
+ * record the scheduler keeps, not by status.
+ */
+function laneAdmits(input: {
+  targetLaneId: string;
+  contextId: string;
+  placement: ContextPlacement;
+  definition: ReadinessDefinition;
+  execution: GraphWorkflowExecution;
+}): boolean {
+  const { targetLaneId, contextId, placement, definition, execution } = input;
+  if (placement.mode === "readOnly") return true;
+
+  for (const state of Object.values(execution.contextStates)) {
+    if (state.contextId === contextId) continue;
+    if (state.laneId !== targetLaneId) continue;
+    if (state.status !== "running") continue;
+    const occupant = definition.executionContexts.find(
+      (context) => context.id === state.contextId,
+    )?.placement;
+    // A running occupant the definition no longer carries (a live edit removed
+    // it mid-turn) still holds the worktree, and nothing describes what it
+    // writes — the fail-closed reading is that it holds the lane exclusively.
+    if (occupant === undefined) return false;
+    if (occupant.mode === "readOnly") continue;
+    if (occupant.mode === "full" || placement.mode === "full") return false;
+    for (const ownedPath of placement.ownedPaths) {
+      for (const occupied of occupant.ownedPaths) {
+        if (declaredPrefixesOverlap(ownedPath, occupied)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Prefix coverage at segment boundaries, so `src/lib` does not swallow the
+ * sibling `src/libraries`. Mirrors the authoring-time check in
+ * `placement-validation.ts`, which is the same rule read off the same strings.
+ */
+function declaredPrefixesOverlap(left: string, right: string): boolean {
+  return (
+    left === right ||
+    left.startsWith(`${right}/`) ||
+    right.startsWith(`${left}/`)
+  );
 }
 
 function collectSourceLaneIds(
@@ -478,19 +666,6 @@ function intersectReachableLanes(
     }
   }
   return result;
-}
-
-function isLaneBusy(
-  laneId: string,
-  execution: GraphWorkflowExecution,
-  excludingContextId?: string,
-): boolean {
-  for (const [contextId, state] of Object.entries(execution.contextStates)) {
-    if (contextId === excludingContextId) continue;
-    if (state.laneId !== laneId) continue;
-    if (state.status === "running" || state.status === "ready") return true;
-  }
-  return false;
 }
 
 /**

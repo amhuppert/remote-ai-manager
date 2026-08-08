@@ -595,6 +595,7 @@ describe("GET /api/conversations/active", () => {
               machineSnapshot: null,
               history: [],
               executionLanes: {},
+              laneReservations: {},
               joins: {
                 "join-running": {
                   joinId: "join-running",
@@ -731,6 +732,7 @@ describe("GET /api/conversations/active", () => {
               machineSnapshot: null,
               history: [],
               executionLanes: {},
+              laneReservations: {},
               joins: {
                 "join-final": {
                   joinId: "join-final",

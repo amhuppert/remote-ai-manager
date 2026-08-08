@@ -573,6 +573,10 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         isolation: "worktree",
         batchId: "batch-1",
         reservedByBatchId: "batch-1",
+        reservedOwnership: {
+          mode: "owned",
+          canonicalPrefixes: ["/wt/lane-1/src/api", "/wt/lane-1/docs"],
+        },
         laneId: "lane-1",
         joinId: "join-1",
         mergeStatus: "in-progress",
@@ -1047,6 +1051,27 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T03:00:00Z",
+      },
+    },
+    laneReservations: {
+      "lane-2": {
+        laneId: "lane-2",
+        batchId: "batch-2",
+        provisioning: true,
+        members: [
+          {
+            contextId: "ctx-2",
+            ownership: {
+              mode: "owned",
+              canonicalPrefixes: ["/wt/lane-2/src/ui"],
+            },
+          },
+          {
+            contextId: "ctx-3",
+            ownership: { mode: "readOnly", canonicalPrefixes: [] },
+          },
+        ],
+        createdAt: "2026-01-02T04:00:00Z",
       },
     },
     joins: {

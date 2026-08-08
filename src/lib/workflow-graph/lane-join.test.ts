@@ -96,7 +96,9 @@ function completeAllContextTasks(
 }
 
 describe("pickJoinTarget", () => {
-  it("picks the most-recently-updated existing source lane", () => {
+  it("uses the authored target lane, whatever the sources' recency", () => {
+    // Authored placement decides where the downstream runs, so the join has to
+    // deliver the work THERE. Recency is not a placement authority.
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -114,10 +116,15 @@ describe("pickJoinTarget", () => {
       },
     };
 
-    expect(pickJoinTarget(["lane-a", "lane-b"], execution)).toBe("lane-b");
+    expect(pickJoinTarget(["lane-a", "lane-b"], execution, "lane-a")).toBe(
+      "lane-a",
+    );
   });
 
-  it("breaks ties on equal updatedAt by lane id (asc)", () => {
+  it("falls back to the lowest source lane id when the authored target has no lane yet", () => {
+    // The downstream's own lane does not exist to merge into, so the sources
+    // converge on one of themselves and the new lane forks from the result.
+    // Deterministic by id so a resume and a replay converge on the same answer.
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
       ...base,
@@ -125,7 +132,7 @@ describe("pickJoinTarget", () => {
         "lane-z": makeLane({
           laneId: "lane-z",
           branchName: "csm/test-z",
-          updatedAt: t0,
+          updatedAt: t1,
         }),
         "lane-a": makeLane({
           laneId: "lane-a",
@@ -135,7 +142,204 @@ describe("pickJoinTarget", () => {
       },
     };
 
+    expect(pickJoinTarget(["lane-z", "lane-a"], execution, "lane-new")).toBe(
+      "lane-a",
+    );
     expect(pickJoinTarget(["lane-z", "lane-a"], execution)).toBe("lane-a");
+  });
+});
+
+describe("planContextJoin targets the authored lane (R3, decision D5)", () => {
+  /**
+   * `context-plan` on `lane-up`, `context-implement` authored onto `lane-down`.
+   * The caller decides what has already been merged into `lane-down`.
+   */
+  function makeTargetedFixture(input: {
+    joins?: GraphWorkflowExecution["joins"];
+    downIncludes?: readonly string[];
+    extraUpstreamLaneId?: string;
+  }): GraphWorkflowExecution {
+    const base = createWorkflowExecution();
+    const definition = {
+      ...base.workingDefinition,
+      executionContexts: base.workingDefinition.executionContexts.map(
+        (context) =>
+          context.id === "context-implement"
+            ? {
+                ...context,
+                placement: { lane: "lane-down", mode: "full" as const },
+              }
+            : context,
+      ),
+      edges: [
+        {
+          id: "edge-plan-implement",
+          sourceContextId: "context-plan",
+          targetContextId: "context-implement",
+        },
+        ...(input.extraUpstreamLaneId
+          ? [
+              {
+                id: "edge-verify-implement",
+                sourceContextId: "context-verify",
+                targetContextId: "context-implement",
+              },
+            ]
+          : []),
+      ],
+    };
+    const executionLanes: GraphWorkflowExecution["executionLanes"] = {
+      "lane-up": makeLane({
+        laneId: "lane-up",
+        branchName: "csm/test-up",
+        includedContextIds: ["context-plan"],
+      }),
+      "lane-down": makeLane({
+        laneId: "lane-down",
+        branchName: "csm/test-down",
+        includedContextIds: [...(input.downIncludes ?? [])],
+      }),
+    };
+    const contextStates: GraphWorkflowExecution["contextStates"] = {
+      ...base.contextStates,
+      "context-plan": {
+        ...base.contextStates["context-plan"]!,
+        status: "completed" as const,
+        isolation: "worktree" as const,
+        laneId: "lane-up",
+        mergeStatus: "merged-success" as const,
+      },
+    };
+    if (input.extraUpstreamLaneId) {
+      executionLanes[input.extraUpstreamLaneId] = makeLane({
+        laneId: input.extraUpstreamLaneId,
+        branchName: `csm/test-${input.extraUpstreamLaneId}`,
+        includedContextIds: ["context-verify"],
+      });
+      contextStates["context-verify"] = {
+        ...base.contextStates["context-verify"]!,
+        status: "completed" as const,
+        isolation: "worktree" as const,
+        laneId: input.extraUpstreamLaneId,
+        mergeStatus: "merged-success" as const,
+      };
+    }
+    return {
+      ...base,
+      workingDefinition: definition,
+      executionLanes,
+      joins: input.joins ?? {},
+      contextStates,
+    };
+  }
+
+  it("plans a join for a SINGLE upstream lane that has not reached the authored target", () => {
+    // The two-source minimum used to drop this on the floor: one unmerged
+    // source into an existing target is still a merge that has to happen.
+    const plan = planContextJoin({
+      contextId: "context-implement",
+      execution: makeTargetedFixture({}),
+      now: () => t1,
+      generateJoinId: () => "join-single",
+    });
+
+    expect(plan).not.toBeNull();
+    expect(plan!.targetLaneId).toBe("lane-down");
+    expect(plan!.sourceLaneIds.sort()).toEqual(["lane-down", "lane-up"]);
+    expect(plan!.contextId).toBe("context-implement");
+  });
+
+  it("merges every unreached source into the authored target", () => {
+    const plan = planContextJoin({
+      contextId: "context-implement",
+      execution: makeTargetedFixture({ extraUpstreamLaneId: "lane-side" }),
+      now: () => t1,
+      generateJoinId: () => "join-multi",
+    });
+
+    expect(plan!.targetLaneId).toBe("lane-down");
+    expect(plan!.sourceLaneIds.sort()).toEqual([
+      "lane-down",
+      "lane-side",
+      "lane-up",
+    ]);
+  });
+
+  it("skips a source lane already reachable from the authored target", () => {
+    const plan = planContextJoin({
+      contextId: "context-implement",
+      execution: makeTargetedFixture({
+        extraUpstreamLaneId: "lane-side",
+        joins: {
+          "join-prior": makeJoin({
+            joinId: "join-prior",
+            targetLaneId: "lane-down",
+            sourceLaneIds: ["lane-up"],
+            mergedSourceLaneIds: ["lane-up"],
+            status: "succeeded",
+          }),
+        },
+      }),
+      now: () => t1,
+      generateJoinId: () => "join-rest",
+    });
+
+    expect(plan!.targetLaneId).toBe("lane-down");
+    expect(plan!.sourceLaneIds.sort()).toEqual(["lane-down", "lane-side"]);
+  });
+
+  it("returns null when every upstream is already visible from the authored target", () => {
+    const plan = planContextJoin({
+      contextId: "context-implement",
+      execution: makeTargetedFixture({
+        joins: {
+          "join-prior": makeJoin({
+            joinId: "join-prior",
+            targetLaneId: "lane-down",
+            sourceLaneIds: ["lane-up"],
+            mergedSourceLaneIds: ["lane-up"],
+            status: "succeeded",
+          }),
+        },
+      }),
+      now: () => t1,
+      generateJoinId: () => "join-none",
+    });
+
+    expect(plan).toBeNull();
+  });
+
+  it("returns null when the upstream ran on the authored target lane itself", () => {
+    // R3.2: same-lane work is already in the shared worktree, so a join would
+    // merge a branch into itself and buy the downstream nothing but a wait.
+    const base = makeTargetedFixture({});
+    const sameLane: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        ...base.executionLanes,
+        "lane-down": makeLane({
+          laneId: "lane-down",
+          branchName: "csm/test-down",
+          includedContextIds: ["context-plan"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          laneId: "lane-down",
+        },
+      },
+    };
+
+    expect(
+      planContextJoin({
+        contextId: "context-implement",
+        execution: sameLane,
+        now: () => t1,
+        generateJoinId: () => "join-same",
+      }),
+    ).toBeNull();
   });
 });
 

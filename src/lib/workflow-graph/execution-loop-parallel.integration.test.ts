@@ -16,7 +16,7 @@ import {
   type JoinRunner,
 } from "@/lib/workflow-graph/join-runner";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
-import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-join";
+import { SESSION_LANE_ID } from "@/lib/workflow-graph/lane-identity";
 import { createSessionGitLock } from "@/lib/shared/lock-retry";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -380,6 +380,7 @@ function createInitialExecution(
     advisoryIndex: [],
     laneStates: {},
     executionLanes: {},
+    laneReservations: {},
     joins: {},
     machineSnapshot: null,
     startedAt: "2026-03-27T12:00:00.000Z",

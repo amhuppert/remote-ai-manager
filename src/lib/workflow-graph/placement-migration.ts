@@ -22,8 +22,7 @@
  * guards.
  */
 
-import { SESSION_LANE_ID } from "./lane-join";
-import { SESSION_LANE_NAME } from "./lane-identity";
+import { SESSION_LANE_ID, SESSION_LANE_NAME } from "./lane-identity";
 
 /** What a context whose id sanitizes to nothing legal is named. */
 const FALLBACK_LANE_NAME = "context";

@@ -28,8 +28,11 @@ import type {
   WorkflowGraphValidationError,
   WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
-import { SESSION_LANE_ID } from "./lane-join";
-import { laneIdViolation, SESSION_LANE_NAME } from "./lane-identity";
+import {
+  laneIdViolation,
+  SESSION_LANE_ID,
+  SESSION_LANE_NAME,
+} from "./lane-identity";
 
 /** A placement that may write: everything except the read-only grade. */
 function isWriteCapable(placement: ContextPlacement): boolean {
