@@ -17,6 +17,7 @@ import type {
   WorkflowCollaborationConfig,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
+  defaultValidatorAuthority,
   PLAN_REPAIR_DEFAULT_AGENT,
   type AgentAssignment,
   type GraphWorkflowAgentValidationConfig,
@@ -80,8 +81,9 @@ export function ImplementerEditor({
  * Strategy and backend stay independent, so a Codex agent under conversation
  * strategy (or Claude under task) is authorable rather than implied by a
  * provider-named type. Authority is handed down as a control for the same
- * reason strategy is — it exists only where a verdict does, and the shared
- * editor must not assume every assignment carries one.
+ * reason strategy is — it exists only where a verdict does. Replacing the
+ * profile applies that profile's authority default; the author can still
+ * override it independently afterward.
  *
  * The shared editor's result is FORWARDED, never merged over the current value:
  * it returns this validator assignment whole, and merging would restore an
@@ -97,12 +99,25 @@ export function ContextValidatorEditor({
   AssignmentEditorSurfaceProps): React.JSX.Element {
   const continuityEnabled = value.continuity.enabled;
   const continuityLimit = value.continuity.contextLimitTokens;
+  const handleAssignmentChange = (next: ValidatorAssignment) => {
+    if (
+      next.profile.tier === value.profile.tier &&
+      next.profile.id === value.profile.id
+    ) {
+      onChange(next);
+      return;
+    }
+    onChange({
+      ...next,
+      authority: defaultValidatorAuthority(next.profile),
+    });
+  };
 
   return (
     <div className="flex flex-col gap-sm">
       <AssignmentEditor
         value={value}
-        onChange={onChange}
+        onChange={handleAssignmentChange}
         strategy={{
           value: value.strategy,
           onChange: (strategy) => onChange({ ...value, strategy }),

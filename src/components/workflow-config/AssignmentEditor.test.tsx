@@ -292,6 +292,38 @@ describe("ContextValidatorEditor", () => {
     );
   });
 
+  it("defaults the built-in acceptance-criteria profile to blocking when selected", () => {
+    const { onChange } = renderValidator({
+      value: { ...VALIDATOR, authority: "advisory" },
+      open: true,
+    });
+    fireEvent.click(screen.getByRole("option", { name: /General Reviewer/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: { tier: "builtin", id: "general-reviewer" },
+        authority: "blocking",
+      }),
+    );
+  });
+
+  it("defaults every other profile to advisory when selected", () => {
+    const { onChange } = renderValidator({
+      value: {
+        ...VALIDATOR,
+        profile: { tier: "builtin", id: "general-reviewer" },
+        authority: "blocking",
+      },
+      open: true,
+    });
+    fireEvent.click(screen.getByRole("option", { name: /House Style/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profile: { tier: "project", id: "house-style" },
+        authority: "advisory",
+      }),
+    );
+  });
+
   it("labels the instructions field from the seat's own authority", () => {
     renderValidator({ value: { ...VALIDATOR, authority: "advisory" } });
     expect(screen.getByLabelText("Focus for security")).toBeInTheDocument();

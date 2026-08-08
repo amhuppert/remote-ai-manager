@@ -228,11 +228,11 @@ describe("CohortEditor authority", () => {
     expect(next.assignments[0]).toEqual(COHORT.assignments[0]);
   });
 
-  it("adds a new validator as advisory — blocking authority is authored, never inherited", () => {
+  it("adds the standard acceptance-criteria validator as blocking", () => {
     const { onChange } = renderCohort();
     fireEvent.click(screen.getByRole("button", { name: "Add validator" }));
     const next = onChange.mock.calls[0]?.[0] as ValidatorCohort;
-    expect(next.assignments.at(-1)?.authority).toBe("advisory");
+    expect(next.assignments.at(-1)?.authority).toBe("blocking");
     expect(validatorCohortSchema.safeParse(next).success).toBe(true);
   });
 

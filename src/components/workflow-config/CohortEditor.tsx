@@ -195,11 +195,6 @@ export function CohortEditor({
         {
           ...seed,
           id: freshAssignmentId(taken, seed.profile.id),
-          // The seed's blocking authority is the acceptance-criteria verifier's
-          // own, not a template: blocking is authored, never inherited, so a
-          // seat added here arrives unable to fail the context until its author
-          // says otherwise and takes on convergence for it.
-          authority: "advisory",
         },
       ],
     });

@@ -255,7 +255,7 @@ it protects their shared fan-in target. The list is closed by
 | Block | Purpose |
 |---|---|
 | `implementer` | The implementer ASSIGNMENT: `{ id, profile, focus?, agent }` — a library profile plus the runtime (backend, model, reasoning) that runs it |
-| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, authority, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; `authority` (`blocking \| advisory`, default advisory) decides whether the seat can reopen tasks — see the authority section; a disabled cohort keeps its assignments dormant |
+| `contextValidator` | The validator COHORT: `{ enabled, assignments: [{ id, profile, focus?, strategy, authority, agent, continuity }] }`. `strategy` (`conversation \| task`) replaced the provider-named `type` discriminator; `authority` (`blocking \| advisory`) decides whether the seat can reopen tasks — the built-in acceptance-criteria validator defaults blocking and every other profile defaults advisory; a disabled cohort keeps its assignments dormant |
 | `scriptValidator` | Deterministic validator that runs its ordered registered command selection. `{ commands: string[] }`; an empty list disables it |
 | `humanApprovalGate` | Whether a context pauses for operator approval before it lands. `{ enabled: boolean }`, default disabled |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
@@ -462,10 +462,9 @@ Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` r
 
 Every validator assignment carries `authority` (`validatorAuthoritySchema` in
 `workflow-graph/config-schemas.ts`): `blocking` findings reopen tasks, `advisory`
-findings never can. The schema default is `advisory` for every assignment, and
-the one blocking seat an unconfigured workflow gets — the acceptance-criteria
-verifier — is written explicitly in `SEEDED_WORKFLOW_DEFAULTS`
-(`resolve-config.ts`), never derived from an id. A specialist added to a cohort
+findings never can. When authority is omitted, the built-in `general-reviewer`
+profile used for standard acceptance-criteria validation defaults to `blocking`;
+every other profile defaults to `advisory`. A specialist added to a cohort
 therefore arrives non-blocking; making it able to fail a context is a deliberate
 authoring act, and the author who performs it owns convergence for that standard
 (the circuit breaker and plan repair are the backstops, not a substitute).

@@ -7,6 +7,7 @@ import type {
   WorkflowCollaborationConfigOverride,
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
+  ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF,
   DEFAULT_AGENT_VALIDATION_CONFIG,
   DEFAULT_LANE_MERGE_VALIDATION_CONFIG,
   DEFAULT_PLAN_REPAIR_POLICY,
@@ -48,12 +49,10 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
     assignments: [
       {
         id: "general",
-        profile: { tier: "builtin", id: "general-reviewer" },
+        profile: ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF,
         strategy: "conversation",
-        // The one seeded blocking seat: its mandate is the context's acceptance
-        // criteria, so it is the assignment an unconfigured workflow relies on
-        // to reopen tasks. Written here rather than defaulted by id, which is
-        // what keeps the schema default a flat "advisory" for everyone else.
+        // Its mandate is the context's acceptance criteria, so this is the seat
+        // an unconfigured workflow relies on to reopen tasks.
         authority: "blocking",
         agent: {
           backend: "claude",

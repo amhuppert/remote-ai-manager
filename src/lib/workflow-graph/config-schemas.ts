@@ -13,6 +13,7 @@ import {
 import {
   agentProfileRefSchema,
   agentProfileSnapshotSchema,
+  type AgentProfileRef,
 } from "@/lib/agent-profiles/schemas";
 import { escapeDiagnosticValue } from "@/lib/shared/diagnostic-text";
 import { validationCommandNameSchema } from "@/lib/validation/schemas";
@@ -195,30 +196,60 @@ export type AgentAssignment = z.infer<typeof agentAssignmentSchema>;
 /**
  * Whether a validator's findings can reopen tasks.
  *
- * `blocking` is authored, never inherited: the default is `advisory` for every
- * assignment, and the seeded acceptance-criteria verifier gets its blocking
- * authority from an explicit write in the seed rather than from a rule keyed on
- * its id. A specialist added to a cohort therefore arrives non-blocking, and
- * making it able to fail a context is a deliberate act by the workflow author
- * — who then owns convergence for it.
+ * `blocking` is authored, never inherited. The standard acceptance-criteria
+ * verifier is the one blocking default; every other profile defaults to
+ * `advisory`. A specialist added to a cohort therefore arrives non-blocking,
+ * and making it able to fail a context is a deliberate act by the workflow
+ * author — who then owns convergence for it.
  */
 export const validatorAuthoritySchema = z.enum(["blocking", "advisory"]);
 export type ValidatorAuthority = z.infer<typeof validatorAuthoritySchema>;
+
+export const ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF = {
+  tier: "builtin",
+  id: "general-reviewer",
+} as const satisfies AgentProfileRef;
+
+export function defaultValidatorAuthority(
+  profile: AgentProfileRef,
+): ValidatorAuthority {
+  if (
+    profile.tier === ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF.tier &&
+    profile.id === ACCEPTANCE_CRITERIA_VALIDATOR_PROFILE_REF.id
+  ) {
+    return "blocking";
+  }
+  return "advisory";
+}
+
+function applyDefaultValidatorAuthority(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  if ("authority" in value && value.authority !== undefined) return value;
+  if (!("profile" in value)) return value;
+
+  const profile = agentProfileRefSchema.safeParse(value.profile);
+  if (!profile.success) return { ...value, authority: "advisory" };
+  return { ...value, authority: defaultValidatorAuthority(profile.data) };
+}
 
 /**
  * A validator use site. Strategy is independent of backend exactly as the
  * pre-cutover `type` field was in practice: all four backend-x-strategy
  * combinations are expressible, and dispatch reads `strategy` directly.
  */
-export const validatorAssignmentSchema = agentAssignmentSchema
+const validatorAssignmentObjectSchema = agentAssignmentSchema
   .extend({
     strategy: z.enum(["conversation", "task"]),
-    authority: validatorAuthoritySchema.default("advisory"),
+    authority: validatorAuthoritySchema,
     continuity: graphWorkflowLaneContinuityPolicySchema.default({
       enabled: true,
     }),
   })
   .strict();
+export const validatorAssignmentSchema = z.preprocess(
+  applyDefaultValidatorAuthority,
+  validatorAssignmentObjectSchema,
+);
 export type ValidatorAssignment = z.infer<typeof validatorAssignmentSchema>;
 
 /**
@@ -289,9 +320,12 @@ export const seededAgentAssignmentSchema = agentAssignmentSchema
   .strict();
 export type SeededAgentAssignment = z.infer<typeof seededAgentAssignmentSchema>;
 
-export const seededValidatorAssignmentSchema = validatorAssignmentSchema
-  .extend({ profileSnapshot: agentProfileSnapshotSchema })
-  .strict();
+export const seededValidatorAssignmentSchema = z.preprocess(
+  applyDefaultValidatorAuthority,
+  validatorAssignmentObjectSchema
+    .extend({ profileSnapshot: agentProfileSnapshotSchema })
+    .strict(),
+);
 export type SeededValidatorAssignment = z.infer<
   typeof seededValidatorAssignmentSchema
 >;

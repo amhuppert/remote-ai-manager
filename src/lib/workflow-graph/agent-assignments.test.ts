@@ -188,13 +188,38 @@ describe("validatorAssignmentSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("defaults authority to advisory, so blocking is authored rather than inherited", () => {
+  it("defaults the built-in acceptance-criteria validator to blocking", () => {
     const parsed = validatorAssignmentSchema.parse({
-      id: "security",
+      id: "acceptance-criteria",
       profile: { tier: "builtin", id: "general-reviewer" },
       strategy: "conversation",
       agent: CLAUDE_AGENT,
     });
+    expect(parsed.authority).toBe("blocking");
+  });
+
+  it("defaults every other validator profile to advisory", () => {
+    for (const profile of [
+      { tier: "builtin", id: "security-reviewer" },
+      { tier: "global", id: "general-reviewer" },
+      { tier: "project", id: "general-reviewer" },
+    ] as const) {
+      const parsed = validatorAssignmentSchema.parse({
+        id: "specialist",
+        profile,
+        strategy: "conversation",
+        agent: CLAUDE_AGENT,
+      });
+      expect(parsed.authority, `${profile.tier}:${profile.id}`).toBe(
+        "advisory",
+      );
+    }
+  });
+
+  it("preserves explicit advisory authority on the acceptance-criteria validator", () => {
+    const parsed = validatorAssignmentSchema.parse(
+      reviewer({ authority: "advisory" }),
+    );
     expect(parsed.authority).toBe("advisory");
   });
 
@@ -302,7 +327,10 @@ describe("validatorCohortSchema", () => {
       enabled: true,
       assignments: [
         reviewer({ id: "security", authority: "advisory" }),
-        reviewer({ id: "performance" }),
+        reviewer({
+          id: "performance",
+          profile: { tier: "builtin", id: "security-reviewer" },
+        }),
       ],
     });
 

@@ -161,9 +161,7 @@ function makeDefinition(
 
 describe("SEEDED_WORKFLOW_DEFAULTS", () => {
   it("writes blocking authority onto the seeded acceptance-criteria verifier", () => {
-    // The default is advisory for every assignment; the seed is the one place
-    // that authors blocking, and it does so explicitly rather than by having
-    // the schema special-case this assignment's id.
+    // The standard acceptance-criteria profile is the one blocking default.
     expect(
       SEEDED_WORKFLOW_DEFAULTS.contextValidator.assignments.map(
         (assignment) => assignment.authority,
