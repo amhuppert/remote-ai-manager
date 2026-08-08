@@ -5,6 +5,11 @@
 # different memory footprints — the two compete for the same global validation
 # budget and are sized against the same machine.
 #
+# TEST_WORKERS is a CEILING REQUEST. The launcher clamps it to what the machine
+# can hold (scripts/validate/worker-budget.mjs) rather than spawning it blindly,
+# so validation cannot oversubscribe a box the vitest config would have sized
+# down.
+#
 # Callers must set SCRIPT_DIR and source common.sh first.
 
 readonly TEST_WORKERS=8

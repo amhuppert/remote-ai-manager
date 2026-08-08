@@ -8,7 +8,8 @@
  * its only delivery channel, and which same-lane pairs could ever run at the
  * same time. Those live here, in the composite the authoring surfaces
  * (`cctl workflow validate`, create, replace, and the saved-edit applier) all
- * reach through `validateAuthoredDefinition`, so no surface can miss them.
+ * reach through `validateAuthoredDefinition`, and the live-edit frontier
+ * re-asks of the post-batch working definition, so no surface can miss them.
  *
  * Every check reports through the located `WorkflowGraphValidationError` shape:
  * the offending context id plus a definition-relative field path, which
@@ -24,15 +25,45 @@
 import type {
   ContextPlacement,
   GraphWorkflowContextEdge,
-  GraphWorkflowExecutionContextDefinition,
   WorkflowGraphValidationError,
-  WorkflowSemanticDefinition,
 } from "@/lib/workflow-graph/definition-schemas";
 import {
   laneIdViolation,
   SESSION_LANE_ID,
   SESSION_LANE_NAME,
 } from "./lane-identity";
+
+/**
+ * The slice of a context these checks read, structural so BOTH tiers satisfy it:
+ * the authored context and the resolved one a live edit rewrites.
+ *
+ * `placement` is optional HERE only so the structural type fits a caller whose
+ * value the type system cannot prove present; a placement-less context is
+ * skipped rather than refused, because refusing it is the authored tier's job —
+ * it is where the field is required, and a row that reached the live tier
+ * without one has no authored placement to have gotten wrong.
+ */
+interface PlacementValidatableContext {
+  readonly id: string;
+  readonly placement?: ContextPlacement | undefined;
+  readonly outputSchema?: unknown;
+}
+
+interface PlacementValidatableDefinition {
+  readonly executionContexts: readonly PlacementValidatableContext[];
+  readonly edges: readonly GraphWorkflowContextEdge[];
+}
+
+/** A context that declares a placement — the only kind these checks judge. */
+interface PlacedContext extends PlacementValidatableContext {
+  readonly placement: ContextPlacement;
+}
+
+function isPlaced(
+  context: PlacementValidatableContext,
+): context is PlacedContext {
+  return context.placement !== undefined;
+}
 
 /** A placement that may write: everything except the read-only grade. */
 function isWriteCapable(placement: ContextPlacement): boolean {
@@ -61,7 +92,7 @@ function prefixesOverlap(left: string, right: string): boolean {
  * read-only output contract — everything decidable from one context alone.
  */
 function validateContextPlacement(
-  context: GraphWorkflowExecutionContextDefinition,
+  context: PlacedContext,
   contextIndex: number,
 ): WorkflowGraphValidationError[] {
   const errors: WorkflowGraphValidationError[] = [];
@@ -122,7 +153,7 @@ function validateContextPlacement(
  * dependency is exact rather than merely conservative.
  */
 function buildReachability(
-  contexts: readonly GraphWorkflowExecutionContextDefinition[],
+  contexts: readonly PlacementValidatableContext[],
   edges: readonly GraphWorkflowContextEdge[],
 ): Map<string, Set<string>> {
   const adjacency = new Map<string, string[]>();
@@ -162,18 +193,18 @@ function buildReachability(
  * ownership alone.
  */
 function validateLaneConcurrency(
-  definition: WorkflowSemanticDefinition,
+  definition: PlacementValidatableDefinition,
 ): WorkflowGraphValidationError[] {
   const contexts = definition.executionContexts;
   const reachable = buildReachability(contexts, definition.edges);
 
   interface LaneMember {
-    context: GraphWorkflowExecutionContextDefinition;
+    context: PlacedContext;
     index: number;
   }
   const membersByLane = new Map<string, LaneMember[]>();
   contexts.forEach((context, index) => {
-    if (!isWriteCapable(context.placement)) return;
+    if (!isPlaced(context) || !isWriteCapable(context.placement)) return;
     const members = membersByLane.get(context.placement.lane) ?? [];
     members.push({ context, index });
     membersByLane.set(context.placement.lane, members);
@@ -228,15 +259,21 @@ function validateLaneConcurrency(
 }
 
 /**
- * Every placement check an authored definition must pass, in one call so the
- * authoring composite has a single line to compose.
+ * Every placement check a definition must pass, in one call so each composite
+ * has a single line to compose.
+ *
+ * Both tiers reach it: the authored composite (`validateAuthoredDefinition`,
+ * for validate/create/replace and the saved-edit applier) and the live-edit
+ * frontier, which re-asks the same questions of the post-batch working
+ * definition. Sharing the implementation is what keeps a lane name legal at the
+ * same boundary whether it was authored in a plan or introduced by a live edit.
  */
 export function validatePlacements(
-  definition: WorkflowSemanticDefinition,
+  definition: PlacementValidatableDefinition,
 ): WorkflowGraphValidationError[] {
   return [
     ...definition.executionContexts.flatMap((context, index) =>
-      validateContextPlacement(context, index),
+      isPlaced(context) ? validateContextPlacement(context, index) : [],
     ),
     ...validateLaneConcurrency(definition),
   ];

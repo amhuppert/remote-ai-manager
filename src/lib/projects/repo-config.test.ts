@@ -47,7 +47,7 @@ describe("readRepoConfig", () => {
           command: "scripts/validate/test.sh",
           cost: 8,
           timeoutMs: 3_600_000,
-          description: "Run affected unit tests with eight workers",
+          description: "Run affected unit tests with up to eight workers",
           scopeArgs: "paths",
         },
         "test-full-suite": {
@@ -55,7 +55,7 @@ describe("readRepoConfig", () => {
           cost: 8,
           timeoutMs: 3_600_000,
           description:
-            "Run the full unit test suite with eight workers, unscoped and without bail",
+            "Run the full unit test suite with up to eight workers, unscoped and without bail",
           scopeArgs: "forbid",
         },
       },

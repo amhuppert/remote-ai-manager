@@ -12,14 +12,17 @@ function maximalResolvedContext(): Record<string, unknown> {
     title: "Implement the thing",
     description: "Detailed description of the context",
     acceptanceCriteria: "All tests pass and the build is green",
+    // The owning grade, because it is the only one that carries a payload:
+    // a placement round-trip that only ever saw `{ lane, mode }` would not
+    // prove the owned-prefix set survives a real save and reload.
+    placement: {
+      lane: "delivery",
+      mode: "owned",
+      ownedPaths: ["src/feature", "docs/feature.md"],
+    },
     origin: {
       sourceUri: "workflow-source:maximal/context/ctx-1",
       label: "Maximal context source",
-    },
-    placement: {
-      lane: "build",
-      mode: "owned",
-      ownedPaths: ["src/lib/state-store", "docs/adr"],
     },
     implementer: {
       id: "implementer",
@@ -302,16 +305,17 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          // The owning grade, because it is the only one that carries a payload:
+          // a placement round-trip that only ever saw `{ lane, mode }` would not
+          // prove the owned-prefix set survives a real save and reload.
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["src/feature", "docs/feature.md"],
+          },
           origin: {
             sourceUri: "workflow-source:maximal/context/ctx-1",
             label: "Maximal context source",
-          },
-          // The owning grade, so the round trip carries an ownedPaths list
-          // rather than only the shape a bare full-access placement has.
-          placement: {
-            lane: "build",
-            mode: "owned",
-            ownedPaths: ["src/lib/state-store", "docs/adr"],
           },
           implementer: {
             id: "implementer",

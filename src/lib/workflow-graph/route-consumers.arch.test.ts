@@ -35,7 +35,7 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
   // Authoring, validation and persistence of the drawn graph.
   "src/lib/workflow-graph/validation.ts": "structural graph validation",
   "src/lib/workflow-graph/placement-validation.ts":
-    "accept-time placement checks over the drawn graph: same-lane ownership disjointness is only required between contexts nothing SEQUENCES, and the authored edge set is the only statement of ordering there is — a declined guard skips its target entirely, so every authored edge is exact, and no execution exists for the projection to resolve",
+    "accept-time placement checks over the drawn graph: same-lane ownership disjointness is only required between contexts nothing SEQUENCES, and the authored edge set is the only statement of ordering there is — a declined guard skips its target entirely, so every authored edge is exact, both tiers ask it of the same drawn topology, and no execution exists for the projection to resolve",
   "src/lib/workflow-graph/edge-guard-validation.ts":
     "authoring-time guard validation",
   "src/lib/workflow-graph/edge-identity.ts": "mints and repairs edge ids",

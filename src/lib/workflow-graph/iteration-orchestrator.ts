@@ -200,9 +200,15 @@ export interface GraphWorkflowRunAgentIterationInput {
    */
   askUserQuestionsEnabled?: boolean;
   /**
-   * The context's authored placement. Forwarded so the runner composes this
-   * turn's write envelope from the ownership the definition declared, before
-   * any dispatch decision (R6).
+   * The context's authored placement, read from the working definition as of
+   * THIS iteration's seed commit. Forwarded so the runner composes this turn's
+   * write envelope from the ownership the definition declared, before any
+   * dispatch decision (R6). Re-read per iteration rather than captured at
+   * launch: a placement change accepted by the live-edit core takes effect on
+   * the context's next turn (R10.2), and a stale copy here would run the turn
+   * under ownership the operator already revoked.
+   *
+   * Optional because an execution seeded before placement existed carries none.
    */
   placement?: ContextPlacement;
 }
@@ -4315,6 +4321,20 @@ export function createGraphWorkflowIterationOrchestrator(
         `Execution context "${input.contextId}" does not exist in runtime state`,
       );
     }
+    // The definition as of the SEED COMMIT, not as of the snapshot this
+    // iteration opened with. Until that commit lands, the context's persisted
+    // lifecycle still reads `unstarted`, so the live-edit core can validly
+    // accept a placement change for it while this function is awaiting
+    // conversation resolution — and there is no later turn such an edit could
+    // belong to. The seed carries the edit forward (it clones the latest
+    // execution and touches only runtime state), so this read observes it;
+    // dispatching the pre-await snapshot instead would run the turn under the
+    // superseded envelope. Everything committed after the seed sees `started`
+    // and is pause-to-edit, which the next turn's own re-read picks up.
+    const seededContext = getContextDefinition(
+      seededExecution,
+      input.contextId,
+    );
     // Pre-seed iteration count. A parked iteration must not consume an
     // iteration (Req 3.3, design 3.3 "bypasses seed/failure branches"), so the
     // park short-circuit rolls the seed increment back to this value.
@@ -4529,10 +4549,16 @@ export function createGraphWorkflowIterationOrchestrator(
         toolServer: toolServer.server,
         executionTarget: input.executionTarget,
         askUserQuestionsEnabled: context.askUserQuestions.enabled,
-        // Absent only for an execution seeded before placement existed; every
-        // authored context declares one.
-        ...(context.placement !== undefined
-          ? { placement: context.placement }
+        // Read from the atomically seeded definition, so this is the placement
+        // as of the moment this context became `started` — including an edit
+        // accepted since the previous turn, and including one that landed
+        // inside this iteration's own start-up window. Follow-up turns reuse
+        // this base, which is the same boundary the editability tiers draw: a
+        // started context is pause-to-edit, so its ownership cannot change
+        // underneath a turn already in flight. Absent only for an execution
+        // seeded before placement existed; every authored context declares one.
+        ...(seededContext.placement !== undefined
+          ? { placement: seededContext.placement }
           : {}),
       } as const;
 

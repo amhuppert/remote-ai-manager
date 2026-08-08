@@ -1,4 +1,13 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { createGraphWorkflowExecutionsRepo } from "@/lib/state-store/graph-workflow-executions-repo";
+import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
+import { checkFsWritePolicy } from "@/lib/agent-backends/fs-write-policy";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { createWorkflowExecution, makeProfileSnapshot } from "./test-fixtures";
 import {
   applyLiveExecutionEdits,
@@ -3289,5 +3298,544 @@ describe("applyLiveExecutionEdits — criterion must-run coverage at the frontie
     );
 
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
+  const DELIVERY_LANE = "delivery";
+
+  /** A session whose worktree is a real directory the composer can canonicalize. */
+  function makeEnvelopeSession(worktreePath: string): SessionState {
+    return {
+      sessionName: "session-1",
+      worktreePath,
+      branchName: "csm/session-1",
+      createdAt: "2026-08-08T00:00:00.000Z",
+      lastActivityAt: "2026-08-08T00:00:00.000Z",
+      archived: false,
+      finished: false,
+      conversations: [],
+      source: "cc",
+      creationMode: "normal",
+      tddEnabled: true,
+      targetBranch: "main",
+      parentSessionName: null,
+      graphWorkflowExecution: null,
+      referenceDocuments: [],
+    };
+  }
+
+  function placeOnDeliveryLane(
+    context: GraphWorkflowResolvedContext,
+    ownedPaths: string[],
+  ): GraphWorkflowResolvedContext {
+    return {
+      ...context,
+      placement: { lane: DELIVERY_LANE, mode: "owned", ownedPaths },
+    };
+  }
+
+  /**
+   * `context-plan` and `context-implement` share one authored lane with nothing
+   * sequencing them (the fixture's plan → implement edge is dropped), which is
+   * exactly the shape ownership disjointness exists for: one worktree, two
+   * members that could hold it at the same time.
+   */
+  function sharedLaneExecution(
+    overrides: Partial<GraphWorkflowExecution> = {},
+  ): GraphWorkflowExecution {
+    const base = createWorkflowExecution(overrides);
+    return {
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        edges: base.workingDefinition.edges.filter(
+          (edge) => edge.id !== "edge-plan-implement",
+        ),
+        executionContexts: base.workingDefinition.executionContexts.map(
+          (context) =>
+            context.id === "context-plan"
+              ? placeOnDeliveryLane(context, ["docs"])
+              : context.id === "context-implement"
+                ? placeOnDeliveryLane(context, ["src/feature"])
+                : context,
+        ),
+      },
+    };
+  }
+
+  /** Put `context-implement` in flight: the lane's worktree is held. */
+  function withImplementRunning(
+    execution: GraphWorkflowExecution,
+  ): GraphWorkflowExecution {
+    return {
+      ...execution,
+      activeContextIds: ["context-implement"],
+      contextStates: {
+        ...execution.contextStates,
+        "context-implement": {
+          ...execution.contextStates["context-implement"]!,
+          status: "running",
+          iterationCount: 1,
+        },
+      },
+    };
+  }
+
+  function placementOf(execution: GraphWorkflowExecution, contextId: string) {
+    return execution.workingDefinition.executionContexts.find(
+      (context) => context.id === contextId,
+    )?.placement;
+  }
+
+  it("accepts a placement change for a not-started context while the execution runs", () => {
+    const execution = withImplementRunning(
+      sharedLaneExecution({ status: "running" }),
+    );
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        placement: {
+          lane: DELIVERY_LANE,
+          mode: "owned",
+          ownedPaths: ["docs", "README.md"],
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(placementOf(result.execution, "context-plan")).toEqual({
+      lane: DELIVERY_LANE,
+      mode: "owned",
+      ownedPaths: ["docs", "README.md"],
+    });
+    expect(result.affectedContextIds).toContain("context-plan");
+  });
+
+  it("refuses a started context's placement change until the execution is paused", () => {
+    const running = withImplementRunning(
+      sharedLaneExecution({ status: "running" }),
+    );
+    const operation: WorkflowLiveEditOperation = {
+      type: "update-context",
+      contextId: "context-implement",
+      placement: {
+        lane: DELIVERY_LANE,
+        mode: "owned",
+        ownedPaths: ["src/feature", "src/shared"],
+      },
+    };
+
+    const refused = apply(running, [operation]);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.code).toBe("requires_pause");
+    expect(refused.issues[0]).toMatchObject({
+      code: "requires-pause",
+      contextId: "context-implement",
+    });
+
+    const paused = apply(
+      { ...running, status: "paused", activeContextIds: [] },
+      [operation],
+    );
+    expect(paused.ok).toBe(true);
+    if (!paused.ok) return;
+    expect(placementOf(paused.execution, "context-implement")).toEqual({
+      lane: DELIVERY_LANE,
+      mode: "owned",
+      ownedPaths: ["src/feature", "src/shared"],
+    });
+  });
+
+  it("refuses a placement that overlaps an active lane sibling with a typed issue", () => {
+    const execution = withImplementRunning(
+      sharedLaneExecution({ status: "running" }),
+    );
+    const before = structuredClone(execution);
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        placement: {
+          lane: DELIVERY_LANE,
+          mode: "owned",
+          // Beneath the running sibling's `src/feature` prefix.
+          ownedPaths: ["src/feature/api"],
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("invalid_edit");
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "placement-owned-paths-overlap",
+    );
+    expect(execution).toEqual(before);
+  });
+
+  it("refuses a full-access placement while a sibling holds the same lane", () => {
+    const execution = withImplementRunning(
+      sharedLaneExecution({ status: "running" }),
+    );
+
+    const result = apply(execution, [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        placement: { lane: DELIVERY_LANE, mode: "full" },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "placement-full-access-concurrency",
+    );
+  });
+
+  it("refuses an illegal lane name on a live placement change", () => {
+    const result = apply(sharedLaneExecution({ status: "paused" }), [
+      {
+        type: "update-context",
+        contextId: "context-plan",
+        placement: { lane: "session", mode: "full" },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "placement-session-lane-write-capable",
+    );
+  });
+
+  it("carries an authored placement onto a live add-context", () => {
+    // A third member of the shared lane, disjoint from both existing members —
+    // one worktree, three owners, no overlap.
+    const result = apply(sharedLaneExecution({ status: "paused" }), [
+      {
+        type: "add-context",
+        id: "context-docs",
+        title: "Document",
+        acceptanceCriteria: "Docs describe the change.",
+        placement: {
+          lane: DELIVERY_LANE,
+          mode: "owned",
+          ownedPaths: ["reference"],
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(placementOf(result.execution, "context-docs")).toEqual({
+      lane: DELIVERY_LANE,
+      mode: "owned",
+      ownedPaths: ["reference"],
+    });
+  });
+
+  it("refuses a live add-context onto a lane whose members it would overlap", () => {
+    const result = apply(sharedLaneExecution({ status: "paused" }), [
+      {
+        type: "add-context",
+        id: "context-docs",
+        title: "Document",
+        acceptanceCriteria: "Docs describe the change.",
+        placement: {
+          lane: DELIVERY_LANE,
+          mode: "owned",
+          ownedPaths: ["docs/reference"],
+        },
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.map((issue) => issue.code)).toContain(
+      "placement-owned-paths-overlap",
+    );
+  });
+  it("persists an accepted ownership change as what the context's next turn is composed from", () => {
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject("/repo");
+      fixture.seedSession("/repo", "session-1");
+
+      const result = apply(
+        withImplementRunning(sharedLaneExecution({ status: "running" })),
+        [
+          {
+            type: "update-context",
+            contextId: "context-plan",
+            placement: {
+              lane: DELIVERY_LANE,
+              mode: "owned",
+              ownedPaths: ["docs", "scripts/docs.ts"],
+            },
+          },
+        ],
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      fixture.graphWorkflowExecutions.setActive(
+        "/repo",
+        "session-1",
+        result.execution,
+        "2026-08-08T00:00:00.000Z",
+      );
+
+      // Through a SECOND repo over the same database: the next turn reads the
+      // stored execution, not this process's parsed row, and the write envelope
+      // it runs under is composed from the placement it finds there.
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        "/repo",
+        "session-1",
+      );
+      expect(reloaded).not.toBeNull();
+      if (reloaded === null) return;
+      expect(placementOf(reloaded, "context-plan")).toEqual({
+        lane: DELIVERY_LANE,
+        mode: "owned",
+        ownedPaths: ["docs", "scripts/docs.ts"],
+      });
+      // The running sibling's envelope is untouched by its neighbour's edit.
+      expect(placementOf(reloaded, "context-implement")).toEqual({
+        lane: DELIVERY_LANE,
+        mode: "owned",
+        ownedPaths: ["src/feature"],
+      });
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("composes the affected context's next-turn write envelope from the accepted ownership change", async () => {
+    // The whole chain with nothing stubbed at the decisive step: the edit is
+    // accepted, round-trips through SQLite, and the next turn is dispatched
+    // through the production runner with NO composer injected — so the envelope
+    // the backend would receive is whatever the one canonical composer makes of
+    // the placement that survived the round trip, against a real worktree.
+    const fixture = createPersistenceFixture();
+    const worktreePath = mkdtempSync(path.join(tmpdir(), "cc-lwp-envelope-"));
+    try {
+      fixture.seedProject("/repo");
+      fixture.seedSession("/repo", "session-1");
+      mkdirSync(path.join(worktreePath, "docs"), { recursive: true });
+      mkdirSync(path.join(worktreePath, "scripts"), { recursive: true });
+
+      const result = apply(
+        withImplementRunning(sharedLaneExecution({ status: "running" })),
+        [
+          {
+            type: "update-context",
+            contextId: "context-plan",
+            placement: {
+              lane: DELIVERY_LANE,
+              mode: "owned",
+              // Widened from the fixture's ["docs"]: the added entry is what
+              // must appear in the next turn's allowlist.
+              ownedPaths: ["docs", "scripts/docs.ts"],
+            },
+          },
+        ],
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      fixture.graphWorkflowExecutions.setActive(
+        "/repo",
+        "session-1",
+        result.execution,
+        "2026-08-08T00:00:00.000Z",
+      );
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        "/repo",
+        "session-1",
+      );
+      expect(reloaded).not.toBeNull();
+      if (reloaded === null) return;
+      const placement = placementOf(reloaded, "context-plan");
+      expect(placement).toBeDefined();
+      if (placement === undefined) return;
+
+      let dispatchedPolicy: FsWritePolicy | undefined;
+      const runner = createGraphWorkflowImplementerRunner({
+        executePromptStream: async (
+          _projectPath,
+          _session,
+          _prompt,
+          _emit,
+          conversationId,
+          _model,
+          _images,
+          options,
+        ) => {
+          dispatchedPolicy = options?.fsWritePolicy;
+          return {
+            conversationId: conversationId ?? "conversation-1",
+            contextTokens: null,
+            contextWindowMax: null,
+            compacted: false,
+          };
+        },
+        getConversation: async () => null,
+        mintLaneCapability: () => null,
+      });
+
+      await runner.runIteration({
+        projectPath: "/repo",
+        session: makeEnvelopeSession(worktreePath),
+        prompt: "Continue",
+        conversationId: "conversation-1",
+        executionId: reloaded.id,
+        contextId: "context-plan",
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+        toolServer: { servers: [] },
+        placement,
+      });
+
+      // A temp directory on macOS is reached through a symlinked parent, so a
+      // lexically-joined allowlist would differ from these by the whole prefix.
+      // Asserted on the repository entries rather than the whole allowlist: the
+      // scratch, payload and temp entries around them are the composer's own
+      // contract, covered where that contract lives.
+      const canonicalWorktree = realpathSync(worktreePath);
+      expect(dispatchedPolicy).toBeDefined();
+      if (dispatchedPolicy === undefined) return;
+      expect(dispatchedPolicy.allowWrite).toEqual(
+        expect.arrayContaining([
+          path.join(canonicalWorktree, "docs"),
+          path.join(canonicalWorktree, "scripts", "docs.ts"),
+        ]),
+      );
+      expect(dispatchedPolicy.denyWrite).toEqual([
+        path.join(canonicalWorktree, ".git"),
+      ]);
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+      fixture.close();
+    }
+  });
+
+  it("carries a no-repository-write envelope when a context is moved to the read-only session lane", async () => {
+    // Absence means unrestricted, so the accepted read-only change must show up
+    // as an envelope that denies the worktree — not as a dropped field.
+    const fixture = createPersistenceFixture();
+    const worktreePath = mkdtempSync(path.join(tmpdir(), "cc-lwp-readonly-"));
+    try {
+      fixture.seedProject("/repo");
+      fixture.seedSession("/repo", "session-1");
+
+      const result = apply(
+        withImplementRunning(sharedLaneExecution({ status: "running" })),
+        [
+          {
+            type: "update-context",
+            contextId: "context-plan",
+            placement: { lane: "session", mode: "readOnly" },
+            // A read-only context delivers exclusively through structured
+            // output, so the grade change carries its output contract with it.
+            outputSchema: {
+              type: "object",
+              properties: { verdict: { type: "string" } },
+              required: ["verdict"],
+            },
+          },
+        ],
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      fixture.graphWorkflowExecutions.setActive(
+        "/repo",
+        "session-1",
+        result.execution,
+        "2026-08-08T00:00:00.000Z",
+      );
+      const reloaded = createGraphWorkflowExecutionsRepo(fixture.db).getActive(
+        "/repo",
+        "session-1",
+      );
+      expect(reloaded).not.toBeNull();
+      if (reloaded === null) return;
+      const placement = placementOf(reloaded, "context-plan");
+      expect(placement).toBeDefined();
+      if (placement === undefined) return;
+
+      let dispatchedPolicy: FsWritePolicy | undefined;
+      const runner = createGraphWorkflowImplementerRunner({
+        executePromptStream: async (
+          _projectPath,
+          _session,
+          _prompt,
+          _emit,
+          conversationId,
+          _model,
+          _images,
+          options,
+        ) => {
+          dispatchedPolicy = options?.fsWritePolicy;
+          return {
+            conversationId: conversationId ?? "conversation-1",
+            contextTokens: null,
+            contextWindowMax: null,
+            compacted: false,
+          };
+        },
+        getConversation: async () => null,
+        mintLaneCapability: () => null,
+      });
+
+      await runner.runIteration({
+        projectPath: "/repo",
+        session: makeEnvelopeSession(worktreePath),
+        prompt: "Review",
+        conversationId: "conversation-1",
+        executionId: reloaded.id,
+        contextId: "context-plan",
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "medium",
+        toolServer: { servers: [] },
+        placement,
+      });
+
+      expect(dispatchedPolicy).toBeDefined();
+      if (dispatchedPolicy === undefined) return;
+      const canonicalWorktree = realpathSync(worktreePath);
+      expect(dispatchedPolicy.allowWrite.length).toBeGreaterThan(0);
+      for (const allowed of dispatchedPolicy.allowWrite) {
+        // No repository path is writable. The one exception is the injected
+        // payload directory, which is inside the repo by construction and
+        // git-ignored; its final segment is the escaped context id, so the
+        // check is on its parent namespace.
+        const insideRepo =
+          allowed === canonicalWorktree ||
+          allowed.startsWith(`${canonicalWorktree}${path.sep}`);
+        expect(insideRepo).toBe(
+          path.dirname(allowed) === path.join(canonicalWorktree, ".cc", "temp"),
+        );
+        if (!insideRepo) rmSync(allowed, { recursive: true, force: true });
+      }
+      // The previously-owned prefix is gone: the read-only change actually
+      // removed the write surface rather than merely adding a denial.
+      expect(dispatchedPolicy.allowWrite).not.toContain(
+        path.join(canonicalWorktree, "docs"),
+      );
+      expect(checkFsWritePolicy(dispatchedPolicy)).toEqual({ kind: "ok" });
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+      fixture.close();
+    }
   });
 });

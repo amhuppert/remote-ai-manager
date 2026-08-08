@@ -25,6 +25,10 @@ import {
   OutputSchemaField,
   lintOutputSchemaText,
 } from "@/components/workflow-config/OutputSchemaField";
+import {
+  PlacementEditor,
+  placementAuthoringIssue,
+} from "@/components/workflow-config/PlacementEditor";
 import { cn } from "@/lib/ui/cn";
 import {
   classifyContextLifecycle,
@@ -48,7 +52,10 @@ import {
   type GraphWorkflowScriptValidatorConfig,
   type GraphWorkflowMutabilityPolicy,
 } from "@/lib/workflow-graph/config-schemas";
-import type { ResolvedAgentValidationConfig } from "@/lib/workflow-graph/definition-schemas";
+import type {
+  ContextPlacement,
+  ResolvedAgentValidationConfig,
+} from "@/lib/workflow-graph/definition-schemas";
 import type { ValidationCommandSummary } from "@/lib/validation/schemas";
 import type { WorkflowLiveEditOperation } from "@/lib/workflows/edit-schemas";
 
@@ -166,6 +173,12 @@ interface ConfigDraft {
    * survive a re-render and an SSE rebase, and only a text draft can hold one.
    * Parsed to object-or-null at diff time (D8/R7.5). */
   outputSchema: string;
+  /**
+   * The context's lane and write grade. `null` only for an execution seeded
+   * before placement existed — there is nothing to edit, and inventing a
+   * placement here would author a lane the run never had.
+   */
+  placement: ContextPlacement | null;
   implementer: AgentAssignment;
   contextValidator: ValidatorCohort;
   scriptValidator: GraphWorkflowScriptValidatorConfig;
@@ -234,6 +247,7 @@ function toDraft(context: ResolvedContext): ConfigDraft {
     description: context.description ?? "",
     acceptanceCriteria: context.acceptanceCriteria,
     outputSchema: serializeOutputSchemaText(context.outputSchema),
+    placement: context.placement ?? null,
     implementer: toAuthoredAssignment(context.implementer),
     contextValidator: {
       ...context.contextValidator,
@@ -289,6 +303,12 @@ function diffToUpdateContextOp(
     } else if (lint.stage === "empty") {
       changes.outputSchema = null;
     }
+  }
+  // Wholesale, like `outputSchema` — the grade discriminates on `mode`, so a
+  // partial merge has no meaning. A legacy context (`null` on both sides) yields
+  // no field: this editor never invents the placement such a run never had.
+  if (draft.placement && !deepEqualJson(draft.placement, base.placement)) {
+    changes.placement = draft.placement;
   }
   if (!deepEqualJson(draft.implementer, base.implementer)) {
     changes.implementer = draft.implementer;
@@ -370,6 +390,11 @@ function rebaseDraft(
       draft.outputSchema,
       seedBase.outputSchema,
       freshBase.outputSchema,
+    ),
+    placement: threeWay(
+      draft.placement,
+      seedBase.placement,
+      freshBase.placement,
     ),
     implementer: threeWay(
       draft.implementer,
@@ -559,6 +584,12 @@ function GateBlock({
     </ConfigBlock>
   );
 }
+
+const PLACEMENT_MODE_LABEL: Record<ContextPlacement["mode"], string> = {
+  full: "full access",
+  owned: "owning",
+  readOnly: "read-only",
+};
 
 const RUNTIME_ROW = "grid grid-cols-[110px_1fr] items-baseline gap-x-[10px]";
 const RUNTIME_LABEL =
@@ -751,6 +782,12 @@ export default function ContextConfigTab({
   const schemaInvalid =
     draft !== null &&
     lintOutputSchemaText(draft.outputSchema).issues.length > 0;
+  // An incomplete placement (an owning grade with no paths, an illegal lane
+  // name) is representable in the draft but would be refused at the frontier, so
+  // the save bar blocks it here rather than letting the whole batch bounce.
+  const placementIssue = draft?.placement
+    ? placementAuthoringIssue(draft.placement)
+    : null;
   const dirty = pendingOp !== null || schemaTextDirty;
 
   if (!context || !draft) return null;
@@ -768,7 +805,8 @@ export default function ContextConfigTab({
       !seedBase ||
       isSaving ||
       readOnly ||
-      schemaInvalid
+      schemaInvalid ||
+      placementIssue !== null
     ) {
       return;
     }
@@ -942,6 +980,23 @@ export default function ContextConfigTab({
                 }
               />
             </div>
+          </ConfigBlock>
+        </section>
+
+        <section className="flex flex-col gap-sm" data-section="placement">
+          <ConfigBlock testId="config-block-placement" label="Placement">
+            {draft.placement ? (
+              <PlacementEditor
+                value={draft.placement}
+                onChange={(placement) => patch({ placement })}
+                readOnly={readOnly}
+              />
+            ) : (
+              <p className={BLOCK_TEXT}>
+                This execution was seeded before lane placement was authored, so
+                it has none to edit.
+              </p>
+            )}
           </ConfigBlock>
         </section>
 
@@ -1215,6 +1270,28 @@ export default function ContextConfigTab({
                 value={contextState.cleanupStatus}
                 testId="runtime-cleanup-status"
               />
+              {/* The AUTHORED lane, read from the context's own placement —
+                  never inferred from the context id, which stopped being the
+                  lane the moment contexts could be grouped. It sits beside the
+                  runtime lane id below because the two answer different
+                  questions: which group this context belongs to, and which
+                  provisioned lane is currently carrying it. */}
+              <RuntimeRow
+                label="Placement"
+                value={
+                  context.placement
+                    ? `${context.placement.lane} · ${PLACEMENT_MODE_LABEL[context.placement.mode]}`
+                    : null
+                }
+                testId="runtime-placement"
+              />
+              {context.placement?.mode === "owned" ? (
+                <RuntimeRow
+                  label="Owns"
+                  value={context.placement.ownedPaths.join(", ")}
+                  testId="runtime-owned-paths"
+                />
+              ) : null}
               <RuntimeRow
                 label="Lane"
                 value={contextState.laneId}
@@ -1253,6 +1330,7 @@ export default function ContextConfigTab({
               disabled={
                 isSaving ||
                 schemaInvalid ||
+                placementIssue !== null ||
                 (!dirty && !multilineActions.voiceBusy)
               }
             >

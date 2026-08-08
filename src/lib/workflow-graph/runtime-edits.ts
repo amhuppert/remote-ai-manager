@@ -31,6 +31,7 @@ import {
   validateResolvedWorkflow,
   validateWorkflowDefinition,
 } from "./validation";
+import { validatePlacements } from "./placement-validation";
 import {
   classifyContextLifecycle,
   classifyContextLifecycleFromPin,
@@ -484,6 +485,16 @@ interface LiveEditOpContext {
    */
   laneMergeTouched: boolean;
   /**
+   * Set by any op that establishes or rewrites a placement, so the frontier
+   * re-runs the placement grammar and lane-disjointness checks. A boolean rather
+   * than a context set because the pairwise refusal names the LOWER-indexed
+   * member of the colliding pair, which need not be the context the batch
+   * touched — filtering by touched id would drop exactly the collisions this
+   * exists to catch. Gating on it at all keeps an unrelated edit from tripping
+   * over a legacy execution's pre-placement state.
+   */
+  placementTouched: boolean;
+  /**
    * Contexts this batch itself created. A task added into one of them is the
    * initiating agent's own work (provenance `agent`), and the append-only
    * structural exception is scoped by it.
@@ -545,6 +556,7 @@ function liveEditTouchedPaths(
           "acceptanceCriteria",
           "outputSchema",
           "routing",
+          "placement",
           "implementer",
           "contextValidator",
           "scriptValidator",
@@ -743,6 +755,7 @@ function runLiveEditOps(
     affectedContextIds,
     validationTouchedContextIds,
     laneMergeTouched: false,
+    placementTouched: false,
     batchCreatedContextIds: new Set<string>(),
     laneAgentContextId: options.laneAgentContextId,
     structuralSource: options.structuralSource,
@@ -1973,6 +1986,15 @@ function applyUpdateContext(
   } else if (op.routing !== undefined) {
     context.routing = op.routing;
   }
+  // Wholesale replacement (the grade discriminates on `mode`, so there is no
+  // partial merge) and never a clear. WHEN it may change is already decided by
+  // the editability gate above — unstarted freely, started only at quiescence;
+  // WHETHER the new envelope can coexist with the lane's other members is the
+  // frontier's question, because only the post-batch graph knows (lwp R10.2).
+  if (op.placement !== undefined) {
+    context.placement = op.placement;
+    ctx.placementTouched = true;
+  }
   const priorAgentValidation = context.agentValidation;
   applyLiveConfigBlocks(context, op, ctx.deps);
   if (op.agentValidation !== undefined) {
@@ -2422,18 +2444,21 @@ function applyAddContext(
     title: op.title,
     acceptanceCriteria: op.acceptanceCriteria,
     ...(op.description !== undefined ? { description: op.description } : {}),
-    // A single-member lane of its own, matching the saved-tier add
-    // (`definition-edits.ts`) and the shape a live-added context had before
-    // placement was authored. Never seeded from `configFromContextId`: sharing
-    // a lane is a claim about concurrency and ownership between two specific
-    // contexts, which copying config cannot establish.
-    placement: { lane: op.id, mode: "full" },
     // Never seeded from `configFromContextId`: an output contract is per-context
     // identity, not inheritable config (D1).
     ...(op.outputSchema !== undefined ? { outputSchema: op.outputSchema } : {}),
     // Same reason: a routing policy describes this context's own outgoing edge
     // set, so it is never seeded from `configFromContextId`.
     ...(op.routing !== undefined ? { routing: op.routing } : {}),
+    // Never seeded from `configFromContextId` either — a lane and its owned
+    // prefixes are the one thing two contexts must NOT share by accident, and
+    // sharing a lane is a claim about concurrency and ownership between two
+    // specific contexts that copying config cannot establish. Without an
+    // authored placement the context gets a single-member lane of its own,
+    // matching the saved-tier add (`definition-edits.ts`) and the shape a
+    // live-added context had before placement was authored; the frontier
+    // validates the result either way.
+    placement: op.placement ?? { lane: op.id, mode: "full" },
     implementer:
       op.implementer === undefined
         ? base.implementer
@@ -2469,6 +2494,9 @@ function applyAddContext(
   ctx.affectedContextIds.add(op.id);
   ctx.validationTouchedContextIds.add(op.id);
   ctx.batchCreatedContextIds.add(op.id);
+  // An add always establishes a placement, authored or fallback, so the lane it
+  // joins is checked here rather than at provisioning time.
+  ctx.placementTouched = true;
   return null;
 }
 
@@ -3384,6 +3412,11 @@ function checkLiveEditFrontier(
     return { code: "invalid_edit", issues: resolved.errors };
   }
 
+  const placementIssues = checkPlacements(next, ctx);
+  if (placementIssues.length > 0) {
+    return { code: "invalid_edit", issues: placementIssues };
+  }
+
   const commandIssues = checkValidationCommandSelections(next, ctx);
   if (commandIssues.length > 0) {
     const hasOversizedCommand = commandIssues.some(
@@ -3407,6 +3440,31 @@ function checkLiveEditFrontier(
     return { code: "invalid_edit", issues: coverageIssues };
   }
   return null;
+}
+
+/**
+ * Frontier check — placement (lwp R1, R10.2), asked of the POST-BATCH working
+ * definition through the same composite the authored tier uses, so a lane name,
+ * an owned prefix, or a read-only grade means the same thing whether it arrived
+ * in a plan or in a live edit.
+ *
+ * Only a batch that established or rewrote a placement is judged. The check is
+ * whole-definition by nature — the pairwise disjointness question is about a
+ * PAIR, and the refusal names the lower-indexed member, which need not be the
+ * context the batch touched — so running it on every edit would let an execution
+ * seeded before placement existed refuse edits that have nothing to do with it.
+ *
+ * "Concurrent" here is decided by dependency reachability, not by which contexts
+ * happen to be running: two lane members that nothing sequences can hold the
+ * lane's one worktree at the same time, and an active sibling is exactly the
+ * case where that has already happened.
+ */
+function checkPlacements(
+  next: GraphWorkflowExecution,
+  ctx: LiveEditOpContext,
+): WorkflowGraphValidationError[] {
+  if (!ctx.placementTouched) return [];
+  return validatePlacements(next.workingDefinition);
 }
 
 /**

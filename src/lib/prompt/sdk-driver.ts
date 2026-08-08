@@ -545,8 +545,10 @@ export interface PromptStreamOptions {
   /**
    * Server-derived filesystem-write envelope for this turn. Set only by the
    * graph-workflow implementer runner, which composes it from the context's
-   * authored ownership before any dispatch decision. Every other caller leaves
-   * it unset, so an ordinary conversation stays unrestricted.
+   * authored placement before any dispatch decision; every other caller leaves
+   * it unset, so an ordinary conversation keeps its unrestricted worktree.
+   * Carried onto the claimed turn, so the turn that runs is the one the
+   * envelope was composed for.
    */
   fsWritePolicy?: FsWritePolicy;
 }

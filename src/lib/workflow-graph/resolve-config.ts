@@ -267,7 +267,10 @@ export function resolveContext(
     acceptanceCriteria: context.acceptanceCriteria,
     ...(context.origin !== undefined ? { origin: context.origin } : {}),
     // Identity passthrough: no cascade tier contributes placement, and the
-    // runtime reads the lane off the resolved context.
+    // runtime reads the lane off the resolved context. Unconditional, unlike
+    // the optional passthroughs below: placement is required on the authored
+    // context, so every resolution carries one and a resolved context missing
+    // it can only be a row seeded before the field existed.
     placement: context.placement,
     // Identity passthrough: no cascade tier contributes an output schema, so an
     // undeclared field stays absent rather than resolving to a default shape.
@@ -277,11 +280,6 @@ export function resolveContext(
     // Same identity passthrough: the routing policy describes this context's own
     // outgoing edge set, so no cascade tier can meaningfully supply one.
     ...(context.routing !== undefined ? { routing: context.routing } : {}),
-    // Identity passthrough as well: placement is authored, and the write
-    // envelope composed from it must be the ownership the definition declared.
-    ...(context.placement !== undefined
-      ? { placement: context.placement }
-      : {}),
     implementer,
     contextValidator,
     scriptValidator,

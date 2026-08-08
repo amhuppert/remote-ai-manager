@@ -288,12 +288,13 @@ export function validateWorkflowDefinition(
  * tiers reject an invalid prerequisite at the same choke point (gwt R4.4, R4.6).
  *
  * Placement checks (`validatePlacements`) compose here rather than inside
- * `validateWorkflowDefinition` for the mirror of the reason `outputSchema` goes
- * the other way: `placement` is an AUTHORED field with no counterpart on the
- * resolved shape, so a tier-shared check would report every resolved context as
- * placement-less. The authored composite is nonetheless the choke point that
- * matters for lwp R1 — validate, create, replace, and the saved-edit applier
- * all arrive here.
+ * `validateWorkflowDefinition` even though the resolved shape mirrors the field.
+ * The authored tier is where an authored placement can be WRONG — a reserved
+ * lane name, a path under `.git`, an owning grade with no paths — and this is
+ * the composite every author path reaches (validate, create, replace, and the
+ * saved-edit applier). The live tier re-asks the same checks at the live-edit
+ * frontier instead, against the post-batch working definition, where it can also
+ * see which lane siblings are actually running.
  */
 export function validateAuthoredDefinition(
   definition: WorkflowSemanticDefinition,

@@ -85,11 +85,13 @@ export interface ConversationTurnActive {
    *  asking-questions session-instruction variant. Unset for every other turn. */
   askUserQuestionsEnabled?: boolean;
   /**
-   * Server-derived filesystem-write envelope for this implementer turn. Claimed
-   * onto the active turn rather than re-read from the event at dispatch, for
-   * the same reason the task-run variant is: a turn that lost its policy
-   * between claim and dispatch would run unrestricted. Absent for every turn
-   * outside an owning or read-only graph-workflow context.
+   * Server-derived filesystem-write envelope for this implementer turn, composed
+   * by the graph-workflow implementer runner from the context's authored
+   * placement. Claimed onto the active turn rather than re-read from the event
+   * at dispatch, for the same reason {@link TaskRunActive.fsWritePolicy} is: a
+   * turn that lost its policy between claim and dispatch would run
+   * unrestricted. Absent for every turn outside an owning or read-only
+   * graph-workflow context.
    */
   fsWritePolicy?: FsWritePolicy;
 }

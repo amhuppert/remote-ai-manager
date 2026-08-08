@@ -1,4 +1,6 @@
+import os from "node:os";
 import { startVitest } from "vitest/node";
+import { resolveWorkerBudget } from "./worker-budget.mjs";
 
 const [scope, projectSelection, ...scopeArgs] = process.argv.slice(2);
 const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
@@ -16,6 +18,19 @@ if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
 if (!Number.isInteger(testBail) || testBail < 0) {
   throw new Error("CC_TEST_BAIL must be a non-negative integer");
 }
+
+// The requested worker count is a ceiling request, not an instruction. Running
+// more forks than the machine's budget allows contends with the vitest main
+// process, which has its own deadline to meet: a worker whose `onTaskUpdate`
+// RPC goes unanswered for 60s fails the run on an unhandled timeout with every
+// test passing. Resolved through the same owner the vitest config uses, so the
+// two cannot disagree about what this machine can hold.
+const workers = resolveWorkerBudget({
+  requestedWorkers: testWorkers,
+  workerHeapMb: testHeapMb,
+  totalMemoryBytes: os.totalmem(),
+  availableParallelism: os.availableParallelism(),
+});
 
 const projectsBySelection = {
   both: ["unit-node", "unit-jsdom"],
@@ -46,11 +61,11 @@ await startVitest("test", filters, {
   ...(changed ? { changed } : {}),
   project: projects,
   pool: "forks",
-  maxWorkers: testWorkers,
+  maxWorkers: workers,
   minWorkers: 1,
   poolOptions: {
     forks: {
-      maxForks: testWorkers,
+      maxForks: workers,
       minForks: 1,
       execArgv: [`--max-old-space-size=${testHeapMb}`],
     },

@@ -20,6 +20,7 @@ import {
 } from "@/lib/workflow-graph/collaboration-schemas";
 import {
   contextOutputSchemaSchema,
+  contextPlacementSchema,
   graphWorkflowContextRoutingPolicySchema,
   graphWorkflowEdgeGuardSchema,
   graphWorkflowLoopPredicateSchema,
@@ -214,6 +215,11 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       // (an absent field on a brand-new context IS the cleared state).
       outputSchema: contextOutputSchemaSchema.optional(),
       routing: graphWorkflowContextRoutingPolicySchema.optional(),
+      // Same identity tier. Optional in the VOCABULARY, required in the
+      // definition: the applier gives a placement-less add the single-member
+      // lane an added context already had, so an existing caller keeps working
+      // and a caller that means to group says so explicitly.
+      placement: contextPlacementSchema.optional(),
       ...definitionEditAddContextConfigShape,
     }),
     z.object({
@@ -229,6 +235,10 @@ export const workflowDefinitionEditOperationSchema = z.discriminatedUnion(
       // Same replace/clear semantics; `null` returns the context to the
       // `independent` default.
       routing: graphWorkflowContextRoutingPolicySchema.nullable().optional(),
+      // Replaces wholesale, and NOT nullable: a context always has a placement,
+      // so there is no cleared state to spell. Moving lanes and re-drawing owned
+      // paths are one edit because the grade discriminates on both.
+      placement: contextPlacementSchema.optional(),
       ...definitionEditUpdateContextConfigShape,
     }),
     z.object({
@@ -470,6 +480,12 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
       outputSchema: contextOutputSchemaSchema.nullable().optional(),
       // Likewise an identity field, not a cascade result (D4 R3).
       routing: graphWorkflowContextRoutingPolicySchema.nullable().optional(),
+      // Identity again, and the live tier's spelling matches doc 05 exactly:
+      // present replaces the whole placement, absent leaves it. The editability
+      // tiers decide WHEN it may change (unstarted freely, started only at
+      // quiescence); the frontier decides whether the new envelope can coexist
+      // with the lane siblings that are already running (lwp R10.2).
+      placement: contextPlacementSchema.optional(),
       ...liveEditContextConfigShape,
     })
     .refine(
@@ -488,10 +504,15 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
     description: z.string().trim().min(1).optional(),
     outputSchema: contextOutputSchemaSchema.optional(),
     routing: graphWorkflowContextRoutingPolicySchema.optional(),
+    // Same identity tier as the saved `add-context`: optional in the vocabulary
+    // so a placement-less add keeps its single-member lane, present when the
+    // caller means to join an existing one.
+    placement: contextPlacementSchema.optional(),
     // Seed the new context's resolved config from this context's resolved config
     // when present, else from resolved global defaults; explicit blocks override.
-    // NOT a source for `outputSchema`: copying one context's output contract
-    // onto another is never what an author means (D1 — per-context identity).
+    // NOT a source for `outputSchema` or `placement`: copying one context's
+    // output contract or lane ownership onto another is never what an author
+    // means (D1 — per-context identity).
     configFromContextId: z.string().trim().min(1).optional(),
     ...liveEditContextConfigShape,
   }),

@@ -15,7 +15,9 @@ import {
   setContextOutputSchema,
   setWorkflowConfigOverride,
   updateContextPosition,
+  updateExecutionContext,
 } from "./builder-draft";
+import { validatePlacements } from "./placement-validation";
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 describe("workflow builder draft helpers", () => {
@@ -39,6 +41,47 @@ describe("workflow builder draft helpers", () => {
       x: 1080,
       y: 0,
     });
+  });
+
+  it("creates contexts whose placement the accept-time gate accepts", () => {
+    // Two adds in a row: the second must not land on the first one's lane, or
+    // the builder would author a collision the author never asked for.
+    const once = addExecutionContext({
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    });
+    const twice = addExecutionContext(once);
+
+    expect(validatePlacements(twice.definition)).toEqual([]);
+    expect(
+      twice.definition.executionContexts
+        .slice(-2)
+        .map((context) => context.placement),
+    ).toEqual([
+      { lane: "context-4", mode: "full" },
+      { lane: "context-5", mode: "full" },
+    ]);
+  });
+
+  it("authors a grouped placement through updateExecutionContext", () => {
+    const definition = updateExecutionContext(
+      createWorkflowDefinition(),
+      "context-plan",
+      {
+        placement: {
+          lane: "delivery",
+          mode: "owned",
+          ownedPaths: ["docs"],
+        },
+      },
+    );
+
+    expect(
+      definition.executionContexts.find(
+        (context) => context.id === "context-plan",
+      )?.placement,
+    ).toEqual({ lane: "delivery", mode: "owned", ownedPaths: ["docs"] });
+    expect(validatePlacements(definition)).toEqual([]);
   });
 
   it("removes an execution context together with its tasks and edges", () => {

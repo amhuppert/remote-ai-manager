@@ -364,6 +364,8 @@ export function createResolvedWorkflowDefinition(
         ? { description: ctx.description }
         : {}),
       acceptanceCriteria: ctx.acceptanceCriteria,
+      // Mirrored, like production resolution: a launched execution schedules and
+      // edits its WORKING definition, so placement has to survive the resolve.
       placement: ctx.placement,
       implementer: seedAssignment(
         ctx.implementer ??

@@ -474,10 +474,11 @@ describe("validateWorkflowPlan", () => {
         const issue = result.issues.find(
           (i) => i.path === "definition.executionContexts.0.title",
         );
-        // A shape refusal mounted on the context reads identically wherever it
-        // was authored, and an array index is not what an author calls the
-        // context — so the use site is the context id. There is no assignment
-        // here, so there is no profile to name either.
+        // A shape refusal mounted on the context itself — a bad title, an absent
+        // placement — reads identically wherever it was authored, and an array
+        // index is not what an author calls the context, so the use site names
+        // the context id. There is no assignment here, so there is no profile to
+        // name either.
         expect(issue?.message).toContain(
           `Use site: the context "${definition.executionContexts[0]?.id}"`,
         );

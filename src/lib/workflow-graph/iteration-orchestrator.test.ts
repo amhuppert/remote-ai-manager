@@ -31,7 +31,15 @@ import {
   appendFailureHistory,
   createGraphWorkflowIterationOrchestrator,
   IterationHaltedError,
+  type GraphWorkflowRunAgentIterationInput,
 } from "./iteration-orchestrator";
+import {
+  applyLiveExecutionEdits,
+  type LiveEditDeps,
+  type ResolvedContextConfig,
+} from "./runtime-edits";
+import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import type { GraphWorkflowContextValidationInput } from "./execution-validation";
 import type { CohortParkedLane } from "./validation-cohort";
 import type { ResumeUserInputContext } from "./user-input-gate";
@@ -82,6 +90,58 @@ interface InMemoryExecutionRepository {
     executionId: string,
     contextId: string,
   ): Promise<GraphWorkflowExecutionEvent | null>;
+}
+
+/**
+ * Global config floor for the live-edit core, which this file drives only to
+ * make a placement change the production way — through the one live-edit core
+ * — before asserting which placement the NEXT iteration dispatches under.
+ */
+const LIVE_EDIT_RESOLVED_DEFAULTS: ResolvedContextConfig = {
+  implementer: {
+    id: "implementer",
+    profile: { tier: "builtin", id: "general-implementer" },
+    profileSnapshot: makeProfileSnapshot(),
+    agent: { backend: "claude", model: "opus", reasoningEffort: "medium" },
+  },
+  contextValidator: { enabled: false, assignments: [] },
+  scriptValidator: { commands: [] },
+  humanApprovalGate: { enabled: false },
+  askUserQuestions: { enabled: false },
+  mutability: { allowAgentTaskAdd: false, allowAgentContextAdd: false },
+  circuitBreaker: { consecutiveFailureThreshold: 3 },
+  iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
+  planRepair: { enabled: true, maxAttemptsPerContext: 2 },
+  collaboration: {
+    enabled: { value: true, source: "global" },
+    secondAgent: {
+      value: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+      source: "global",
+    },
+    negotiationRounds: { value: 3, source: "global" },
+    autonomousResolutionThreshold: { value: "minor", source: "global" },
+  },
+  agentValidation: {
+    implementer: { value: { mode: "all", except: [] }, source: "global" },
+    contextValidator: {
+      value: { mode: "only", commands: [] },
+      source: "global",
+    },
+  },
+};
+
+function makeLiveEditDeps(): LiveEditDeps {
+  let counter = 0;
+  return {
+    createTaskId: () => `task-minted-${(counter += 1)}`,
+    resolvedGlobalDefaults: () => LIVE_EDIT_RESOLVED_DEFAULTS,
+    validationCommandPreflight: () => ({
+      commandCosts: { typecheck: 2, test: 5 },
+      concurrencyLimit: 8,
+    }),
+    snapshotFor: (assignment) => makeProfileSnapshot({ ...assignment.profile }),
+    now: () => "2026-03-27T16:20:00.000Z",
+  };
 }
 
 function isResultWithEvents(value: MutateActiveReturn): value is {
@@ -914,6 +974,314 @@ describe("graph workflow iteration orchestrator", () => {
     expect(runAgentIteration).toHaveBeenCalledWith(
       expect.objectContaining({ askUserQuestionsEnabled: false }),
     );
+  });
+
+  it("dispatches the placement a live edit accepted on the context's next turn (lwp R10.2)", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "completed",
+      "task-plan-2": "pending",
+    });
+    execution.workingDefinition.executionContexts =
+      execution.workingDefinition.executionContexts.map((ctx) =>
+        ctx.id === "context-plan"
+          ? {
+              ...ctx,
+              placement: {
+                lane: "delivery",
+                mode: "owned",
+                ownedPaths: ["docs"],
+              },
+            }
+          : ctx,
+      );
+    const repository = createRepository(execution);
+    const createConversation = vi.fn(async () => ({
+      id: "conversation-placement",
+    }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+
+    // The first iteration leaves the task open, so the context legitimately
+    // takes a SECOND iteration — the turn the accepted edit has to reach.
+    let completeTheTask = false;
+    const dispatchedPlacements: unknown[] = [];
+    // Not a re-read of the dispatch field: each turn's placement goes through
+    // the same composer the implementer runner binds in production, so what is
+    // asserted is the write envelope the turn would run under.
+    const dispatchedEnvelopes: (FsWritePolicy | null)[] = [];
+    const runAgentIteration = vi.fn(
+      async (input: GraphWorkflowRunAgentIterationInput) => {
+        dispatchedPlacements.push(input.placement);
+        dispatchedEnvelopes.push(
+          input.placement === undefined || input.placement.mode === "full"
+            ? null
+            : composeImplementerLaneWriteEnvelope(
+                {
+                  executionId: input.executionId,
+                  contextId: input.contextId,
+                  worktreePath: "/repo/worktree",
+                  // The same derivation the implementer runner performs before
+                  // dispatch, so what is asserted is the policy the turn would
+                  // actually run under.
+                  ownedPaths:
+                    input.placement.mode === "owned"
+                      ? input.placement.ownedPaths
+                      : [],
+                },
+                {
+                  scratchRootDir: "/scratch",
+                  ensureDir: () => {},
+                  exists: () => true,
+                  // Idempotent, so a path already canonical resolves to itself.
+                  realpath: (target: string) =>
+                    target.startsWith("/private/")
+                      ? target
+                      : `/private${target}`,
+                },
+              ).policy,
+        );
+        if (completeTheTask) {
+          const current = structuredClone(repository.read());
+          const taskState = current.taskStates["task-plan-2"];
+          const contextState = current.contextStates["context-plan"];
+          if (!taskState || !contextState) {
+            throw new Error("fixture is missing context-plan runtime state");
+          }
+          current.taskStates["task-plan-2"] = {
+            ...taskState,
+            status: "completed",
+            summary: "Finished planning",
+            completedAt: "2026-03-27T16:22:00.000Z",
+          };
+          current.contextStates["context-plan"] = {
+            ...contextState,
+            completedTaskCount: 2,
+          };
+          await repository.mutateActive("/repo", "session-1", () => current);
+        }
+        return {
+          conversationId: "conv-mock",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:20:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(dispatchedPlacements[0]).toEqual({
+      lane: "delivery",
+      mode: "owned",
+      ownedPaths: ["docs"],
+    });
+
+    // The accepted change goes through the live-edit core on the paused
+    // execution — pause-to-edit, because the first iteration started it.
+    const edited = applyLiveExecutionEdits(
+      { ...repository.read(), status: "paused" },
+      {
+        operations: [
+          {
+            type: "update-context",
+            contextId: "context-plan",
+            placement: {
+              lane: "delivery",
+              mode: "owned",
+              ownedPaths: ["docs", "scripts/docs.ts"],
+            },
+          },
+        ],
+      },
+      makeLiveEditDeps(),
+    );
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) return;
+    await repository.mutateActive("/repo", "session-1", () => ({
+      ...edited.execution,
+      status: "running",
+    }));
+
+    completeTheTask = true;
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(dispatchedPlacements.at(-1)).toEqual({
+      lane: "delivery",
+      mode: "owned",
+      ownedPaths: ["docs", "scripts/docs.ts"],
+    });
+
+    // The point of the criterion: the envelope the NEXT turn runs under grew
+    // the newly-owned path, while the first turn's did not. Asserted on the
+    // repository entries rather than the whole allowlist, because the scratch
+    // and payload entries around them are the composer's own contract and have
+    // their own coverage.
+    expect(dispatchedEnvelopes[0]?.allowWrite).toContain(
+      "/private/repo/worktree/docs",
+    );
+    expect(dispatchedEnvelopes[0]?.allowWrite).not.toContain(
+      "/private/repo/worktree/scripts/docs.ts",
+    );
+    expect(dispatchedEnvelopes.at(-1)?.allowWrite).toEqual(
+      expect.arrayContaining([
+        "/private/repo/worktree/docs",
+        "/private/repo/worktree/scripts/docs.ts",
+      ]),
+    );
+    expect(dispatchedEnvelopes.at(-1)?.denyWrite).toEqual([
+      "/private/repo/worktree/.git",
+    ]);
+  });
+
+  it("dispatches a placement edit that lands while the iteration is starting (lwp R10.2)", async () => {
+    // `context-implement` is unstarted at entry, so update-context is editable
+    // WHILE RUNNING — no pause required. That opens a real interleaving: the
+    // orchestrator reads the definition, then awaits conversation resolution,
+    // and only then commits the seed that marks the context started. An edit
+    // that commits inside that window is accepted against a lifecycle that
+    // still reads `unstarted`, so it has to reach the very turn being
+    // dispatched — there is no later turn it could belong to.
+    const execution = createExecutionWithPlanTasks({});
+    execution.workingDefinition.executionContexts =
+      execution.workingDefinition.executionContexts.map((ctx) =>
+        ctx.id === "context-implement"
+          ? {
+              ...ctx,
+              placement: {
+                lane: "implement",
+                mode: "owned",
+                ownedPaths: ["docs"],
+              },
+            }
+          : ctx,
+      );
+    const repository = createRepository(execution);
+
+    let editOutcome: "not-attempted" | "accepted" | "rejected" =
+      "not-attempted";
+    const createConversation = vi.fn(async () => {
+      const edited = applyLiveExecutionEdits(
+        repository.read(),
+        {
+          operations: [
+            {
+              type: "update-context",
+              contextId: "context-implement",
+              placement: {
+                lane: "implement",
+                mode: "owned",
+                ownedPaths: ["docs", "scripts/docs.ts"],
+              },
+            },
+          ],
+        },
+        makeLiveEditDeps(),
+      );
+      editOutcome = edited.ok ? "accepted" : "rejected";
+      if (edited.ok) {
+        await repository.mutateActive(
+          "/repo",
+          "session-1",
+          () => edited.execution,
+        );
+      }
+      return { id: "conversation-race" };
+    });
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+
+    const dispatchedPlacements: unknown[] = [];
+    const runAgentIteration = vi.fn(
+      async (input: GraphWorkflowRunAgentIterationInput) => {
+        dispatchedPlacements.push(input.placement);
+        const current = structuredClone(repository.read());
+        const taskState = current.taskStates["task-implement-1"];
+        const contextState = current.contextStates["context-implement"];
+        if (!taskState || !contextState) {
+          throw new Error("fixture is missing context-implement runtime state");
+        }
+        current.taskStates["task-implement-1"] = {
+          ...taskState,
+          status: "completed",
+          summary: "Implemented",
+          completedAt: "2026-03-27T16:22:00.000Z",
+        };
+        current.contextStates["context-implement"] = {
+          ...contextState,
+          completedTaskCount: 1,
+        };
+        await repository.mutateActive("/repo", "session-1", () => current);
+        return {
+          conversationId: "conv-mock",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+        };
+      },
+    );
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:20:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-implement",
+    });
+
+    // The interleaved edit really was accepted (a rejection would make the
+    // dispatch assertion below pass for the wrong reason).
+    expect(editOutcome).toBe("accepted");
+    expect(dispatchedPlacements).toEqual([
+      {
+        lane: "implement",
+        mode: "owned",
+        ownedPaths: ["docs", "scripts/docs.ts"],
+      },
+    ]);
+    // The seed preserved the edit in the working definition, so the dispatched
+    // value is the persisted one and not a lucky read of a discarded snapshot.
+    expect(
+      repository
+        .read()
+        .workingDefinition.executionContexts.find(
+          (ctx) => ctx.id === "context-implement",
+        )?.placement,
+    ).toEqual({
+      lane: "implement",
+      mode: "owned",
+      ownedPaths: ["docs", "scripts/docs.ts"],
+    });
   });
 
   it("preserves sibling active contexts when one parallel context starts and completes", async () => {

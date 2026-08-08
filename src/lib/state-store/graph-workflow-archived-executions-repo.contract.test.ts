@@ -345,14 +345,17 @@ function maximalResolvedContext(): Record<string, unknown> {
     title: "Implement the thing",
     description: "Detailed description of the context",
     acceptanceCriteria: "All tests pass and the build is green",
+    // The owning grade, because it is the only one that carries a payload:
+    // a placement round-trip that only ever saw `{ lane, mode }` would not
+    // prove the owned-prefix set survives a real save and reload.
+    placement: {
+      lane: "delivery",
+      mode: "owned",
+      ownedPaths: ["src/feature", "docs/feature.md"],
+    },
     origin: {
       sourceUri: "spec://native-sdd/contexts/ctx-1",
       label: "Implementation context",
-    },
-    placement: {
-      lane: "build",
-      mode: "owned",
-      ownedPaths: ["src/lib/state-store", "docs/adr"],
     },
     implementer: {
       id: "implementer",
@@ -606,14 +609,17 @@ function buildMaximalExecution(): unknown {
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          // The owning grade, because it is the only one that carries a payload:
+          // a placement round-trip that only ever saw `{ lane, mode }` would not
+          // prove the owned-prefix set survives a real save and reload.
+          placement: {
+            lane: "delivery",
+            mode: "owned",
+            ownedPaths: ["src/feature", "docs/feature.md"],
+          },
           origin: {
             sourceUri: "spec://native-sdd/contexts/ctx-1",
             label: "Implementation context",
-          },
-          placement: {
-            lane: "build",
-            mode: "owned",
-            ownedPaths: ["src/lib/state-store", "docs/adr"],
           },
           implementer: {
             id: "implementer",

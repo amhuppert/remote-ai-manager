@@ -2365,3 +2365,112 @@ describe("ContextConfigTab — per-assignment reset", () => {
     expect(screen.queryByLabelText("Reset general")).not.toBeInTheDocument();
   });
 });
+
+describe("ContextConfigTab — lane placement (lwp R10.2)", () => {
+  function placedContext(): GraphWorkflowResolvedContext {
+    return {
+      ...fullContext(),
+      placement: {
+        lane: "delivery",
+        mode: "owned",
+        ownedPaths: ["src/feature", "docs"],
+      },
+    };
+  }
+
+  it("displays the authored lane beside the provisioned runtime lane", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(placedContext(), startedContextState())}
+        contextId="context-impl"
+      />,
+    );
+
+    const runtime = screen.getByTestId("context-runtime");
+    expect(within(runtime).getByTestId("runtime-placement")).toHaveTextContent(
+      "delivery · owning",
+    );
+    expect(
+      within(runtime).getByTestId("runtime-owned-paths"),
+    ).toHaveTextContent("src/feature, docs");
+    // The provisioned lane is a different fact and keeps its own row — the
+    // authored lane is never inferred from either it or the context id.
+    expect(within(runtime).getByTestId("runtime-lane")).toHaveTextContent(
+      "lane-3",
+    );
+  });
+
+  it("composes an update-context op carrying only the edited placement", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(placedContext(), startedContextState())}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    const editor = screen.getByTestId("placement-editor");
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Remove docs" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(onSaveContextConfig).toHaveBeenCalledWith([
+      {
+        type: "update-context",
+        contextId: "context-impl",
+        placement: {
+          lane: "delivery",
+          mode: "owned",
+          ownedPaths: ["src/feature"],
+        },
+      },
+    ]);
+  });
+
+  it("blocks Save while the authored placement is incomplete", () => {
+    const onSaveContextConfig = vi.fn();
+    render(
+      <ContextConfigTab
+        execution={startedExecution(placedContext(), startedContextState())}
+        contextId="context-impl"
+        onSaveContextConfig={onSaveContextConfig}
+      />,
+    );
+
+    // Read-only is a legal grade, but this context declares no outputSchema, so
+    // the author has to fix that first — here the simpler incompleteness: an
+    // owning grade stripped of every path.
+    const editor = screen.getByTestId("placement-editor");
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Remove docs" }),
+    );
+    fireEvent.click(
+      within(editor).getByRole("button", { name: "Remove src/feature" }),
+    );
+
+    expect(screen.getByTestId("placement-issue")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  // No "seeded before placement existed" case here: the resolved context type
+  // requires placement, and a legacy row is backfilled at its inflate boundary
+  // (`placement-migration.ts`) before any surface can read it, so the
+  // placement-less shape this tab renders defensively is unreachable from a
+  // launched execution. That boundary owns the legacy case.
+
+  it("locks the placement editor while a started context awaits a pause", () => {
+    render(
+      <ContextConfigTab
+        execution={startedExecution(placedContext(), startedContextState(), {
+          status: "running",
+          activeContextIds: ["context-impl"],
+        })}
+        contextId="context-impl"
+      />,
+    );
+
+    expect(screen.getByLabelText("Lane name")).toBeDisabled();
+  });
+});

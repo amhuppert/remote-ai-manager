@@ -34,6 +34,7 @@ function makeValidDefinitionRecord() {
           id: "ctx-1",
           title: "Plan",
           acceptanceCriteria: "All tasks complete",
+          placement: { lane: "ctx-1", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin", id: "general-implementer" },
@@ -80,6 +81,7 @@ function makeValidExecution() {
           id: "ctx-1",
           title: "Plan",
           acceptanceCriteria: "All tasks complete",
+          placement: { lane: "ctx-1", mode: "full" },
           implementer: {
             id: "implementer",
             profile: { tier: "builtin", id: "general-implementer" },
