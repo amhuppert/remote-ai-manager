@@ -182,6 +182,7 @@ function soleAssignment(
 }
 
 const context: GraphWorkflowResolvedContext = {
+  placement: { lane: "context-implement", mode: "full" as const },
   id: "context-implement",
   title: "Implement Feature",
   description: "Build the widget",

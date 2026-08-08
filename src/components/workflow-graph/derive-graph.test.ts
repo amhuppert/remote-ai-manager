@@ -637,6 +637,7 @@ describe("getDisplayValidators", () => {
     overrides: Partial<GraphWorkflowResolvedContext> = {},
   ): GraphWorkflowResolvedContext {
     return {
+      placement: { lane: "ctx-1", mode: "full" as const },
       id: "ctx-1",
       title: "Ctx",
       acceptanceCriteria: "AC",
@@ -913,6 +914,7 @@ describe("getDisplayApprovalGate", () => {
     overrides: Partial<GraphWorkflowResolvedContext> = {},
   ): GraphWorkflowResolvedContext {
     return {
+      placement: { lane: "ctx-1", mode: "full" as const },
       id: "ctx-1",
       title: "Ctx",
       acceptanceCriteria: "AC",

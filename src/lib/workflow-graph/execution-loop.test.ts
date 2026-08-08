@@ -181,7 +181,6 @@ function createRunningExecution(
     laneStates: {},
     executionLanes: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: null,

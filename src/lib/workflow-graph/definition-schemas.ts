@@ -537,9 +537,16 @@ export const graphWorkflowResolvedContextSchema = z.object({
   description: z.string().trim().min(1).optional(),
   acceptanceCriteria: z.string().trim().min(1),
   origin: workflowOriginSchema.optional(),
-  // Mirrored verbatim from the authored context — an identity field, not a
-  // cascade result. Absent on contexts whose author declared none, and on every
-  // execution seeded before the field existed.
+  // Mirrored verbatim from the authored context, and REQUIRED here for the same
+  // reason it is required there: placement is the only lane authority, so an
+  // absent one at runtime would be a scheduler with nothing to read. No cascade
+  // tier contributes it — where a context runs is a property of that context.
+  // A working definition seeded before placement existed is migrated at its
+  // inflate boundary, never defaulted here.
+  placement: contextPlacementSchema,
+  // Identity passthrough as well, but genuinely optional: absent on contexts
+  // whose author declared none, and on every execution seeded before the field
+  // existed.
   outputSchema: contextOutputSchemaSchema.optional(),
   // Same identity passthrough: no cascade tier contributes a routing policy.
   routing: graphWorkflowContextRoutingPolicySchema.optional(),

@@ -320,29 +320,6 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     }
   });
 
-  it("seeds the lane plan from the resolved working definition at creation time", async () => {
-    const { repo } = createInMemoryRepo();
-    const execution = await repo.create("/repo", "session-1", {
-      definition: createWorkflowDefinition(),
-      definitionId: "wf-1",
-      definitionRevision: 1,
-      executionId: "exec-1",
-      startedAt: "2026-04-04T00:00:00.000Z",
-      inputs: {},
-      launchedTier: "project",
-    });
-
-    expect(execution.lanePlan.continuationMap).toEqual({
-      "context-plan": "context-implement",
-      "context-implement": "context-verify",
-    });
-    expect(execution.lanePlan.longestDownstreamPath).toEqual({
-      "context-plan": 2,
-      "context-implement": 1,
-      "context-verify": 0,
-    });
-  });
-
   it("initializes context and task state to execution-start defaults", async () => {
     const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {

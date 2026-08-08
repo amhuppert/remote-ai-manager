@@ -1598,15 +1598,6 @@ export type GraphWorkflowLoopState = z.infer<
   typeof graphWorkflowLoopStateSchema
 >;
 
-// fan-out point so restarts make the same call. See
-// `src/lib/workflow-graph/lane-plan.ts`.
-const graphWorkflowLanePlanSchema = z.object({
-  continuationMap: z.record(z.string(), z.string()).default({}),
-  longestDownstreamPath: z
-    .record(z.string(), z.number().int().min(0))
-    .default({}),
-});
-
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
@@ -1747,10 +1738,6 @@ export const graphWorkflowExecutionSchema = z.object({
   joins: z
     .record(z.string(), graphWorkflowExecutionJoinStateSchema)
     .default({}),
-  lanePlan: graphWorkflowLanePlanSchema.default({
-    continuationMap: {},
-    longestDownstreamPath: {},
-  }),
   machineSnapshot: z.unknown().nullable().default(null),
   startedAt: z.string(),
   completedAt: z.string().nullable().default(null),

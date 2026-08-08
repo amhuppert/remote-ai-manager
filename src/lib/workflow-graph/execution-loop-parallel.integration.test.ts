@@ -381,7 +381,6 @@ function createInitialExecution(
     laneStates: {},
     executionLanes: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: null,
@@ -1434,10 +1433,22 @@ describe("execution loop — parallel integration", () => {
     expect(idempotent?.haltReason).toEqual(haltReason);
   });
 
-  it("scenario 7: solo-eligible context — no worktree provisioned, no merge invoked", async () => {
+  it("scenario 7: session-lane context — no worktree provisioned, no merge invoked", async () => {
     _resetActiveLoopsForTesting();
 
     const definition = createParallelDefinition(["ctx-solo"]);
+    // Authored onto the session worktree itself, which is the one placement
+    // that provisions nothing and lands through no join.
+    definition.executionContexts = definition.executionContexts.map(
+      (context) => ({
+        ...context,
+        placement: { lane: "session", mode: "readOnly" as const },
+        outputSchema: {
+          type: "object" as const,
+          properties: { result: { type: "string" as const } },
+        },
+      }),
+    );
     const initial = createInitialExecution(definition);
     const repository = createRepository(initial);
     const parallelWorktrees = createParallelWorktreesStub();
@@ -1466,6 +1477,14 @@ describe("execution loop — parallel integration", () => {
           }
           const ts = updated.taskStates[`task-${input.contextId}`];
           if (ts) ts.status = "completed";
+          // Structured output is a read-only context's ONLY delivery channel,
+          // so the run cannot finish until the declared contract is satisfied.
+          updated.contextOutputs[input.contextId] = {
+            value: { result: "done" },
+            capturedAt: "2026-03-27T12:05:00.000Z",
+            iteration: 1,
+            parse: { source: "native" },
+          };
           return updated;
         });
         return {
@@ -1905,14 +1924,15 @@ describe("execution loop — parallel integration", () => {
 
     const dataLayerStateAtSchedule = snapshot.contextStates["p1-data-layer"];
     expect(dataLayerStateAtSchedule?.isolation).toBe("worktree");
-    // Sequential lane reuse: the downstream inherits its upstream's lane
-    // rather than provisioning a fresh worktree.
-    expect(dataLayerStateAtSchedule?.laneId).toBe("p1-foundation");
+    // Each context is placed on its own lane, so the downstream forks a
+    // worktree of its own from the upstream's committed head rather than
+    // moving into the upstream's worktree.
+    expect(dataLayerStateAtSchedule?.laneId).toBe("p1-data-layer");
     expect(dataLayerStateAtSchedule?.worktreePath).toBe(
-      "/repo/.worktrees/session-1.p1-foundation",
+      "/repo/.worktrees/session-1.p1-data-layer",
     );
     expect(dataLayerStateAtSchedule?.branchName).toBe(
-      "csm/session-1-p1-foundation",
+      "csm/session-1-p1-data-layer",
     );
     expect(dataLayerStateAtSchedule?.status).toBe("running");
     expect(snapshot.contextStates["p2"]?.status).toBe("running");
@@ -1925,7 +1945,8 @@ describe("execution loop — parallel integration", () => {
     const provisionedContextIds = parallelWorktrees.provisionCalls.map(
       (c) => c.contextId,
     );
-    expect(provisionedContextIds).not.toContain("p1-data-layer");
+    // Its own lane means its own worktree.
+    expect(provisionedContextIds).toContain("p1-data-layer");
 
     for (const ctxId of contextIds) {
       const cs = result.contextStates[ctxId];
@@ -1936,6 +1957,7 @@ describe("execution loop — parallel integration", () => {
     expect(
       parallelWorktrees.cleanupLaneCalls.map((c) => c.branchName).sort(),
     ).toEqual([
+      "csm/session-1-p1-data-layer",
       "csm/session-1-p1-foundation",
       "csm/session-1-p2",
       "csm/session-1-p3",
@@ -2735,13 +2757,15 @@ describe("execution loop — parallel integration", () => {
     definition.edges = [
       { id: "e1", sourceContextId: "ctx-a", targetContextId: "ctx-b" },
     ];
+    // Both contexts are authored onto one lane, so scheduling mints a worktree
+    // lane for ctx-a and ctx-b reuses it (sequential lane reuse).
+    definition.executionContexts = definition.executionContexts.map(
+      (context) => ({
+        ...context,
+        placement: { lane: "shared", mode: "full" as const },
+      }),
+    );
     const initial = createInitialExecution(definition);
-    // ctx-b is planned to continue ctx-a's lane, so scheduling mints a
-    // worktree lane for ctx-a and ctx-b reuses it (sequential lane reuse).
-    initial.lanePlan = {
-      continuationMap: { "ctx-a": "ctx-b" },
-      longestDownstreamPath: {},
-    };
     const repository = createRepository(initial);
     const parallelWorktrees = createParallelWorktreesStub();
 
@@ -2822,15 +2846,18 @@ describe("execution loop — parallel integration", () => {
     expect(result.status).toBe("completed");
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-success");
-    expect(result.contextStates["ctx-a"]?.laneId).toBe("ctx-a");
-    expect(result.contextStates["ctx-b"]?.laneId).toBe("ctx-a");
+    // Both members sit on the lane they were AUTHORED onto, which is what the
+    // single worktree is named after — not the id of whichever member happened
+    // to reach it first.
+    expect(result.contextStates["ctx-a"]?.laneId).toBe("shared");
+    expect(result.contextStates["ctx-b"]?.laneId).toBe("shared");
     expect(parallelWorktrees.cleanupLaneCalls).toEqual([
       {
         projectPath: "/repo",
         sessionName: "session-1",
         sessionDir: "session-1",
-        contextId: "ctx-a",
-        branchName: "csm/session-1-ctx-a",
+        contextId: "shared",
+        branchName: "csm/session-1-shared",
       },
     ]);
   });
@@ -3229,22 +3256,29 @@ describe("execution loop — parallel integration", () => {
       expect(cs?.completedTaskCount).toBe(cs?.totalTaskCount);
     }
 
-    // The sweep's source lanes converged through a context_merge so the sweep
-    // ran on the merged worktree lane before anything was published.
+    // The sweep's source lanes converged through a context_merge before
+    // anything was published; the sweep then ran on its OWN lane, forked from
+    // that converged lane so its worktree carries both sources' work.
     const contextMerge = Object.values(result.joins).find(
       (join) => join.kind === "context_merge" && join.contextId === "ctx-sweep",
     );
     expect(contextMerge?.status).toBe("succeeded");
     const sweepLaneId = result.contextStates["ctx-sweep"]?.laneId;
-    expect(sweepLaneId).toBe(contextMerge?.targetLaneId);
-    expect(result.executionLanes[sweepLaneId ?? ""]?.kind).toBe("worktree");
+    expect(sweepLaneId).toBe("ctx-sweep");
+    const sweepLane = result.executionLanes[sweepLaneId ?? ""];
+    expect(sweepLane?.kind).toBe("worktree");
+    expect(sweepLane?.includedContextIds).toEqual(
+      expect.arrayContaining(["ctx-a", "ctx-b"]),
+    );
 
-    // The final publish then lands the one converged lane on the session.
+    // The final publish then lands the sweep's lane on the session.
     const finalJoin = Object.values(result.joins).find(
       (join) => join.kind === "final_publish",
     );
     expect(finalJoin?.status).toBe("succeeded");
-    expect(finalJoin?.sourceLaneIds).toEqual([contextMerge?.targetLaneId]);
+    // Both worktree lanes are still unpublished, so both are delivered: the
+    // sweep forked away from ctx-a rather than continuing on it.
+    expect(finalJoin?.sourceLaneIds).toEqual(["ctx-a", sweepLaneId]);
   });
 
   it("scenario 20: a stale pending final_publish restored on resume is superseded while a source-eligible context has unstarted tasks (ticket #28)", async () => {
@@ -3443,15 +3477,12 @@ describe("execution loop — parallel integration", () => {
       (join) => join.kind === "context_merge" && join.contextId === "ctx-sweep",
     );
     expect(contextMerge?.status).toBe("succeeded");
-    expect(result.contextStates["ctx-sweep"]?.laneId).toBe(
-      contextMerge?.targetLaneId,
-    );
+    const sweepLaneId = result.contextStates["ctx-sweep"]?.laneId;
+    expect(sweepLaneId).toBe("ctx-sweep");
     const freshFinalPublish = Object.values(result.joins).find(
       (join) => join.kind === "final_publish" && join.joinId !== "join-stale",
     );
     expect(freshFinalPublish?.status).toBe("succeeded");
-    expect(freshFinalPublish?.sourceLaneIds).toEqual([
-      contextMerge?.targetLaneId,
-    ]);
+    expect(freshFinalPublish?.sourceLaneIds).toEqual(["ctx-a", sweepLaneId]);
   });
 });

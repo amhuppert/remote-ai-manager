@@ -12,6 +12,7 @@ function maximalResolvedContext(): Record<string, unknown> {
     title: "Implement the thing",
     description: "Detailed description of the context",
     acceptanceCriteria: "All tests pass and the build is green",
+    placement: { lane: "lane-loop", mode: "full" },
     origin: {
       sourceUri: "workflow-source:maximal/context/ctx-1",
       label: "Maximal context source",
@@ -297,6 +298,13 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          // The owning grade, so the round trip carries an ownedPaths list
+          // rather than only the shape a bare full-access placement has.
+          placement: {
+            lane: "lane-1",
+            mode: "owned",
+            ownedPaths: ["src/lib/state-store", "docs/design/persistence.md"],
+          },
           origin: {
             sourceUri: "workflow-source:maximal/context/ctx-1",
             label: "Maximal context source",
@@ -1086,10 +1094,6 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
         updatedAt: "2026-01-02T04:00:00Z",
         completedAt: "2026-01-02T05:00:00Z",
       },
-    },
-    lanePlan: {
-      continuationMap: { "ctx-1": "ctx-2" },
-      longestDownstreamPath: { "ctx-1": 3 },
     },
     machineSnapshot: { value: "running", context: { step: 2 } },
     startedAt: "2026-01-01T00:00:00Z",

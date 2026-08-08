@@ -49,6 +49,10 @@
         "title": "Triage the report",
         "description": "Read the report, reproduce it if the steps allow, and classify its severity.",
         "acceptanceCriteria": "The report has been read and, where the steps allow, reproduced. The captured output declares one severity from the declared set plus a rationale that cites the evidence behind it. No remediation work has been started.",
+        "placement": {
+          "lane": "ctx-triage",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "properties": {
@@ -56,38 +60,65 @@
               "type": "string",
               "enum": ["blocker", "defect", "enhancement", "not-a-bug"]
             },
-            "rationale": { "type": "string", "minLength": 1 }
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            }
           },
           "required": ["severity", "rationale"]
         },
-        "routing": { "cardinality": "exactlyOne" }
+        "routing": {
+          "cardinality": "exactlyOne"
+        }
       },
       {
         "id": "ctx-hotfix",
         "title": "Hotfix the blocker",
         "description": "Ship the smallest correct fix for a blocking defect.",
         "acceptanceCriteria": "A regression test reproduces the reported failure and fails before the fix. The minimal fix makes it pass, and the surrounding suite for the touched module is green.",
-        "iterationPolicy": { "maxIterations": 8 }
+        "placement": {
+          "lane": "ctx-hotfix",
+          "mode": "full"
+        },
+        "iterationPolicy": {
+          "maxIterations": 8
+        }
       },
       {
         "id": "ctx-repair",
         "title": "Repair the defect",
         "description": "Fix the defect on the normal path, root cause first.",
         "acceptanceCriteria": "The root cause is identified and stated. A failing behavior-level test is added first, the fix makes it pass, and the touched module's tests and typecheck are green.",
-        "iterationPolicy": { "maxIterations": 8 }
+        "placement": {
+          "lane": "ctx-repair",
+          "mode": "full"
+        },
+        "iterationPolicy": {
+          "maxIterations": 8
+        }
       },
       {
         "id": "ctx-backlog",
         "title": "File it for the backlog",
         "description": "The fallback branch for every severity no remediation branch names: enhancements and reports that turn out not to be bugs.",
         "acceptanceCriteria": "A backlog entry records the report, the triage rationale, and the reason no code change was made. No production code is modified.",
-        "iterationPolicy": { "maxIterations": 4 }
+        "placement": {
+          "lane": "ctx-backlog",
+          "mode": "full"
+        },
+        "iterationPolicy": {
+          "maxIterations": 4
+        }
       },
       {
         "id": "ctx-report",
         "title": "Report the outcome",
         "description": "Summarize the triage verdict and whatever the selected branch did.",
-        "acceptanceCriteria": "The summary names the severity, the branch that ran, and what it changed or deliberately did not change. It describes only the path that actually ran."
+        "acceptanceCriteria": "The summary names the severity, the branch that ran, and what it changed or deliberately did not change. It describes only the path that actually ran.",
+        "placement": {
+          "lane": "ctx-report",
+          "mode": "full"
+        }
       }
     ],
     "tasks": [
@@ -135,7 +166,11 @@
         "when": {
           "schema": {
             "type": "object",
-            "properties": { "severity": { "const": "blocker" } },
+            "properties": {
+              "severity": {
+                "const": "blocker"
+              }
+            },
             "required": ["severity"]
           }
         }
@@ -147,7 +182,11 @@
         "when": {
           "schema": {
             "type": "object",
-            "properties": { "severity": { "const": "defect" } },
+            "properties": {
+              "severity": {
+                "const": "defect"
+              }
+            },
             "required": ["severity"]
           }
         }
@@ -156,7 +195,9 @@
         "id": "ctx-triage__ctx-backlog",
         "sourceContextId": "ctx-triage",
         "targetContextId": "ctx-backlog",
-        "when": { "else": true }
+        "when": {
+          "else": true
+        }
       },
       {
         "id": "ctx-hotfix__ctx-report",
@@ -175,5 +216,8 @@
       }
     ]
   },
-  "layout": { "workflowId": "plan", "contextPositions": {} }
+  "layout": {
+    "workflowId": "plan",
+    "contextPositions": {}
+  }
 }

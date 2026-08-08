@@ -2996,6 +2996,7 @@ describe("codex implementer continuity", () => {
     const definition = createResolvedWorkflowDefinition({
       executionContexts: [
         {
+          placement: { lane: "context-plan", mode: "full" as const },
           id: "context-plan",
           title: "Plan",
           acceptanceCriteria: "TBD",

@@ -345,6 +345,7 @@ function maximalResolvedContext(): Record<string, unknown> {
     title: "Implement the thing",
     description: "Detailed description of the context",
     acceptanceCriteria: "All tests pass and the build is green",
+    placement: { lane: "ctx-1", mode: "full" },
     origin: {
       sourceUri: "spec://native-sdd/contexts/ctx-1",
       label: "Implementation context",
@@ -601,6 +602,7 @@ function buildMaximalExecution(): unknown {
           title: "Implement the thing",
           description: "Detailed description of the context",
           acceptanceCriteria: "All tests pass and the build is green",
+          placement: { lane: "ctx-1", mode: "full" },
           origin: {
             sourceUri: "spec://native-sdd/contexts/ctx-1",
             label: "Implementation context",
@@ -1333,10 +1335,6 @@ function buildMaximalExecution(): unknown {
         updatedAt: "2026-01-02T04:00:00Z",
         completedAt: "2026-01-02T05:00:00Z",
       },
-    },
-    lanePlan: {
-      continuationMap: { "ctx-1": "ctx-2" },
-      longestDownstreamPath: { "ctx-1": 3 },
     },
     machineSnapshot: { value: "running", context: { step: 2 } },
     history: [

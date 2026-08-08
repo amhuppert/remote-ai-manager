@@ -362,6 +362,7 @@ function createCodexExecutionWithRunningTask() {
   const definition = createResolvedWorkflowDefinition({
     executionContexts: [
       {
+        placement: { lane: "context-codex-impl", mode: "full" as const },
         id: "context-codex-impl",
         title: "Codex Implement",
         description: "Codex-powered implementation",

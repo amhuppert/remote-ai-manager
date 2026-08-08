@@ -19,7 +19,7 @@ import {
 import { SEEDED_WORKFLOW_DEFAULTS } from "@/lib/workflow-graph/resolve-config";
 
 describe("workflow builder draft helpers", () => {
-  it("adds an execution context with only id, title, and empty acceptance criteria", () => {
+  it("adds an execution context with only id, title, empty acceptance criteria, and a lane of its own", () => {
     const result = addExecutionContext({
       definition: createWorkflowDefinition(),
       layout: createWorkflowLayout(),
@@ -31,6 +31,7 @@ describe("workflow builder draft helpers", () => {
       id: "context-4",
       title: "Execution Context 4",
       acceptanceCriteria: "",
+      placement: { lane: "context-4", mode: "full" },
     });
     expect(result.layout.contextPositions["context-4"]).toEqual({
       x: 1080,

@@ -32,6 +32,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       id: "ctx-1",
       title: "Ctx 1",
       acceptanceCriteria: "AC1",
+      placement: { lane: "ctx-1", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },

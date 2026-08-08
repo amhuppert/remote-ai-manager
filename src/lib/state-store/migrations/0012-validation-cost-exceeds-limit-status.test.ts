@@ -14,6 +14,7 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import Database from "better-sqlite3";
+import { KNOWN_SCHEMA_VERSION } from "../state-db";
 import {
   createPersistenceFixture,
   type PersistenceFixture,
@@ -298,9 +299,11 @@ describe("0012-validation-cost-exceeds-limit-status", () => {
 
   it("refuses under the write lock when the ledger records a newer version, leaving the barrier published and the table untouched", async () => {
     const { db, dir } = legacyFileBackedDb();
+    // Above THIS build's KNOWN_SCHEMA_VERSION, so the recheck sees a genuinely
+    // newer build's advance rather than a version this build already ships.
     db.prepare(
-      "INSERT INTO schema_migrations (version, description) VALUES (5, 'future build')",
-    ).run();
+      "INSERT INTO schema_migrations (version, description) VALUES (?, 'future build')",
+    ).run(KNOWN_SCHEMA_VERSION + 1);
 
     await expect(
       validationCostExceedsLimitStatus.up({
@@ -318,7 +321,9 @@ describe("0012-validation-cost-exceeds-limit-status", () => {
 
   it("refuses when the config directory already carries a newer external barrier", async () => {
     const { db, dir } = legacyFileBackedDb();
-    await publishSchemaCompatibilityBarrier(dir, 5);
+    // Above THIS build's KNOWN_SCHEMA_VERSION, so the barrier belongs to a
+    // genuinely newer build rather than one this build already ships.
+    await publishSchemaCompatibilityBarrier(dir, KNOWN_SCHEMA_VERSION + 1);
 
     await expect(
       validationCostExceedsLimitStatus.up({

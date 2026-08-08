@@ -42,6 +42,7 @@ function classifyAndActDefinition(): WorkflowSemanticDefinition {
     title,
     description: title,
     acceptanceCriteria: `${title} is done`,
+    placement: { lane: id, mode: "full" as const },
     implementer: makeImplementerAssignment(AGENT),
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: { consecutiveFailureThreshold: 3 },

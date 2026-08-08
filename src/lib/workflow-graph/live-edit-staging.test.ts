@@ -477,7 +477,6 @@ describe("finalizePreparedEdits — interleaved mutation", () => {
         noReads("workingDefinition"),
       ),
       laneStates: new Proxy(committed.laneStates, noReads("laneStates")),
-      lanePlan: new Proxy(committed.lanePlan, noReads("lanePlan")),
       contextStates: new Proxy(
         committed.contextStates,
         noEnumeration("contextStates"),

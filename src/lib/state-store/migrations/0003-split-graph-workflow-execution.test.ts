@@ -140,7 +140,6 @@ function populatedExecution() {
     completedAt: null,
     workingDefinition: { schemaVersion: 2, kind: "definition-payload" },
     charter: { kind: "charter-payload" },
-    lanePlan: { continuationMap: { "ctx-1": "ctx-2" } },
     activeContextIds: ["ctx-1"],
     contextStates: { "ctx-1": { contextId: "ctx-1", status: "running" } },
     taskStates: { "task-1": { taskId: "task-1", status: "running" } },

@@ -364,6 +364,7 @@ export function createResolvedWorkflowDefinition(
         ? { description: ctx.description }
         : {}),
       acceptanceCriteria: ctx.acceptanceCriteria,
+      placement: ctx.placement,
       implementer: seedAssignment(
         ctx.implementer ??
           makeImplementerAssignment({
@@ -552,7 +553,6 @@ export function createWorkflowExecution(
     laneStates: {},
     executionLanes: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: timestamp,
     completedAt: null,

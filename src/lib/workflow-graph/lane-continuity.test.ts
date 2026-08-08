@@ -48,6 +48,7 @@ function makeDefinition(
         id: "ctx-1",
         title: "Plan",
         acceptanceCriteria: "TBD",
+        placement: { lane: "ctx-1", mode: "full" as const },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -148,7 +149,6 @@ function makeExecution(
     laneStates: {},
     executionLanes: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: NOW,
     completedAt: null,

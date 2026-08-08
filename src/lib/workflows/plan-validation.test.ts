@@ -458,7 +458,7 @@ describe("validateWorkflowPlan", () => {
         ).toBe(true);
       });
 
-      it("leaves a non-assignment shape error unenriched", () => {
+      it("names the context as the use site for a non-assignment shape error", () => {
         const definition = createWorkflowDefinition();
         const result = validateWorkflowPlan(
           makePlan({
@@ -474,7 +474,11 @@ describe("validateWorkflowPlan", () => {
         const issue = result.issues.find(
           (i) => i.path === "definition.executionContexts.0.title",
         );
-        expect(issue?.message).not.toContain("Use site:");
+        // The array index is not what an author calls the context, so a shape
+        // refusal mounted on the context itself is located by its id.
+        expect(issue?.message).toContain(
+          'Use site: the context "context-plan"',
+        );
       });
     });
   });

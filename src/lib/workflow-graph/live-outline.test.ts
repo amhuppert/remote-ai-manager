@@ -27,6 +27,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       title: "Plan the work",
       description: "Lay out the approach",
       acceptanceCriteria: "A plan exists",
+      placement: { lane: "plan", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -68,6 +69,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       id: "impl",
       title: "Build inspector UI",
       acceptanceCriteria: "UI ships",
+      placement: { lane: "impl", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },
@@ -109,6 +111,7 @@ const workingDefinition = resolvedWorkflowSemanticDefinitionSchema.parse({
       id: "verify",
       title: "Verify",
       acceptanceCriteria: "All green",
+      placement: { lane: "verify", mode: "full" },
       implementer: {
         id: "implementer",
         profile: { tier: "builtin", id: "general-implementer" },

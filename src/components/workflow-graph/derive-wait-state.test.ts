@@ -129,7 +129,6 @@ function makeExecution(
     laneStates: {},
     executionLanes: {},
     joins: {},
-    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     startedAt: new Date().toISOString(),
     completedAt: null,

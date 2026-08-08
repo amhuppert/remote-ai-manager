@@ -177,6 +177,7 @@ function createResolvedDefinition() {
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "All tasks are complete and verified.",
+        placement: { lane: "context-1", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },
@@ -216,6 +217,7 @@ function createResolvedDefinition() {
         title: "Implement",
         description: "Write the code",
         acceptanceCriteria: "Code compiles and tests pass.",
+        placement: { lane: "context-2", mode: "full" },
         implementer: {
           id: "implementer",
           profile: { tier: "builtin", id: "general-implementer" },

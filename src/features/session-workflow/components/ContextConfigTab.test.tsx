@@ -41,6 +41,7 @@ function render(ui: React.ReactElement) {
 
 function fullContext(): GraphWorkflowResolvedContext {
   return {
+    placement: { lane: "context-impl", mode: "full" as const },
     id: "context-impl",
     title: "Implement",
     description: "Do the work",

@@ -194,8 +194,6 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: outer keys are author-fixed execution contexts; inner keys are the one implementer plus that context's author-fixed validator assignments. In graph_workflow_executions.runtime_json.",
       "joins.**":
         "bounded: per-join merge state keyed by author-fixed joins; lane-id and conflict-file lists sized by the merge. In graph_workflow_executions.runtime_json.",
-      "lanePlan.**":
-        "bounded: continuation / longest-path maps derived from the author-fixed graph. In graph_workflow_executions.definition_json.",
       "haltReason.**":
         "bounded: single halt descriptor (conflict files / source lanes from one halt). In graph_workflow_executions.runtime_json.",
       "pendingHaltReason.**":

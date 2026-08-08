@@ -65,10 +65,10 @@
       "joinKind": "context_merge",
       "contextId": "ctx-converge",
       "sourceLaneIds": [
-        "ctx-right",
-        "ctx-root"
+        "ctx-left",
+        "ctx-right"
       ],
-      "targetLaneId": "ctx-right"
+      "targetLaneId": "ctx-left"
     },
     {
       "decision": "eligible",
@@ -96,7 +96,9 @@
       "joinKind": "final_publish",
       "contextId": null,
       "sourceLaneIds": [
-        "ctx-right"
+        "ctx-converge",
+        "ctx-left",
+        "ctx-root"
       ],
       "targetLaneId": "__session__"
     },
@@ -356,6 +358,11 @@
     },
     {
       "kind": "graph-workflow-lane-status",
+      "subject": "ctx-left",
+      "detail": "active"
+    },
+    {
+      "kind": "graph-workflow-lane-status",
       "subject": "ctx-right",
       "detail": "active"
     },
@@ -446,7 +453,7 @@
     },
     {
       "kind": "graph-workflow-lane-status",
-      "subject": "ctx-root",
+      "subject": "ctx-left",
       "detail": "active"
     },
     {
@@ -505,6 +512,11 @@
       "detail": "running"
     },
     {
+      "kind": "graph-workflow-lane-status",
+      "subject": "ctx-converge",
+      "detail": "active"
+    },
+    {
       "kind": "graph-workflow-context-status",
       "subject": "ctx-converge",
       "detail": "running"
@@ -551,7 +563,7 @@
     },
     {
       "kind": "graph-workflow-lane-status",
-      "subject": "ctx-right",
+      "subject": "ctx-converge",
       "detail": "active"
     },
     {
@@ -563,6 +575,16 @@
       "kind": "graph-workflow-status",
       "subject": null,
       "detail": "running"
+    },
+    {
+      "kind": "graph-workflow-join-status",
+      "subject": "loop-job-2",
+      "detail": "final_publish:running"
+    },
+    {
+      "kind": "graph-workflow-join-status",
+      "subject": "loop-job-2",
+      "detail": "final_publish:running"
     },
     {
       "kind": "graph-workflow-join-status",

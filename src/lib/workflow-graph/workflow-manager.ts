@@ -39,7 +39,10 @@ import {
   type ParallelWorktrees,
   type ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
-import { validateContextId } from "@/lib/workflow-graph/lane-identity";
+import {
+  SESSION_LANE_NAME,
+  validateLaneId,
+} from "@/lib/workflow-graph/lane-identity";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
@@ -544,9 +547,8 @@ function clearLaneStatesFor(
 
 /**
  * Find the upstream context whose laneId matches `laneId` and which is the
- * direct dependency of any of `contenders`. Used at fan-out to identify the
- * parent so the scheduler can consult `lanePlan.continuationMap[parentId]`
- * to pick which child inherits the lane.
+ * direct dependency of any of `contenders`. Used at fan-out to name the parent
+ * a non-inheriting sibling forks from.
  */
 function findUpstreamCompletedOnLane(
   contenders: readonly string[],
@@ -1832,11 +1834,23 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const laneReusedDecisions: LaneReusedDecision[] = [];
     type SchedulableEntry = {
       contextId: string;
+      /**
+       * The AUTHORED lane name this context is placed on, and the id of any lane
+       * minted for it. Resolved once here, where the definition is in hand, so
+       * the out-of-lock provisioning and the finalize mutation address the lane
+       * by the same name.
+       *
+       * Not the context id: a context id accepts any non-empty string while a
+       * lane name is spliced into a git branch and a worktree path, and a
+       * pre-placement definition's migrated lane (R11.1) is the sanitized
+       * encoding of an id that may itself be illegal there.
+       */
+      laneName: string;
       classification: Extract<ContextSchedulability, { kind: "schedulable" }>;
       // When set, this entry is a fan-out fork: the candidate lost the
       // continuation contest for `sourceLaneId` and must provision a fresh
       // worktree lane from the parent lane's committed head (parentBranch).
-      // Forked lane id equals the candidate's contextId.
+      // Forked lane id equals the candidate's authored lane name.
       forkFromLane: {
         sourceLaneId: string;
         parentBranchName: string;
@@ -1925,6 +1939,16 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         // both be marked running on that lane. Skip any later entry whose
         // target was already claimed by an earlier entry in this pass.
         const reservedLaneIds = new Set<string>();
+        // The one place a context's authored lane name is read. Every lane this
+        // pass validates, provisions, or keys uses this rather than the context
+        // id: the two coincide for a context whose id is already a legal lane
+        // segment, and diverge exactly where they must — an authored group lane,
+        // and a pre-placement context whose migrated lane is the sanitized
+        // encoding of an id that is not spliceable into a branch or a path.
+        const authoredLaneOf = (contextId: string): string | undefined =>
+          running.workingDefinition.executionContexts.find(
+            (ctx) => ctx.id === contextId,
+          )?.placement.lane;
         // Two-pass scheduling: collect classifications first so the plan-driven
         // inheritance decision can compare all contenders before reservation.
         type Candidate = {
@@ -1947,81 +1971,102 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           if (classification.kind !== "schedulable") continue;
           candidates.push({ contextId, classification });
         }
-        // Plan-driven inheritor per contested lane. For each lane that two or
-        // more candidates want to reuse, look up the parent context whose lane
-        // matches and consult `lanePlan.continuationMap` to pick the inheriting
-        // child. Fallback to the first candidate in definition order when no
-        // plan entry exists. Sole contenders inherit unconditionally.
+        // Occupant per contested lane, first in definition order. Only a
+        // candidate PLACED on the lane contends for it: one whose placement
+        // names a different lane is going to fork away from this one, so
+        // counting it here would stall the lane's real occupant for a pass.
         const inheritorByLane = new Map<string, string>();
-        const parentContextByLane = new Map<string, string>();
         const contendersByLane = new Map<string, string[]>();
         for (const candidate of candidates) {
-          if (candidate.classification.targetLaneId === null) continue;
           const laneId = candidate.classification.targetLaneId;
+          if (laneId === null) continue;
+          if (authoredLaneOf(candidate.contextId) !== laneId) continue;
           const list = contendersByLane.get(laneId) ?? [];
           list.push(candidate.contextId);
           contendersByLane.set(laneId, list);
         }
         for (const [laneId, contenders] of contendersByLane) {
-          const parentContextId = findUpstreamCompletedOnLane(
-            contenders,
-            laneId,
-            running,
-          );
-          if (parentContextId !== null) {
-            parentContextByLane.set(laneId, parentContextId);
-          }
-          if (contenders.length === 1) {
-            inheritorByLane.set(laneId, contenders[0]!);
-            continue;
-          }
-          const planned = parentContextId
-            ? running.lanePlan.continuationMap[parentContextId]
-            : undefined;
-          if (planned && contenders.includes(planned)) {
-            inheritorByLane.set(laneId, planned);
-          } else {
-            inheritorByLane.set(laneId, contenders[0]!);
-          }
+          inheritorByLane.set(laneId, contenders[0]!);
         }
+        // Lanes this pass will MINT. A lane id identifies one worktree for the
+        // whole execution, so two candidates cannot mint the same one; a later
+        // candidate wanting an already-claimed name waits for a pass where the
+        // lane exists and can be occupied instead.
+        const mintedLaneNames = new Set<string>();
         for (const candidate of candidates) {
           const { contextId, classification } = candidate;
           if (remainingCapacity !== undefined && remainingCapacity <= 0) break;
-          let forkFromLane: SchedulableEntry["forkFromLane"] = null;
-          if (classification.targetLaneId !== null) {
-            const inheritor = inheritorByLane.get(classification.targetLaneId);
-            if (inheritor !== undefined && inheritor !== contextId) {
-              // Non-inheritor sibling at fan-out: fork from the parent lane's
-              // committed head if the parent lane is a worktree (forkable). A
-              // session-kind parent cannot be forked, so the sibling waits for
-              // the inheritor to release the lane on its next pass.
-              const parentLane =
-                running.executionLanes[classification.targetLaneId];
-              const parentContextId = parentContextByLane.get(
-                classification.targetLaneId,
-              );
-              if (
-                !parentLane ||
-                parentLane.kind !== "worktree" ||
-                parentLane.worktreePath === null ||
-                !parentContextId
-              ) {
-                continue;
-              }
-              forkFromLane = {
-                sourceLaneId: classification.targetLaneId,
-                parentBranchName: parentLane.branchName,
-                parentContextId,
-              };
-            } else if (reservedLaneIds.has(classification.targetLaneId)) {
-              // Defensive: an earlier candidate already claimed this lane in
-              // this pass. Skip to avoid double-reserving.
-              continue;
-            }
+          // Fail closed rather than falling back to the context id: a context
+          // the definition does not carry has no authored lane, and inventing
+          // one from its id is the lexical fallback lane-write-policy forbids.
+          const laneName = authoredLaneOf(contextId);
+          if (laneName === undefined) {
+            throw new Error(
+              `Context "${contextId}" is not present in the working definition, so it has no authored lane placement`,
+            );
           }
-          schedulableEntries.push({ contextId, classification, forkFromLane });
-          if (classification.targetLaneId !== null && forkFromLane === null) {
-            reservedLaneIds.add(classification.targetLaneId);
+
+          // Lane admission (R11.1). The classifier reports where this context's
+          // upstream landed; that is an OFFER, not a placement. A context runs on
+          // the lane it was placed on, so an offer for any other lane is taken as
+          // a fork point rather than a destination. Accepting it would put the
+          // context in a worktree its placement never claimed and, for a
+          // definition migrated to one single-member lane per context, would
+          // collapse the chain back onto a single worktree.
+          const offeredLane = classification.targetLaneId;
+          const parentLane =
+            offeredLane === null
+              ? undefined
+              : running.executionLanes[offeredLane];
+          // Only a worktree lane with a committed upstream on it can be forked
+          // from: that commit is what the new worktree branches off to inherit
+          // the upstream's work. Without one there is nothing to fork, so the
+          // offer stands and the existing routing (session lane, post-join
+          // common target) is left exactly as it was.
+          const forkParentContextId =
+            offeredLane !== null &&
+            parentLane?.kind === "worktree" &&
+            parentLane.worktreePath !== null
+              ? findUpstreamCompletedOnLane([contextId], offeredLane, running)
+              : null;
+          const canForkOwnLane =
+            offeredLane !== null &&
+            offeredLane !== laneName &&
+            forkParentContextId !== null &&
+            running.executionLanes[laneName] === undefined &&
+            !mintedLaneNames.has(laneName);
+          let forkFromLane: SchedulableEntry["forkFromLane"] = null;
+
+          if (offeredLane === laneName) {
+            // The offer IS this context's lane — it belongs there. Same-lane
+            // siblings still serialize: one context at a time per worktree, the
+            // first in definition order taking it.
+            const inheritor = inheritorByLane.get(offeredLane);
+            if (inheritor !== undefined && inheritor !== contextId) continue;
+            if (reservedLaneIds.has(offeredLane)) continue;
+          } else if (canForkOwnLane) {
+            forkFromLane = {
+              sourceLaneId: offeredLane,
+              parentBranchName: parentLane!.branchName,
+              parentContextId: forkParentContextId,
+            };
+          } else if (offeredLane !== null) {
+            if (reservedLaneIds.has(offeredLane)) continue;
+          } else if (mintedLaneNames.has(laneName)) {
+            // No offer, and a sibling in this pass already claimed the name.
+            continue;
+          }
+
+          schedulableEntries.push({
+            contextId,
+            laneName,
+            classification,
+            forkFromLane,
+          });
+          if (offeredLane !== null && forkFromLane === null) {
+            reservedLaneIds.add(offeredLane);
+          } else {
+            mintedLaneNames.add(laneName);
           }
           if (remainingCapacity !== undefined) {
             remainingCapacity = Math.max(0, remainingCapacity - 1);
@@ -2039,21 +2084,27 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         }
 
         const canMintLane = !!(deps.parallelWorktrees && deps.getSession);
-        const planHasContinuation = (contextId: string): boolean =>
-          running.lanePlan.continuationMap[contextId] !== undefined;
+        // Whether the context's AUTHORED lane is a group lane — anything but
+        // the reserved session lane, which is the session worktree itself.
+        //
+        // This is where the deleted plan's continuation score used to sit, and
+        // the declared answer subsumes it: a context on a group lane needs that
+        // lane provisioned, both for its own work and because every later
+        // member of the lane inherits the worktree it mints. Without it the
+        // first member would land in `laneId: null` and the next member's
+        // classifier would see no worktree source lane to reuse.
+        const laneIsGroupLane = (contextId: string): boolean => {
+          const lane = authoredLaneOf(contextId);
+          return lane !== undefined && lane !== SESSION_LANE_NAME;
+        };
 
         const soloEntry =
           schedulableEntries.length === 1 ? schedulableEntries[0]! : null;
-        // A solo entry with a planned continuation must be provisioned into a
-        // fresh worktree lane up front so downstream consumers can reuse the
-        // same lane (sequential reuse). Without this, a root context would
-        // land in `laneId: null` and the next context's classifier would see
-        // no worktree source lane to reuse.
         const isSoloSession =
           soloEntry !== null &&
           soloEntry.classification.targetLaneId === null &&
           !soloEntry.classification.requiresFork &&
-          !(canMintLane && planHasContinuation(soloEntry.contextId));
+          !(canMintLane && laneIsGroupLane(soloEntry.contextId));
 
         if (isSoloSession && soloEntry) {
           const soloContextId = soloEntry.contextId;
@@ -2102,15 +2153,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
           if (entry.forkFromLane !== null) return true;
           if (entry.classification.targetLaneId !== null) return false;
           if (entry.classification.requiresFork) return true;
-          // Mint a fresh worktree lane for any session-bound entry whose lane
-          // plan has a continuation — downstream consumers need a worktree
-          // source lane to reuse for sequential lane reuse.
-          if (planHasContinuation(entry.contextId)) return true;
+          // Mint a fresh worktree lane for any session-bound entry authored
+          // onto a group lane — its own work and every later member of that
+          // lane need the worktree.
+          if (laneIsGroupLane(entry.contextId)) return true;
           return multiContextBatch;
         };
 
+        // The lane NAME is what gets spliced into a branch name and a worktree
+        // path, so that is what must satisfy the charset. Validating the context
+        // id here would refuse a pre-placement context whose migrated lane is
+        // legal precisely because the id was not (R11.1).
         for (const entry of schedulableEntries) {
-          validateContextId(entry.contextId);
+          validateLaneId(entry.laneName);
         }
 
         // Reserve records the routing intent AND persists an owner-discriminated
@@ -2295,7 +2350,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             sessionName,
             sessionDir,
             sessionBranch: baseBranch,
-            laneId: entry.contextId,
+            laneId: entry.laneName,
           });
           provisioned.push({ entry, result });
         }
@@ -2338,7 +2393,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
           const provisionTimestamp = getNow(deps);
           for (const entry of schedulableEntries) {
-            const { classification, contextId, forkFromLane } = entry;
+            const { classification, contextId, laneName, forkFromLane } = entry;
             const contextState = running.contextStates[contextId]!;
             transitionContextStatus(running, contextId, "running", {
               reason: "manager.schedule_eligible_contexts.batch",
@@ -2350,8 +2405,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
 
             if (forkFromLane !== null) {
               // Fan-out fork: provision a new worktree lane forked from the
-              // parent lane's committed head. The new lane's id matches the
-              // contextId. Inherit everything present in the parent's branch —
+              // parent lane's committed head. The new lane's id is the entry's
+              // authored lane name. Inherit everything present in the parent's branch —
               // what ran on it AND what a succeeded join already merged into
               // it — so upstream visibility checks recognize the full history
               // the fork copied. Inheriting only the parent's own
@@ -2370,7 +2425,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
                 forkFromLane.sourceLaneId,
                 running,
               );
-              const newLaneId = contextId;
+              const newLaneId = laneName;
               running.executionLanes[newLaneId] = {
                 laneId: newLaneId,
                 kind: "worktree",
@@ -2447,11 +2502,11 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               // joins + the quiescence final_publish join), which carries the
               // execution's provenance to the delivery gate; the laneId-null
               // fan-in path bypasses the gate and remains only for resumed
-              // legacy executions. The lane id matches the contextId so
-              // downstream consumers can identify the upstream's lane via the
-              // existing classifier path. The minted lane starts empty —
+              // legacy executions. The lane id is the context's authored lane
+              // name so downstream consumers can identify the upstream's lane
+              // via the existing classifier path. The minted lane starts empty —
               // commitments are recorded later by `runLaneCommit`.
-              const newLaneId = contextId;
+              const newLaneId = laneName;
               running.executionLanes[newLaneId] = {
                 laneId: newLaneId,
                 kind: "worktree",

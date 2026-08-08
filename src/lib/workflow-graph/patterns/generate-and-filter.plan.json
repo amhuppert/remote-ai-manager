@@ -55,6 +55,10 @@
         "title": "Survey the brief and fan out candidates",
         "description": "Read the candidate brief, decide which distinct approaches are worth building, and create one execution context per approach.",
         "acceptanceCriteria": "The brief has been read and a set of genuinely distinct approaches chosen, with a one-line reason for each. One execution context per approach exists in the running graph, each carrying its own build task and an edge into context-filter. The captured output names the approaches and the requestId the expansion was submitted under.",
+        "placement": {
+          "lane": "context-generate",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "description": "What the generator decided, so the filter and the audit trail can both read it.",
@@ -62,7 +66,9 @@
             "approaches": {
               "type": "array",
               "description": "The approaches fanned out, in the order the candidates were created.",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "minItems": 1
             },
             "expansionRequestId": {
@@ -84,6 +90,10 @@
         "title": "Filter to the winning candidate",
         "description": "Compare every candidate's reported result against the brief and pick exactly one winner.",
         "acceptanceCriteria": "Every candidate that ran has been considered — none silently dropped — and exactly one is chosen, with a rationale that cites the brief's tradeoff axes rather than restating the scores. The captured output names the winning context id.",
+        "placement": {
+          "lane": "context-filter",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "description": "The filter's verdict.",
@@ -131,9 +141,19 @@
   "layout": {
     "workflowId": "generate-and-filter",
     "contextPositions": {
-      "context-generate": { "x": 0, "y": 0 },
-      "context-filter": { "x": 520, "y": 0 }
+      "context-generate": {
+        "x": 0,
+        "y": 0
+      },
+      "context-filter": {
+        "x": 520,
+        "y": 0
+      }
     },
-    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
   }
 }

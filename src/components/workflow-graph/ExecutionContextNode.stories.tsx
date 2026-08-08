@@ -693,6 +693,7 @@ export const ValidatorsInheritedClaude: Story = {
   args: {
     data: {
       context: {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "API Integration",
         description:
@@ -743,6 +744,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
   args: {
     data: {
       context: {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "API Integration",
         description:
@@ -818,6 +820,7 @@ export const ApprovalGateWithValidators: Story = {
   args: {
     data: {
       context: {
+        placement: { lane: "ctx-1", mode: "full" as const },
         id: "ctx-1",
         title: "API Integration",
         description:

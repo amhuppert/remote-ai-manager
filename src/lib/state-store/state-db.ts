@@ -70,8 +70,15 @@ const DB_FILE_NAME = "command-center.db";
  * Version 3 and version 4 were authored concurrently on two branches and both
  * originally claimed 3; they are sequenced here because one number cannot fence
  * two independent cutovers, and 3 is already stamped in live databases.
+ *
+ * Version 5 is the graph-workflow lane-placement cutover: migration
+ * `0016-graph-workflow-context-placement` backfills authored placement onto
+ * every stored execution context. A build predating placement does not know
+ * the field and would write it back out stripped, dissolving an authored lane
+ * GROUP into one lane per context on the next read — so the gate refuses such a
+ * build once the migration has stamped the upgraded DB.
  */
-export const KNOWN_SCHEMA_VERSION = 4;
+export const KNOWN_SCHEMA_VERSION = 5;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the

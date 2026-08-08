@@ -56,6 +56,10 @@
         "title": "State the objective and the exit bar",
         "description": "Read the loop brief and restate, in checkable terms, what the work has to achieve and what the judge will hold it to.",
         "acceptanceCriteria": "The objective is stated in one sentence that names the outcome rather than the activity, and the exit bar is stated so that a reviewer who did not do the work can decide whether it is met without asking a follow-up question. Both are captured as structured output.",
+        "placement": {
+          "lane": "context-brief",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "description": "The contract every pass of the loop works against.",
@@ -80,6 +84,10 @@
         "title": "Draft or revise the work",
         "description": "Produce the next revision: the first draft on pass 1, and on every later pass a revision that addresses the judge's blocking items.",
         "acceptanceCriteria": "The revision addresses every blocking item the previous pass's judge recorded, or says explicitly why an item is not actionable. The work itself is complete enough to be judged — not a plan for work. The captured output summarizes what changed this pass and hands the next pass what it needs to know.",
+        "placement": {
+          "lane": "context-draft",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "description": "What this pass produced, for the judge and for the next pass.",
@@ -104,6 +112,10 @@
         "title": "Judge the revision against the exit bar",
         "description": "Independently decide whether this revision meets the exit bar, and either approve or name what blocks approval.",
         "acceptanceCriteria": "The verdict is decided against the exit bar stated in the brief, not against the reviewer's own preferences, and it is reached by inspecting the work rather than by reading the worker's summary of it. A `revise` verdict names at least one blocking item, each concrete enough to act on; an `approved` verdict names none.",
+        "placement": {
+          "lane": "context-review",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "description": "The judge's verdict. The engine reads `verdict` to decide whether the loop continues.",
@@ -116,7 +128,9 @@
             "blocking": {
               "type": "array",
               "description": "What blocks approval, one item per problem. Empty when approved.",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string"
+              }
             },
             "handoff": {
               "type": "string",
@@ -133,6 +147,10 @@
         "title": "Publish the approved result",
         "description": "Take the approved revision as final and record the outcome for whoever comes next.",
         "acceptanceCriteria": "The summary describes what was delivered and cites the approving verdict rather than restating the drafting history. Nothing is re-litigated: the judge's approval is the decision, and this context does not reopen it.",
+        "placement": {
+          "lane": "context-publish",
+          "mode": "full"
+        },
         "outputSchema": {
           "type": "object",
           "description": "The published outcome.",
@@ -205,7 +223,11 @@
         "until": {
           "schema": {
             "type": "object",
-            "properties": { "verdict": { "const": "approved" } },
+            "properties": {
+              "verdict": {
+                "const": "approved"
+              }
+            },
             "required": ["verdict"]
           }
         },
@@ -216,11 +238,27 @@
   "layout": {
     "workflowId": "loop-until-done",
     "contextPositions": {
-      "context-brief": { "x": 0, "y": 0 },
-      "context-draft": { "x": 320, "y": 0 },
-      "context-review": { "x": 640, "y": 0 },
-      "context-publish": { "x": 960, "y": 0 }
+      "context-brief": {
+        "x": 0,
+        "y": 0
+      },
+      "context-draft": {
+        "x": 320,
+        "y": 0
+      },
+      "context-review": {
+        "x": 640,
+        "y": 0
+      },
+      "context-publish": {
+        "x": 960,
+        "y": 0
+      }
     },
-    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
   }
 }

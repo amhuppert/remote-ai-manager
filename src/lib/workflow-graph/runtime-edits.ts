@@ -47,7 +47,6 @@ import {
   buildInitialContextState,
   buildInitialTaskState,
 } from "./execution-state";
-import { computeLanePlan, recomputeLanePlanForSubgraph } from "./lane-plan";
 import { ensureLoopState } from "./loop-budgets";
 import {
   LOOP_PASS_ENTRY_EDGE_SUFFIX,
@@ -264,8 +263,8 @@ export function createGraphWorkflowRuntimeEditService(
 
     // The lane-agent entry point is one `add-task` over the shared live-edit
     // core (doc 06 — one core, multiple entry points). The entry-point policy
-    // above is enforced here; the core owns task placement, runtime-map sync,
-    // and lanePlan recompute. `laneAgentContextId` lets the add bypass the
+    // above is enforced here; the core owns task placement and runtime-map
+    // sync. `laneAgentContextId` lets the add bypass the
     // started-context quiescence gate (this context is running, active, and
     // `allowAgentTaskAdd` — all just checked) and stamps the task `source: agent`.
     // Pre-minting the id keeps parity with the prior slug-or-mint behavior and
@@ -737,7 +736,6 @@ function runLiveEditOps(
   const next = cloneExecution(execution);
   const affectedContextIds = new Set<string>();
   const validationTouchedContextIds = new Set<string>();
-  let hasStructuralOp = false;
 
   const opContext: LiveEditOpContext = {
     quiescent,
@@ -792,9 +790,6 @@ function runLiveEditOps(
     if (rejection) {
       return { ok: false, code: rejection.code, issues: rejection.issues };
     }
-    if (isStructuralLiveOp(operation.type)) {
-      hasStructuralOp = true;
-    }
   }
 
   // The route-control revision of every source whose outgoing conditional edges
@@ -807,18 +802,6 @@ function runLiveEditOps(
     execution.workingDefinition,
     next.workingDefinition,
   );
-
-  // lanePlan: full recompute for structural batches (edge topology changed),
-  // subgraph recompute for task-only batches (matches today's add_task).
-  if (hasStructuralOp) {
-    next.lanePlan = computeLanePlan(next.workingDefinition);
-  } else if (affectedContextIds.size > 0) {
-    next.lanePlan = recomputeLanePlanForSubgraph({
-      definition: next.workingDefinition,
-      previousPlan: execution.lanePlan,
-      contextIds: Array.from(affectedContextIds),
-    });
-  }
 
   return { ok: true, next, opContext };
 }
@@ -860,7 +843,7 @@ function validateLiveEditBatch(
  * Apply an ordered, atomic batch of live edits to a launched execution. Pure —
  * clones the input, applies ops sequentially (so a later op sees an earlier
  * one's result), and rejects the whole batch on the first failing op. On success
- * the runtime maps and lanePlan are re-synced and the whole execution is
+ * the runtime maps are re-synced and the whole execution is
  * re-parsed. `liveRevision` is NOT touched here (the route/wrapper owns exactly
  * one increment per accepted mutation).
  */
@@ -2439,6 +2422,12 @@ function applyAddContext(
     title: op.title,
     acceptanceCriteria: op.acceptanceCriteria,
     ...(op.description !== undefined ? { description: op.description } : {}),
+    // A single-member lane of its own, matching the saved-tier add
+    // (`definition-edits.ts`) and the shape a live-added context had before
+    // placement was authored. Never seeded from `configFromContextId`: sharing
+    // a lane is a claim about concurrency and ownership between two specific
+    // contexts, which copying config cannot establish.
+    placement: { lane: op.id, mode: "full" },
     // Never seeded from `configFromContextId`: an output contract is per-context
     // identity, not inheritable config (D1).
     ...(op.outputSchema !== undefined ? { outputSchema: op.outputSchema } : {}),

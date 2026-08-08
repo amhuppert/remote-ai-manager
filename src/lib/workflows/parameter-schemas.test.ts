@@ -29,6 +29,7 @@ function baseDefinition(): Record<string, unknown> {
         title: "Plan",
         description: "Plan the implementation",
         acceptanceCriteria: "All tasks are complete and verified.",
+        placement: { lane: "context-1", mode: "full" },
       },
     ],
     tasks: [],

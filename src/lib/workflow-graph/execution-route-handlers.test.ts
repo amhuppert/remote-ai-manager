@@ -2954,6 +2954,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
   const definition = createResolvedWorkflowDefinition({
     executionContexts: [
       {
+        placement: { lane: "context-codex", mode: "full" as const },
         id: "context-codex",
         title: "Codex Implement",
         acceptanceCriteria: "TBD",

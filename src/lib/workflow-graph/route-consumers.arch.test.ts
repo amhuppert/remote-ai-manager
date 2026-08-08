@@ -34,6 +34,8 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
 
   // Authoring, validation and persistence of the drawn graph.
   "src/lib/workflow-graph/validation.ts": "structural graph validation",
+  "src/lib/workflow-graph/placement-validation.ts":
+    "accept-time placement checks over the drawn graph; a declined branch simply never runs, so every authored edge is exact ordering",
   "src/lib/workflow-graph/edge-guard-validation.ts":
     "authoring-time guard validation",
   "src/lib/workflow-graph/edge-identity.ts": "mints and repairs edge ids",
@@ -49,8 +51,6 @@ const TOPOLOGY_READERS: Readonly<Record<string, string>> = {
 
   // Views of the drawn graph: position, declared dependencies, provenance.
   "src/lib/workflow-graph/layout.ts": "lays out the drawn graph",
-  "src/lib/workflow-graph/lane-plan.ts":
-    "seed-time continuation plan over the authored topology",
   "src/lib/workflow-graph/live-outline.ts":
     "renders DECLARED dependencies; an unstarted context has no resolved ones",
   "src/cli/commands/workflow-outline.ts":

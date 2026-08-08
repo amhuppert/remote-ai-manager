@@ -2,6 +2,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { workflowSemanticDefinitionSchema } from "@/lib/workflow-graph/definition-schemas";
+import {
+  migrateRawDefinitionPlacement,
+  migrateRawExecutionPlacement,
+} from "@/lib/workflow-graph/placement-migration";
 import type { CompatibilityScenario } from "./engine-harness";
 import {
   compatibilityRecordingSchema,
@@ -55,6 +59,26 @@ export function readExecutionFixture(scenarioName: string): unknown {
 }
 
 /**
+ * A fixture as its stored-load boundary hands it to the parse.
+ *
+ * The fixtures stay exactly as they were captured — placement-less, because the
+ * field did not exist — and the migration that every real load applies is
+ * applied here too. Editing placement INTO them would delete the evidence: a
+ * pre-placement document is precisely what these files exist to be.
+ */
+export function inflateDefinitionFixture(scenarioName: string): unknown {
+  const raw = readDefinitionFixture(scenarioName);
+  migrateRawDefinitionPlacement(raw);
+  return raw;
+}
+
+export function inflateExecutionFixture(scenarioName: string): unknown {
+  const raw = readExecutionFixture(scenarioName);
+  migrateRawExecutionPlacement(raw);
+  return raw;
+}
+
+/**
  * Every turn completes one task. `iteration-halt` never completes its task,
  * which drives the context into its `maxIterations` budget and halts the
  * execution.
@@ -98,7 +122,7 @@ export function loadCompatibilityScenario(
   return {
     name: scenarioName,
     definition: workflowSemanticDefinitionSchema.parse(
-      readDefinitionFixture(scenarioName),
+      inflateDefinitionFixture(scenarioName),
     ),
     sessionLaneEnabled: SESSION_LANE_ENABLED[scenarioName],
     agent: AGENT_SCRIPTS[scenarioName],

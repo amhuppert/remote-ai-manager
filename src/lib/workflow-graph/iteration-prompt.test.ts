@@ -76,6 +76,7 @@ function makeContext(
   overrides: Partial<GraphWorkflowResolvedContext> = {},
 ): GraphWorkflowResolvedContext {
   return {
+    placement: { lane: "context-plan", mode: "full" as const },
     id: "context-plan",
     title: "Plan",
     description: "Plan the implementation",
