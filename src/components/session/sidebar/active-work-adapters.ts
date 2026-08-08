@@ -71,13 +71,15 @@ export function adaptGraphWorkflows(
   return executions.map((execution) => {
     const contexts = execution.activeContextTitles.length;
     const phase =
-      execution.status === "paused"
-        ? "Paused"
-        : execution.status === "pending"
-          ? "Queued"
-          : contexts > 0
-            ? `${contexts} context${contexts === 1 ? "" : "s"} active`
-            : "Running";
+      execution.status === "halted"
+        ? "Halted"
+        : execution.status === "paused"
+          ? "Paused"
+          : execution.status === "pending"
+            ? "Queued"
+            : contexts > 0
+              ? `${contexts} context${contexts === 1 ? "" : "s"} active`
+              : "Running";
     return {
       id: `workflow:${execution.executionId}`,
       kind: "workflow",

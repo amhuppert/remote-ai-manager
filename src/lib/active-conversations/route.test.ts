@@ -7,6 +7,7 @@ import type { ConversationStatus } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import type { SessionConversationListItem } from "@/lib/state-store";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 
 /**
  * Internal fixture source shared by the derived accessors. Tests reconfigure it
@@ -414,6 +415,32 @@ describe("GET /api/conversations/active", () => {
       totalContexts: 2,
       startedAt: "2026-01-01T12:00:00.000Z",
     });
+  });
+
+  it("keeps halted graph workflow executions in the active work feed", async () => {
+    const haltedExecution = createWorkflowExecution({ status: "halted" });
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [],
+            graphWorkflowExecution: haltedExecution,
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.graphWorkflowExecutions).toEqual([
+      expect.objectContaining({
+        executionId: haltedExecution.id,
+        status: "halted",
+      }),
+    ]);
   });
 
   it("lists every active context title for parallel graph workflow executions", async () => {

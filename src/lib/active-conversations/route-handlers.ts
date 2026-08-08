@@ -233,6 +233,7 @@ const ACTIVE_GW_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
   "pending",
   "running",
   "paused",
+  "halted",
 ]);
 
 /**
@@ -748,6 +749,13 @@ export function createActiveConversationsRouteHandlers(
           }
         }
       }
+
+      logger.debug("graph_workflows.active_pass.complete", {
+        executionCount: graphWorkflowExecutions.length,
+        haltedExecutionCount: graphWorkflowExecutions.filter(
+          (execution) => execution.status === "halted",
+        ).length,
+      });
 
       // Project-conversation pass: session-less conversations across all
       // projects. Visibility mirrors the lifecycle rules — non-archived

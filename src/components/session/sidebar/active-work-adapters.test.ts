@@ -177,6 +177,12 @@ describe("adaptGraphWorkflows", () => {
       ["Graph workflow", "Running"],
     ]);
   });
+
+  it("labels halted executions as halted", () => {
+    const items = adaptGraphWorkflows([makeWorkflow({ status: "halted" })]);
+
+    expect(items[0]?.phase).toBe("Halted");
+  });
 });
 
 describe("adaptCollaborations", () => {
