@@ -319,6 +319,57 @@ describe("conversation manager", () => {
   });
 
   describe("executeConversationTurn", () => {
+    it("waits for an external turn to settle when workflow dispatch opts into readiness", async () => {
+      const actor = startConversationActor(DEFAULT_INPUT);
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      expect(actor.getSnapshot().value).toBe("externalExecuting");
+
+      const executionPromise = executeConversationTurn({
+        projectPath: DEFAULT_INPUT.projectPath,
+        sessionName: DEFAULT_INPUT.sessionName,
+        conversationId: DEFAULT_INPUT.conversationId,
+        streamId: "stream-workflow-wait",
+        emit: vi.fn(),
+        waitUntilReady: true,
+        turn: {
+          promptText: "Continue the workflow",
+          backend: "claude",
+          autonomous: true,
+        },
+      });
+
+      const earlyOutcome = await Promise.race([
+        executionPromise.then(() => "settled" as const),
+        Promise.resolve("pending" as const),
+      ]);
+      expect(earlyOutcome).toBe("pending");
+
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: {
+          backendRef: null,
+          costUsd: null,
+          durationMs: null,
+          numTurns: null,
+          contextTokens: null,
+          contextWindow: null,
+          inputTokens: null,
+          outputTokens: null,
+          cachedInputTokens: null,
+          contentBlocks: [],
+          aborted: false,
+          compacted: false,
+          error: null,
+          continuationDisposition: "retain",
+        },
+      });
+
+      await expect(executionPromise).resolves.toMatchObject({
+        status: "completed",
+      });
+      expect(actor.getSnapshot().value).toBe("idle");
+    });
+
     it("settles a debug turn through the lifecycle interface and detaches its stream", async () => {
       const actor = startConversationActor(DEFAULT_INPUT);
       sendConversationEvent(

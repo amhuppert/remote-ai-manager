@@ -1120,6 +1120,26 @@ describe("executePromptStream (facade)", () => {
     );
   });
 
+  it("forwards workflow readiness waiting into the conversation lifecycle", async () => {
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { waitForConversationReady: true },
+    );
+
+    expect(deps.executeConversationTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ waitUntilReady: true }),
+    );
+  });
+
   it("returns the backgroundWait summary from the actor snapshot when a wait occurred", async () => {
     const backgroundWait = {
       waitedTaskIds: ["task-a"],

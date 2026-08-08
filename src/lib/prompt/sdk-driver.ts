@@ -522,6 +522,11 @@ export interface PromptStreamOptions {
    */
   waitForBackgroundTasks?: boolean;
   /**
+   * Workflow-owned turns wait for an in-flight conversation continuation to
+   * settle before dispatch. Interactive sends retain fail-fast busy semantics.
+   */
+  waitForConversationReady?: boolean;
+  /**
    * Structured document-review feedback to record on the user turn. When set,
    * the turn's transcript carries a `document_feedback` block and the
    * agent-facing prompt text is derived from it when `promptText` is empty.
@@ -944,6 +949,7 @@ export async function executePromptStream(
     conversationId,
     streamId,
     emit,
+    ...(options?.waitForConversationReady ? { waitUntilReady: true } : {}),
     onAccepted: () => notifyPromptAccepted(options, scopeRef, conversationId),
     turn: {
       promptText,

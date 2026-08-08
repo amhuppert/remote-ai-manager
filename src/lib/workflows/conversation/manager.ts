@@ -112,6 +112,12 @@ export interface ExecuteConversationTurnInput {
   emit(event: string, data: unknown): void;
   turn: ConversationTurnRequest;
   /**
+   * Workflow-owned turns serialize behind a conversation turn that is already
+   * settling. Interactive sends leave this unset and retain fail-fast busy
+   * semantics.
+   */
+  waitUntilReady?: boolean;
+  /**
    * Called once the machine has accepted `SUBMIT_PROMPT`, before the turn is
    * awaited. Must not throw — callers own their failure handling.
    */
@@ -500,6 +506,41 @@ function waitForTurnBoundary(actor: ConversationActorRef): Promise<void> {
   });
 }
 
+function waitForPromptAcceptance(
+  actor: ConversationActorRef,
+  event: Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }>,
+): Promise<void> {
+  const initial = actor.getSnapshot();
+  if (initial.status === "error") {
+    return Promise.reject(new Error("Conversation lifecycle errored"));
+  }
+  if (initial.status === "done") {
+    return Promise.reject(new Error("Conversation lifecycle stopped"));
+  }
+  if (initial.can(event)) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const subscription = actor.subscribe((snapshot) => {
+      if (snapshot.status === "error") {
+        subscription.unsubscribe();
+        reject(new Error("Conversation lifecycle errored"));
+        return;
+      }
+      if (snapshot.status === "done") {
+        subscription.unsubscribe();
+        reject(new Error("Conversation lifecycle stopped"));
+        return;
+      }
+      if (snapshot.can(event)) {
+        subscription.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
 function projectTurnResult(
   actor: ConversationActorRef,
 ): ConversationTurnProjection {
@@ -694,31 +735,66 @@ export async function executeConversationTurn(
         : {}),
     };
 
-    if (!actor.getSnapshot().can(event)) {
-      logger.error("conversation-manager.turn_rejected", {
+    let waitedForReady = false;
+    while (true) {
+      const snapshot = actor.getSnapshot();
+      if (!snapshot.can(event)) {
+        if (input.waitUntilReady !== true) {
+          logger.error("conversation-manager.turn_rejected", {
+            conversationId: input.conversationId,
+            ...scopeRef,
+            lifecycleState: snapshot.value,
+          });
+          return {
+            status: "rejected",
+            reason: "not_ready",
+            result: projectTurnResult(actor),
+          };
+        }
+        if (!waitedForReady) {
+          logger.info("conversation-manager.turn_waiting_for_ready", {
+            conversationId: input.conversationId,
+            ...scopeRef,
+            lifecycleState: snapshot.value,
+          });
+        }
+        waitedForReady = true;
+        await waitForPromptAcceptance(actor, event);
+      }
+
+      // Settle the agent profile BEFORE the prompt reaches the actor (R8/D21).
+      // Awaited, and after the acceptance check so a rejected turn does not
+      // lock a profile it never ran under. Readiness is checked again after
+      // this await so another turn cannot claim the actor in the gap.
+      await admitConversationProfileForTurn({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+      });
+
+      if (!actor.getSnapshot().can(event)) {
+        if (input.waitUntilReady === true) continue;
+        logger.error("conversation-manager.turn_rejected", {
+          conversationId: input.conversationId,
+          ...scopeRef,
+          lifecycleState: actor.getSnapshot().value,
+        });
+        return {
+          status: "rejected",
+          reason: "not_ready",
+          result: projectTurnResult(actor),
+        };
+      }
+
+      actor.send(event);
+      break;
+    }
+    if (waitedForReady) {
+      logger.info("conversation-manager.turn_ready_after_wait", {
         conversationId: input.conversationId,
         ...scopeRef,
-        lifecycleState: actor.getSnapshot().value,
       });
-      return {
-        status: "rejected",
-        reason: "not_ready",
-        result: projectTurnResult(actor),
-      };
     }
-
-    // Settle the agent profile BEFORE the prompt reaches the actor (R8/D21).
-    // Awaited, and after the acceptance check so a rejected turn does not lock
-    // a profile it never ran under: once this resolves the lock is on disk, so
-    // a profile change contending with this turn is refused rather than
-    // silently replacing what the runtime is about to be given.
-    await admitConversationProfileForTurn({
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
-    });
-
-    actor.send(event);
     await input.onAccepted?.();
     try {
       await waitForTurnBoundary(actor);

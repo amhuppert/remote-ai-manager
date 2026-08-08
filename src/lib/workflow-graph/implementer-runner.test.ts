@@ -449,7 +449,10 @@ describe("graph workflow implementer runner", () => {
       "conversation-1",
       "opus",
       undefined,
-      expect.objectContaining({ waitForBackgroundTasks: true }),
+      expect.objectContaining({
+        waitForBackgroundTasks: true,
+        waitForConversationReady: true,
+      }),
     );
   });
 

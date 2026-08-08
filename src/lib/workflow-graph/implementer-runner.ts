@@ -47,6 +47,7 @@ interface ExecutePromptStreamFn {
       workflowContext?: WorkflowLaneIdentity;
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks?: boolean;
+      waitForConversationReady?: boolean;
       askUserQuestionsEnabled?: boolean;
     },
   ): Promise<PromptStreamResult>;
@@ -140,6 +141,7 @@ export function createGraphWorkflowImplementerRunner(
       workflowContext: WorkflowLaneIdentity;
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks: boolean;
+      waitForConversationReady: boolean;
       askUserQuestionsEnabled: boolean;
     } = {
       autonomous: true,
@@ -163,6 +165,11 @@ export function createGraphWorkflowImplementerRunner(
       // Deterministically opt this implementer turn into holding open for
       // in-flight waitable background tasks. No agent involvement (Req 6.3).
       waitForBackgroundTasks: true,
+      // SDK auto-continuations can briefly retain the lane conversation after
+      // the preceding work turn settles. The execution loop owns this follow-up
+      // and must serialize behind that continuation instead of treating the
+      // transient busy state as an agent failure.
+      waitForConversationReady: true,
       // Effective ask-user-questions availability drives the enabled/disabled
       // asking-questions session instructions (Req 8.1-8.4).
       askUserQuestionsEnabled: input.askUserQuestionsEnabled === true,
