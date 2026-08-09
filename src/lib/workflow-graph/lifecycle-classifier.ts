@@ -28,6 +28,42 @@ export type ExecutionEditability =
       reason: "completed" | "aborted" | "halt-not-resumable";
     };
 
+export type GraphWorkflowSessionDeliveryDecision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      executionId: string;
+      status: GraphWorkflowExecution["status"];
+      message: string;
+    };
+
+export function evaluateGraphWorkflowSessionDelivery(
+  execution: Pick<GraphWorkflowExecution, "id" | "status"> | null,
+): GraphWorkflowSessionDeliveryDecision {
+  if (execution === null) return { allowed: true };
+
+  switch (execution.status) {
+    case "completed":
+    case "aborted":
+      return { allowed: true };
+    case "pending":
+    case "running":
+    case "paused":
+    case "halted":
+      return {
+        allowed: false,
+        executionId: execution.id,
+        status: execution.status,
+        message: `Graph workflow execution ${execution.id} is ${execution.status}. Complete or abort it before merging this session.`,
+      };
+    default:
+      return assertNever(
+        execution.status,
+        `unhandled execution status: ${String(execution.status)}`,
+      );
+  }
+}
+
 /**
  * Resumability allowlist over every halt reason type (doc 06, D6). Written as an
  * exhaustive `Record` so adding a halt reason type to

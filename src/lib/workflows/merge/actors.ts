@@ -26,6 +26,8 @@ import type {
 } from "./types";
 import { resolveSessionConversationId } from "../validation-fix/actors";
 import { getErrorMessage } from "@/lib/shared/errors";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { evaluateGraphWorkflowSessionDelivery } from "@/lib/workflow-graph/lifecycle-classifier";
 
 const logger = createLogger("smart-merge-actors");
 
@@ -352,6 +354,10 @@ export interface PublishActorDeps {
     operation: () => Promise<T>,
   ): Promise<T>;
   setSessionFinished(projectPath: string, sessionName: string): Promise<void>;
+  getActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<Pick<GraphWorkflowExecution, "id" | "status"> | null>;
   reconcileTicketSessionLifecycle(input: {
     projectPath: string;
     sessionName: string;
@@ -439,6 +445,24 @@ export async function runPublish(
   });
 
   try {
+    if (input.finalizeSession) {
+      const deliveryDecision = evaluateGraphWorkflowSessionDelivery(
+        await deps.getActiveGraphWorkflowExecution(
+          input.projectPath,
+          input.sessionName,
+        ),
+      );
+      if (!deliveryDecision.allowed) {
+        logger.warn("publishActor.active_graph_workflow_refused", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId: deliveryDecision.executionId,
+          workflowStatus: deliveryDecision.status,
+        });
+        return { status: "failed", error: deliveryDecision.message };
+      }
+    }
+
     const result = await deps.publishPreparedMerge({
       projectPath: input.projectPath,
       targetBranch: input.targetBranch,
@@ -575,7 +599,8 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
     const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
     const { getSessionLifecycleGate } =
       await import("@/lib/sessions/lifecycle-gate");
-    const { setSessionFinished } = await import("@/lib/state-store");
+    const { getActiveGraphWorkflowExecution, setSessionFinished } =
+      await import("@/lib/state-store");
     const { stopAllForSession } = await import("@/lib/dev-server/registry");
     const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
     const { reconcileTicketSessionLifecycle } =
@@ -593,6 +618,7 @@ export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
             operation,
           ),
         setSessionFinished,
+        getActiveGraphWorkflowExecution,
         reconcileTicketSessionLifecycle,
         retargetOrphanedChildren,
         stopAllForSession,

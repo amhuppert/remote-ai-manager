@@ -21,6 +21,7 @@ import {
 import {
   classifyContextLifecycle,
   classifyExecutionEditability,
+  evaluateGraphWorkflowSessionDelivery,
   isResumableHalt,
 } from "./lifecycle-classifier";
 import { makeProfileSnapshot } from "./test-fixtures";
@@ -120,6 +121,42 @@ function taskState(
 ): GraphWorkflowTaskState {
   return { ...INITIAL_TASK_STATE, ...patch };
 }
+
+describe("evaluateGraphWorkflowSessionDelivery", () => {
+  const blockingStatuses: GraphWorkflowStatus[] = [
+    "pending",
+    "running",
+    "paused",
+    "halted",
+  ];
+
+  for (const status of blockingStatuses) {
+    it(`blocks ${status} execution work from being delivered as a finished session`, () => {
+      expect(
+        evaluateGraphWorkflowSessionDelivery({ id: "execution-1", status }),
+      ).toEqual({
+        allowed: false,
+        executionId: "execution-1",
+        status,
+        message: `Graph workflow execution execution-1 is ${status}. Complete or abort it before merging this session.`,
+      });
+    });
+  }
+
+  for (const status of ["completed", "aborted"] as const) {
+    it(`allows session delivery after the execution is ${status}`, () => {
+      expect(
+        evaluateGraphWorkflowSessionDelivery({ id: "execution-1", status }),
+      ).toEqual({ allowed: true });
+    });
+  }
+
+  it("allows session delivery when no graph execution exists", () => {
+    expect(evaluateGraphWorkflowSessionDelivery(null)).toEqual({
+      allowed: true,
+    });
+  });
+});
 
 describe("classifyContextLifecycle", () => {
   const cases: Array<{

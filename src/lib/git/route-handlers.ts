@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
-import { getSession as defaultGetSession } from "@/lib/state-store";
+import {
+  getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
+  getSession as defaultGetSession,
+} from "@/lib/state-store";
 import { computeDiff as defaultComputeDiff } from "./diff";
 import { resolveMergeTarget as defaultResolveMergeTarget } from "./merge-target";
 import {
@@ -38,10 +41,13 @@ import {
   type RouteResolution,
 } from "@/lib/shared/route-resolution";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { evaluateGraphWorkflowSessionDelivery } from "@/lib/workflow-graph/lifecycle-classifier";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 
 const diffLogger = createLogger("api.diff");
+const mergeLogger = createLogger("git-merge-route");
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -53,6 +59,10 @@ export interface GitRouteDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
+  getActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<Pick<GraphWorkflowExecution, "id" | "status"> | null>;
   computeDiff(worktreePath: string): Promise<SessionDiff>;
   getCommitLog(
     worktreePath: string,
@@ -118,6 +128,7 @@ function defaultDeps(): GitRouteDeps {
   return {
     resolveProjectPath: defaultResolveProjectPath,
     getSession: defaultGetSession,
+    getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
     computeDiff: defaultComputeDiff,
     getCommitLog: defaultGetCommitLog,
     getCommitDiff: defaultGetCommitDiff,
@@ -413,6 +424,29 @@ export function createGitRouteHandlers(deps: GitRouteDeps = defaultDeps()) {
     const { projectPath, projectName, sessionName, session } = r.value;
 
     if (session.finished) return finishedSessionConflict();
+
+    const deliveryDecision = evaluateGraphWorkflowSessionDelivery(
+      await deps.getActiveGraphWorkflowExecution(projectPath, sessionName),
+    );
+    if (!deliveryDecision.allowed) {
+      mergeLogger.warn("merge.active_graph_workflow_refused", {
+        projectPath,
+        sessionName,
+        executionId: deliveryDecision.executionId,
+        workflowStatus: deliveryDecision.status,
+      });
+      return NextResponse.json(
+        {
+          error: deliveryDecision.message,
+          code: "GRAPH_WORKFLOW_ACTIVE",
+          details: {
+            executionId: deliveryDecision.executionId,
+            status: deliveryDecision.status,
+          },
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
 
     const body = await parseJsonBody(
       request,
