@@ -4,6 +4,7 @@
  */
 export declare function resolveWorkerBudget(input: {
   requestedWorkers?: number;
+  coordinatorHeapMb: number;
   workerHeapMb: number;
   totalMemoryBytes: number;
   availableParallelism: number;
