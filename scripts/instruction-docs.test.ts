@@ -340,6 +340,45 @@ describe("agent instruction and canonical documentation contracts", () => {
     }
   });
 
+  /**
+   * Guidance may only name a command the registry actually resolves. An agent
+   * is told to run registered validation exclusively through `cctl validate
+   * run <name>`, so a documented name that is absent from the registry is a
+   * dead end at the moment the agent is least able to improvise: it has been
+   * forbidden the direct invocation that would otherwise substitute. Renaming
+   * or folding a command is the drift this catches — `test-full-suite` became
+   * `test --scope full`, and `build`/`seams` were only ever steps inside
+   * `typecheck`.
+   */
+  it("only names validation commands the registry resolves", () => {
+    const allowlist = new Map<string, string>([
+      [
+        "docs/reports/validation-concurrency-live-e2e-2026-08-05.md",
+        "dated live-e2e transcript quoting the run's own fixture command names",
+      ],
+    ]);
+    const registered = new Set(
+      Object.keys(
+        (
+          JSON.parse(read("CommandCenter.json")) as {
+            validation: { commands: Record<string, unknown> };
+          }
+        ).validation.commands,
+      ),
+    );
+
+    const unresolvable = guidanceFiles()
+      .filter((path) => !allowlist.has(path))
+      .flatMap((path) =>
+        [...read(path).matchAll(/cctl validate run ([a-z][a-z0-9-]*)/g)]
+          .map((match) => match[1] ?? "")
+          .filter((name) => !registered.has(name))
+          .map((name) => `${path}: ${name}`),
+      );
+
+    expect(unresolvable).toEqual([]);
+  });
+
   it("keeps agent validation guidance on the server-owned policy path", () => {
     const agents = read("AGENTS.md");
     const agentContext = read(
