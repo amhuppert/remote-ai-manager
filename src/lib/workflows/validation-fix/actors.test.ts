@@ -30,19 +30,19 @@ const REGISTERED_CONFIG: PerRepoConfig = {
   validation: {
     commands: {
       typecheck: {
-        command: "./scripts/typecheck.sh",
+        command: { full: "./scripts/typecheck.sh" },
         cost: 2,
-        scopeArgs: "forbid",
+        pathArgs: "forbid",
       },
       test: {
-        command: "./scripts/test.sh",
+        command: { full: "./scripts/test.sh" },
         cost: 3,
-        scopeArgs: "forbid",
+        pathArgs: "forbid",
       },
       lint: {
-        command: "./scripts/lint.sh",
+        command: { full: "./scripts/lint.sh" },
         cost: 1,
-        scopeArgs: "forbid",
+        pathArgs: "forbid",
       },
     },
     preMerge: ["typecheck", "test"],
@@ -59,6 +59,8 @@ function accepted(
     status,
     position: status === "queued" ? 0 : null,
     lease: null,
+    requestedScope: "changed",
+    effectiveScope: "full",
   };
 }
 
@@ -161,6 +163,7 @@ describe("performMergeValidation", () => {
       {
         source: "smart_merge",
         command: { kind: "registered", name: "typecheck" },
+        scope: "changed",
         projectPath: BASE_INPUT.projectPath,
         target: {
           worktreePath: BASE_INPUT.worktreePath,
@@ -172,6 +175,7 @@ describe("performMergeValidation", () => {
       {
         source: "smart_merge",
         command: { kind: "registered", name: "test" },
+        scope: "changed",
         projectPath: BASE_INPUT.projectPath,
         target: {
           worktreePath: BASE_INPUT.worktreePath,
@@ -228,6 +232,7 @@ describe("performMergeValidation", () => {
       {
         source: "graph_lane_merge",
         command: { kind: "registered", name: "typecheck" },
+        scope: "changed",
         projectPath: BASE_INPUT.projectPath,
         conversationId: "conv-lane",
         workflow: { executionId: "exec-1", contextId: "context-verify" },

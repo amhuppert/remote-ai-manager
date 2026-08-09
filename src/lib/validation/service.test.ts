@@ -130,13 +130,27 @@ function createFakeRunner() {
 const REPO_VALIDATION = repoValidationConfigSchema.parse({
   commands: {
     test: {
-      command: "scripts/validate/test.sh",
+      command: {
+        full: "scripts/validate/test-full-suite.sh",
+        changed: "scripts/validate/test.sh",
+      },
       cost: 8,
       timeoutMs: 900_000,
-      scopeArgs: "paths",
+      pathArgs: "paths",
     },
-    typecheck: { command: "scripts/validate/typecheck.sh", cost: 2 },
-    format: { command: "scripts/validate/format.sh", cost: 1 },
+    typecheck: {
+      command: { full: "scripts/validate/typecheck.sh" },
+      cost: 2,
+      pathArgs: "forbid",
+    },
+    format: {
+      command: {
+        full: "scripts/validate/format-full.sh",
+        changed: "scripts/validate/format.sh",
+      },
+      cost: 1,
+      pathArgs: "forbid",
+    },
   },
   preMerge: ["typecheck", "test"],
 });
@@ -274,6 +288,7 @@ function systemRequest(
   return {
     source: "graph_script_validator",
     command: { kind: "registered", name: "typecheck" },
+    scope: "changed",
     projectPath: "/projects/app",
     conversationId: "c1",
     target: {
@@ -320,7 +335,8 @@ describe("service-owned listing", () => {
         name: "test",
         cost: 8,
         description: null,
-        scopeArgs: "paths",
+        pathArgs: "paths",
+        changedScope: "native",
         timeoutMs: 900_000,
         enabled: false,
       },
@@ -328,7 +344,8 @@ describe("service-owned listing", () => {
         name: "typecheck",
         cost: 2,
         description: null,
-        scopeArgs: "forbid",
+        pathArgs: "forbid",
+        changedScope: "full_fallback",
         timeoutMs: null,
         enabled: true,
       },
@@ -336,7 +353,8 @@ describe("service-owned listing", () => {
         name: "format",
         cost: 1,
         description: null,
-        scopeArgs: "forbid",
+        pathArgs: "forbid",
+        changedScope: "native",
         timeoutMs: null,
         enabled: false,
       },
@@ -351,6 +369,8 @@ describe("service-owned listing", () => {
         source: "agent_cli",
         projectPath: "/projects/app",
         conversationId: "c1",
+        requestedScope: "changed",
+        effectiveScope: "full",
         position: null,
       },
     ]);
@@ -438,6 +458,9 @@ describe("submission lifecycle", () => {
       sessionName: "s1",
       branchName: "csm/s1",
       targetBranch: "main",
+      requestedScope: "changed",
+      effectiveScope: "changed",
+      pathArgs: "paths",
       scopePaths: ["src/a.test.ts"],
       timeoutMs: 900_000,
     });
@@ -465,10 +488,49 @@ describe("submission lifecycle", () => {
     expect(row?.conversationId).toBe("c1");
     expect(row?.queueMs).toBe(0);
     expect(row?.execMs).toBe(2_500);
-    expect(row?.scoped).toBe(true);
+    expect(row?.requestedScope).toBe("changed");
+    expect(row?.effectiveScope).toBe("changed");
     expect(row?.scopedPathCount).toBe(1);
     expect(row?.exitCode).toBe(0);
     expect(phases()).toEqual(["requested", "started", "completed"]);
+  });
+
+  it("dispatches changed fallback and explicit full from the same logical profile", async () => {
+    const fallback = await service.submit(
+      request({ commandName: "typecheck" }),
+    );
+    expect(fallback).toMatchObject({
+      kind: "accepted",
+      requestedScope: "changed",
+      effectiveScope: "full",
+    });
+    expect(runner.spawns[0]).toMatchObject({
+      commandName: "typecheck",
+      command: "scripts/validate/typecheck.sh",
+      requestedScope: "changed",
+      effectiveScope: "full",
+    });
+
+    runner.runs
+      .get("run-1")
+      ?.complete({ kind: "exited", exitCode: 0, output: "clean" });
+    await flush();
+
+    const full = await service.submit(
+      request({ commandName: "test", scope: "full" }),
+    );
+    expect(full).toMatchObject({
+      kind: "accepted",
+      requestedScope: "full",
+      effectiveScope: "full",
+    });
+    expect(runner.spawns[1]).toMatchObject({
+      commandName: "test",
+      command: "scripts/validate/test-full-suite.sh",
+      requestedScope: "full",
+      effectiveScope: "full",
+      scopePaths: [],
+    });
   });
 
   it("queues behind running work and pumps the waiter after release", async () => {
@@ -495,6 +557,47 @@ describe("submission lifecycle", () => {
     expect(runner.spawns[1]?.commandName).toBe("typecheck");
     expect(service.poll("run-1").result?.kind).toBe("failed");
     expect(repo.findById(queued.runId)?.status).toBe("running");
+  });
+
+  it("keeps a queued run's resolved executable after live config edits", async () => {
+    let currentConfig = REPO_VALIDATION;
+    service = buildService({
+      readRepoValidation: async () => currentConfig,
+    });
+    await service.submit(request({ commandName: "test" }));
+    const queued = await service.submit(
+      request({ commandName: "typecheck", wait: true }),
+    );
+    expect(queued).toMatchObject({
+      kind: "accepted",
+      status: "queued",
+      requestedScope: "changed",
+      effectiveScope: "full",
+    });
+
+    currentConfig = repoValidationConfigSchema.parse({
+      ...REPO_VALIDATION,
+      commands: {
+        ...REPO_VALIDATION.commands,
+        typecheck: {
+          ...REPO_VALIDATION.commands.typecheck,
+          command: {
+            full: "scripts/validate/typecheck-replacement-full.sh",
+            changed: "scripts/validate/typecheck-replacement-changed.sh",
+          },
+        },
+      },
+    });
+    runner.runs
+      .get("run-1")
+      ?.complete({ kind: "exited", exitCode: 0, output: "clean" });
+    await flush();
+
+    expect(runner.spawns[1]).toMatchObject({
+      command: "scripts/validate/typecheck.sh",
+      requestedScope: "changed",
+      effectiveScope: "full",
+    });
   });
 
   it("rejects unknown commands and over-limit costs without touching the runner", async () => {
@@ -568,11 +671,46 @@ describe("submission lifecycle", () => {
 
   it("refuses forwarded paths before admission when the command forbids them", async () => {
     const submission = await service.submit(
-      request({ commandName: "typecheck", scopePaths: ["src/a.ts"] }),
+      request({ commandName: "format", scopePaths: ["src/a.ts"] }),
     );
     expect(submission).toMatchObject({
       kind: "invalid",
-      reason: "scope_args_forbidden",
+      reason: "path_args_forbidden",
+    });
+    expect(repo.findStaleActive()).toHaveLength(0);
+    expect(runner.spawns).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      name: "full scope",
+      request: request({
+        commandName: "test",
+        scope: "full",
+        scopePaths: ["src/a.test.ts"],
+      }),
+      reason: "path_args_require_changed",
+    },
+    {
+      name: "full fallback",
+      request: request({
+        commandName: "typecheck",
+        scopePaths: ["src/a.ts"],
+      }),
+      reason: "path_args_require_changed",
+    },
+    {
+      name: "unsafe path",
+      request: request({
+        commandName: "test",
+        scopePaths: ["../outside.test.ts"],
+      }),
+      reason: "path_args_rejected",
+    },
+  ])("rejects $name paths before admission", async ({ request, reason }) => {
+    await expect(service.submit(request)).resolves.toMatchObject({
+      kind: "invalid",
+      reason,
     });
     expect(repo.findStaleActive()).toHaveLength(0);
     expect(runner.spawns).toHaveLength(0);
@@ -611,6 +749,7 @@ describe("durable timing by validation source", () => {
       const systemSubmission = await service.submitSystem({
         source,
         command: { kind: "registered", name: "typecheck" },
+        scope: "changed",
         projectPath: "/projects/app",
         conversationId: `conversation-${source}`,
         target: {
@@ -643,7 +782,8 @@ describe("durable timing by validation source", () => {
         status: row?.status,
         queueMs: row?.queueMs,
         execMs: row?.execMs,
-        scoped: row?.scoped,
+        requestedScope: row?.requestedScope,
+        effectiveScope: row?.effectiveScope,
         scopedPathCount: row?.scopedPathCount,
       };
     });
@@ -656,7 +796,8 @@ describe("durable timing by validation source", () => {
         status: "passed",
         queueMs: 0,
         execMs: 125,
-        scoped: true,
+        requestedScope: "changed",
+        effectiveScope: "changed",
         scopedPathCount: 2,
       },
       {
@@ -666,7 +807,8 @@ describe("durable timing by validation source", () => {
         status: "passed",
         queueMs: 0,
         execMs: 250,
-        scoped: false,
+        requestedScope: "changed",
+        effectiveScope: "full",
         scopedPathCount: 0,
       },
       {
@@ -676,7 +818,8 @@ describe("durable timing by validation source", () => {
         status: "passed",
         queueMs: 0,
         execMs: 375,
-        scoped: false,
+        requestedScope: "changed",
+        effectiveScope: "full",
         scopedPathCount: 0,
       },
       {
@@ -686,7 +829,8 @@ describe("durable timing by validation source", () => {
         status: "passed",
         queueMs: 0,
         execMs: 500,
-        scoped: false,
+        requestedScope: "changed",
+        effectiveScope: "full",
         scopedPathCount: 0,
       },
       {
@@ -696,7 +840,8 @@ describe("durable timing by validation source", () => {
         status: "passed",
         queueMs: 0,
         execMs: 625,
-        scoped: false,
+        requestedScope: "changed",
+        effectiveScope: "full",
         scopedPathCount: 0,
       },
     ]);
@@ -746,7 +891,8 @@ describe("durable timing by validation source", () => {
       conversationId: "c1",
       queueMs: null,
       execMs: null,
-      scoped: false,
+      requestedScope: "changed",
+      effectiveScope: "changed",
       scopedPathCount: 0,
     });
     expect(
@@ -771,7 +917,8 @@ describe("durable timing by validation source", () => {
         queueMs: null,
         execMs: null,
         timedOut: false,
-        scoped: false,
+        requestedScope: "changed",
+        effectiveScope: "changed",
         scopedPathCount: 0,
         limit: 4,
       },
@@ -786,6 +933,7 @@ describe("system submissions with explicit targets", () => {
     const submission = await service.submitSystem({
       source: "graph_script_validator",
       command: { kind: "registered", name: "test" },
+      scope: "changed",
       projectPath: "/projects/app",
       conversationId: "conv-oversized",
       target: {
@@ -819,6 +967,7 @@ describe("system submissions with explicit targets", () => {
     const submission = await service.submitSystem({
       source: "graph_lane_merge",
       command: { kind: "registered", name: "typecheck" },
+      scope: "changed",
       projectPath: "/projects/app",
       conversationId: "conv-lane",
       workflow: { executionId: "exec-1", contextId: "api" },
@@ -876,6 +1025,7 @@ describe("system submissions with explicit targets", () => {
     const submission = await service.submitSystem({
       source: "graph_script_validator",
       command: { kind: "registered", name: "typecheck" },
+      scope: "changed",
       projectPath: "/projects/app",
       conversationId: "conv-lane",
       workflow: { executionId: "exec-1", contextId: "api" },
@@ -892,6 +1042,8 @@ describe("system submissions with explicit targets", () => {
     if (submission.kind !== "accepted") return;
     expect(submission.status).toBe("running");
     expect(submission.lease).toBeNull();
+    expect(submission.requestedScope).toBe("changed");
+    expect(submission.effectiveScope).toBe("full");
 
     // The spawn targets exactly the caller-resolved lane worktree — no
     // resolver involvement, no session fallback.
@@ -905,6 +1057,8 @@ describe("system submissions with explicit targets", () => {
       branchName: "csm/s1-api",
       targetBranch: "csm/s1",
       contextId: "api",
+      requestedScope: "changed",
+      effectiveScope: "full",
     });
     const row = repo.findById(submission.runId);
     expect(row?.source).toBe("graph_script_validator");
@@ -930,6 +1084,7 @@ describe("system submissions with explicit targets", () => {
     const queued = await service.submitSystem({
       source: "graph_script_validator",
       command: { kind: "registered", name: "typecheck" },
+      scope: "changed",
       projectPath: "/projects/app",
       target: {
         worktreePath: "/projects/app/.worktrees/s1",
@@ -976,6 +1131,7 @@ describe("system submissions with explicit targets", () => {
     const submission = await service.submitSystem({
       source: "graph_script_validator",
       command: { kind: "registered", name: "nope" },
+      scope: "changed",
       projectPath: "/projects/app",
       target: {
         worktreePath: "/projects/app/.worktrees/s1",
@@ -1000,6 +1156,7 @@ describe("system submissions with explicit targets", () => {
     const submission = await service.submitSystem({
       source: "smart_commit",
       command: { kind: "registered", name: "typecheck" },
+      scope: "changed",
       projectPath: "/projects/app",
       target: {
         worktreePath: "/projects/app/.worktrees/s1",
@@ -1095,7 +1252,8 @@ describe("recovery on construction (persistence fixture)", () => {
       finishedAt: null,
       queueMs: null,
       execMs: null,
-      scoped: false,
+      requestedScope: "changed",
+      effectiveScope: "full",
       scopedPathCount: 0,
       exitCode: null,
       timedOut: false,
@@ -1197,7 +1355,8 @@ describe("recovery on construction (persistence fixture)", () => {
         queueMs: 1_000,
         execMs: 2_000,
         timedOut: false,
-        scoped: false,
+        requestedScope: "changed",
+        effectiveScope: "full",
         scopedPathCount: 0,
         limit: 8,
       },

@@ -115,9 +115,21 @@ describe("ValidationService shared global budget", () => {
       });
       const repoValidation = repoValidationConfigSchema.parse({
         commands: {
-          heavy: { command: "scripts/validate/heavy.sh", cost: 3 },
-          format: { command: "scripts/validate/format.sh", cost: 1 },
-          oversized: { command: "scripts/validate/oversized.sh", cost: 5 },
+          heavy: {
+            command: { full: "scripts/validate/heavy.sh" },
+            cost: 3,
+            pathArgs: "forbid",
+          },
+          format: {
+            command: { full: "scripts/validate/format.sh" },
+            cost: 1,
+            pathArgs: "forbid",
+          },
+          oversized: {
+            command: { full: "scripts/validate/oversized.sh" },
+            cost: 5,
+            pathArgs: "forbid",
+          },
         },
         preMerge: ["heavy"],
       });
@@ -310,6 +322,7 @@ describe("ValidationService shared global budget", () => {
       const graphGate = await service.submitSystem({
         source: "graph_script_validator",
         command: { kind: "registered", name: "heavy" },
+        scope: "changed",
         projectPath: "/projects/app",
         workflow: { executionId: "execution-1", contextId: "api" },
         target: {
@@ -331,6 +344,7 @@ describe("ValidationService shared global budget", () => {
       const merge = await service.submitSystem({
         source: "smart_merge",
         command: { kind: "registered", name: "format" },
+        scope: "changed",
         projectPath: "/projects/app",
         target: {
           worktreePath: "/projects/app/.worktrees/session-1",

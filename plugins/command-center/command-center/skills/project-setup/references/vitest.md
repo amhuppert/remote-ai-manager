@@ -2,7 +2,7 @@
 
 Load this reference when Vitest is detected (`vitest` in `dependencies` or `devDependencies`).
 
-Vitest config covers AI-optimal output and may mirror the fixed worker count. The registered test wrapper and its canonical launcher own worker and heap enforcement, scope each run to the files touched by the branch, and permit narrower path selection for TDD.
+Vitest config covers AI-optimal output and may mirror the fixed worker count. Separate full and changed wrappers share one canonical launcher and own worker and heap enforcement. The changed wrapper uses Vitest's native affected-file mode and permits narrower path selection for TDD.
 
 AI detection uses the `CLAUDECODE` env var, which every generated validation wrapper exports explicitly.
 
@@ -76,7 +76,7 @@ Generate `scripts/validate/vitest-launcher.mjs` beside the registered wrapper. T
 ```javascript
 import { startVitest } from "vitest/node";
 
-const [scope, ...scopeArgs] = process.argv.slice(2);
+const [mode, ...modeArgs] = process.argv.slice(2);
 const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
 const testHeapMb = Number.parseInt(process.env.CC_TEST_HEAP_MB ?? "", 10);
 
@@ -89,11 +89,11 @@ if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
 
 let filters = [];
 let changed;
-if (scope === "paths") {
-  filters = scopeArgs;
-} else if (scope === "changed" && scopeArgs.length === 1) {
-  changed = scopeArgs[0];
-} else if (scope !== "full" || scopeArgs.length > 0) {
+if (mode === "paths") {
+  filters = modeArgs;
+} else if (mode === "changed" && modeArgs.length === 1) {
+  changed = modeArgs[0];
+} else if (mode !== "full" || modeArgs.length > 0) {
   throw new Error("expected full, changed <merge-base>, or paths <path...>");
 }
 
@@ -105,7 +105,7 @@ await startVitest(
     color: false,
     reporters: ["dot"],
     bail: 3,
-    passWithNoTests: scope !== "full",
+    passWithNoTests: mode !== "full",
     ...(changed ? { changed } : {}),
     pool: "forks",
     maxWorkers: testWorkers,
@@ -125,7 +125,7 @@ The `startVitest` options are the final configuration layer. Both `maxForks` and
 
 ## Validation wrapper invocation
 
-The shared wrapper setup in `references/pre-merge-script.md` computes `$merge_base`. Register `scripts/validate/test.sh` with `scopeArgs: "paths"`; forwarded values are already validated as relative non-option paths. The wrapper invokes the canonical launcher instead of the candidate-worktree Vitest CLI entry point.
+The shared wrapper setup in `references/pre-merge-script.md` computes `$merge_base` for the changed wrapper. Register a logical test profile whose `command.full` and `command.changed` point to separate wrappers and whose `pathArgs` is `"paths"`. Forwarded values reach only the changed wrapper and are already validated as relative non-option paths. Both wrappers invoke the canonical launcher instead of the candidate-worktree Vitest CLI entry point.
 
 ```bash
 readonly SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
@@ -141,6 +141,8 @@ export VITEST_MAX_FORKS="$TEST_WORKERS"
 export VITEST_MIN_FORKS=1
 export CLAUDECODE=1
 
+# Changed wrapper only:
+
 if [ "$#" -gt 0 ]; then
   run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" paths "$@"
 elif [ -z "$merge_base" ]; then
@@ -152,11 +154,17 @@ else
 fi
 ```
 
+The full wrapper uses the same fixed environment prelude, ignores the merge base and any paths, and invokes:
+
+```bash
+run_quiet env NODE_ENV=test node "$SCRIPT_DIR/vitest-launcher.mjs" full
+```
+
 | Mechanism | Purpose |
 |---|---|
 | `changed "$merge_base"` | Makes the launcher set Vitest's `changed` option to the merge base. |
 | `paths "$@"` | Passes only server-validated relative paths as narrower test filters. |
-| `passWithNoTests` for scoped modes | Allows a branch that touches only untested files to pass. |
+| `passWithNoTests` for changed/path modes | Allows a branch that touches only untested files to pass. |
 | `color: false` plus `run_quiet` | Produces no color, discards success output, and replays complete failure output. |
 | Final `poolOptions.forks` | Prevents candidate configuration from increasing fan-out or worker heap. |
 

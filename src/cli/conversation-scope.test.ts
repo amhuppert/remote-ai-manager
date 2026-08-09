@@ -28,7 +28,8 @@ const validationListResponse = {
       name: "test",
       cost: 4,
       description: "Focused tests",
-      scopeArgs: "paths",
+      pathArgs: "paths",
+      changedScope: "native",
       timeoutMs: null,
       enabled: true,
     },
@@ -52,6 +53,8 @@ function validationResponse(request: RecordedRequest): Response {
         status: "running",
         position: null,
         result: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );

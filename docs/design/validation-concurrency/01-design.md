@@ -25,23 +25,37 @@ The load-bearing consequence: **every** validation path — the agent CLI, the g
   "validation": {
     "commands": {
       "format": {
-        "command": "scripts/validate/format.sh",
+        "command": {
+          "full": "scripts/validate/format-full.sh",
+          "changed": "scripts/validate/format.sh"
+        },
         "cost": 1,
-        "description": "Format changed files"
+        "description": "Format project files",
+        "pathArgs": "forbid"
       },
       "lint": {
-        "command": "scripts/validate/lint.sh",
-        "cost": 2
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint.sh"
+        },
+        "cost": 2,
+        "pathArgs": "forbid"
       },
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
-        "cost": 2
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
+        "cost": 2,
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full-suite.sh",
+          "changed": "scripts/validate/test.sh"
+        },
         "cost": 8,
         "timeoutMs": 900000,
-        "scopeArgs": "paths"
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["format", "lint", "typecheck", "test"]
@@ -52,11 +66,12 @@ The load-bearing consequence: **every** validation path — the agent CLI, the g
 **Rules.**
 
 - **Names** are arbitrary, stable, CLI-safe identifiers (`test`, `test-unit`, `typecheck`, `build`, …). Nothing is hard-coded to a fixed set; `test`/`lint`/`typecheck`/`format` are conventions the skills recommend so configuration composes across projects.
-- **`command`** is a path resolved from the **canonical project root** and invoked with `execFile` (shebang required) — never a shell string. This preserves the existing safety property and matches how `initScriptPath` and the current pre-merge script already work.
-- **`cost`** is required and positive. No default, no normalization — a project must state its weight. Convention: one unit for a single-process tool, roughly one unit per configured test worker, applied consistently across all projects on the machine so the numbers stay comparable.
+- **`command.full`** is required; **`command.changed`** is optional. Both are paths resolved from the **canonical project root** and invoked with `execFile` (shebang required) — never shell strings. Every wrapper has one fixed behavior and never parses Command Center's scope value.
+- **Scope** is `changed` or `full` and defaults to changed at the agent boundary. A changed request selects `command.changed` when present; otherwise Command Center selects `command.full` and records effective scope full. A full request always selects `command.full`.
+- **`cost`** is required and positive. Both variants share it, so it must cover the profile's maximum resource use. No default, no normalization — a project must state its weight. Convention: one unit for a single-process tool, roughly one unit per configured test worker, applied consistently across all projects on the machine so the numbers stay comparable.
 - **`timeoutMs`** is optional per command, falling back to a global default. This matters: without it, one knob would have to cover both a 60-minute suite and a 2-minute lint, and a hung lint would hold its capacity reservation for an hour.
 - **`description`** is optional and surfaces in `cctl validate list` and in generated agent prompts.
-- **`scopeArgs`** defaults to `"forbid"`. Setting `"paths"` permits `cctl validate run test -- src/example.test.ts`: every forwarded value must be a non-option token that resolves inside the target worktree. Option tokens, absolute paths, and traversal are rejected. This is what makes the TDD inner loop workable through the wrapper while mechanically preventing an agent from passing worker/pool/config flags that would make real load exceed the declared cost. Wrapper scripts pin worker count and heap; scope arguments may only *narrow* work. Containment is validated lexically, so a path for a just-deleted or renamed file still forwards and the wrapper decides what to do with it.
+- **`pathArgs`** defaults to `"forbid"`. Setting `"paths"` permits `cctl validate run test --scope changed -- src/example.test.ts`: every forwarded value must be a non-option token that resolves inside the target worktree. Paths require a native changed executable; full requests and changed-to-full fallback reject them. Option tokens, absolute paths, and traversal are rejected. This makes the TDD inner loop workable while mechanically preventing worker/pool/config flags that would make real load exceed the declared cost. Containment is lexical, so a just-deleted or renamed file can still forward and the changed wrapper decides what to do with it.
 - **`preMerge`** is the ordered command selection used by Smart Merge and Smart Commit. It is deliberately independent of graph script-validator selection.
 - **`laneMerge`** (optional) is an ordered command selection specifically for graph-workflow lane merges — typically a cheaper subset (e.g. `["typecheck", "test"]` with scoping). When absent, lane merges fall back to `preMerge`. Workflow configuration can override either way (§6).
 
@@ -132,7 +147,7 @@ This ledger is operational state for ownership and recovery first; terminal rows
 
 ```
 cctl validate list
-cctl validate run <name> [--wait] [--json] [-- <validated paths>]
+cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]
 cctl validate status [run-id]
 cctl validate cancel <run-id>
 ```
@@ -259,7 +274,7 @@ Surfaces: root/system instructions and `AGENTS.md`, the CLI instructions and `va
 
 ## 9. Setup skills — scoped by default
 
-The project-setup skill stops generating one monolithic pre-merge script and instead registers one command per tool or resource profile, with guidance to:
+The project-setup skill registers one logical command per tool or resource profile, with separate fixed full and changed executables where both modes are sound. Its guidance is to:
 
 - format only changed files where the formatter permits it;
 - lint only changed files or affected packages where safe;
@@ -268,6 +283,7 @@ The project-setup skill stops generating one monolithic pre-merge script and ins
 - **cap test workers and heap explicitly in the wrapper**, never via forwarded flags;
 - make the declared cost match the configured worker/resource profile;
 - keep output colorless, quiet on success, complete on failure.
+- omit the changed executable when sound scoping is unavailable so Command Center performs the full fallback.
 
 The skill explains that cost is a **reservation weight, not measured usage**, and that consistency across projects on one machine is what makes the numbers meaningful. Graph-workflow planning guidance keeps agent permissions separate from script selection and preserves implementer test access for TDD. The canonical plugin sources for project setup, `cc-cli`, agent context, and workflow planning are updated and their derived references regenerated.
 
@@ -296,8 +312,8 @@ The change touches a specific, known set of sites that must move together or con
 - **Cascade siblings:** config resolution, runtime and definition live-edit field allowlists, builder draft state, test fixtures, workflow inspector and context-config panels, config-UI script-validator fields and form state, CLI workflow outlines (rendering `script: typecheck+test` rather than `script on`), and graph derivation.
 - **CLI:** help-registry entry with flags wired through the registry, bidirectional `related` edges, skill references, the registry contract test, scope classification in the session-env inventory (project-supported, with both-direction conversation-scope coverage), the project-route wiring arch test, and regeneration of the `cc-cli` SKILL.md command reference.
 - **Events** through the typed publication seam only — `requested`, `rejected`, `queued`, `started`, `completed`, `cancelled`, `interrupted`, `policy_skipped`.
-- **Logging** via `createLogger("validation")` with stable event names and structured fields (`runId`, `name`, `cost`, `inUse`, `limit`, `queueDepth`, project, conversation, `exitCode`, `queueMs`, `execMs`, `timedOut`, `scoped`). Bounded output or a tail in state; complete output to a validation artifact — never unbounded test output in structured logs.
-- **Persistence:** the new ledger table carries the standard repository mapping, maximal round-trip contract fixture, and migration floor obligations.
+- **Logging** via `createLogger("validation")` with stable event names and structured fields (`runId`, `name`, `cost`, `inUse`, `limit`, `queueDepth`, project, conversation, `exitCode`, `queueMs`, `execMs`, `timedOut`, `requestedScope`, `effectiveScope`, `scopedPathCount`). Bounded output or a tail in state; complete output to a validation artifact — never unbounded test output in structured logs.
+- **Persistence:** the ledger carries nullable requested/effective scopes for legacy rows and non-null snapshots for every new run, plus the standard repository mapping, maximal round-trip contract fixture, and migration floor obligations.
 
 ---
 
@@ -305,13 +321,13 @@ The change touches a specific, known set of sites that must move together or con
 
 Every run's timing is captured at the three transitions the scheduler already owns — `submittedAt` on request arrival, `startedAt` at process spawn, `finishedAt` when group death is confirmed — yielding two durations that are **always kept separate**: `queueMs` (contention) and `execMs` (what the command itself costs). Conflating them would corrupt both statistics: queue wait measures whether the global limit is too tight; execution time measures the command.
 
-Each terminal run records, in one place: command name, project, declared cost, source (`agent_cli` / `graph_script_validator` / `graph_lane_merge` / `smart_merge` / `smart_commit`), outcome, exit code, session/conversation, workflow execution/context/role when applicable, and whether scope paths were forwarded (plus their count). The scoped flag is essential for honest accounting — a single-file TDD run and a full-suite run of the same `test` command have wildly different durations, and folding them into one distribution would make "how long does `test` tend to take" meaningless.
+Each terminal run records, in one place: command name, project, declared cost, source (`agent_cli` / `graph_script_validator` / `graph_lane_merge` / `smart_merge` / `smart_commit`), outcome, exit code, session/conversation, workflow execution/context/role when applicable, requested scope, effective scope, and forwarded path count. Requested and effective scope distinguish a native changed run, changed-to-full fallback, and explicit full run without guessing from path presence. Legacy rows remain nullable where the old ledger cannot prove scope.
 
 Storage and query:
 
 - **Terminal ledger rows are retained**, not deleted. The ledger already writes these timestamps for crash recovery, so durable accounting costs nothing extra to collect. This deliberately amends the round-1 "operational state only" scope guard: the concrete consumer that decision was waiting for now exists (this requirement). Rows are one-per-run and tiny; no pruning in v1. The table's repository and round-trip contract obligations cover the timing fields like any other persisted field.
-- The `validation.run_completed` **structured log event** carries the same fields (`queueMs`, `execMs`, outcome, `scoped`, source, project), so the existing DuckDB-over-logs performance-analysis path works immediately, alongside direct SQL over the ledger.
-- **No UI in v1**, but the data answers the questions directly: per project × command execution-time distributions (scoped vs full split), queue-wait distributions (is the limit too tight?), outcome mix, and *where agents spend their time* — for `agent_cli` runs the CLI blocks the agent's turn, so `queueMs + execMs` aggregated by conversation and role is exactly agent wall-clock spent on validation, while the source field keeps system-owned gate time (script validator, merge/commit) separate from agent time.
+- The `validation.run_completed` **structured log event** carries the same fields (`queueMs`, `execMs`, outcome, `requestedScope`, `effectiveScope`, `scopedPathCount`, source, project), so the existing DuckDB-over-logs performance-analysis path works immediately, alongside direct SQL over the ledger.
+- **No history UI in v1**, but list and status expose native/fallback support and requested/effective scope without executable paths. The data also answers per project × command execution-time distributions by effective scope, queue-wait distributions, outcome mix, and agent wall-clock spent on validation.
 - Fast-follow enabled by the data (not v1 scope): `cctl validate list` can annotate typical durations ("test: ~4m in this project") through the existing best-effort dynamic help-context garnish, giving agents a real basis for choosing fail-fast, `--wait`, or doing other work first.
 
 ---
@@ -323,9 +339,10 @@ Unit and contract coverage, using injected scheduler/runner dependencies and rea
 - registry validation, stable command identity, unknown names, and cost-greater-than-limit rejection at every preflight boundary;
 - leaf-level cascade, list replacement, seed-time selector expansion, independent script/agent selectors;
 - weighted admission under simultaneous requests, strict FIFO, no leapfrogging, starvation resistance, live limit changes, release on every terminal path;
-- `scopeArgs` validation — option tokens, absolute paths, and traversal rejected; valid relative paths forwarded;
+- scope dispatch — native changed, changed-to-full fallback, and explicit full select the immutable registered executable snapshot;
+- `pathArgs` validation — full/fallback paths, option tokens, absolute paths, and traversal rejected; valid relative paths forwarded only to native changed runs;
 - lease renewal restricted to the token holder, expiry cancellation, cancellation of queued and running jobs, process-group timeout and descendant cleanup, queue time excluded from timeout;
-- timing capture: `submittedAt`/`startedAt`/`finishedAt` recorded at the correct transitions, `queueMs` and `execMs` derived separately, scoped runs flagged, terminal ledger rows retained, and the `run_completed` event carrying the same fields as the row;
+- timing capture: `submittedAt`/`startedAt`/`finishedAt` recorded at the correct transitions, `queueMs` and `execMs` derived separately, requested/effective scopes retained, terminal ledger rows retained, and the `run_completed` event carrying the same fields as the row;
 - policy-disabled commands proving the scheduler and process runner were never called;
 - fail-closed behavior for stale or mismatched graph identity;
 - CLI text/JSON parity, stable exit codes, capacity hints, policy instructions;

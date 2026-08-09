@@ -15,11 +15,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoValidationConfigSchema } from "@/lib/validation/schemas";
 
 /**
- * The registered `test` command scopes itself to the diff against the target
- * branch, so a green run proves the changed files pass — not that the branch
- * passes. `test-full-suite` is the unscoped counterpart: it must select every
- * unit test file regardless of merge base, and must not stop at the launcher's
- * default bail threshold, because its whole purpose is a complete failure list.
+ * The registered `test` profile has separate changed and full executables. The
+ * full executable must select every unit test file regardless of merge base,
+ * and must not stop at the launcher's default bail threshold, because its whole
+ * purpose is a complete failure list.
  *
  * This runs the real script against a throwaway repository that *has* a merge
  * base and a small diff — the exact situation in which `test` would narrow —
@@ -30,29 +29,35 @@ const scriptPath = resolve(
   process.cwd(),
   "scripts/validate/test-full-suite.sh",
 );
+const changedScriptPath = resolve(process.cwd(), "scripts/validate/test.sh");
 
 interface Invocation {
   args: string[];
   bail: string;
+  workers: string;
+  heapMb: string;
 }
 
 let invocations: Invocation[] = [];
+let changedInvocations: Invocation[] = [];
 let workdir: string;
 let exitCode: number | null = null;
+let changedExitCode: number | null = null;
 let output = "";
+let changedOutput = "";
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
 
-/** Records the argv and bail setting the launcher was invoked with. */
+/** Records the argv and fixed resource settings used by the launcher. */
 function writeNodeStub(binDir: string): void {
   const stub = join(binDir, "node");
   writeFileSync(
     stub,
     [
       "#!/usr/bin/env bash",
-      `printf '%s\\t%s\\n' "$*" "\${CC_TEST_BAIL:-<unset>}" >> "$FULL_SUITE_TEST_LOG"`,
+      `printf '%s\\t%s\\t%s\\t%s\\n' "$*" "\${CC_TEST_BAIL:-<unset>}" "\${CC_TEST_WORKERS:-<unset>}" "\${CC_TEST_HEAP_MB:-<unset>}" >> "$FULL_SUITE_TEST_LOG"`,
       "exit 0",
     ].join("\n"),
     "utf8",
@@ -114,8 +119,42 @@ beforeAll(() => {
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [args = "", bail = ""] = line.split("\t");
-      return { args: args.split(" ").filter(Boolean), bail };
+      const [args = "", bail = "", workers = "", heapMb = ""] =
+        line.split("\t");
+      return { args: args.split(" ").filter(Boolean), bail, workers, heapMb };
+    });
+
+  writeFileSync(logPath, "", "utf8");
+  try {
+    changedOutput = execFileSync("bash", [changedScriptPath], {
+      cwd: repo,
+      encoding: "utf8",
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        FULL_SUITE_TEST_LOG: logPath,
+        TARGET_BRANCH: "main",
+      },
+    });
+    changedExitCode = 0;
+  } catch (err) {
+    const failure = err as {
+      status?: number;
+      stdout?: string;
+      stderr?: string;
+    };
+    changedExitCode = failure.status ?? null;
+    changedOutput = `${failure.stdout ?? ""}${failure.stderr ?? ""}`;
+  }
+
+  changedInvocations = readFileSync(logPath, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [args = "", bail = "", workers = "", heapMb = ""] =
+        line.split("\t");
+      return { args: args.split(" ").filter(Boolean), bail, workers, heapMb };
     });
 });
 
@@ -133,8 +172,26 @@ describe("test-full-suite validation command", () => {
     expect(invocation?.args.slice(1)).toEqual(["full", "both"]);
   });
 
+  it("keeps the changed variant on Vitest's native affected-file mode", () => {
+    expect(changedExitCode, `script failed:\n${changedOutput}`).toBe(0);
+    expect(changedInvocations).toHaveLength(1);
+    expect(changedInvocations[0]?.args.slice(1)).toEqual([
+      "changed",
+      "both",
+      expect.any(String),
+    ]);
+  });
+
   it("disables the launcher bail threshold so every failure is reported", () => {
     expect(invocations.at(0)?.bail).toBe("0");
+  });
+
+  it("keeps changed and full variants on one worker and heap profile", () => {
+    expect(invocations[0]).toMatchObject({ workers: "8", heapMb: "1536" });
+    expect(changedInvocations[0]).toMatchObject({
+      workers: "8",
+      heapMb: "1536",
+    });
   });
 
   it("is registered in CommandCenter.json with an executable script", () => {
@@ -145,12 +202,14 @@ describe("test-full-suite validation command", () => {
       (config as { validation: unknown }).validation,
     );
 
-    const command = validation.commands["test-full-suite"];
+    const command = validation.commands.test;
     expect(command).toBeDefined();
-    // Forwarded paths would narrow the run, contradicting the command's name.
-    expect(command?.scopeArgs).toBe("forbid");
+    expect(command?.pathArgs).toBe("paths");
 
-    const registeredScript = resolve(process.cwd(), command?.command ?? "");
+    const registeredScript = resolve(
+      process.cwd(),
+      command?.command.full ?? "",
+    );
     expect(registeredScript).toBe(scriptPath);
     expect(() => accessSync(registeredScript, constants.X_OK)).not.toThrow();
   });

@@ -971,8 +971,18 @@ describe("WorkflowInspectorPanel — validation command selectors", () => {
           {
             projectName: "alpha",
             commands: [
-              { name: "typecheck", cost: 2 },
-              { name: "test", cost: 4 },
+              {
+                name: "typecheck",
+                cost: 2,
+                pathArgs: "forbid",
+                changedScope: "full_fallback",
+              },
+              {
+                name: "test",
+                cost: 4,
+                pathArgs: "paths",
+                changedScope: "native",
+              },
             ],
           },
         ],

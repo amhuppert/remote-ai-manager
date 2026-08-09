@@ -12,7 +12,8 @@ import os from "node:os";
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
 import { buildChildEnv } from "@/lib/shared/child-env";
-import { validateScopeArgs, type ScopeArgsViolationKind } from "./scope-args";
+import { validatePathArgs, type PathArgsViolationKind } from "./path-args";
+import type { ValidationScope } from "./schemas";
 
 const logger = createLogger("validation");
 
@@ -60,7 +61,9 @@ export interface SpawnValidationParams {
   targetBranch?: string;
   /** Lane-worktree context id; omitted for session/project targets. */
   contextId?: string;
-  scopeArgs: "forbid" | "paths";
+  requestedScope: ValidationScope;
+  effectiveScope: ValidationScope;
+  pathArgs: "forbid" | "paths";
   scopePaths: string[];
   /** Measured from spawn — queue time never consumes it. */
   timeoutMs: number;
@@ -95,10 +98,11 @@ export interface ValidationProcessHandle {
 
 export type SpawnValidationResult =
   | { kind: "spawned"; handle: ValidationProcessHandle }
-  | { kind: "scope_args_forbidden"; tokens: string[] }
+  | { kind: "path_args_require_changed"; tokens: string[] }
+  | { kind: "path_args_forbidden"; tokens: string[] }
   | {
-      kind: "scope_args_rejected";
-      violation: ScopeArgsViolationKind;
+      kind: "path_args_rejected";
+      violation: PathArgsViolationKind;
       token: string;
     }
   | { kind: "script_not_found"; scriptPath: string }
@@ -205,7 +209,7 @@ export const SUPERVISOR_START_ABORTED_EXIT_CODE = 97;
 
 const SUPERVISOR_SOURCE = `#!/bin/sh
 # Command Center validation supervisor (generated; do not edit).
-# argv: <nonce-marker> <command-path> [scope args...]
+# argv: <nonce-marker> <command-path> [path args...]
 shift
 cmd="$1"
 shift
@@ -301,13 +305,19 @@ export async function spawnValidation(
   const maxOutputBytes = params.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
 
   if (params.scopePaths.length > 0) {
-    if (params.scopeArgs === "forbid") {
-      return { kind: "scope_args_forbidden", tokens: [...params.scopePaths] };
+    if (params.effectiveScope !== "changed") {
+      return {
+        kind: "path_args_require_changed",
+        tokens: [...params.scopePaths],
+      };
     }
-    const checked = validateScopeArgs(params.scopePaths, params.worktreePath);
+    if (params.pathArgs === "forbid") {
+      return { kind: "path_args_forbidden", tokens: [...params.scopePaths] };
+    }
+    const checked = validatePathArgs(params.scopePaths, params.worktreePath);
     if (!checked.ok) {
       return {
-        kind: "scope_args_rejected",
+        kind: "path_args_rejected",
         violation: checked.kind,
         token: checked.token,
       };
@@ -349,7 +359,7 @@ export async function spawnValidation(
   // The supervisor file is the group leader, invoked with a pure argv array
   // (execFile semantics — no shell -c string anywhere): its argv carries the
   // nonce marker for recovery, the registered script path, and the validated
-  // scope paths passed through verbatim.
+  // validated paths passed through verbatim.
   let supervisorPath: string;
   try {
     supervisorPath = ensureValidationSupervisorScript();
@@ -406,7 +416,8 @@ export async function spawnValidation(
     pid: pgid,
     worktreePath: params.worktreePath,
     timeoutMs: params.timeoutMs,
-    scoped: params.scopePaths.length > 0,
+    requestedScope: params.requestedScope,
+    effectiveScope: params.effectiveScope,
     scopedPathCount: params.scopePaths.length,
   });
 

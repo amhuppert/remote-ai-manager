@@ -2,7 +2,7 @@
 
 Load this reference when Prettier is detected (`prettier` in `dependencies` or `devDependencies`).
 
-## Validation wrapper invocation
+## Changed wrapper invocation
 
 Scope Prettier to the files this branch changes. Formatting unchanged files churns the diff and risks reformatting code the author didn't touch.
 
@@ -20,6 +20,14 @@ fi
 
 When `changed_files` is empty under a resolved merge base, skip Prettier entirely — there is nothing in this branch's diff for it to format.
 
+## Full wrapper invocation
+
+The full wrapper does not resolve a merge base:
+
+```bash
+run_quiet npx prettier --write --no-color .
+```
+
 ## Flags
 
 | Flag | Purpose |
@@ -33,4 +41,4 @@ When `changed_files` is empty under a resolved merge base, skip Prettier entirel
 ## Parallelism
 
 Prettier processes files in a single Node process. No worker pool to cap.
-Register this wrapper with cost `1`.
+Register both wrappers under one logical profile with cost `1`.

@@ -65,7 +65,8 @@ function submission(
     workflowExecutionId: null,
     workflowContextId: null,
     workflowRole: null,
-    scoped: false,
+    requestedScope: "changed",
+    effectiveScope: "full",
     scopedPathCount: 0,
     ...overrides,
   };

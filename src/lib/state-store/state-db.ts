@@ -1056,6 +1056,8 @@ export const VALIDATION_RUNS_SCHEMA_DDL = `
     finished_at           TEXT,
     queue_ms              INTEGER,
     exec_ms               INTEGER,
+    requested_scope       TEXT CHECK (requested_scope IN ('changed', 'full')),
+    effective_scope       TEXT CHECK (effective_scope IN ('changed', 'full')),
     scoped                INTEGER NOT NULL DEFAULT 0,
     scoped_path_count     INTEGER NOT NULL DEFAULT 0,
     exit_code             INTEGER,
@@ -1713,6 +1715,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "INTEGER CHECK (workflow_definition_revision > 0)",
   },
   { table: "validation_runs", column: "session_name", type: "TEXT" },
+  {
+    table: "validation_runs",
+    column: "requested_scope",
+    type: "TEXT CHECK (requested_scope IN ('changed', 'full'))",
+  },
+  {
+    table: "validation_runs",
+    column: "effective_scope",
+    type: "TEXT CHECK (effective_scope IN ('changed', 'full'))",
+  },
   {
     table: "conversations",
     column: "name_origin",

@@ -7,15 +7,36 @@ const response: ValidationCommandsResponse = {
     {
       projectName: "alpha",
       commands: [
-        { name: "test", cost: 4 },
-        { name: "typecheck", cost: 2 },
+        {
+          name: "test",
+          cost: 4,
+          pathArgs: "paths",
+          changedScope: "native",
+        },
+        {
+          name: "typecheck",
+          cost: 2,
+          pathArgs: "forbid",
+          changedScope: "full_fallback",
+        },
       ],
     },
     {
       projectName: "beta",
       commands: [
-        { name: "lint", cost: 1 },
-        { name: "typecheck", cost: 6, description: "beta's slower tsc" },
+        {
+          name: "lint",
+          cost: 1,
+          pathArgs: "forbid",
+          changedScope: "native",
+        },
+        {
+          name: "typecheck",
+          cost: 6,
+          description: "beta's slower tsc",
+          pathArgs: "forbid",
+          changedScope: "full_fallback",
+        },
       ],
     },
   ],
@@ -29,8 +50,18 @@ describe("selectValidationCommandOptions", () => {
 
   it("scopes to the named project's commands", () => {
     expect(selectValidationCommandOptions(response, "alpha")).toEqual([
-      { name: "test", cost: 4 },
-      { name: "typecheck", cost: 2 },
+      {
+        name: "test",
+        cost: 4,
+        pathArgs: "paths",
+        changedScope: "native",
+      },
+      {
+        name: "typecheck",
+        cost: 2,
+        pathArgs: "forbid",
+        changedScope: "full_fallback",
+      },
     ]);
   });
 
@@ -42,10 +73,25 @@ describe("selectValidationCommandOptions", () => {
 
   it("unions across projects for the global scope, first occurrence winning", () => {
     expect(selectValidationCommandOptions(response, null)).toEqual([
-      { name: "lint", cost: 1 },
-      { name: "test", cost: 4 },
+      {
+        name: "lint",
+        cost: 1,
+        pathArgs: "forbid",
+        changedScope: "native",
+      },
+      {
+        name: "test",
+        cost: 4,
+        pathArgs: "paths",
+        changedScope: "native",
+      },
       // alpha is listed first, so its typecheck summary wins the dedupe.
-      { name: "typecheck", cost: 2 },
+      {
+        name: "typecheck",
+        cost: 2,
+        pathArgs: "forbid",
+        changedScope: "full_fallback",
+      },
     ]);
   });
 });

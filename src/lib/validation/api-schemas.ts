@@ -4,6 +4,7 @@ import {
   validationRunResultSchema,
   validationRunSourceSchema,
   validationRunStatusSchema,
+  validationScopeSchema,
 } from "./schemas";
 
 /** Private submitter lease carried by poll/cancel requests. */
@@ -24,6 +25,7 @@ export const VALIDATION_LEASE_HEADER = "x-cc-validation-lease-token";
 export const validationSubmitBodySchema = z
   .object({
     commandName: z.string().trim().min(1),
+    scope: validationScopeSchema.default("changed"),
     scopePaths: z.array(z.string()).optional(),
     wait: z.boolean().optional(),
     /**
@@ -61,6 +63,8 @@ export const validationSubmitResponseSchema = z.discriminatedUnion("kind", [
     runId: z.string().min(1),
     status: z.enum(["queued", "running"]),
     position: z.number().int().nonnegative().nullable(),
+    requestedScope: validationScopeSchema,
+    effectiveScope: validationScopeSchema,
     /** Present only for the submitter (agent CLI source). */
     lease: validationLeaseSchema.nullable(),
   }),
@@ -78,6 +82,8 @@ export const validationPollResponseSchema = z.object({
   status: validationRunStatusSchema,
   position: z.number().int().nonnegative().nullable(),
   result: validationRunResultSchema.nullable(),
+  requestedScope: validationScopeSchema.nullable(),
+  effectiveScope: validationScopeSchema.nullable(),
 });
 export type ValidationPollResponse = z.infer<
   typeof validationPollResponseSchema
@@ -94,7 +100,8 @@ export const validationListCommandSchema = z.object({
   name: z.string().min(1),
   cost: z.number().int().positive(),
   description: z.string().nullable(),
-  scopeArgs: z.enum(["forbid", "paths"]),
+  pathArgs: z.enum(["forbid", "paths"]),
+  changedScope: z.enum(["native", "full_fallback"]),
   timeoutMs: z.number().int().positive().nullable(),
   /** Whether the resolved caller (role/context) may submit this command. */
   enabled: z.boolean(),
@@ -119,6 +126,8 @@ export const validationActiveRunSchema = z.object({
   source: validationRunSourceSchema,
   projectPath: z.string().min(1),
   conversationId: z.string().min(1).nullable(),
+  requestedScope: validationScopeSchema.nullable(),
+  effectiveScope: validationScopeSchema.nullable(),
   position: z.number().int().nonnegative().nullable(),
 });
 export type ValidationActiveRun = z.infer<typeof validationActiveRunSchema>;
