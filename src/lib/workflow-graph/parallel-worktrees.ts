@@ -15,7 +15,13 @@ import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-con
 import { readConfig as defaultReadGlobalConfig } from "@/lib/config/loader";
 import { resolveBranchPrefix } from "@/lib/config/cascade";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
-import { parseDirtyPaths } from "@/lib/git/worktree";
+import { parseDirtyPaths, readIgnoredContents } from "@/lib/git/worktree";
+import { summarizeIgnoredContents } from "@/lib/workflow-graph/lane-drift";
+import {
+  createLaneIgnoredBaselineStore,
+  type LaneIgnoredBaselineStore,
+} from "@/lib/workflow-graph/lane-ignored-baseline-store";
+import type { GraphWorkflowIgnoredBaselineEntry } from "@/lib/workflow-graph/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { validateLaneId } from "@/lib/workflow-graph/lane-identity";
 
@@ -46,9 +52,23 @@ export interface ProvisionLaneInput {
   laneId: string;
 }
 
-export interface ProvisionResult {
+/** Where a lane's worktree and branch live. Derivable without touching disk. */
+export interface LaneTargets {
   worktreePath: string;
   branchName: string;
+}
+
+export interface ProvisionResult extends LaneTargets {
+  /**
+   * The ignored content the worktree already held once provisioning finished —
+   * checkout plus whatever the init script installed (R8, decision D8).
+   *
+   * Captured HERE rather than at first landing because that is the only moment
+   * it means "before any member wrote anything". Drift classification gives
+   * `.gitignore` no blanket exemption, so without this every pre-existing
+   * `node_modules` would read as an unattributable write.
+   */
+  ignoredBaseline: readonly GraphWorkflowIgnoredBaselineEntry[];
 }
 
 export interface DisposeInput {
@@ -102,6 +122,7 @@ export interface ParallelWorktreesDeps {
   readRepoConfig?(repoRoot: string): Promise<PerRepoConfig | null>;
   readGlobalConfig?(): Promise<Pick<GlobalConfig, "branchPrefix">>;
   execFileAsync?: ExecFileAsync;
+  ignoredBaselineStore?: LaneIgnoredBaselineStore;
   buildChildEnv?(): NodeJS.ProcessEnv;
   logger?: Logger;
   fastRemoveWorktree?: typeof defaultFastRemoveWorktree;
@@ -127,7 +148,7 @@ export function deriveLaneTargets(input: {
   sessionDir: string;
   laneId: string;
   branchPrefix: string;
-}): ProvisionResult {
+}): LaneTargets {
   const worktreePath = deriveLaneWorktreePath(input);
   const unprefixed = `${input.sessionDir}-${input.laneId}`;
   const branchName = input.branchPrefix
@@ -163,6 +184,9 @@ export function createParallelWorktrees(
   const execFileAsync = deps.execFileAsync ?? defaultExecFileAsync;
   const buildChildEnv = deps.buildChildEnv ?? defaultBuildChildEnv;
   const logger = deps.logger ?? defaultLogger;
+  const ignoredBaselineStore =
+    deps.ignoredBaselineStore ??
+    createLaneIgnoredBaselineStore({ gitClient, logger });
   const fastRemoveWorktree =
     deps.fastRemoveWorktree ?? defaultFastRemoveWorktree;
   const stopDevServersForWorktree =
@@ -226,7 +250,7 @@ export function createParallelWorktrees(
 
   async function provisionLaneImpl(
     input: ProvisionLaneInput,
-    targets: ProvisionResult,
+    targets: LaneTargets,
   ): Promise<ProvisionResult> {
     if (existsSync(targets.worktreePath)) {
       const existingBranch = await getBranchForWorktree(
@@ -241,7 +265,10 @@ export function createParallelWorktrees(
           worktreePath: targets.worktreePath,
           branchName: targets.branchName,
         });
-        return targets;
+        return {
+          ...targets,
+          ignoredBaseline: await recoverIgnoredBaseline(targets),
+        };
       }
       throw new Error(
         `Worktree at ${targets.worktreePath} already exists on branch ${
@@ -299,7 +326,52 @@ export function createParallelWorktrees(
       throw err;
     }
 
-    return targets;
+    // After the init script, so everything provisioning itself installed is
+    // baselined rather than reported as a member's undeclared write.
+    return {
+      ...targets,
+      ignoredBaseline: await captureIgnoredBaseline(targets),
+    };
+  }
+
+  /**
+   * Best-effort: a status read that fails must not fail the provisioning it
+   * describes. An empty baseline is the fail-closed reading — it can only make
+   * a pre-existing ignored path look like drift, which surfaces a halt an
+   * operator dismisses, never hides a write.
+   */
+  async function captureIgnoredBaseline(
+    targets: LaneTargets,
+  ): Promise<readonly GraphWorkflowIgnoredBaselineEntry[]> {
+    try {
+      const contents = await readIgnoredContents(
+        targets.worktreePath,
+        gitClient,
+      );
+      if (contents.roots.length > 0 || contents.entries.length > 0) {
+        await ignoredBaselineStore.write(targets.worktreePath, contents);
+      }
+      return summarizeIgnoredContents(contents);
+    } catch (error) {
+      logger.warn("provision_ignored_baseline_failed", {
+        worktreePath: targets.worktreePath,
+        branchName: targets.branchName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  async function recoverIgnoredBaseline(
+    targets: LaneTargets,
+  ): Promise<readonly GraphWorkflowIgnoredBaselineEntry[]> {
+    const contents = await ignoredBaselineStore.read(targets.worktreePath);
+    if (contents !== null) return summarizeIgnoredContents(contents);
+    logger.warn("provision_ignored_baseline_recovery_failed", {
+      worktreePath: targets.worktreePath,
+      branchName: targets.branchName,
+    });
+    return [];
   }
 
   async function provision(input: ProvisionInput): Promise<ProvisionResult> {
@@ -321,7 +393,7 @@ export function createParallelWorktrees(
 
   async function runInitScript(
     context: InitScriptContext,
-    targets: ProvisionResult,
+    targets: LaneTargets,
   ): Promise<void> {
     const repoConfig = await readRepoConfig(context.projectPath);
     if (!repoConfig?.initScriptPath) {
@@ -398,7 +470,7 @@ export function createParallelWorktrees(
    */
   async function reportDirtyOnCreate(
     context: { projectPath: string; sessionName: string; laneId: string },
-    targets: ProvisionResult,
+    targets: LaneTargets,
   ): Promise<void> {
     let dirtyPaths: DirtyPath[];
     try {

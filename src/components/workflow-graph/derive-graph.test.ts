@@ -459,6 +459,7 @@ describe("deriveNodes wait state attachment", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },

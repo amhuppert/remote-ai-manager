@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { OwnedLandingRequest } from "@/lib/git/owned-landing";
 import { graphWorkflowExecutionLaneStateSchema } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
@@ -8,13 +9,17 @@ import {
   type LaneCommitterDeps,
 } from "./lane-committer";
 
+const FULL_ACCESS = { mode: "full" as const, canonicalPrefixes: [] };
+
 function makeDeps(
   overrides: Partial<LaneCommitterDeps> = {},
 ): LaneCommitterDeps {
   return {
     hasUncommittedChanges: async () => true,
     commitChanges: async () => ({ hash: "deadbeef" }),
+    commitOwnedPaths: async () => ({ status: "committed", hash: "owned123" }),
     resolveHeadSha: async () => null,
+    realpath: async (target) => target,
     now: () => "2026-04-02T10:00:00.000Z",
     ...overrides,
   };
@@ -40,6 +45,7 @@ function withLane(
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-04-02T09:00:00.000Z",
         updatedAt: "2026-04-02T09:00:00.000Z",
       },
@@ -60,6 +66,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: null,
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({ status: "skipped" });
@@ -86,6 +93,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: "head-before-turn",
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({
@@ -114,6 +122,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: "head-unmoved",
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({ status: "skipped" });
@@ -134,6 +143,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: "head-before-turn",
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({ status: "skipped" });
@@ -156,6 +166,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: "head-before-turn",
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({ status: "skipped" });
@@ -178,6 +189,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: "head-before-turn",
+      ownership: FULL_ACCESS,
     });
 
     // Exactly one snapshot for the context — the committer's own commit is
@@ -215,6 +227,7 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: null,
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({
@@ -250,12 +263,277 @@ describe("createLaneCommitter.commit", () => {
       laneId: "lane-plan",
       laneWorktreePath: "/repo/.worktrees/session-1.lane-plan",
       preTurnHeadSha: null,
+      ownership: FULL_ACCESS,
     });
 
     expect(result).toEqual({
       status: "failed",
       errorMessage: "git commit failed: nothing to commit",
     });
+  });
+});
+
+describe("createLaneCommitter.commit under an ownership envelope", () => {
+  const LANE_WORKTREE = "/repo/.worktrees/session-1.lane-api";
+  /** The lane worktree reached through a symlinked parent, as macOS does. */
+  const CANONICAL_LANE_WORKTREE = "/private/repo/.worktrees/session-1.lane-api";
+
+  function ownedDeps(overrides: Partial<LaneCommitterDeps> = {}) {
+    const landings: OwnedLandingRequest[] = [];
+    const wholeTreeCommits: string[] = [];
+    const deps = makeDeps({
+      realpath: async () => CANONICAL_LANE_WORKTREE,
+      commitOwnedPaths: async (request) => {
+        landings.push(request);
+        return { status: "committed", hash: "owned-abc" };
+      },
+      commitChanges: async (worktreePath) => {
+        wholeTreeCommits.push(worktreePath);
+        return { hash: "whole-tree" };
+      },
+      ...overrides,
+    });
+    return { deps, landings, wholeTreeCommits };
+  }
+
+  it("lands an owning context through the pathspec primitive, with the frozen prefixes as repo-relative paths and the landing-intent trailer", async () => {
+    const { deps, landings, wholeTreeCommits } = ownedDeps();
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: "head-before-turn",
+      landingToken: "token-api",
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [
+          `${CANONICAL_LANE_WORKTREE}/src/api`,
+          `${CANONICAL_LANE_WORKTREE}/docs/api.md`,
+        ],
+      },
+    });
+
+    expect(result).toEqual({
+      status: "committed",
+      snapshot: {
+        contextId: "context-api",
+        sha: "owned-abc",
+        committedAt: "2026-04-02T10:00:00.000Z",
+      },
+    });
+    expect(landings).toEqual([
+      {
+        worktreePath: LANE_WORKTREE,
+        message:
+          "Graph workflow context context-api\n\nLanding-Intent: token-api",
+        ownedPaths: ["src/api", "docs/api.md"],
+      },
+    ]);
+    // The whole-tree committer would have swept every sibling's in-progress
+    // work into this commit; an owning context must never reach it.
+    expect(wholeTreeCommits).toEqual([]);
+  });
+
+  it("never adopts a moved lane HEAD for an owning context, because a sibling's landing moves it too", async () => {
+    const { deps, landings } = ownedDeps({
+      hasUncommittedChanges: async () => false,
+      resolveHeadSha: async () => "head-moved-by-sibling",
+      commitOwnedPaths: async (request) => {
+        landings.push(request);
+        return { status: "no-changes" };
+      },
+    });
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: "head-before-turn",
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [`${CANONICAL_LANE_WORKTREE}/src/api`],
+      },
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+  });
+
+  it("reports skipped when nothing under the owned prefixes changed, however dirty the shared worktree is", async () => {
+    const { deps } = ownedDeps({
+      hasUncommittedChanges: async () => true,
+      commitOwnedPaths: async () => ({ status: "no-changes" }),
+    });
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: null,
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [`${CANONICAL_LANE_WORKTREE}/src/api`],
+      },
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+  });
+
+  it("refuses to land an owning context whose frozen prefix set is empty rather than falling back to a whole-tree commit", async () => {
+    const { deps, landings, wholeTreeCommits } = ownedDeps();
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: null,
+      ownership: { mode: "owned", canonicalPrefixes: [] },
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") return;
+    expect(result.errorMessage).toContain("context-api");
+    expect(landings).toEqual([]);
+    expect(wholeTreeCommits).toEqual([]);
+  });
+
+  it("refuses to land when a frozen prefix does not sit under the canonical lane worktree", async () => {
+    const { deps, landings, wholeTreeCommits } = ownedDeps();
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: null,
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: ["/etc/passwd"],
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") return;
+    expect(result.errorMessage).toContain("/etc/passwd");
+    expect(landings).toEqual([]);
+    expect(wholeTreeCommits).toEqual([]);
+  });
+
+  it("refuses to land when the lane worktree cannot be canonicalized", async () => {
+    const { deps, landings, wholeTreeCommits } = ownedDeps({
+      realpath: async () => {
+        throw new Error("ENOENT: no such file or directory");
+      },
+    });
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: null,
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [`${CANONICAL_LANE_WORKTREE}/src/api`],
+      },
+    });
+
+    expect(result.status).toBe("failed");
+    expect(landings).toEqual([]);
+    expect(wholeTreeCommits).toEqual([]);
+  });
+
+  it("returns failed with the primitive's error message when the owned landing throws", async () => {
+    const { deps } = ownedDeps({
+      commitOwnedPaths: async () => {
+        throw new Error("update-ref rejected: HEAD moved");
+      },
+    });
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-api",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: null,
+      ownership: {
+        mode: "owned",
+        canonicalPrefixes: [`${CANONICAL_LANE_WORKTREE}/src/api`],
+      },
+    });
+
+    expect(result).toEqual({
+      status: "failed",
+      errorMessage: "update-ref rejected: HEAD moved",
+    });
+  });
+
+  it("lands nothing for a read-only lane member, which has no write surface to commit", async () => {
+    const { deps, landings, wholeTreeCommits } = ownedDeps({
+      hasUncommittedChanges: async () => true,
+      resolveHeadSha: async () => "head-moved-by-sibling",
+    });
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-reader",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: "head-before-turn",
+      ownership: { mode: "readOnly", canonicalPrefixes: [] },
+    });
+
+    expect(result).toEqual({ status: "skipped" });
+    expect(landings).toEqual([]);
+    expect(wholeTreeCommits).toEqual([]);
+  });
+
+  it("keeps the whole-tree committer, adoption included, for a full-access lane member", async () => {
+    const { deps, landings } = ownedDeps({
+      hasUncommittedChanges: async () => false,
+      resolveHeadSha: async () => "head-after-selfcommit",
+    });
+    const committer = createLaneCommitter(deps);
+
+    const result = await committer.commit({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-full",
+      laneId: "lane-api",
+      laneWorktreePath: LANE_WORKTREE,
+      preTurnHeadSha: "head-before-turn",
+      ownership: FULL_ACCESS,
+    });
+
+    expect(result).toEqual({
+      status: "adopted",
+      snapshot: {
+        contextId: "context-full",
+        sha: "head-after-selfcommit",
+        committedAt: "2026-04-02T10:00:00.000Z",
+      },
+    });
+    expect(landings).toEqual([]);
   });
 });
 

@@ -32,8 +32,9 @@ import type {
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import type { MutateActiveResult } from "./execution-repository";
 import {
-  createGraphWorkflowExecutionLoop,
+  createGraphWorkflowExecutionLoop as createProductionGraphWorkflowExecutionLoop,
   _resetActiveLoopsForTesting,
+  type GraphWorkflowExecutionLoopDeps,
 } from "./execution-loop";
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
@@ -41,6 +42,16 @@ import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
+
+/** Synthetic worktrees in this suite have no Git index to prepare. */
+function createGraphWorkflowExecutionLoop(
+  deps: GraphWorkflowExecutionLoopDeps,
+) {
+  return createProductionGraphWorkflowExecutionLoop({
+    ...deps,
+    resyncSharedIndex: deps.resyncSharedIndex ?? (async () => {}),
+  });
+}
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -187,6 +198,7 @@ function createParallelWorktreesStub(): ParallelWorktreesStub {
     return {
       worktreePath: `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`,
       branchName: `csm/${input.sessionDir}-${input.contextId}`,
+      ignoredBaseline: [],
     };
   }
 
@@ -3327,6 +3339,7 @@ describe("execution loop — parallel integration", () => {
         includedContextIds: [contextId],
         lastCommittingContextId: contextId,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T12:00:00.000Z",
         updatedAt: "2026-03-27T12:01:00.000Z",
       };
@@ -3340,6 +3353,7 @@ describe("execution loop — parallel integration", () => {
       includedContextIds: [],
       lastCommittingContextId: null,
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: "2026-03-27T12:00:00.000Z",
       updatedAt: "2026-03-27T12:00:00.000Z",
     };

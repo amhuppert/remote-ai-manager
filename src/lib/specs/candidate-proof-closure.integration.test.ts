@@ -818,6 +818,7 @@ function workflowLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
+    ignoredBaseline: [],
     createdAt: now,
     updatedAt: now,
   };

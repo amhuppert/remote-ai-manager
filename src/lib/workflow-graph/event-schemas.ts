@@ -684,6 +684,9 @@ export const graphWorkflowPlanRepairEventSchema = z.object({
     "max_iterations",
     // D4 R12: a loop that exhausted a pass budget is repairable too.
     "loop_limit_reached",
+    // Lightweight parallelism R8: lane drift is repaired by widening a
+    // member's ownership.
+    "ownership_violation",
   ]),
   /** The loop a `loop_limit_reached` round repaired; null for context halts. */
   loopGroupId: z.string().nullable().default(null),

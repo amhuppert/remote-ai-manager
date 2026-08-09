@@ -156,7 +156,11 @@ function createWorktreesStub(
     const worktreePath = laneWorktreePath(projectPath, input.laneId);
     mkdirSync(worktreePath, { recursive: true });
     if (options.onProvision) await options.onProvision(input);
-    return { worktreePath, branchName: `csm/${SESSION_DIR}-${input.laneId}` };
+    return {
+      worktreePath,
+      branchName: `csm/${SESSION_DIR}-${input.laneId}`,
+      ignoredBaseline: [],
+    };
   }
 
   return {
@@ -246,6 +250,7 @@ function makeFixture(input: {
       includedContextIds: ["context-plan"],
       lastCommittingContextId: "context-plan",
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: timestamp,
       updatedAt: timestamp,
     },
@@ -262,6 +267,7 @@ function makeFixture(input: {
       includedContextIds: ["context-plan"],
       lastCommittingContextId: "context-plan",
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: timestamp,
       updatedAt: timestamp,
     };

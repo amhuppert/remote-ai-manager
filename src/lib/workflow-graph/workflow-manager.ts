@@ -2786,6 +2786,9 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
               includedContextIds: [...inheritedIncluded],
               lastCommittingContextId: mint.parentContextId,
               commitSnapshots: [],
+              // Captured by provisioning, after the init script ran: what this
+              // lane's members inherited rather than wrote (R8, decision D8).
+              ignoredBaseline: [...result.ignoredBaseline],
               createdAt: provisionTimestamp,
               updatedAt: provisionTimestamp,
             };

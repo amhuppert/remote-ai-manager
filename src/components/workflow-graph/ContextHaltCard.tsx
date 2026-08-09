@@ -449,6 +449,23 @@ export function formatGraphWorkflowHaltReason(
               "Raise the pass cap or amend the exit predicate while the execution is quiescent, then resume. Completed passes are never re-run.",
             tone: "attention",
           };
+    case "ownership_violation":
+      return {
+        headline: `Lane "${reason.laneId}" changed ${reason.unattributedPaths.length} path(s) no member owns`,
+        // Same amber `<code>` locator list the dirty-path halts use, so a
+        // machine locator reads the same wherever a halt reports one.
+        detail: (
+          <ul className={haltPathsClass}>
+            {reason.unattributedPaths.map((unattributed) => (
+              <li key={unattributed}>
+                <code>{unattributed}</code>
+              </li>
+            ))}
+          </ul>
+        ),
+        action: `Found while "${reason.contextId}" landed — the lane cannot say which member wrote them. Widen a member's ownership to cover these paths, or remove the writes, then resume.`,
+        tone: "attention",
+      };
   }
 }
 

@@ -164,6 +164,7 @@ describe("loop crash and restart safety (R9.4)", () => {
       includedContextIds: [],
       lastCommittingContextId: null,
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: NOW,
       updatedAt: NOW,
     };

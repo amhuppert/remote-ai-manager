@@ -531,6 +531,16 @@ function haltReasonsEqual(
         previous.pass === next.pass &&
         previous.maxPasses === next.maxPasses
       );
+    case "ownership_violation":
+      return (
+        next.type === "ownership_violation" &&
+        previous.laneId === next.laneId &&
+        // The reporting context is part of the identity: the same lane can drift
+        // again after a repair, and the member that noticed says which landing
+        // it was found at.
+        previous.contextId === next.contextId &&
+        arraysEqual(previous.unattributedPaths, next.unattributedPaths)
+      );
   }
 
   return assertNever(previous);

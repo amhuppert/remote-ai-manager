@@ -57,27 +57,70 @@ beforeEach(() => {
 });
 
 describe("hasUncommittedChanges", () => {
-  it("returns true when git status has output", async () => {
-    mockGitSuccess(" M src/index.ts\n?? new-file.ts\n");
-    const result = await ops.hasUncommittedChanges("/worktree");
-    expect(result).toBe(true);
-    expect(gitMock).toHaveBeenCalledWith(
-      ["status", "--porcelain", "--untracked-files=all"],
-      "/worktree",
-      expect.anything(),
-    );
+  /** rev-parse HEAD^{tree}, then the two nominating probes. */
+  function mockProbes(diff: string, others: string) {
+    mockGitSequence([
+      { stdout: "headtree0000\n" },
+      { stdout: diff },
+      { stdout: others },
+    ]);
+  }
+
+  it("returns false without opening a private index when nothing is nominated", async () => {
+    mockProbes("", "");
+    expect(await ops.hasUncommittedChanges("/worktree")).toBe(false);
+    // Three calls and no more: a clean tree hashes nothing.
+    expect(gitMock).toHaveBeenCalledTimes(3);
+    expect(gitMock.mock.calls[0]![0]).toEqual(["rev-parse", "HEAD^{tree}"]);
   });
 
-  it("returns false when git status is empty", async () => {
-    mockGitSuccess("");
-    const result = await ops.hasUncommittedChanges("/worktree");
-    expect(result).toBe(false);
+  it("stages only the nominated paths into a private index and compares the tree it writes", async () => {
+    mockGitSequence([
+      { stdout: "headtree0000\n" },
+      { stdout: "src/index.ts\0" },
+      { stdout: "new-file.ts\0" },
+      { stdout: "/repo/.git\n" },
+      { stdout: "" }, // read-tree
+      { stdout: "" }, // add
+      { stdout: "differenttree\n" }, // write-tree
+    ]);
+
+    expect(await ops.hasUncommittedChanges("/worktree")).toBe(true);
+    expect(gitMock.mock.calls[5]![0]).toEqual([
+      "--literal-pathspecs",
+      "add",
+      "--all",
+      "--",
+      "src/index.ts",
+      "new-file.ts",
+    ]);
   });
 
-  it("returns false for whitespace-only output", async () => {
-    mockGitSuccess("   \n  ");
-    const result = await ops.hasUncommittedChanges("/worktree");
-    expect(result).toBe(false);
+  it("reports no work when the nominated paths write back HEAD's own tree, which is the stale-index case", async () => {
+    mockGitSequence([
+      { stdout: "headtree0000\n" },
+      { stdout: "src/api/handler.ts\0" },
+      { stdout: "" },
+      { stdout: "/repo/.git\n" },
+      { stdout: "" },
+      { stdout: "" },
+      { stdout: "headtree0000\n" },
+    ]);
+
+    expect(await ops.hasUncommittedChanges("/worktree")).toBe(false);
+  });
+
+  it("falls back to status on an unborn branch, where there is no HEAD to differ from", async () => {
+    mockGitSequence([
+      { error: new Error("fatal: ambiguous argument 'HEAD'") },
+      { stdout: "?? first.ts\n" },
+    ]);
+    expect(await ops.hasUncommittedChanges("/worktree")).toBe(true);
+    expect(gitMock.mock.calls[1]![0]).toEqual([
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+    ]);
   });
 });
 
@@ -140,9 +183,27 @@ describe("getHeadCommit", () => {
 });
 
 describe("commitChanges", () => {
+  /**
+   * What `hasUncommittedChanges` reads before it can say "yes, there is work":
+   * HEAD's tree, the two nominating probes, then the private-index staging that
+   * settles whether the nominees really differ. These tests are about what
+   * happens AFTER that verdict, so they prepend it rather than restate it.
+   */
+  const DIRTY_VERDICT = [
+    { stdout: "headtree0000\n" },
+    { stdout: "file.ts\0" },
+    { stdout: "" },
+    { stdout: "/repo/.git\n" },
+    { stdout: "" },
+    { stdout: "" },
+    { stdout: "differenttree\n" },
+  ];
+  /** Index of the first call `commitChanges` makes on its own. */
+  const AFTER_VERDICT = DIRTY_VERDICT.length;
+
   it("stages all and commits, returning the hash", async () => {
     mockGitSequence([
-      { stdout: " M file.ts\n" },
+      ...DIRTY_VERDICT,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
     ]);
@@ -150,8 +211,12 @@ describe("commitChanges", () => {
     const result = await ops.commitChanges("/worktree", "Add feature");
     expect(result.hash).toBe("abc1234");
 
-    expect(gitMock.mock.calls[1]![0]).toEqual(["add", "-A"]);
-    expect(gitMock.mock.calls[2]![0]).toEqual(["commit", "-m", "Add feature"]);
+    expect(gitMock.mock.calls[AFTER_VERDICT]![0]).toEqual(["add", "-A"]);
+    expect(gitMock.mock.calls[AFTER_VERDICT + 1]![0]).toEqual([
+      "commit",
+      "-m",
+      "Add feature",
+    ]);
   });
 
   it("throws when commit message is empty", async () => {
@@ -165,6 +230,9 @@ describe("commitChanges", () => {
 
   it("throws when there are no uncommitted changes and no merge in progress", async () => {
     mockGitSequence([
+      // HEAD tree, the two nominating probes, then the MERGE_HEAD check.
+      { stdout: "headtree0000\n" },
+      { stdout: "" },
       { stdout: "" },
       { error: new Error("fatal: Needed a single revision") },
     ]);
@@ -175,6 +243,10 @@ describe("commitChanges", () => {
 
   it("commits with empty porcelain when a merge is in progress (take-ours resolution)", async () => {
     mockGitSequence([
+      // A take-ours resolution leaves the tree matching HEAD and nothing
+      // untracked, so both nominating probes come back empty.
+      { stdout: "headtree0000\n" },
+      { stdout: "" },
       { stdout: "" },
       { stdout: "abc1234def5678\n" },
       { stdout: "" },
@@ -187,13 +259,13 @@ describe("commitChanges", () => {
     );
     expect(result.hash).toBe("abc1234");
 
-    expect(gitMock.mock.calls[1]![0]).toEqual([
+    expect(gitMock.mock.calls[3]![0]).toEqual([
       "rev-parse",
       "-q",
       "--verify",
       "MERGE_HEAD",
     ]);
-    expect(gitMock.mock.calls[3]![0]).toEqual([
+    expect(gitMock.mock.calls[5]![0]).toEqual([
       "commit",
       "-m",
       "resolve merge conflicts",
@@ -202,7 +274,7 @@ describe("commitChanges", () => {
 
   it("passes --no-verify when skipHooks is true", async () => {
     mockGitSequence([
-      { stdout: " M file.ts\n" },
+      ...DIRTY_VERDICT,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] WIP commit\n 1 file changed\n" },
     ]);
@@ -212,7 +284,7 @@ describe("commitChanges", () => {
     });
     expect(result.hash).toBe("abc1234");
 
-    expect(gitMock.mock.calls[2]![0]).toEqual([
+    expect(gitMock.mock.calls[AFTER_VERDICT + 1]![0]).toEqual([
       "commit",
       "-m",
       "WIP commit",
@@ -222,19 +294,23 @@ describe("commitChanges", () => {
 
   it("does not pass --no-verify by default", async () => {
     mockGitSequence([
-      { stdout: " M file.ts\n" },
+      ...DIRTY_VERDICT,
       { stdout: "" },
       { stdout: "[csm/my-session abc1234] Add feature\n 1 file changed\n" },
     ]);
 
     await ops.commitChanges("/worktree", "Add feature");
 
-    expect(gitMock.mock.calls[2]![0]).toEqual(["commit", "-m", "Add feature"]);
+    expect(gitMock.mock.calls[AFTER_VERDICT + 1]![0]).toEqual([
+      "commit",
+      "-m",
+      "Add feature",
+    ]);
   });
 
   it("returns empty hash when git output format is unexpected", async () => {
     mockGitSequence([
-      { stdout: " M file.ts\n" },
+      ...DIRTY_VERDICT,
       { stdout: "" },
       { stdout: "Unexpected output format" },
     ]);

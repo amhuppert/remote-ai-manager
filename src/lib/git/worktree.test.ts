@@ -1,14 +1,39 @@
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  symlink,
+  utimes,
+  writeFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
 import {
   createWorktreeOperations,
   parseDirtyPaths,
+  parseWorktreeStatusV2,
+  readWorktreeStatusV2,
+  readIgnoredContents,
+  readIgnoredEntries,
   ensureCcArtifactsExcluded,
   CC_ARTIFACTS_IGNORE_PATTERN,
 } from "./worktree";
+
+async function writeStatusFile(
+  repo: string,
+  relative: string,
+  content: string,
+): Promise<void> {
+  const target = path.join(repo, relative);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, content, "utf-8");
+}
 
 const gitMock = vi.fn();
 
@@ -840,5 +865,246 @@ describe("abortInProgressMerge", () => {
     await expect(ops.abortInProgressMerge("/worktree")).rejects.toThrow(
       "could not abort",
     );
+  });
+});
+
+describe("parseWorktreeStatusV2", () => {
+  it("reads the path out of each record kind, past the fixed fields that precede it", () => {
+    const stdout = [
+      "1 .M N... 100644 100644 100644 aaa bbb src/one.txt",
+      "u UU N... 100644 100644 100644 100644 aaa bbb ccc src/conflict.txt",
+      "? src/untracked.txt",
+      "! build/",
+      "",
+    ].join("\0");
+
+    expect(parseWorktreeStatusV2(stdout)).toEqual([
+      { path: "src/one.txt", originalPath: null, kind: "changed" },
+      { path: "src/conflict.txt", originalPath: null, kind: "unmerged" },
+      { path: "src/untracked.txt", originalPath: null, kind: "untracked" },
+      { path: "build", originalPath: null, kind: "ignored" },
+    ]);
+  });
+
+  it("consumes a rename's source from the following field, so both endpoints are attributable", () => {
+    const stdout = [
+      "2 R. N... 100644 100644 100644 aaa bbb R100 src/moved.txt",
+      "src/moveme.txt",
+      "? src/after.txt",
+      "",
+    ].join("\0");
+
+    expect(parseWorktreeStatusV2(stdout)).toEqual([
+      {
+        path: "src/moved.txt",
+        originalPath: "src/moveme.txt",
+        kind: "renamed",
+      },
+      { path: "src/after.txt", originalPath: null, kind: "untracked" },
+    ]);
+  });
+
+  it("keeps paths with spaces and skips branch header lines", () => {
+    const stdout = [
+      "# branch.oid aaa",
+      "# branch.head lane-1",
+      "1 .M N... 100644 100644 100644 aaa bbb src/two words.txt",
+      "",
+    ].join("\0");
+
+    expect(parseWorktreeStatusV2(stdout)).toEqual([
+      { path: "src/two words.txt", originalPath: null, kind: "changed" },
+    ]);
+  });
+});
+
+describe("readWorktreeStatusV2 (real git)", () => {
+  let statusRepo: string;
+
+  beforeEach(async () => {
+    statusRepo = await mkdtemp(path.join(tmpdir(), "cc-worktree-status-"));
+    await defaultGitClient.git(
+      ["init", "--initial-branch=lane", "."],
+      statusRepo,
+    );
+    await defaultGitClient.git(
+      ["config", "user.email", "engine@command-center.test"],
+      statusRepo,
+    );
+    await defaultGitClient.git(
+      ["config", "user.name", "Command Center"],
+      statusRepo,
+    );
+    await writeStatusFile(statusRepo, ".gitignore", "build/\n*.log\n");
+    await writeStatusFile(statusRepo, "src/one.txt", "one\n");
+    await writeStatusFile(statusRepo, "src/moveme.txt", "move\n");
+    await defaultGitClient.git(["add", "-A"], statusRepo);
+    await defaultGitClient.git(["commit", "-m", "base"], statusRepo);
+  });
+
+  afterEach(async () => {
+    await rm(statusRepo, { recursive: true, force: true });
+  });
+
+  it("enumerates modifications, untracked files, and both rename endpoints without quoting names that contain a newline", async () => {
+    await writeStatusFile(statusRepo, "src/one.txt", "one changed\n");
+    await defaultGitClient.git(
+      ["mv", "src/moveme.txt", "src/moved.txt"],
+      statusRepo,
+    );
+    await writeStatusFile(statusRepo, "src/new\nline.txt", "newline\n");
+    await writeStatusFile(statusRepo, 'src/we ird".txt', "quotes\n");
+
+    const entries = await readWorktreeStatusV2(statusRepo);
+
+    expect(entries).toContainEqual({
+      path: "src/one.txt",
+      originalPath: null,
+      kind: "changed",
+    });
+    expect(entries).toContainEqual({
+      path: "src/moved.txt",
+      originalPath: "src/moveme.txt",
+      kind: "renamed",
+    });
+    // Raw bytes, not git's C-style quoting: the classifier compares these
+    // against declared ownership, and a quoted name would never match.
+    expect(entries).toContainEqual({
+      path: "src/new\nline.txt",
+      originalPath: null,
+      kind: "untracked",
+    });
+    expect(entries).toContainEqual({
+      path: 'src/we ird".txt',
+      originalPath: null,
+      kind: "untracked",
+    });
+  });
+
+  it("omits ignored paths, which have their own enumeration", async () => {
+    await writeStatusFile(statusRepo, "build/out.js", "built\n");
+    await writeStatusFile(statusRepo, "debug.log", "log\n");
+
+    expect(await readWorktreeStatusV2(statusRepo)).toEqual([]);
+  });
+
+  it("reports every untracked file individually rather than collapsing a new directory", async () => {
+    await writeStatusFile(statusRepo, "generated/a.ts", "a\n");
+    await writeStatusFile(statusRepo, "generated/b.ts", "b\n");
+
+    expect(await readWorktreeStatusV2(statusRepo)).toEqual([
+      { path: "generated/a.ts", originalPath: null, kind: "untracked" },
+      { path: "generated/b.ts", originalPath: null, kind: "untracked" },
+    ]);
+  });
+
+  it("reports a deletion inside the worktree", async () => {
+    await rm(path.join(statusRepo, "src/one.txt"));
+
+    expect(await readWorktreeStatusV2(statusRepo)).toEqual([
+      { path: "src/one.txt", originalPath: null, kind: "changed" },
+    ]);
+  });
+
+  it("enumerates ignored content at both grains, so a file inside a wholly-ignored directory is visible even though the collapsed form names only the directory", async () => {
+    await writeStatusFile(statusRepo, "build/out.js", "built\n");
+    await writeStatusFile(statusRepo, "build/nested/chunk.js", "chunk\n");
+    await writeStatusFile(statusRepo, "debug.log", "log\n");
+
+    const contents = await readIgnoredContents(statusRepo);
+
+    // The collapsed grain is what a baseline can afford to store, and it cannot
+    // tell `build` with one file from `build` with three.
+    expect(contents.roots).toEqual(["build", "debug.log"]);
+    expect(contents.entries.map((entry) => entry.path)).toEqual([
+      "build/nested/chunk.js",
+      "build/out.js",
+      "debug.log",
+    ]);
+    expect(await readIgnoredEntries(statusRepo)).toEqual(contents.entries);
+  });
+
+  it("fingerprints each ignored file so a rewrite in place is visible, though the path list is unchanged", async () => {
+    await writeStatusFile(statusRepo, "build/out.js", "built\n");
+    const before = await readIgnoredEntries(statusRepo);
+
+    await writeStatusFile(statusRepo, "build/out.js", "rebuilt, differently\n");
+    const after = await readIgnoredEntries(statusRepo);
+
+    expect(after.map((entry) => entry.path)).toEqual(
+      before.map((entry) => entry.path),
+    );
+    expect(after[0]?.fingerprint).not.toBe(before[0]?.fingerprint);
+  });
+
+  it("fingerprints an overwrite that restores the file's exact size AND modification time, as a metadata-preserving copy leaves it", async () => {
+    // The adversarial shape: `cp -p` (or `touch -r`) writes new bytes and then
+    // puts the old size and mtime back, so metadata alone does not prove which
+    // bytes are present. The fingerprint must carry the byte digest itself.
+    // Pinned to a whole millisecond so the restore is exact at NANOSECOND
+    // precision: `utimes` cannot express the sub-millisecond part of a natural
+    // mtime, and a restore that misses by nanoseconds would prove nothing.
+    const pinned = new Date("2020-01-02T03:04:05.000Z");
+    await writeStatusFile(statusRepo, "build/out.js", "aaaaaa\n");
+    const target = path.join(statusRepo, "build/out.js");
+    await utimes(target, pinned, pinned);
+    const original = await lstat(target, { bigint: true });
+    const before = await readIgnoredEntries(statusRepo);
+    const originalDigest = createHash("sha256").update("aaaaaa\n").digest("hex");
+    expect(before[0]?.fingerprint).toContain(originalDigest);
+
+    await writeFile(target, "bbbbbb\n", "utf-8");
+    await utimes(target, pinned, pinned);
+    const restored = await lstat(target, { bigint: true });
+    expect(restored.size).toBe(original.size);
+    expect(restored.mtimeNs).toBe(original.mtimeNs);
+
+    const after = await readIgnoredEntries(statusRepo);
+    const replacementDigest = createHash("sha256")
+      .update("bbbbbb\n")
+      .digest("hex");
+
+    expect(after[0]?.fingerprint).toContain(replacementDigest);
+    expect(after[0]?.fingerprint).not.toBe(before[0]?.fingerprint);
+  });
+
+  it("makes unreadable content fail closed while retaining the filesystem identity that was observable", async () => {
+    const target = path.join(statusRepo, "build/private.bin");
+    await writeStatusFile(statusRepo, "build/private.bin", "before\n");
+    await chmod(target, 0o000);
+    const original = await lstat(target, { bigint: true });
+    const before = await readIgnoredEntries(statusRepo);
+
+    await rm(target);
+    await writeStatusFile(statusRepo, "build/private.bin", "after!\n");
+    await chmod(target, 0o000);
+    const replacement = await lstat(target, { bigint: true });
+    const after = await readIgnoredEntries(statusRepo);
+
+    expect(before[0]?.fingerprint).toContain(`:${original.ino}:`);
+    expect(after[0]?.fingerprint).toContain(`:${replacement.ino}:`);
+    expect(after[0]?.fingerprint).not.toBe(before[0]?.fingerprint);
+  });
+
+  it("fingerprints a dangling symlink from its literal target without following it", async () => {
+    await writeStatusFile(statusRepo, "build/out.js", "built\n");
+    const target = path.join(statusRepo, "build/missing-target");
+    await symlink(target, path.join(statusRepo, "build/dangling.js"));
+
+    const entries = await readIgnoredEntries(statusRepo);
+    const dangling = entries.find(
+      (entry) => entry.path === "build/dangling.js",
+    );
+
+    expect(dangling?.fingerprint).toContain(
+      createHash("sha256").update(target).digest("hex"),
+    );
+  });
+
+  it("reports no ignored content for a worktree that has none", async () => {
+    expect(await readIgnoredContents(statusRepo)).toEqual({
+      entries: [],
+      roots: [],
+    });
   });
 });

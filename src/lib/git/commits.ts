@@ -1,5 +1,6 @@
 import { defaultGitClient, type GitClient } from "./client";
 import { parseDiff } from "./diff";
+import { createOwnedLandingOperations } from "./owned-landing";
 import { createLogger } from "../logging";
 import type { CommitLogEntry, SessionDiff } from "./schemas";
 
@@ -36,6 +37,9 @@ function parseLogEntry(line: string): CommitLogEntry | null {
  * Tests can inject a fake client; production uses the default singleton.
  */
 export function createCommitsOperations(client: GitClient = defaultGitClient) {
+  // Built from the same client, so an injected one governs both halves.
+  const { worktreeMatchesHead } = createOwnedLandingOperations(client);
+
   async function git(
     cwd: string,
     args: string[],
@@ -43,14 +47,32 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     return client.git(args, cwd, { maxBuffer: MAX_BUFFER });
   }
 
-  /** Check if a worktree has uncommitted changes (staged or unstaged) */
+  /**
+   * Whether a worktree holds work to commit — precisely, whether `git add -A &&
+   * git commit` would produce a commit.
+   *
+   * That is deliberately a comparison of the WORKING TREE against HEAD rather
+   * than a reading of the index, which can disagree with both while the
+   * worktree matches HEAD exactly: a graph-workflow lane lands owned paths
+   * through a private index and never writes the shared one, and a plain `git
+   * add` followed by reverting the file does the same thing by hand. Believing
+   * the index there sends callers into a commit that stages the phantom away
+   * and then fails with "nothing to commit". `worktreeMatchesHead` owns the
+   * comparison — see `git/owned-landing.ts` for why the index cannot answer it.
+   */
   async function hasUncommittedChanges(worktreePath: string): Promise<boolean> {
-    const { stdout } = await git(worktreePath, [
-      "status",
-      "--porcelain",
-      "--untracked-files=all",
-    ]);
-    return stdout.trim().length > 0;
+    try {
+      return !(await worktreeMatchesHead(worktreePath));
+    } catch {
+      // No HEAD to compare against (unborn branch): nothing is committed, so
+      // the index cannot disagree with it and status is the exact answer.
+      const { stdout } = await git(worktreePath, [
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+      ]);
+      return stdout.trim().length > 0;
+    }
   }
 
   /** Summarize the worktree's current changes as agent-readable text:

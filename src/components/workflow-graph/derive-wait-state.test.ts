@@ -67,6 +67,7 @@ function makeLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
+    ignoredBaseline: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,

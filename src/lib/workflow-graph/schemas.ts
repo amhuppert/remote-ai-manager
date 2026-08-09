@@ -287,6 +287,24 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
      */
     summary: z.string().nullable().default(null),
   }),
+  /**
+   * A landing found worktree changes that no current lane member's declared
+   * ownership, scratch, or payload directory accounts for (lightweight
+   * parallelism R8). Raised per LANE, not per context: git cannot attribute a
+   * shared worktree's changes to an agent, so `contextId` is the member whose
+   * landing noticed — the reporter, never an accusation.
+   *
+   * Resumable and repairable by construction: the sanctioned remedy is to widen
+   * a member's ownership through the live-edit path (or to remove the write)
+   * and resume, which is exactly what plan repair is able to do unattended.
+   */
+  z.object({
+    type: z.literal("ownership_violation"),
+    laneId: z.string().trim().min(1),
+    contextId: z.string().trim().min(1),
+    unattributedPaths: z.array(z.string().min(1)).max(50).default([]),
+    message: z.string(),
+  }),
   z.object({
     type: z.literal("collaboration_failure"),
     status: z.enum([
@@ -332,6 +350,29 @@ export type GraphWorkflowExecutionLaneCommitSnapshot = z.infer<
   typeof graphWorkflowExecutionLaneCommitSnapshotSchema
 >;
 
+/**
+ * One entry of a lane's provisioning-time ignored baseline: an ignored path as
+ * the ignore rules name it, plus a digest of the files it actually contained.
+ *
+ * The digest is what makes the baseline usable. Git names a wholly-ignored
+ * directory by the directory alone however many files are inside it, so a
+ * baseline of names could only ever answer "was `node_modules` here?" — never
+ * "is what is under it still what provisioning installed?". Recording the names
+ * of all those files instead would put a repo-sized list in the execution's
+ * persisted state; a digest over them costs one line and answers the same
+ * question, at the price of naming the directory rather than the new file when
+ * they differ.
+ */
+export const graphWorkflowIgnoredBaselineEntrySchema = z.object({
+  /** Repo-relative, no trailing slash even for a directory. */
+  path: z.string().min(1),
+  /** Over the sorted paths and byte/filesystem fingerprints beneath it. */
+  digest: z.string().min(1),
+});
+export type GraphWorkflowIgnoredBaselineEntry = z.infer<
+  typeof graphWorkflowIgnoredBaselineEntrySchema
+>;
+
 export const graphWorkflowExecutionLaneStateSchema = z.object({
   laneId: graphWorkflowExecutionLaneIdSchema,
   kind: graphWorkflowExecutionLaneKindSchema,
@@ -343,6 +384,18 @@ export const graphWorkflowExecutionLaneStateSchema = z.object({
   commitSnapshots: z
     .array(graphWorkflowExecutionLaneCommitSnapshotSchema)
     .default([]),
+  /**
+   * The ignored content this lane's worktree already held when it was
+   * provisioned (R8, decision D8). Drift classification gives `.gitignore` no
+   * blanket exemption, so it needs to know which ignored content predates the
+   * members — everything else ignored and unowned is a write nobody declared.
+   *
+   * Empty on the session lane and on every lane recorded before the field
+   * existed, which reads as "no ignored path is pre-existing". That is the
+   * fail-closed direction: it can only surface a halt an operator dismisses,
+   * never hide a write.
+   */
+  ignoredBaseline: z.array(graphWorkflowIgnoredBaselineEntrySchema).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -1328,6 +1381,10 @@ export const planRepairRoundSchema = z.object({
     // re-run, so counting per context would give every fresh pass a fresh
     // budget of repairs.
     "loop_limit_reached",
+    // Lane drift (lightweight parallelism R8). Accounted per CONTEXT like the
+    // other two context halts — the reporting member is the subject whose
+    // ownership the repair widens.
+    "ownership_violation",
   ]),
   /** The loop a `loop_limit_reached` round repairs; null for context halts. */
   loopGroupId: z.string().trim().min(1).nullable().default(null),

@@ -2567,6 +2567,7 @@ describe("graph workflow manager", () => {
               includedContextIds: ["context-plan"],
               lastCommittingContextId: "context-plan",
               commitSnapshots: [],
+              ignoredBaseline: [],
               createdAt: "2026-03-27T15:00:00.000Z",
               updatedAt: "2026-03-27T15:00:00.000Z",
             },
@@ -2767,6 +2768,7 @@ describe("graph workflow manager", () => {
             includedContextIds: ["context-plan"],
             lastCommittingContextId: "context-plan",
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2779,6 +2781,7 @@ describe("graph workflow manager", () => {
             includedContextIds: ["context-implement"],
             lastCommittingContextId: "context-implement",
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2791,6 +2794,7 @@ describe("graph workflow manager", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -2938,6 +2942,7 @@ describe("graph workflow manager", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -3008,6 +3013,7 @@ describe("graph workflow manager", () => {
             includedContextIds: [],
             lastCommittingContextId: null,
             commitSnapshots: [],
+            ignoredBaseline: [],
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:00.000Z",
           },
@@ -4791,6 +4797,7 @@ describe("graph workflow manager", () => {
         return {
           worktreePath: `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`,
           branchName: `csm/${input.sessionDir}-${input.contextId}`,
+          ignoredBaseline: [],
         };
       }
 
@@ -6365,6 +6372,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6457,6 +6465,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6469,6 +6478,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-implement"],
         lastCommittingContextId: "context-implement",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6481,6 +6491,7 @@ describe("graph workflow manager", () => {
         includedContextIds: [],
         lastCommittingContextId: null,
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6707,6 +6718,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6850,6 +6862,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -6944,6 +6957,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -7059,6 +7073,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -7141,6 +7156,7 @@ describe("graph workflow manager", () => {
         includedContextIds: ["context-plan"],
         lastCommittingContextId: "context-plan",
         commitSnapshots: [],
+        ignoredBaseline: [],
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
       };
@@ -7735,6 +7751,7 @@ describe("graph workflow manager", () => {
                 includedContextIds: ["context-plan"],
                 lastCommittingContextId: "context-plan",
                 commitSnapshots: [],
+                ignoredBaseline: [],
                 createdAt: "2026-03-27T15:00:00.000Z",
                 updatedAt: "2026-03-27T15:00:00.000Z",
               },

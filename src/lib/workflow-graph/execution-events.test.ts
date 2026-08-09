@@ -892,6 +892,7 @@ describe("graph workflow execution event publisher", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-04-02T07:59:00.000Z",
           updatedAt: "2026-04-02T07:59:00.000Z",
         },
@@ -945,6 +946,7 @@ describe("graph workflow execution event publisher", () => {
       includedContextIds: [],
       lastCommittingContextId: null,
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: "2026-04-02T07:59:00.000Z",
       updatedAt: "2026-04-02T07:59:00.000Z",
     };
@@ -1003,6 +1005,7 @@ describe("graph workflow execution event publisher", () => {
       includedContextIds: ["context-plan"],
       lastCommittingContextId: "context-plan",
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: "2026-04-02T07:59:00.000Z",
       updatedAt: "2026-04-02T07:59:00.000Z",
     };
@@ -1048,6 +1051,7 @@ describe("graph workflow execution event publisher", () => {
       includedContextIds: ["context-plan"],
       lastCommittingContextId: "context-plan",
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: "2026-07-18T13:00:00.000Z",
       updatedAt: "2026-07-18T13:00:00.000Z",
     };

@@ -224,6 +224,7 @@ function createWorktreeStub(): ParallelWorktrees {
   ): Promise<ProvisionResult> => ({
     worktreePath: `${input.projectPath}/.worktrees/${input.sessionDir}.${input.contextId}`,
     branchName: `csm/${input.sessionDir}-${input.contextId}`,
+    ignoredBaseline: [],
   });
   const provisionLane = (input: ProvisionLaneInput): Promise<ProvisionResult> =>
     provision({
@@ -730,6 +731,9 @@ export async function runEngineScenario<T>(
         commit: async () => ({ status: "skipped" }),
         resolveHead: async () => null,
       },
+      // Compatibility scenarios use synthetic worktree paths; production's
+      // full-access index preparation is covered by execution-loop tests.
+      resyncSharedIndex: async () => {},
       executionTargetResolver: createExecutionTargetResolver(),
       getSession,
       eventPublisher: publisher,

@@ -251,6 +251,7 @@ describe("workflow-graph validation", () => {
       includedContextIds,
       lastCommittingContextId: null,
       commitSnapshots: [],
+      ignoredBaseline: [],
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -409,6 +410,7 @@ describe("workflow-graph validation", () => {
           includedContextIds: ["context-plan"],
           lastCommittingContextId: "context-plan",
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T12:00:00.000Z",
           updatedAt: "2026-03-27T12:00:00.000Z",
         },
@@ -421,6 +423,7 @@ describe("workflow-graph validation", () => {
           includedContextIds: [],
           lastCommittingContextId: null,
           commitSnapshots: [],
+          ignoredBaseline: [],
           createdAt: "2026-03-27T12:00:00.000Z",
           updatedAt: "2026-03-27T12:00:00.000Z",
         },

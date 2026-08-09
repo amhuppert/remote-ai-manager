@@ -56,6 +56,7 @@ function makeLane(
     includedContextIds: [],
     lastCommittingContextId: null,
     commitSnapshots: [],
+    ignoredBaseline: [],
     createdAt: timestamp,
     updatedAt: timestamp,
     ...overrides,

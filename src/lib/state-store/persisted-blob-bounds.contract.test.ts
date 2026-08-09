@@ -190,6 +190,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
       "executionLanes.*.commitSnapshots":
         "tracked: grows one entry per lane commit with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
+      "executionLanes.*.ignoredBaseline":
+        "bounded: written ONCE at lane provisioning and never appended to, one entry per ignored path as the repo's ignore rules name it (a whole-directory pattern like `node_modules/` collapses to one entry, whose per-file contents are carried as a fixed-width digest rather than a path list). The per-file comparison manifest lives in the lane's private git metadata rather than this database blob. In graph_workflow_executions.runtime_json.",
       "contextStates.*.reservedOwnership.canonicalPrefixes":
         "bounded: one canonical path per prefix the context's authored placement declares, so it is sized by the definition rather than by the run. In graph_workflow_executions.runtime_json.",
       laneReservations:

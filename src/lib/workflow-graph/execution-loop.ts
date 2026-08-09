@@ -63,6 +63,12 @@ import {
   type RouteSettlementOutcome,
 } from "@/lib/workflow-graph/route-runtime";
 import {
+  createLaneDriftAuditor,
+  type LaneDriftAuditor,
+  type LaneDriftVerdict,
+} from "./lane-drift";
+import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
+import {
   createLandingEvidenceProber,
   type LandingEvidenceProber,
 } from "@/lib/workflow-graph/landing-evidence";
@@ -95,6 +101,7 @@ import {
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalDecision,
+  GraphWorkflowCanonicalOwnership,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionJoinState,
@@ -102,6 +109,9 @@ import type {
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
+
+/** Matches the halt schema's cap on `unattributedPaths`. */
+const MAX_REPORTED_UNATTRIBUTED_PATHS = 50;
 import {
   StaleLoopFenceError,
   isOwnRetiredGeneration,
@@ -210,6 +220,17 @@ export interface GraphWorkflowExecutionLoopDeps {
    * prober.
    */
   landingEvidenceProber?: LandingEvidenceProber;
+  /**
+   * Judges the lane worktree against its members' collective ownership after an
+   * enveloped landing (R8). Defaults to the git-backed auditor.
+   */
+  laneDriftAuditor?: LaneDriftAuditor;
+  /**
+   * Repairs a lane worktree's shared index before a full-access member's first
+   * turn, so an agent's own `git commit -a` cannot publish the deletion of a
+   * path an enveloped sibling landed (R7.2). Defaults to the git-backed resync.
+   */
+  resyncSharedIndex?(worktreePath: string): Promise<void>;
   /**
    * Builds the live-edit core's deps for loop unrolling (D4 R9). Unrolling
    * rides `applyLiveExecutionEdits` through the staging seam, and that core is
@@ -557,6 +578,10 @@ export function createGraphWorkflowExecutionLoop(
   const readRepoConfig = deps.readRepoConfig ?? defaultReadRepoConfig;
   const landingEvidenceProber =
     deps.landingEvidenceProber ?? createLandingEvidenceProber();
+  const laneDriftAuditor = deps.laneDriftAuditor ?? createLaneDriftAuditor();
+  const resyncSharedIndex =
+    deps.resyncSharedIndex ??
+    ((worktreePath: string) => resyncSharedIndexToHead(worktreePath));
   const buildLiveEditDeps = deps.buildLiveEditDeps ?? buildDefaultLiveEditDeps;
   const approvalGateService =
     deps.approvalGateService ??
@@ -1822,6 +1847,46 @@ export function createGraphWorkflowExecutionLoop(
       adoptExecution(next);
     }
 
+    /**
+     * Repair the lane's shared index before a full-access member's first turn
+     * (R7.2).
+     *
+     * An owned landing never touches that index (D7), so a path a sibling
+     * ADDED is in HEAD with no index entry — and `git commit -a`, which an
+     * agent may legitimately run, builds its commit from the index and would
+     * publish the file's deletion. Only a whole-tree member needs this: an
+     * enveloped member cannot write outside its prefixes, so it cannot run git.
+     *
+     * Under the session git lock, the same lock a landing holds, so a sibling
+     * landing cannot interleave with the reset. A failed resync must prevent the
+     * turn: allowing a full-access agent to run against the stale index would
+     * let `git commit -a` publish the deletion of a sibling's newly landed file.
+     */
+    async function prepareLaneForWholeTreeWriter(
+      contextId: string,
+      laneWorktreePath: string,
+    ): Promise<void> {
+      if (
+        execution.contextStates[contextId]?.reservedOwnership?.mode !== "full"
+      ) {
+        return;
+      }
+      try {
+        await deps.sessionGitLock.withSessionGitLock(
+          { projectPath: input.projectPath, sessionName: input.sessionName },
+          () => resyncSharedIndex(laneWorktreePath),
+        );
+      } catch (error) {
+        logger.error("graph-workflow.lane_commit.index_resync_failed", {
+          executionId: execution.id,
+          contextId,
+          laneWorktreePath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    }
+
     async function runContextTask(contextId: string): Promise<void> {
       execLogger?.lifecycle("parallel.context_started", {
         contextId,
@@ -1900,6 +1965,10 @@ export function createGraphWorkflowExecutionLoop(
               } catch {
                 preTurnLaneHeadSha = null;
               }
+              await prepareLaneForWholeTreeWriter(
+                contextId,
+                target.worktreePath,
+              );
               await persistLandingBaseline(contextId, preTurnLaneHeadSha);
             }
           } else if (!laneHeadCaptured) {
@@ -2306,6 +2375,93 @@ export function createGraphWorkflowExecutionLoop(
       await runCommitPhase();
     }
 
+    /**
+     * Judge the lane worktree against every current member's declared surface
+     * after an enveloped landing (R8, decision D8).
+     *
+     * Only enveloped landings audit: a full-access member owns the whole tree,
+     * so there is nothing it could have failed to declare. Runs inside the
+     * merge mutex the landing held, so no sibling landing can move the worktree
+     * between the commit and the reading of it.
+     *
+     * Read failures do not halt. The audit is a backstop for writes the sandbox
+     * could not stop, and turning a status read that failed into a halt would
+     * make it a new way for correct runs to stop.
+     */
+    async function auditLaneDrift(
+      contextId: string,
+      laneId: string,
+      laneWorktreePath: string,
+    ): Promise<void> {
+      const lane = execution.executionLanes[laneId];
+      if (!lane) return;
+
+      const memberOwnerships: GraphWorkflowCanonicalOwnership[] = [];
+      const memberContextIds: string[] = [];
+      for (const state of Object.values(execution.contextStates)) {
+        if (state.laneId !== laneId) continue;
+        // A member that never reached admission wrote nothing, and its
+        // authored placement is not the frozen surface anyone was scoped
+        // against — including it would widen the union on a guess.
+        if (!state.reservedOwnership) continue;
+        memberOwnerships.push(state.reservedOwnership);
+        memberContextIds.push(state.contextId);
+      }
+
+      let verdict: LaneDriftVerdict;
+      try {
+        verdict = await laneDriftAuditor.audit({
+          laneWorktreePath,
+          memberOwnerships,
+          memberContextIds,
+          ignoredBaseline: lane.ignoredBaseline,
+        });
+      } catch (error) {
+        logger.warn("graph-workflow.lane_drift.audit_failed", {
+          executionId: execution.id,
+          contextId,
+          laneId,
+          laneWorktreePath,
+          error: getErrorMessage(error),
+        });
+        return;
+      }
+
+      if (verdict.unattributedPaths.length === 0) return;
+
+      // Capped to what the halt schema persists; the count in the message keeps
+      // the total honest when the list is truncated.
+      const unattributedPaths = verdict.unattributedPaths.slice(
+        0,
+        MAX_REPORTED_UNATTRIBUTED_PATHS,
+      );
+      const reason: GraphWorkflowHaltReason = {
+        type: "ownership_violation",
+        laneId,
+        contextId,
+        unattributedPaths: [...unattributedPaths],
+        message: `Lane "${laneId}" has ${verdict.unattributedPaths.length} change(s) that no current member's ownership, scratch, or payload directory accounts for, found while "${contextId}" landed`,
+      };
+      const haltResult = await deps.workflowManager.recordPendingHaltReason({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason,
+      });
+      execution = haltResult.execution;
+      execLogger?.iteration(contextId, "lane_drift.unattributed", {
+        laneId,
+        unattributedCount: verdict.unattributedPaths.length,
+      });
+      logger.error("graph-workflow.lane_drift.unattributed", {
+        executionId: execution.id,
+        contextId,
+        laneId,
+        laneWorktreePath,
+        unattributedCount: verdict.unattributedPaths.length,
+        unattributedPaths,
+      });
+    }
+
     async function runLaneCommit(
       contextId: string,
       laneId: string,
@@ -2331,6 +2487,12 @@ export function createGraphWorkflowExecutionLoop(
             laneBranchName,
           });
 
+          // An enveloped landing is the only one that audits: a full-access
+          // member owns the whole tree, so no path in the worktree is one it
+          // could have failed to declare (R8).
+          const auditsDrift =
+            execution.contextStates[contextId]?.reservedOwnership?.mode ===
+            "owned";
           const result = await deps.sessionGitLock.withSessionGitLock(
             {
               projectPath: input.projectPath,
@@ -2347,6 +2509,13 @@ export function createGraphWorkflowExecutionLoop(
                 landingToken:
                   execution.contextStates[contextId]?.landingIntent?.token ??
                   null,
+                // The envelope this context was ADMITTED under, not a fresh read
+                // of the definition: what the landing may commit has to be the
+                // same set the turn was allowed to write, or a live edit between
+                // dispatch and landing would widen the commit past the surface
+                // the sibling members were scoped against.
+                ownership:
+                  execution.contextStates[contextId]?.reservedOwnership ?? null,
               }),
           );
 
@@ -2454,6 +2623,9 @@ export function createGraphWorkflowExecutionLoop(
                 sha: snapshot.sha,
               },
             );
+            if (auditsDrift) {
+              await auditLaneDrift(contextId, laneId, laneWorktreePath);
+            }
             return;
           }
 
@@ -2503,6 +2675,9 @@ export function createGraphWorkflowExecutionLoop(
             contextId,
             laneId,
           });
+          if (auditsDrift) {
+            await auditLaneDrift(contextId, laneId, laneWorktreePath);
+          }
         },
       );
     }
@@ -2556,6 +2731,8 @@ export function createGraphWorkflowExecutionLoop(
                 landingToken:
                   execution.contextStates[contextId]?.landingIntent?.token ??
                   null,
+                ownership:
+                  execution.contextStates[contextId]?.reservedOwnership ?? null,
               }),
           );
 

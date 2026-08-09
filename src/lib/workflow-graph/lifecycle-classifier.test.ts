@@ -452,6 +452,13 @@ describe("isResumableHalt", () => {
       message: "the final allowed pass did not satisfy the until predicate",
       summary: null,
     },
+    ownership_violation: {
+      type: "ownership_violation",
+      laneId: "lane-api",
+      contextId: "ctx-1",
+      unattributedPaths: ["scripts/deploy.sh"],
+      message: 'Lane "lane-api" has 1 change no member owns',
+    },
   };
 
   const NON_RESUMABLE = new Set<GraphWorkflowHaltReason["type"]>([

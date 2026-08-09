@@ -1306,6 +1306,18 @@ function buildMaximalExecution(): unknown {
             committedAt: "2026-01-02T03:00:00Z",
           },
         ],
+        ignoredBaseline: [
+          {
+            path: "node_modules",
+            digest: "digest-node-modules",
+            excluded: ["node_modules/.cache/generated"],
+          },
+          {
+            path: "dist/bundle.js",
+            digest: "digest-dist-bundle",
+            excluded: [],
+          },
+        ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T03:00:00Z",
       },
