@@ -1999,6 +1999,7 @@ function bodyFor(
         "",
         `- **Dependencies:** ${dependencies.length > 0 ? dependencies.join(", ") : "None"}`,
         `- **Lane group:** ${payload.laneGroup ?? "One task per lane"}`,
+        `- **Execution lane:** ${payload.executionLane ?? "Single-member lane"}`,
         `- **Touched surfaces:** ${payload.touchedPaths?.join(", ") ?? "Not declared"}`,
         `- **Criterion coverage:** ${criteria.length > 0 ? criteria.join(", ") : "None"}`,
       ].join("\n");

@@ -112,6 +112,7 @@ const RULE_ORDER = [
   "9.9.open-question",
   "9.9.materialized-task-change",
   "9.11.lane-group-cycle",
+  "9.11.lane-group-execution-lane-mismatch",
   "9.12.serialized-plan",
   "9.12.overloaded-task",
   "9.12.conflicting-parallel-surfaces",
@@ -293,6 +294,8 @@ function graphShapeFindings(
     contraction.groups.map((group) => [group.id, group]),
   );
 
+  findings.push(...laneGroupExecutionLaneFindings(contraction, tasksById));
+
   if (contraction.groupCycle !== undefined) {
     const cyclicGroups = contraction.groupCycle
       .map((groupId) => groupsById.get(groupId))
@@ -319,6 +322,45 @@ function graphShapeFindings(
   }
 
   return graphShapeAdvisoryFindings(findings, tasks, criteria, contraction);
+}
+
+/**
+ * Contraction and lane sharing compose only as a validation rule (R12).
+ *
+ * A `laneGroup`'s members become ONE execution context, and a context sits on
+ * exactly one lane, so members declaring different `executionLane` values — or
+ * only some of them declaring one — describe a placement no compilation can
+ * honour. Refusing it here, before propose, is what keeps the compiler from
+ * having to guess which member's intent wins.
+ *
+ * Ungrouped tasks are untouched: distinct contexts sharing a lane is the whole
+ * point of the field, not a conflict.
+ */
+function laneGroupExecutionLaneFindings(
+  contraction: GroupContraction,
+  tasksById: ReadonlyMap<string, RevisionElement>,
+): LintFinding[] {
+  const findings: LintFinding[] = [];
+  for (const group of contraction.groups) {
+    if (group.laneGroup === undefined) continue;
+    const members = group.memberTaskIds.flatMap((taskId) => {
+      const task = tasksById.get(taskId);
+      if (task === undefined || task.payload.kind !== "task") return [];
+      return [{ handle: task.handle, lane: task.payload.executionLane }];
+    });
+    if (new Set(members.map(({ lane }) => lane)).size <= 1) continue;
+    findings.push({
+      ruleId: "9.11.lane-group-execution-lane-mismatch",
+      severity: "blocks_propose",
+      elementHandle: members[0]?.handle ?? group.id,
+      message: `Lane group ${group.laneGroup} mixes execution lanes: ${members
+        .map(({ handle, lane }) => `${handle} → ${lane ?? "none"}`)
+        .join(
+          ", ",
+        )}. Members contracted into one context must all declare the same executionLane or all omit it.`,
+    });
+  }
+  return findings;
 }
 
 function graphShapeAdvisoryFindings(

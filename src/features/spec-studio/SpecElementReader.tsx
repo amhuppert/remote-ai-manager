@@ -501,6 +501,9 @@ function TaskDocument({
         if (payload.laneGroup !== undefined) {
           rows.push({ label: "Lane group", value: payload.laneGroup });
         }
+        if (payload.executionLane !== undefined) {
+          rows.push({ label: "Execution lane", value: payload.executionLane });
+        }
         if (payload.touchedPaths !== undefined) {
           rows.push({
             label: "Touched paths",

@@ -24,6 +24,7 @@ import {
 } from "@/lib/specs/authoring-service";
 import {
   MACHINE_VALIDATION_EVIDENCE_KINDS,
+  executionLaneSchema,
   sectionRoleSchema,
   specElementPayloadSchema,
   taskElementPayloadSchema,
@@ -81,6 +82,9 @@ const CREATE_USAGE =
 
 const TOUCHED_PATH_DESCRIPTION =
   "normalized repo-relative POSIX paths; directories without a trailing slash";
+
+const EXECUTION_LANE_DESCRIPTION =
+  "the lane this task's execution context runs on; tasks sharing one share a worktree and a join. /^[A-Za-z0-9_.-]+$/, not starting with '.' or '-', not containing '..', not ending with '.', '-', or '.lock'";
 
 const CREATE_DOCUMENT_ID = "create-element";
 
@@ -189,6 +193,12 @@ function jsonSchemaOf(schema: z.ZodType): Record<string, unknown> {
       if (ctx.zodSchema === touchedPathSchema) {
         ctx.jsonSchema.description = TOUCHED_PATH_DESCRIPTION;
       }
+      // Same reason as the touched path above: the lane grammar is a
+      // `.superRefine()` that generates to a bare string, and a published shape
+      // accepting `src/lib` would teach an author to fail at compile time.
+      if (ctx.zodSchema === executionLaneSchema) {
+        ctx.jsonSchema.description = EXECUTION_LANE_DESCRIPTION;
+      }
     },
   });
   return isRecord(generated) ? generated : {};
@@ -246,6 +256,7 @@ const KIND_NOTES: Record<SpecElementKind, readonly string[]> = {
   task: [
     "All four id arrays hold elementIds, not handles; dependsOnTaskElementIds is the execution ordering the compiler reads.",
     "Size each task for one agent lane, and declare touchedPaths where they communicate a parallelism claim.",
+    "laneGroup and executionLane are different claims: laneGroup contracts its tasks into ONE execution context, executionLane puts contexts on ONE lane — one worktree, one join — where touchedPaths become the ownership envelope that keeps them apart. Every context on an executionLane needs a non-empty envelope, so a task on one must declare touchedPaths unless it is contracted into a laneGroup where another member does. Every member of one laneGroup must agree on the executionLane or all omit it.",
   ],
 };
 

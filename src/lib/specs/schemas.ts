@@ -156,6 +156,47 @@ export const touchedPathSchema = z
   });
 export type TouchedPath = z.infer<typeof touchedPathSchema>;
 
+/**
+ * The lane a task's compiled execution context runs on. Tasks declaring the
+ * same lane share one worktree and one join; the field is what an author writes
+ * to claim that sharing, and it is orthogonal to `laneGroup`, which contracts
+ * tasks into one CONTEXT rather than placing contexts on one LANE.
+ *
+ * The grammar is the lane-id grammar `laneIdViolation` owns in
+ * `@/lib/workflow-graph/lane-identity`: the value becomes a compiled context's
+ * placement lane, and from there a git branch name and a worktree path segment,
+ * so the two must accept exactly the same names. It is mirrored here rather than
+ * imported because this module is deliberately dependency-free apart from Zod —
+ * importing it would drag the jobs, conversations, and agent-backend schema
+ * graphs into every reader of a spec payload. `schemas.test.ts` pins the mirror
+ * against the owning predicate so it cannot drift.
+ *
+ * Reserved lane identity (`session`, `__session__`) is NOT refused here: those
+ * names are grammatical, and the refusal that knows what they mean lives at the
+ * authored-placement choke point, where it can name the compiled context.
+ */
+export const executionLaneSchema = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    const invalid =
+      !/^[A-Za-z0-9_.-]+$/.test(value) ||
+      value.startsWith(".") ||
+      value.startsWith("-") ||
+      value.includes("..") ||
+      value.endsWith(".") ||
+      value.endsWith("-") ||
+      value.endsWith(".lock");
+    if (invalid) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "executionLane becomes a branch name and a worktree path segment: it must match /^[A-Za-z0-9_.-]+$/, must not start with '.' or '-', must not contain '..', and must not end with '.', '-', or '.lock'",
+      });
+    }
+  });
+export type ExecutionLane = z.infer<typeof executionLaneSchema>;
+
 export const taskElementPayloadSchema = z
   .object({
     kind: z.literal("task"),
@@ -166,6 +207,7 @@ export const taskElementPayloadSchema = z
     coveredCriterionElementIds: z.array(idSchema),
     dependsOnTaskElementIds: z.array(idSchema),
     laneGroup: z.string().min(1).optional(),
+    executionLane: executionLaneSchema.optional(),
     touchedPaths: z.array(touchedPathSchema).optional(),
   })
   .strict();

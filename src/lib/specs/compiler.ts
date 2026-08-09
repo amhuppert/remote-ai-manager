@@ -1,6 +1,10 @@
 import { z } from "zod";
-import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import type {
+  ContextPlacement,
+  WorkflowSemanticDefinition,
+} from "@/lib/workflow-graph/definition-schemas";
 import { findCriteriaWithoutMustRunCoverage } from "@/lib/workflow-graph/criterion-coverage";
+import { laneNameFromId } from "@/lib/workflow-graph/lane-identity";
 import {
   evidenceKindSchema,
   isMachineValidationEvidenceKind,
@@ -260,44 +264,55 @@ export function compileSpecExecutionPlan(
       };
     }),
   );
-  const executionContexts = contraction.groups.map((group) => {
-    const members = group.orderedTaskIds.map((taskId) => {
+  const contextSources = contraction.groups.map((group) => ({
+    contextId: requiredMapValue(
+      contextIdsByGroupId,
+      group.id,
+      "execution context",
+    ),
+    members: group.orderedTaskIds.map((taskId) => {
       const contract = taskContracts.get(taskId);
       if (contract === undefined) {
         throw new Error(`Cannot compile missing selected task ${taskId}.`);
       }
       return contract;
-    });
-    const title = contextTitle(
-      group,
-      members.map(({ task }) => task),
-    );
-    const contextId = requiredMapValue(
-      contextIdsByGroupId,
-      group.id,
-      "execution context",
-    );
-    return {
-      id: contextId,
-      title,
-      description: contextDescription(
+    }),
+    group,
+  }));
+  const placementsByContextId = contextPlacements(
+    contextSources.map(({ contextId, members }) => ({
+      contextId,
+      members: members.map(({ task }) => task),
+    })),
+  );
+  const executionContexts = contextSources.map(
+    ({ group, contextId, members }) => {
+      const title = contextTitle(
         group,
         members.map(({ task }) => task),
-      ),
-      acceptanceCriteria: contextAcceptanceCriteria(
-        members.map(({ criterionBriefs }) => criterionBriefs),
-      ),
-      // A single-member lane named after the context, which is byte-for-byte
-      // the lane a compiled context ran on before placement was authored. An
-      // element id that cannot be a lane name now fails definition validation
-      // with a located issue instead of crashing at worktree provisioning.
-      placement: { lane: contextId, mode: "full" as const },
-      origin: {
-        sourceUri: revisionSourceUri,
-        label: `${input.spec.slug} ${title}`,
-      },
-    };
-  });
+      );
+      return {
+        id: contextId,
+        title,
+        description: contextDescription(
+          group,
+          members.map(({ task }) => task),
+        ),
+        acceptanceCriteria: contextAcceptanceCriteria(
+          members.map(({ criterionBriefs }) => criterionBriefs),
+        ),
+        placement: requiredMapValue(
+          placementsByContextId,
+          contextId,
+          "context placement",
+        ),
+        origin: {
+          sourceUri: revisionSourceUri,
+          label: `${input.spec.slug} ${title}`,
+        },
+      };
+    },
+  );
 
   const compiledEdges = contraction.edges.map((contractedEdge) => {
     const sourceGroup = groupsById.get(contractedEdge.sourceGroupId);
@@ -1012,6 +1027,132 @@ function requireElementNumber(
   return element.element.number;
 }
 
+interface ContextSourceTasks {
+  contextId: string;
+  members: readonly IndexedTask[];
+}
+
+/**
+ * Where every compiled context runs and what it may write (R12).
+ *
+ * Contraction has already happened, so each entry's `members` is one context's
+ * source tasks and its own mapping is decided entirely from what they declare:
+ *
+ *  - an agreed `executionLane` — that lane, owning the union of the members'
+ *    `touchedPaths`. Sharing a worktree is exactly what makes the ownership
+ *    envelope load-bearing, so a shared lane without a declared surface is
+ *    refused rather than widened to full access.
+ *  - no `executionLane` — a lane of its own, named after the context. The id is
+ *    encoded through `laneNameFromId` rather than copied: a context id is
+ *    composed from caller-assigned element ids and authored `laneGroup` names,
+ *    both of which accept any non-empty string, so `laneGroup: "a-lane:b"`
+ *    compiles to `context-lane-a-lane%3Ab` and no lane name may carry a `%`.
+ *    The encoding is the identity on ids that already read as lane names, so
+ *    the ordinary lane is still spelled exactly like its context, and it is
+ *    injective, so two contexts never generate one name. The context id itself
+ *    is untouched — it addresses tasks, edges, and locked regions, none of
+ *    which answer to the lane grammar.
+ *
+ * The pass is whole-plan rather than per-context because those two halves draw
+ * from ONE namespace: `executionLane` accepts any legal lane name, including
+ * the name a context with neither field would generate for itself. Two contexts
+ * would then share a lane that each believes it owns alone — refused at the
+ * placement choke point as `placement-full-access-concurrency`, or, once a
+ * dependency edge orders the pair, silently accepted as a "single-member" lane
+ * with two members. Authored names are therefore reserved first and generated
+ * ones are fitted around them: an author chose theirs, and nothing outside the
+ * compiler ever spells a generated one.
+ */
+function contextPlacements(
+  sources: readonly ContextSourceTasks[],
+): ReadonlyMap<string, ContextPlacement> {
+  const placements = new Map<string, ContextPlacement>();
+  const generated: { contextId: string; base: string }[] = [];
+  const taken = new Set<string>();
+
+  for (const { contextId, members } of sources) {
+    const lane = agreedExecutionLane(members);
+    if (lane === undefined) {
+      generated.push({ contextId, base: laneNameFromId(contextId) });
+      continue;
+    }
+    placements.set(contextId, ownedPlacement(lane, members));
+    taken.add(lane);
+  }
+
+  // Every uncontested base is claimed before any contested one is renamed, so a
+  // rename can never displace a context that would have been spelled like its
+  // own id. `laneNameFromId` is injective over distinct context ids, so a base
+  // is only ever contested by an authored lane.
+  const contested: typeof generated = [];
+  for (const entry of generated) {
+    if (taken.has(entry.base)) {
+      contested.push(entry);
+      continue;
+    }
+    taken.add(entry.base);
+    placements.set(entry.contextId, { lane: entry.base, mode: "full" });
+  }
+  for (const { contextId, base } of contested) {
+    let suffix = 2;
+    // A suffixed name stays inside the lane grammar: `base` already satisfies
+    // it and the suffix ends on a digit.
+    while (taken.has(`${base}-${suffix}`)) suffix += 1;
+    taken.add(`${base}-${suffix}`);
+    placements.set(contextId, { lane: `${base}-${suffix}`, mode: "full" });
+  }
+  return placements;
+}
+
+/**
+ * The one `executionLane` a context's source tasks agree on, or undefined when
+ * they all omit it.
+ *
+ * Disagreement inside one contracted group is a lint refusal before propose
+ * (`9.11.lane-group-execution-lane-mismatch`); it is repeated here because a
+ * compiler that silently picked a winner would make that lint advisory in
+ * practice, and only an approved revision ever reaches this code.
+ */
+function agreedExecutionLane(
+  members: readonly IndexedTask[],
+): string | undefined {
+  const declaredLanes = new Set(
+    members.map((member) => member.payload.executionLane),
+  );
+  if (declaredLanes.size > 1) {
+    throw new Error(
+      `Cannot compile conflicting execution lanes on one context: ${members
+        .map(
+          (member) =>
+            `${member.handle} declares ${member.payload.executionLane ?? "none"}`,
+        )
+        .join(
+          ", ",
+        )}. Every member of a contracted lane group must declare the same executionLane or all omit it.`,
+    );
+  }
+  return [...declaredLanes][0];
+}
+
+function ownedPlacement(
+  lane: string,
+  members: readonly IndexedTask[],
+): ContextPlacement {
+  const ownedPaths = [
+    ...new Set(members.flatMap((member) => member.payload.touchedPaths ?? [])),
+  ];
+  if (ownedPaths.length === 0) {
+    throw new Error(
+      `Cannot compile executionLane "${lane}" for ${members
+        .map((member) => member.handle)
+        .join(
+          ", ",
+        )}: a shared lane isolates its members by declared file ownership, so every task placed on one must declare touchedPaths.`,
+    );
+  }
+  return { lane, mode: "owned", ownedPaths };
+}
+
 function contextIdForTask(taskElementId: string): string {
   return `context-${taskElementId}`;
 }
@@ -1109,11 +1250,11 @@ function compareIndexedTasks(left: IndexedTask, right: IndexedTask): number {
   );
 }
 
-function requiredMapValue(
-  values: ReadonlyMap<string, string>,
+function requiredMapValue<Value>(
+  values: ReadonlyMap<string, Value>,
   key: string,
   label: string,
-): string {
+): Value {
   const value = values.get(key);
   if (value === undefined) {
     throw new Error(`Cannot compile missing ${label} ${key}.`);

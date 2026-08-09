@@ -22,6 +22,7 @@ describe("Spec Studio query contracts", () => {
           title: "Implement status line",
           dependsOn: [],
           laneGroup: "status-line",
+          executionLane: "status-line-lane",
           touchedPaths: ["src/statusLine.js"],
           criterionCoverage: ["R1.1"],
         },
