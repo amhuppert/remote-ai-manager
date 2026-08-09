@@ -254,7 +254,7 @@ export function SpecEvidencePanel({
                 unresolvedCount === 0 ? "text-green" : "text-amber",
               )}
             >
-              {unresolvedCount === 0 ? "Merge gate open" : "Proof incomplete"}
+              {unresolvedCount === 0 ? "Proof complete" : "Proof incomplete"}
             </p>
             <p className="mt-2xs mb-0 font-mono text-[0.7rem] text-text-tertiary">
               {readinessMessage(inScope.length, unresolvedCount)}
@@ -625,7 +625,9 @@ function requirementHandle(criterionHandle: string): string {
 
 function readinessMessage(total: number, unresolved: number): string {
   if (total === 0) return "No criteria are in scope for this execution.";
-  if (unresolved === 0) return "All in-scope criteria are proven.";
+  if (unresolved === 0) {
+    return "All in-scope criteria have current proof; candidate freshness is checked at publish.";
+  }
   return `${unresolved} in-scope ${unresolved === 1 ? "criterion" : "criteria"} still need proof.`;
 }
 
