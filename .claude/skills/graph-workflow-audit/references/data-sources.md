@@ -15,9 +15,16 @@ until a new run replaces them (the old one is then archived).
 - `execution_id`, `status` (`pending|running|paused|completed|halted|aborted`), `started_at`, `completed_at`
 - `definition_json` — static tier: `id`, `seedDefinitionId`, `seedDefinitionRevision`,
   `boundInputs`, `launchedTier`, `workingDefinition` (`executionContexts[]` with
-  `id`, `title`, `acceptanceCriteria`, `implementer`, `contextValidator`,
-  `scriptValidator`, `humanApprovalGate`, `iterationPolicy`, `circuitBreaker`,
-  `mutability`; plus `tasks[]`, `edges[]`), `charter`, `lanePlan`
+  `id`, `title`, `acceptanceCriteria`, `placement` (`lane`, `mode`
+  `full|owned|readOnly`, `ownedPaths` when owning), `implementer`,
+  `contextValidator`, `scriptValidator`, `humanApprovalGate`, `iterationPolicy`,
+  `circuitBreaker`, `mutability`; plus `tasks[]`, `edges[]`), `charter`.
+  `placement` is where a context runs and what it may write, so it is the field
+  to read first when auditing lane cost, concurrency, or an ownership halt:
+  members of one authored lane share a worktree and a single fan-in join, and
+  read-only contexts are provisioned nothing at all. Definitions stored before
+  placement existed are migrated at their inflate boundary, so a row read
+  through the repository always carries it.
 - `runtime_json` — hot tier:
   - `contextStates{}`: per context — `status`, `iterationCount`,
     `consecutiveFailureCount`, `completedTaskCount`/`totalTaskCount`,
