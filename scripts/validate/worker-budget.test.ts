@@ -7,16 +7,16 @@ const GB = 1024 ** 3;
 const WORKER_HEAP_MB = 1536;
 
 describe("resolveWorkerBudget", () => {
-  it("bounds parallelism by RAM rather than core count", () => {
-    // 16 GB / 16 cores: the cores would allow 16 workers, but 16 × 1.5 GB is
-    // more heap than the machine has, so RAM decides.
+  it("reserves coordinator memory before bounding workers by RAM", () => {
+    // The 55% budget holds five 1.5 GB Node heaps. One belongs to the Vitest
+    // coordinator, leaving four worker heaps.
     expect(
       resolveWorkerBudget({
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(5);
+    ).toBe(4);
   });
 
   it("bounds parallelism by core count when RAM is plentiful", () => {
@@ -50,7 +50,7 @@ describe("resolveWorkerBudget", () => {
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(5);
+    ).toBe(4);
   });
 
   it("honours a caller that asks for fewer workers than the budget allows", () => {

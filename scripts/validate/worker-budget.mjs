@@ -13,8 +13,12 @@
  * a caller can now ask for less than the ceiling but never for more.
  */
 
-/** Fraction of total RAM the worker fleet may budget for its heaps. */
+/** Fraction of total RAM the Vitest process fleet may budget for its heaps. */
 const RAM_BUDGET_FRACTION = 0.55;
+
+// The coordinator must keep processing worker RPCs while every worker is busy.
+// Reserve one worker-sized heap so it cannot be starved by the worker ceiling.
+const COORDINATOR_PROCESS_RESERVATION = 1;
 
 /**
  * Floor for the RAM-derived ceiling. Below two workers a full-suite run takes
@@ -41,10 +45,12 @@ export function resolveWorkerBudget({
   totalMemoryBytes,
   availableParallelism,
 }) {
-  const affordableWorkers = Math.floor(
+  const affordableProcesses = Math.floor(
     ((totalMemoryBytes / BYTES_PER_GB) * RAM_BUDGET_FRACTION) /
       (workerHeapMb / 1024),
   );
+  const affordableWorkers =
+    affordableProcesses - COORDINATOR_PROCESS_RESERVATION;
   const ceiling = Math.max(
     MIN_WORKERS,
     Math.min(availableParallelism, affordableWorkers),
