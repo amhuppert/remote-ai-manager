@@ -738,7 +738,7 @@ describe("planFinalPublishJoin", () => {
     ).toBeNull();
   });
 
-  it("plans a final publish for one non-session terminal lane", () => {
+  it("freezes a three-member lane's context ids into its final-publish intent", () => {
     const base = completeAllContextTasks(createWorkflowExecution());
     const sessionLaneId = "session-lane";
     const execution: GraphWorkflowExecution = {
@@ -753,7 +753,11 @@ describe("planFinalPublishJoin", () => {
         "lane-a": makeLane({
           laneId: "lane-a",
           branchName: "csm/test-a",
-          includedContextIds: ["context-verify"],
+          includedContextIds: [
+            "context-plan",
+            "context-implement",
+            "context-verify",
+          ],
         }),
       },
     };
@@ -768,6 +772,9 @@ describe("planFinalPublishJoin", () => {
     expect(plan!.kind).toBe("final_publish");
     expect(plan!.targetLaneId).toBe(sessionLaneId);
     expect(plan!.sourceLaneIds).toEqual(["lane-a"]);
+    expect(plan!.sourceLaneContextIds).toEqual({
+      "lane-a": ["context-plan", "context-implement", "context-verify"],
+    });
   });
 
   it("excludes a lane whose currently-assigned context has not completed (never publishes partial work)", () => {

@@ -23,6 +23,7 @@ import {
   validateLoopGroups,
 } from "./loop-resolver";
 import { validateContextOutputSchemas } from "./output-schema-validation";
+import { collectEnvelopedScriptCoverageIssues } from "./command-selector-validation";
 import {
   lintParameterReferences,
   validateParameterDeclarations,
@@ -69,6 +70,34 @@ function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
 }
 
+function validateExplicitLaneBarrierCoverage(
+  definition: ValidatableDefinition,
+): WorkflowGraphValidationError[] {
+  const authored = "workflowConfig" in definition;
+  const barrierSelector = authored
+    ? definition.workflowConfig.laneMergeValidation?.commands
+    : definition.laneMergeValidation.commands;
+  if (barrierSelector?.mode !== "only") return [];
+
+  const workflowCommands = authored
+    ? definition.workflowConfig.scriptValidator?.commands
+    : undefined;
+  return definition.executionContexts.flatMap((context, index) => {
+    const contextCommands = context.scriptValidator?.commands;
+    const commands = contextCommands ?? workflowCommands;
+    if (commands === undefined) return [];
+    return collectEnvelopedScriptCoverageIssues({
+      context,
+      commands,
+      commandField:
+        contextCommands !== undefined
+          ? `executionContexts.${index}.scriptValidator.commands`
+          : "workflowConfig.scriptValidator.commands",
+      barrierCommands: barrierSelector.commands,
+    });
+  });
+}
+
 /**
  * Structural graph validation plus the per-context output-schema declaration
  * check. The declaration check lives HERE, not alongside in
@@ -89,6 +118,7 @@ export function validateWorkflowDefinition(
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [
     ...validateContextOutputSchemas(definition.executionContexts),
+    ...validateExplicitLaneBarrierCoverage(definition),
     ...validateCohortWriteRestriction(definition.executionContexts, deps),
     ...validateWorkflowTierCohortWriteRestriction(definition, deps),
     ...validateEdgeGuards(definition.executionContexts, definition.edges),

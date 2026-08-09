@@ -71,6 +71,7 @@ import { applyCharterContentEdit } from "./definition-edits";
 import {
   collectValidationCommandIssuesForResolvedContext,
   collectLaneMergeValidationCommandIssues,
+  ENVELOPED_SCRIPT_VALIDATION_NOT_COVERED_CODE,
 } from "./command-selector-validation";
 import {
   VALIDATION_COST_EXCEEDS_LIMIT_CODE,
@@ -3639,7 +3640,11 @@ function checkValidationCommandSelections(
     const context = findLiveContext(next, contextId);
     if (!context) continue;
     errors.push(
-      ...collectValidationCommandIssuesForResolvedContext(context, preflight),
+      ...collectValidationCommandIssuesForResolvedContext(
+        context,
+        preflight,
+        next.workingDefinition.laneMergeValidation.commands,
+      ),
     );
   }
   if (ctx.laneMergeTouched) {
@@ -3649,6 +3654,19 @@ function checkValidationCommandSelections(
         preflight,
       ),
     );
+    for (const context of next.workingDefinition.executionContexts) {
+      if (ctx.validationTouchedContextIds.has(context.id)) continue;
+      errors.push(
+        ...collectValidationCommandIssuesForResolvedContext(
+          context,
+          preflight,
+          next.workingDefinition.laneMergeValidation.commands,
+        ).filter(
+          (issue) =>
+            issue.code === ENVELOPED_SCRIPT_VALIDATION_NOT_COVERED_CODE,
+        ),
+      );
+    }
   }
   return errors;
 }

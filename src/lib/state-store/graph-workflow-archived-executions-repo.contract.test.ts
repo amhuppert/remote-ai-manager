@@ -1352,6 +1352,16 @@ function buildMaximalExecution(): unknown {
         sourceLaneIds: ["lane-2"],
         mergedSourceLaneIds: ["lane-2"],
         validationDebtSourceLaneIds: ["lane-2"],
+        sourceLaneContextIds: {
+          "lane-2": ["ctx-2", "ctx-3"],
+        },
+        validationEvidence: [
+          {
+            sourceLaneIds: ["lane-2"],
+            contextIds: ["ctx-2", "ctx-3"],
+            recordedAt: "2026-01-02T04:30:00Z",
+          },
+        ],
         status: "running",
         errorMessage: "retrying merge",
         conflicts: {

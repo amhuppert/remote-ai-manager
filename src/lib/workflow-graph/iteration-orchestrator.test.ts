@@ -5149,6 +5149,68 @@ describe("script validator integration", () => {
     expect(validateContextCompletion).toHaveBeenCalledTimes(1);
   });
 
+  it("defers configured script validation for an enveloped context", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    const context = execution.workingDefinition.executionContexts.find(
+      (entry) => entry.id === "context-plan",
+    );
+    if (!context) throw new Error('context "context-plan" not in fixture');
+    context.placement = {
+      lane: "implementation",
+      mode: "owned",
+      ownedPaths: ["src"],
+    };
+    context.scriptValidator = { commands: ["typecheck"] };
+    const repository = createRepository(execution);
+    const { createToolServer, capturedCompleteTask } =
+      createCapturingToolServer();
+    const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "pass" as const,
+      summary: "All good",
+      feedback: "pass",
+      issues: [] as never[],
+      reopenTaskIds: [],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+    const runAgentIteration = vi.fn(async () => {
+      await capturedCompleteTask()!("task-plan-1", "Done");
+      await capturedCompleteTask()!("task-plan-2", "Done");
+      return {
+        conversationId: "conv-enveloped",
+        contextTokens: null,
+        contextWindowMax: null,
+        compacted: false,
+      };
+    });
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      validationRoundService: stubValidationRoundService(),
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conv-enveloped" })),
+      createToolServer,
+      runAgentIteration,
+      validationService: { validateContextCompletion },
+      scriptValidatorService: { runScriptValidator },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(runScriptValidator).not.toHaveBeenCalled();
+    expect(validateContextCompletion).toHaveBeenCalledTimes(1);
+  });
+
   it("runs configured script-validator commands even when the legacy enabled flag is false", async () => {
     const execution = createExecutionWithPlanTasks({
       "task-plan-1": "pending",

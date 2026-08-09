@@ -44,6 +44,18 @@ export interface MaterializeSessionLaneInput {
   now(): string;
 }
 
+function freezeSourceLaneContextIds(
+  execution: GraphWorkflowExecution,
+  sourceLaneIds: readonly string[],
+): Record<string, string[]> {
+  return Object.fromEntries(
+    sourceLaneIds.map((laneId) => [
+      laneId,
+      [...new Set(execution.executionLanes[laneId]?.includedContextIds ?? [])],
+    ]),
+  );
+}
+
 /**
  * Which lane a join merges INTO.
  *
@@ -198,6 +210,8 @@ export function planContextJoin(
     sourceLaneIds: laneIdsArray,
     mergedSourceLaneIds: [],
     validationDebtSourceLaneIds: [],
+    sourceLaneContextIds: freezeSourceLaneContextIds(execution, laneIdsArray),
+    validationEvidence: [],
     status: "pending",
     errorMessage: null,
     conflicts: null,
@@ -371,6 +385,11 @@ export function planFinalPublishJoin(
     sourceLaneIds: unpublishedSources,
     mergedSourceLaneIds: [],
     validationDebtSourceLaneIds: [],
+    sourceLaneContextIds: freezeSourceLaneContextIds(
+      execution,
+      unpublishedSources,
+    ),
+    validationEvidence: [],
     status: "pending",
     errorMessage: null,
     conflicts: null,

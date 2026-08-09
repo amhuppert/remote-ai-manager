@@ -1333,6 +1333,20 @@ export function createGraphWorkflowIterationOrchestrator(
     if (configuredCommands.length === 0) {
       return "skip";
     }
+    if (contextDef.placement.mode !== "full") {
+      execLogger?.validation(
+        input.contextId,
+        "script_validation.deferred_to_lane_merge",
+        { commandCount: configuredCommands.length },
+      );
+      logger.info("graph-workflow.script_validation.deferred_to_lane_merge", {
+        executionId: execution.id,
+        contextId: input.contextId,
+        placementMode: contextDef.placement.mode,
+        commandCount: configuredCommands.length,
+      });
+      return "skip";
+    }
 
     if (!deps.scriptValidatorService) {
       throw new Error(

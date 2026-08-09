@@ -452,6 +452,14 @@ export const graphWorkflowExecutionJoinResolvedConflictSchema = z.object({
 export type GraphWorkflowExecutionJoinResolvedConflict = z.infer<
   typeof graphWorkflowExecutionJoinResolvedConflictSchema
 >;
+export const graphWorkflowExecutionJoinValidationEvidenceSchema = z.object({
+  sourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema).min(1),
+  contextIds: z.array(z.string().trim().min(1)),
+  recordedAt: z.string(),
+});
+export type GraphWorkflowExecutionJoinValidationEvidence = z.infer<
+  typeof graphWorkflowExecutionJoinValidationEvidenceSchema
+>;
 export const graphWorkflowExecutionJoinStateSchema = z.object({
   joinId: graphWorkflowExecutionJoinIdSchema,
   kind: graphWorkflowExecutionJoinKindSchema,
@@ -469,6 +477,22 @@ export const graphWorkflowExecutionJoinStateSchema = z.object({
   validationDebtSourceLaneIds: z
     .array(graphWorkflowExecutionLaneIdSchema)
     .default([]),
+  // Membership snapshot taken when the join intent is planned. The lane's
+  // mutable includedContextIds remains useful operational state, but barrier
+  // coverage expands through this frozen map so a replay proves which members
+  // the original intent covered. The planner always populates this map;
+  // recovery treats its absence as unknown coverage and uses lane state.
+  sourceLaneContextIds: z
+    .record(
+      graphWorkflowExecutionLaneIdSchema,
+      z.array(z.string().trim().min(1)),
+    )
+    .optional(),
+  // Append-only successful barrier records. Evidence is absent until the first
+  // validating merge completes.
+  validationEvidence: z
+    .array(graphWorkflowExecutionJoinValidationEvidenceSchema)
+    .optional(),
   status: graphWorkflowExecutionJoinStatusSchema,
   errorMessage: z.string().nullable().default(null),
   conflicts: graphWorkflowExecutionJoinConflictDetailSchema

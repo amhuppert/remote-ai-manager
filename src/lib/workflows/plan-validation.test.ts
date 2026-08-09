@@ -85,6 +85,69 @@ describe("validateWorkflowPlan", () => {
     );
   });
 
+  it("rejects an enveloped context whose script commands exceed the lane barrier", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        laneMergeValidation: {
+          strategy: "final-only",
+          commands: { mode: "only", commands: ["typecheck"] },
+        },
+      },
+    });
+    definition.executionContexts[1] = {
+      ...definition.executionContexts[1]!,
+      placement: {
+        lane: "implementation",
+        mode: "owned",
+        ownedPaths: ["src"],
+      },
+      scriptValidator: { commands: ["typecheck", "test"] },
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition), {
+      validationCommandPreflight: {
+        commandCosts: { typecheck: 2, test: 8 },
+        concurrencyLimit: 8,
+        laneMergeCommands: ["typecheck"],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues).toContainEqual({
+      path: "definition.executionContexts.1.scriptValidator.commands.1",
+      message: expect.stringMatching(
+        /script-validator command "test".*lane-merge barrier/i,
+      ),
+    });
+  });
+
+  it("keeps full-access contexts' independent script validation selection", () => {
+    const definition = createWorkflowDefinition({
+      workflowConfig: {
+        laneMergeValidation: {
+          strategy: "final-only",
+          commands: { mode: "only", commands: ["typecheck"] },
+        },
+      },
+    });
+    definition.executionContexts[1] = {
+      ...definition.executionContexts[1]!,
+      placement: { lane: "implementation", mode: "full" },
+      scriptValidator: { commands: ["test"] },
+    };
+
+    const result = validateWorkflowPlan(makePlan(definition), {
+      validationCommandPreflight: {
+        commandCosts: { typecheck: 2, test: 8 },
+        concurrencyLimit: 8,
+        laneMergeCommands: ["typecheck"],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("accepts a plan with uncovered guard enum values and reports it as a warning (R3.2)", () => {
     const base = createWorkflowDefinition();
     const definition = {

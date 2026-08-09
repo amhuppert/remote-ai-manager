@@ -241,7 +241,10 @@ export function createProductionValidationCallerResolver(
         (lane.lane === "implementer"
           ? DEFAULT_AGENT_VALIDATION_CONFIG.implementer
           : DEFAULT_AGENT_VALIDATION_CONFIG.contextValidator);
-      const scriptGateCommands = context.scriptValidator.commands ?? [];
+      const isEnvelopedContext = context.placement.mode !== "full";
+      const scriptGateCommands = isEnvelopedContext
+        ? []
+        : (context.scriptValidator.commands ?? []);
 
       return {
         kind: "graph_lane",
@@ -252,8 +255,9 @@ export function createProductionValidationCallerResolver(
         executionId: execution.id,
         contextId: lane.contextId,
         role: lane.lane,
-        allowedCommands:
-          rolePolicy?.commands ?? expandLanePolicy(selector, registryNames),
+        allowedCommands: isEnvelopedContext
+          ? []
+          : (rolePolicy?.commands ?? expandLanePolicy(selector, registryNames)),
         scriptGateCommands,
       };
     },
