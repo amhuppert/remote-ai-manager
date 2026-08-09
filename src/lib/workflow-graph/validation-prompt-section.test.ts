@@ -10,19 +10,22 @@ import type { GraphWorkflowResolvedContext } from "./definition-schemas";
 
 const REGISTRY_COMMANDS = {
   typecheck: {
-    command: "scripts/validate/typecheck.sh",
+    command: { full: "scripts/validate/typecheck.sh" },
     cost: 2,
-    scopeArgs: "forbid" as const,
+    pathArgs: "forbid" as const,
   },
   test: {
-    command: "scripts/validate/test.sh",
+    command: {
+      full: "scripts/validate/test-full-suite.sh",
+      changed: "scripts/validate/test.sh",
+    },
     cost: 4,
-    scopeArgs: "paths" as const,
+    pathArgs: "paths" as const,
   },
   format: {
-    command: "scripts/validate/format.sh",
+    command: { full: "scripts/validate/format.sh" },
     cost: 1,
-    scopeArgs: "forbid" as const,
+    pathArgs: "forbid" as const,
   },
 };
 
@@ -84,9 +87,9 @@ describe("resolveValidationPromptSelections — frozen seed snapshot", () => {
         commands: {
           ...REGISTRY_COMMANDS,
           build: {
-            command: "scripts/validate/build.sh",
+            command: { full: "scripts/validate/build.sh" },
             cost: 6,
-            scopeArgs: "forbid" as const,
+            pathArgs: "forbid" as const,
           },
         },
       },

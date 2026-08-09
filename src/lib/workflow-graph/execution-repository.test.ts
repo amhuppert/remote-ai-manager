@@ -190,9 +190,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck"],
@@ -473,19 +473,22 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
           test: {
-            command: "scripts/validate/test.sh",
+            command: {
+              full: "scripts/validate/test-full-suite.sh",
+              changed: "scripts/validate/test.sh",
+            },
             cost: 8,
-            scopeArgs: "paths",
+            pathArgs: "paths",
           },
           format: {
-            command: "scripts/validate/format.sh",
+            command: { full: "scripts/validate/format.sh" },
             cost: 1,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck", "test"],
@@ -536,19 +539,22 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
           test: {
-            command: "scripts/validate/test.sh",
+            command: {
+              full: "scripts/validate/test-full-suite.sh",
+              changed: "scripts/validate/test.sh",
+            },
             cost: 8,
-            scopeArgs: "paths",
+            pathArgs: "paths",
           },
           format: {
-            command: "scripts/validate/format.sh",
+            command: { full: "scripts/validate/format.sh" },
             cost: 1,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck", "test"],
@@ -635,9 +641,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         validation: {
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
-              scopeArgs: "forbid",
+              pathArgs: "forbid",
             },
           },
           preMerge: ["typecheck"],
@@ -696,9 +702,12 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         validation: {
           commands: {
             test: {
-              command: "scripts/validate/test.sh",
+              command: {
+                full: "scripts/validate/test-full-suite.sh",
+                changed: "scripts/validate/test.sh",
+              },
               cost: 5,
-              scopeArgs: "paths",
+              pathArgs: "paths",
             },
           },
           preMerge: ["test"],
@@ -746,9 +755,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       validation: {
         commands: {
           typecheck: {
-            command: "scripts/validate/typecheck.sh",
+            command: { full: "scripts/validate/typecheck.sh" },
             cost: 2,
-            scopeArgs: "forbid",
+            pathArgs: "forbid",
           },
         },
         preMerge: ["typecheck"],
@@ -811,9 +820,9 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         validation: {
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
-              scopeArgs: "forbid",
+              pathArgs: "forbid",
             },
           },
           preMerge: ["typecheck"],

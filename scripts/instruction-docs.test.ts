@@ -230,7 +230,11 @@ describe("agent instruction and canonical documentation contracts", () => {
     expect(projectSetup).toContain("TARGET_BRANCH");
     expect(projectSetup).toContain("git merge-base");
     expect(projectSetup).toContain("--changed");
-    expect(projectSetup).toContain('`scopeArgs: "paths"`');
+    expect(projectSetup).toContain('`pathArgs: "paths"`');
+    expect(projectSetup).toContain("`command.changed`");
+    expect(projectSetup).toContain("`command.full`");
+    expect(projectSetup).toContain("never parse");
+    expect(projectSetup).not.toContain("scopeArgs");
     expect(projectSetup).toContain("one unit per configured worker");
     expect(projectSetup).toContain("silent on success");
     expect(projectSetup).toContain("complete on failure");

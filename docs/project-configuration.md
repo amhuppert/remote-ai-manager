@@ -25,8 +25,12 @@ my-project/
   "validation": {
     "commands": {
       "pre-merge": {
-        "command": "scripts/pre-merge-validate.sh",
-        "cost": 8
+        "command": {
+          "full": "scripts/pre-merge-validate-full.sh",
+          "changed": "scripts/pre-merge-validate.sh"
+        },
+        "cost": 8,
+        "pathArgs": "forbid"
       }
     },
     "preMerge": ["pre-merge"]
@@ -145,15 +149,21 @@ validation service, which enforces the global weighted concurrency budget.
   "validation": {
     "commands": {
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
         "cost": 2,
-        "description": "Check TypeScript"
+        "description": "Check TypeScript",
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full.sh",
+          "changed": "scripts/validate/test-changed.sh"
+        },
         "cost": 6,
         "timeoutMs": 900000,
-        "scopeArgs": "paths"
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["typecheck", "test"],
@@ -165,17 +175,25 @@ validation service, which enforces the global weighted concurrency budget.
 | Field | Required | Description |
 |---|---|---|
 | `commands` | Yes | Map of command names to command registrations |
-| `commands.<name>.command` | Yes | Executable path relative to the canonical project root, or an absolute path |
+| `commands.<name>.command.full` | Yes | Full-run executable path relative to the canonical project root, or an absolute path |
+| `commands.<name>.command.changed` | No | Native changed-run executable; changed requests fall back to `full` when omitted |
 | `commands.<name>.cost` | Yes | Positive integer reservation weight |
 | `commands.<name>.timeoutMs` | No | Per-command timeout; falls back to the global validation default |
 | `commands.<name>.description` | No | Description shown by validation tooling |
-| `commands.<name>.scopeArgs` | No | `"forbid"` (default) or `"paths"` to allow safe path-only narrowing |
+| `commands.<name>.pathArgs` | No | `"forbid"` (default) or `"paths"` to allow safe path-only narrowing of native changed runs |
 | `preMerge` | No | Ordered command names used by Smart Merge and Smart Commit |
 | `laneMerge` | No | Ordered command names used by graph lane merges; falls back to `preMerge` |
 
 Graph workflow contexts select their own ordered command names through
 `scriptValidator.commands`. That selection is independent from `preMerge` and
 `laneMerge`; an empty list disables the context gate.
+
+Every invocation has scope `changed` or `full`; omission defaults to
+`changed`. Command Center selects the registered executable before admission.
+A changed request uses `command.changed` when present and otherwise reports an
+effective full run using `command.full`. Explicit paths are accepted only when
+the request is changed, a changed executable exists, and `pathArgs` is
+`"paths"`. Wrappers implement one fixed behavior and do not parse scope.
 
 Validation scripts run with the target worktree as their working directory.
 They receive `PROJECT_ROOT`, `CLAUDE_PROJECT_DIR`, `WORKTREE_PATH`,
@@ -369,8 +387,12 @@ A project using all features:
   "validation": {
     "commands": {
       "pre-merge": {
-        "command": "scripts/pre-merge-validate.sh",
-        "cost": 8
+        "command": {
+          "full": "scripts/pre-merge-validate-full.sh",
+          "changed": "scripts/pre-merge-validate-changed.sh"
+        },
+        "cost": 8,
+        "pathArgs": "forbid"
       }
     },
     "preMerge": ["pre-merge"],

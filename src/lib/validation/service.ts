@@ -35,9 +35,10 @@ import type {
   ValidationRunResult,
   ValidationRunSource,
   ValidationRunStatus,
+  ValidationScope,
   ValidationWorkflowRole,
 } from "./schemas";
-import { validateScopeArgs } from "./scope-args";
+import { resolveValidationExecution } from "./command-resolution";
 
 const defaultLogger = createLogger("validation");
 
@@ -135,6 +136,7 @@ export interface ValidationServiceDeps {
 export interface ValidationSubmitRequest {
   source: ValidationRunSource;
   commandName: string;
+  scope?: ValidationScope;
   scopePaths?: string[];
   wait?: boolean;
   caller: ValidationCallerRef;
@@ -177,6 +179,7 @@ export interface ValidationSystemTarget {
 export interface ValidationSystemSubmitRequest {
   source: ValidationSystemSource;
   command: ValidationSystemCommandRef;
+  scope: ValidationScope;
   projectPath: string;
   conversationId?: string | null;
   /** Ledger stamping for §12 timing accounting; never used for policy. */
@@ -187,8 +190,9 @@ export interface ValidationSystemSubmitRequest {
 export type ValidationSubmitInvalidReason =
   | "identity_unresolved"
   | "nested_invocation"
-  | "scope_args_forbidden"
-  | "scope_args_rejected"
+  | "path_args_forbidden"
+  | "path_args_rejected"
+  | "path_args_require_changed"
   | "service_unavailable";
 
 export type ValidationNotStartedResult = Extract<
@@ -210,6 +214,8 @@ export type ValidationSubmission =
       position: number | null;
       /** Returned only to the submitter; null for system-owned sources. */
       lease: ValidationLease | null;
+      requestedScope: ValidationScope;
+      effectiveScope: ValidationScope;
     }
   | { kind: "not_started"; result: ValidationNotStartedResult }
   | {
@@ -222,7 +228,8 @@ export interface ValidationListCommand {
   name: string;
   cost: number;
   description: string | null;
-  scopeArgs: "forbid" | "paths";
+  pathArgs: "forbid" | "paths";
+  changedScope: "native" | "full_fallback";
   timeoutMs: number | null;
   enabled: boolean;
 }
@@ -235,6 +242,8 @@ export interface ValidationActiveRun {
   source: ValidationRunSource;
   projectPath: string;
   conversationId: string | null;
+  requestedScope: ValidationScope | null;
+  effectiveScope: ValidationScope | null;
   position: number | null;
 }
 
@@ -288,6 +297,8 @@ export interface ValidationService {
     status: ValidationRunStatus | null;
     position: number | null;
     result: ValidationRunResult | null;
+    requestedScope: ValidationScope | null;
+    effectiveScope: ValidationScope | null;
   };
   /** Owner-only cancel; performs the cancellation when authorized. */
   cancel(
@@ -407,6 +418,8 @@ export function createValidationService(
       source: ValidationRunSource;
       projectPath: string;
       conversationId: string | null;
+      requestedScope: ValidationScope | null;
+      effectiveScope: ValidationScope | null;
       outcome?: string;
     },
   ): void {
@@ -419,6 +432,8 @@ export function createValidationService(
         source: fields.source,
         projectPath: fields.projectPath,
         conversationId: fields.conversationId,
+        requestedScope: fields.requestedScope,
+        effectiveScope: fields.effectiveScope,
         outcome: fields.outcome ?? null,
         timestamp: now().toISOString(),
       }),
@@ -435,6 +450,8 @@ export function createValidationService(
     source: ValidationRunSource;
     projectPath: string;
     conversationId: string | null;
+    requestedScope: ValidationScope | null;
+    effectiveScope: ValidationScope | null;
   } {
     return {
       runId: row.runId,
@@ -442,6 +459,8 @@ export function createValidationService(
       source: row.source,
       projectPath: row.projectPath,
       conversationId: row.conversationId,
+      requestedScope: row.requestedScope,
+      effectiveScope: row.effectiveScope,
     };
   }
 
@@ -489,7 +508,8 @@ export function createValidationService(
       queueMs: row.queueMs,
       execMs: row.execMs,
       timedOut: row.timedOut,
-      scoped: row.scoped,
+      requestedScope: row.requestedScope,
+      effectiveScope: row.effectiveScope,
       scopedPathCount: row.scopedPathCount,
       limit: lastKnownLimit,
     });
@@ -618,7 +638,7 @@ export function createValidationService(
             ? `validation script not found: ${spawned.scriptPath}`
             : spawned.kind === "spawn_error"
               ? spawned.message
-              : `scope arguments refused at spawn (${spawned.kind})`;
+              : `path arguments refused at spawn (${spawned.kind})`;
         logger.warn("validation.run_spawn_failed", {
           runId: record.runId,
           name: record.commandName,
@@ -651,6 +671,9 @@ export function createValidationService(
         source: record.source,
         pid: spawned.handle.processGroupPid,
         queueMs: started?.queueMs ?? 0,
+        requestedScope: record.requestedScope,
+        effectiveScope: record.effectiveScope,
+        scopedPathCount: record.scopedPathCount,
         limit: lastKnownLimit,
       });
       publishPhase("started", rowMeta(record));
@@ -798,13 +821,17 @@ export function createValidationService(
     const unavailableAtEntry = admissionUnavailable();
     if (unavailableAtEntry) return unavailableAtEntry;
 
+    const requestedScope = request.scope ?? "changed";
     const scopePaths = request.scopePaths ?? [];
+    let effectiveScope: ValidationScope | null = null;
     const meta = {
       runId: null,
       commandName: request.commandName,
       source: request.source,
       projectPath: request.caller.projectPath,
       conversationId: request.caller.conversationId ?? null,
+      requestedScope,
+      effectiveScope: null,
     };
     logger.info("validation.run_requested", {
       name: request.commandName,
@@ -812,7 +839,8 @@ export function createValidationService(
       project: request.caller.projectPath,
       conversation: meta.conversationId,
       wait: request.wait ?? false,
-      scoped: scopePaths.length > 0,
+      requestedScope,
+      effectiveScope,
       scopedPathCount: scopePaths.length,
     });
     publishPhase("requested", meta);
@@ -828,7 +856,11 @@ export function createValidationService(
         project: request.caller.projectPath,
         reason: outcome ?? reason,
       });
-      publishPhase("rejected", { ...meta, outcome: outcome ?? reason });
+      publishPhase("rejected", {
+        ...meta,
+        effectiveScope,
+        outcome: outcome ?? reason,
+      });
       return { kind: "invalid", reason, message };
     };
 
@@ -870,23 +902,14 @@ export function createValidationService(
       };
     }
 
-    // Scope preflight before admission: refusals spawn nothing and consume
-    // no capacity. The runner revalidates before spawn (defense in depth).
-    if (scopePaths.length > 0) {
-      if (command.scopeArgs === "forbid") {
-        return rejected(
-          "scope_args_forbidden",
-          `Command "${request.commandName}" does not accept forwarded paths (scopeArgs: "forbid").`,
-        );
-      }
-      const checked = validateScopeArgs(scopePaths, resolved.worktreePath);
-      if (!checked.ok) {
-        return rejected(
-          "scope_args_rejected",
-          `Scope argument "${checked.token}" was refused (${checked.kind}): forwarded values must be relative paths inside the target worktree.`,
-        );
-      }
-    }
+    const execution = resolveValidationExecution({
+      profile: command,
+      requestedScope,
+      scopePaths,
+      worktreePath: resolved.worktreePath,
+    });
+    if (!execution.ok) return rejected(execution.reason, execution.message);
+    effectiveScope = execution.effectiveScope;
 
     // Policy gate BEFORE admission (design §7): resolved from the
     // execution's seed-time snapshot; a disabled command is an exit-0-shaped
@@ -913,6 +936,7 @@ export function createValidationService(
         });
         publishPhase("policy_skipped", {
           ...meta,
+          effectiveScope,
           outcome: "skipped_by_policy",
         });
         return {
@@ -945,14 +969,15 @@ export function createValidationService(
       workflowContextId:
         resolved.kind === "graph_lane" ? resolved.contextId : null,
       workflowRole: resolved.kind === "graph_lane" ? resolved.role : null,
-      scoped: scopePaths.length > 0,
-      scopedPathCount: scopePaths.length,
+      requestedScope: execution.requestedScope,
+      effectiveScope: execution.effectiveScope,
+      scopedPathCount: execution.scopePaths.length,
     };
     const spawnParams: SpawnValidationParams = {
       runId,
       nonce,
       commandName: request.commandName,
-      command: command.command,
+      command: execution.executable,
       cost: command.cost,
       projectPath: request.caller.projectPath,
       worktreePath: resolved.worktreePath,
@@ -962,8 +987,10 @@ export function createValidationService(
       ...(resolved.kind === "graph_lane"
         ? { contextId: resolved.contextId }
         : {}),
-      scopeArgs: command.scopeArgs,
-      scopePaths,
+      requestedScope: execution.requestedScope,
+      effectiveScope: execution.effectiveScope,
+      pathArgs: execution.pathArgs,
+      scopePaths: execution.scopePaths,
       timeoutMs: command.timeoutMs ?? global.defaultTimeoutMs,
     };
 
@@ -989,7 +1016,11 @@ export function createValidationService(
           cost: command.cost,
           limit: global.concurrencyLimit,
         });
-        publishPhase("rejected", { ...meta, outcome: "cost_exceeds_limit" });
+        publishPhase("rejected", {
+          ...meta,
+          effectiveScope,
+          outcome: "cost_exceeds_limit",
+        });
         return {
           kind: "not_started",
           result: {
@@ -1001,7 +1032,11 @@ export function createValidationService(
         };
       }
       case "capacity_unavailable": {
-        publishPhase("rejected", { ...meta, outcome: "capacity_unavailable" });
+        publishPhase("rejected", {
+          ...meta,
+          effectiveScope,
+          outcome: "capacity_unavailable",
+        });
         return {
           kind: "not_started",
           result: {
@@ -1017,13 +1052,15 @@ export function createValidationService(
       case "queued": {
         locallyOwned.add(runId);
         preparedSpawns.set(runId, spawnParams);
-        publishPhase("queued", { ...meta, runId });
+        publishPhase("queued", { ...meta, effectiveScope, runId });
         return {
           kind: "accepted",
           runId,
           status: "queued",
           position: decision.position,
           lease,
+          requestedScope: execution.requestedScope,
+          effectiveScope: execution.effectiveScope,
         };
       }
       case "admitted": {
@@ -1036,6 +1073,8 @@ export function createValidationService(
           status: "running",
           position: null,
           lease,
+          requestedScope: execution.requestedScope,
+          effectiveScope: execution.effectiveScope,
         };
       }
     }
@@ -1073,7 +1112,11 @@ export function createValidationService(
         name,
         cost: command.cost,
         description: command.description ?? null,
-        scopeArgs: command.scopeArgs,
+        pathArgs: command.pathArgs,
+        changedScope:
+          command.command.changed === undefined
+            ? ("full_fallback" as const)
+            : ("native" as const),
         timeoutMs: command.timeoutMs ?? null,
         enabled:
           resolved.kind !== "graph_lane" ||
@@ -1108,6 +1151,8 @@ export function createValidationService(
         source: row.source,
         projectPath: row.projectPath,
         conversationId: row.conversationId,
+        requestedScope: row.requestedScope,
+        effectiveScope: row.effectiveScope,
         position: queuePositions.get(row.runId) ?? null,
       })),
     };
@@ -1121,12 +1166,15 @@ export function createValidationService(
     if (unavailableAtEntry) return unavailableAtEntry;
 
     const commandName = request.command.name;
+    let effectiveScope: ValidationScope | null = null;
     const meta = {
       runId: null,
       commandName,
       source: request.source,
       projectPath: request.projectPath,
       conversationId: request.conversationId ?? null,
+      requestedScope: request.scope,
+      effectiveScope: null,
     };
     logger.info("validation.run_requested", {
       name: commandName,
@@ -1134,7 +1182,8 @@ export function createValidationService(
       project: request.projectPath,
       conversation: meta.conversationId,
       wait: true,
-      scoped: false,
+      requestedScope: request.scope,
+      effectiveScope,
       scopedPathCount: 0,
     });
     publishPhase("requested", meta);
@@ -1160,7 +1209,30 @@ export function createValidationService(
       };
     }
 
-    const command = registeredCommand.command;
+    const execution = resolveValidationExecution({
+      profile: registeredCommand,
+      requestedScope: request.scope,
+      scopePaths: [],
+      worktreePath: request.target.worktreePath,
+    });
+    if (!execution.ok) {
+      logger.warn("validation.run_rejected", {
+        name: commandName,
+        source: request.source,
+        project: request.projectPath,
+        reason: execution.reason,
+      });
+      publishPhase("rejected", {
+        ...meta,
+        outcome: execution.reason,
+      });
+      return {
+        kind: "invalid",
+        reason: execution.reason,
+        message: execution.message,
+      };
+    }
+    effectiveScope = execution.effectiveScope;
     const cost = registeredCommand.cost;
     const timeoutMs = registeredCommand.timeoutMs ?? global.defaultTimeoutMs;
 
@@ -1181,14 +1253,15 @@ export function createValidationService(
       workflowExecutionId: request.workflow?.executionId ?? null,
       workflowContextId: request.workflow?.contextId ?? null,
       workflowRole: null,
-      scoped: false,
+      requestedScope: execution.requestedScope,
+      effectiveScope: execution.effectiveScope,
       scopedPathCount: 0,
     };
     const spawnParams: SpawnValidationParams = {
       runId,
       nonce,
       commandName,
-      command,
+      command: execution.executable,
       cost,
       projectPath: request.projectPath,
       worktreePath: request.target.worktreePath,
@@ -1200,11 +1273,10 @@ export function createValidationService(
       ...(request.target.contextId
         ? { contextId: request.target.contextId }
         : {}),
-      scopeArgs:
-        request.command.kind === "registered"
-          ? (registeredCommand?.scopeArgs ?? "forbid")
-          : "forbid",
-      scopePaths: [],
+      requestedScope: execution.requestedScope,
+      effectiveScope: execution.effectiveScope,
+      pathArgs: execution.pathArgs,
+      scopePaths: execution.scopePaths,
       timeoutMs,
     };
 
@@ -1218,6 +1290,7 @@ export function createValidationService(
       });
       publishPhase("rejected", {
         ...meta,
+        effectiveScope,
         outcome: unavailableAtAdmission.reason,
       });
       return unavailableAtAdmission;
@@ -1235,7 +1308,11 @@ export function createValidationService(
         cost,
         limit: global.concurrencyLimit,
       });
-      publishPhase("rejected", { ...meta, outcome: "cost_exceeds_limit" });
+      publishPhase("rejected", {
+        ...meta,
+        effectiveScope,
+        outcome: "cost_exceeds_limit",
+      });
       return {
         kind: "not_started",
         result: {
@@ -1255,7 +1332,11 @@ export function createValidationService(
         limit: decision.limit,
         queueDepth: decision.queueDepth,
       });
-      publishPhase("rejected", { ...meta, outcome: "capacity_unavailable" });
+      publishPhase("rejected", {
+        ...meta,
+        effectiveScope,
+        outcome: "capacity_unavailable",
+      });
       return {
         kind: "not_started",
         result: {
@@ -1278,14 +1359,19 @@ export function createValidationService(
         source: request.source,
         cost,
         position: decision.position,
+        requestedScope: execution.requestedScope,
+        effectiveScope: execution.effectiveScope,
+        scopedPathCount: execution.scopePaths.length,
       });
-      publishPhase("queued", { ...meta, runId });
+      publishPhase("queued", { ...meta, effectiveScope, runId });
       return {
         kind: "accepted",
         runId,
         status: "queued",
         position: decision.position,
         lease: null,
+        requestedScope: execution.requestedScope,
+        effectiveScope: execution.effectiveScope,
       };
     }
 
@@ -1296,6 +1382,8 @@ export function createValidationService(
       status: "running",
       position: null,
       lease: null,
+      requestedScope: execution.requestedScope,
+      effectiveScope: execution.effectiveScope,
     };
   }
 
@@ -1320,7 +1408,15 @@ export function createValidationService(
     poll(runId, leaseToken) {
       if (leaseToken) leases.renew(runId, leaseToken);
       const row = deps.repo.findById(runId);
-      if (!row) return { status: null, position: null, result: null };
+      if (!row) {
+        return {
+          status: null,
+          position: null,
+          result: null,
+          requestedScope: null,
+          effectiveScope: null,
+        };
+      }
       const position =
         row.status === "queued"
           ? deps.repo.findQueued().findIndex((q) => q.runId === runId)
@@ -1329,6 +1425,8 @@ export function createValidationService(
         status: row.status,
         position,
         result: results.get(runId) ?? null,
+        requestedScope: row.requestedScope,
+        effectiveScope: row.effectiveScope,
       };
     },
 

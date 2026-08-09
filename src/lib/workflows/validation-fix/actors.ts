@@ -304,6 +304,7 @@ export async function performMergeValidation(
       submission = await deps.validationService.submitSystem({
         source: input.source,
         command: selected.command,
+        scope: "changed",
         projectPath: input.projectPath,
         ...(input.conversationId !== undefined
           ? { conversationId: input.conversationId }

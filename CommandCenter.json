@@ -3,38 +3,50 @@
   "validation": {
     "commands": {
       "pre-merge": {
-        "command": "scripts/pre-merge-validate.sh",
+        "command": {
+          "full": "scripts/pre-merge-validate-full.sh",
+          "changed": "scripts/pre-merge-validate.sh"
+        },
         "cost": 8,
-        "timeoutMs": 3600000
+        "timeoutMs": 3600000,
+        "pathArgs": "forbid"
       },
       "format": {
-        "command": "scripts/validate/format.sh",
+        "command": {
+          "full": "scripts/validate/format-full.sh",
+          "changed": "scripts/validate/format.sh"
+        },
         "cost": 1,
-        "description": "Format changed files"
+        "description": "Format project files",
+        "pathArgs": "forbid"
       },
       "lint": {
-        "command": "scripts/validate/lint.sh",
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint.sh"
+        },
         "cost": 2,
-        "description": "Lint changed files"
+        "description": "Lint project files",
+        "pathArgs": "forbid"
       },
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
         "cost": 2,
         "timeoutMs": 3600000,
-        "description": "Run full-project static and build checks"
+        "description": "Run full-project static and build checks",
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full-suite.sh",
+          "changed": "scripts/validate/test.sh"
+        },
         "cost": 8,
         "timeoutMs": 3600000,
-        "description": "Run affected unit tests with up to eight workers",
-        "scopeArgs": "paths"
-      },
-      "test-full-suite": {
-        "command": "scripts/validate/test-full-suite.sh",
-        "cost": 8,
-        "timeoutMs": 3600000,
-        "description": "Run the full unit test suite with up to eight workers, unscoped and without bail"
+        "description": "Run unit tests with eight workers",
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["format", "lint", "typecheck", "test"],

@@ -11,9 +11,12 @@ describe("validation command preflight", () => {
         {
           commands: {
             test: {
-              command: "scripts/validate/test.sh",
+              command: {
+                full: "scripts/validate/test-full-suite.sh",
+                changed: "scripts/validate/test.sh",
+              },
               cost: 8,
-              scopeArgs: "paths",
+              pathArgs: "paths",
             },
           },
           preMerge: ["test"],

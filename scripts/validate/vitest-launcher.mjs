@@ -2,7 +2,7 @@ import os from "node:os";
 import { startVitest } from "vitest/node";
 import { resolveWorkerBudget } from "./worker-budget.mjs";
 
-const [scope, projectSelection, ...scopeArgs] = process.argv.slice(2);
+const [mode, projectSelection, ...modeArgs] = process.argv.slice(2);
 const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
 const testHeapMb = Number.parseInt(process.env.CC_TEST_HEAP_MB ?? "", 10);
 const coordinatorHeapMb = Number.parseInt(
@@ -52,11 +52,11 @@ if (!projects) {
 
 let filters = [];
 let changed;
-if (scope === "paths" && scopeArgs.length > 0) {
-  filters = scopeArgs;
-} else if (scope === "changed" && scopeArgs.length === 1) {
-  changed = scopeArgs[0];
-} else if (scope !== "full" || scopeArgs.length > 0) {
+if (mode === "paths" && modeArgs.length > 0) {
+  filters = modeArgs;
+} else if (mode === "changed" && modeArgs.length === 1) {
+  changed = modeArgs[0];
+} else if (mode !== "full" || modeArgs.length > 0) {
   throw new Error("expected full, changed <merge-base>, or paths <path...>");
 }
 
@@ -65,7 +65,7 @@ await startVitest("test", filters, {
   color: false,
   reporters: ["dot"],
   bail: testBail,
-  passWithNoTests: scope !== "full",
+  passWithNoTests: mode !== "full",
   ...(changed ? { changed } : {}),
   project: projects,
   pool: "forks",

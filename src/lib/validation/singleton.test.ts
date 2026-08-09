@@ -122,8 +122,16 @@ function resolverDeps(opts: {
     readRepoValidation: async () =>
       repoValidationConfigSchema.parse({
         commands: {
-          typecheck: { command: "scripts/validate/typecheck.sh", cost: 2 },
-          test: { command: "scripts/validate/test.sh", cost: 8 },
+          typecheck: {
+            command: { full: "scripts/validate/typecheck.sh" },
+            cost: 2,
+            pathArgs: "forbid",
+          },
+          test: {
+            command: { full: "scripts/validate/test.sh" },
+            cost: 8,
+            pathArgs: "forbid",
+          },
         },
       }),
   };
@@ -464,10 +472,15 @@ function createPersistedPolicyService(
         repoValidationConfigSchema.parse({
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
+              pathArgs: "forbid",
             },
-            test: { command: "scripts/validate/test.sh", cost: 3 },
+            test: {
+              command: { full: "scripts/validate/test.sh" },
+              cost: 3,
+              pathArgs: "forbid",
+            },
           },
           preMerge: ["typecheck", "test"],
         }),
@@ -477,10 +490,15 @@ function createPersistedPolicyService(
         repoValidationConfigSchema.parse({
           commands: {
             typecheck: {
-              command: "scripts/validate/typecheck.sh",
+              command: { full: "scripts/validate/typecheck.sh" },
               cost: 2,
+              pathArgs: "forbid",
             },
-            test: { command: "scripts/validate/test.sh", cost: 3 },
+            test: {
+              command: { full: "scripts/validate/test.sh" },
+              cost: 3,
+              pathArgs: "forbid",
+            },
           },
           preMerge: ["typecheck", "test"],
         }),
@@ -830,7 +848,13 @@ function fakeService(overrides: Partial<ValidationService>): ValidationService {
       message: "fake",
     }),
     waitForCompletion: async (runId) => ({ kind: "cancelled", runId }),
-    poll: () => ({ status: null, position: null, result: null }),
+    poll: () => ({
+      status: null,
+      position: null,
+      result: null,
+      requestedScope: null,
+      effectiveScope: null,
+    }),
     cancel: async () => ({ authorization: "not_found" }),
     cancelSystemOwned: async () => false,
     sweepExpiredLeases: async () => 0,

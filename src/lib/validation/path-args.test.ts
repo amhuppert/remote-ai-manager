@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { validateScopeArgs } from "./scope-args";
+import { validatePathArgs } from "./path-args";
 
 const worktree = "/repo/.worktrees/session";
 
-describe("validateScopeArgs", () => {
+describe("validatePathArgs", () => {
   it("accepts an empty token list", () => {
-    expect(validateScopeArgs([], worktree)).toEqual({ ok: true, paths: [] });
+    expect(validatePathArgs([], worktree)).toEqual({ ok: true, paths: [] });
   });
 
   it("accepts relative worktree-contained paths, including nested ones", () => {
@@ -15,7 +15,7 @@ describe("validateScopeArgs", () => {
       "docs/design/validation-concurrency/01-design.md",
     ];
 
-    expect(validateScopeArgs(tokens, worktree)).toEqual({
+    expect(validatePathArgs(tokens, worktree)).toEqual({
       ok: true,
       paths: tokens,
     });
@@ -23,18 +23,18 @@ describe("validateScopeArgs", () => {
 
   it("accepts a path to a file that does not exist (lexical containment only)", () => {
     expect(
-      validateScopeArgs(["src/just-deleted-in-this-branch.test.ts"], worktree),
+      validatePathArgs(["src/just-deleted-in-this-branch.test.ts"], worktree),
     ).toEqual({ ok: true, paths: ["src/just-deleted-in-this-branch.test.ts"] });
   });
 
   it("accepts internal ../ segments whose resolution stays inside the worktree", () => {
-    expect(validateScopeArgs(["src/../src/a.test.ts"], worktree).ok).toBe(true);
+    expect(validatePathArgs(["src/../src/a.test.ts"], worktree).ok).toBe(true);
   });
 
   it.each([["--coverage"], ["-t"], ["--pool=threads"]])(
     "rejects the option token %s",
     (token) => {
-      expect(validateScopeArgs(["src/a.ts", token], worktree)).toEqual({
+      expect(validatePathArgs(["src/a.ts", token], worktree)).toEqual({
         ok: false,
         kind: "option_token",
         token,
@@ -43,7 +43,7 @@ describe("validateScopeArgs", () => {
   );
 
   it("rejects absolute paths even when they point inside the worktree", () => {
-    expect(validateScopeArgs([`${worktree}/src/a.test.ts`], worktree)).toEqual({
+    expect(validatePathArgs([`${worktree}/src/a.test.ts`], worktree)).toEqual({
       ok: false,
       kind: "absolute_path",
       token: `${worktree}/src/a.test.ts`,
@@ -53,7 +53,7 @@ describe("validateScopeArgs", () => {
   it.each([["../other-session/file.ts"], ["src/../../escape.ts"]])(
     "rejects the traversal token %s that escapes the worktree",
     (token) => {
-      expect(validateScopeArgs([token], worktree)).toEqual({
+      expect(validatePathArgs([token], worktree)).toEqual({
         ok: false,
         kind: "escapes_worktree",
         token,
@@ -64,7 +64,7 @@ describe("validateScopeArgs", () => {
   it("rejects a sibling directory sharing the worktree path as a prefix", () => {
     // /repo/.worktrees/session-evil starts with /repo/.worktrees/session as a
     // raw string prefix; containment must compare path segments, not chars.
-    expect(validateScopeArgs(["../session-evil/x.ts"], worktree)).toEqual({
+    expect(validatePathArgs(["../session-evil/x.ts"], worktree)).toEqual({
       ok: false,
       kind: "escapes_worktree",
       token: "../session-evil/x.ts",
@@ -72,17 +72,17 @@ describe("validateScopeArgs", () => {
   });
 
   it("rejects empty and whitespace-only tokens", () => {
-    expect(validateScopeArgs([""], worktree)).toEqual({
+    expect(validatePathArgs([""], worktree)).toEqual({
       ok: false,
       kind: "empty_token",
       token: "",
     });
-    expect(validateScopeArgs(["   "], worktree).ok).toBe(false);
+    expect(validatePathArgs(["   "], worktree).ok).toBe(false);
   });
 
   it("reports the first offending token when several are invalid", () => {
     expect(
-      validateScopeArgs(["src/a.ts", "--flag", "/etc/passwd"], worktree),
+      validatePathArgs(["src/a.ts", "--flag", "/etc/passwd"], worktree),
     ).toEqual({ ok: false, kind: "option_token", token: "--flag" });
   });
 });

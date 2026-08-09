@@ -12,15 +12,22 @@ Place `CommandCenter.json` at the repository root. It is optional; projects with
   "validation": {
     "commands": {
       "lint": {
-        "command": "scripts/validate/lint.sh",
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint-changed.sh"
+        },
         "cost": 1,
-        "description": "Lint changed files"
+        "description": "Lint project files",
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full.sh",
+          "changed": "scripts/validate/test-changed.sh"
+        },
         "cost": 4,
         "timeoutMs": 900000,
-        "scopeArgs": "paths"
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["lint", "test"],
@@ -58,17 +65,18 @@ Every name selected by `preMerge` or `laneMerge` must exist in `validation.comma
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `command` | `string` | Yes | Executable wrapper path, normally under `scripts/validate/` |
+| `command.full` | `string` | Yes | Full-run wrapper path, normally under `scripts/validate/` |
+| `command.changed` | `string` | No | Native changed-run wrapper; changed requests fall back to full when omitted |
 | `cost` | positive integer | Yes | Fixed reservation weight against the global validation budget |
 | `timeoutMs` | positive integer | No | Command-specific execution timeout |
 | `description` | `string` | No | Human-readable text surfaced by validation discovery |
-| `scopeArgs` | `"forbid" \| "paths"` | No | Whether validated relative path arguments may narrow the run; defaults to `"forbid"` |
+| `pathArgs` | `"forbid" \| "paths"` | No | Whether validated relative paths may narrow a native changed run; defaults to `"forbid"` |
 
-`cost` must describe the wrapper's maximum fixed resource profile. Use about one unit per configured test worker and keep the convention consistent across projects on the same machine.
+`cost` and `timeoutMs` are shared by both variants. Cost must describe their maximum fixed resource profile. Every invocation requests changed or full; changed is the default and falls back to `command.full` when `command.changed` is absent. Paths require changed scope, a changed wrapper, and `pathArgs: "paths"`.
 
 ## Path Resolution and Execution
 
-`initScriptPath` and validation `command` paths may be relative or absolute. Relative paths resolve from the canonical project root, while validation runs use the target session or lane worktree as `cwd`. Validation wrappers are invoked with `execFile`, so they need a shebang and executable permissions and cannot be shell command strings.
+`initScriptPath` and both validation command paths may be relative or absolute. Relative paths resolve from the canonical project root, while validation runs use the target session or lane worktree as `cwd`. Validation wrappers are invoked with `execFile`, so they need a shebang and executable permissions and cannot be shell command strings. Each wrapper implements one fixed mode and never parses Command Center's scope.
 
 Because command paths resolve from the canonical project root, an unmerged branch cannot test edits to its own registry or wrappers through `cctl validate`.
 
@@ -93,8 +101,9 @@ For the complete dev-server schema and examples, use the `dev-server-setup` skil
   "validation": {
     "commands": {
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
-        "cost": 1
+        "command": { "full": "scripts/validate/typecheck.sh" },
+        "cost": 1,
+        "pathArgs": "forbid"
       }
     },
     "preMerge": ["typecheck"]

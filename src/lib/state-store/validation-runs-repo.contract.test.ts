@@ -63,8 +63,9 @@ const MAXIMAL = {
   finishedAt: "2026-08-05T10:02:05.750Z",
   queueMs: 5_500,
   execMs: 120_250,
-  scoped: true,
-  scopedPathCount: 3,
+  requestedScope: "changed",
+  effectiveScope: "full",
+  scopedPathCount: 0,
   exitCode: 0,
   timedOut: false,
 } as const;
@@ -155,6 +156,21 @@ describe("validation-runs-repo durability contract", () => {
 });
 
 describe("validation-runs-repo lifecycle transitions", () => {
+  it("round-trips nullable scopes on an ambiguous legacy row", () => {
+    repo.submit(
+      queuedRecord({
+        runId: "vr-legacy",
+        requestedScope: null,
+        effectiveScope: null,
+      }),
+    );
+
+    expect(repo.findById("vr-legacy")).toMatchObject({
+      requestedScope: null,
+      effectiveScope: null,
+    });
+  });
+
   it("admit moves only a queued row to running, exactly once", () => {
     repo.submit(queuedRecord());
 

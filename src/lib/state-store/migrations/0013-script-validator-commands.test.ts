@@ -203,7 +203,11 @@ describe("0013-script-validator-commands", () => {
     writeJson(path.join(projectPath, "CommandCenter.json"), {
       validation: {
         commands: {
-          "pre-merge": { command: "scripts/pre-merge.sh", cost: 8 },
+          "pre-merge": {
+            command: { full: "scripts/pre-merge.sh" },
+            cost: 8,
+            pathArgs: "forbid",
+          },
         },
       },
     });
@@ -284,7 +288,11 @@ describe("0013-script-validator-commands", () => {
     writeJson(path.join(projectPath, "CommandCenter.json"), {
       validation: {
         commands: {
-          "pre-merge": { command: "scripts/pre-merge.sh", cost: 0 },
+          "pre-merge": {
+            command: { full: "scripts/pre-merge.sh" },
+            cost: 0,
+            pathArgs: "forbid",
+          },
         },
       },
     });

@@ -88,7 +88,7 @@ Always load `references/commandcenter-json.md`. When any validation tool is dete
 
 ## Register Validation Commands
 
-Register one command per tool or resource profile in `CommandCenter.json`, with one executable wrapper per command under `scripts/validate/`. Typical names are `format`, `lint`, `typecheck`, `test`, and `build`, but names are arbitrary stable kebab-case identifiers. A low-cost and high-cost test profile must be separate registered commands rather than one wrapper whose worker count changes at runtime.
+Register one logical command per tool or fixed resource profile in `CommandCenter.json`. Each profile has a required full wrapper and may have a separate changed wrapper under `scripts/validate/`; every wrapper implements one fixed mode. Typical names are `format`, `lint`, `typecheck`, `test`, and `build`. A low-cost and high-cost test profile remains two logical commands because scope variants share cost and timeout.
 
 Every wrapper must:
 
@@ -97,6 +97,7 @@ Every wrapper must:
 - for every test command, pin the worker count in the wrapper and overwrite `NODE_OPTIONS` there with a fixed `--max-old-space-size` value so the test parent and spawned workers inherit the heap cap; when candidate configuration can supply worker `execArgv` that takes precedence over `NODE_OPTIONS`, use a wrapper-owned launcher to apply the fixed worker `execArgv` after candidate configuration resolves; runner configuration may mirror values but must not own enforcement;
 - emit no color, remain silent on success, and preserve complete output on failure; use quiet flags or capture and replay output on failure instead of discarding diagnostics;
 - exit zero only when its command passes.
+- never parse or receive Command Center's `changed`/`full` scope value; Command Center selects the executable.
 
 ### Scope by default
 
@@ -113,7 +114,7 @@ Apply that comparison point as follows:
 - run Vitest with `--changed <merge-base>`, Jest with `--changedSince=<merge-base>`, or the runner's equivalent related/affected mode;
 - keep a full typecheck or build when file-level or package-level scoping cannot soundly detect breakage in unchanged dependents.
 
-The test command should declare `scopeArgs: "paths"` so `cctl validate run test -- path/to/test.ts` supports the TDD inner loop. Its wrapper may treat those positional paths as a narrower explicit selection; it must not accept option-like forwarded arguments or use them to change workers, heap, pool, or config. Commands that do not need caller-provided paths keep the default `scopeArgs: "forbid"`.
+Register the affected-work wrapper as `command.changed` and an unconditional whole-project wrapper as `command.full`. If sound changed execution is unavailable, omit `command.changed`; changed requests then fall back to full automatically. The test profile should declare `pathArgs: "paths"` so `cctl validate run test --scope changed -- path/to/test.ts` supports the TDD inner loop. Only the changed wrapper receives these validated positional paths. Commands that do not need caller-provided paths keep `pathArgs: "forbid"`.
 
 ### Declare honest costs
 
@@ -147,7 +148,7 @@ Propose:
 
 - `CommandCenter.json`, preserving any existing `devServers` field untouched;
 - `scripts/worktree-init.sh` when `package.json` exists;
-- one wrapper under `scripts/validate/` for every detected validation command;
+- one full wrapper and, where sound, one changed wrapper under `scripts/validate/` for every detected validation command;
 - a wrapper-owned launcher for Vitest when needed to apply fixed worker `execArgv` after candidate configuration resolution;
 - a merged Vitest or Jest config update when needed to make output quiet and mirror the wrapper-owned resource profile.
 
@@ -159,23 +160,37 @@ For `CommandCenter.json`, use this shape and include only detected commands:
   "validation": {
     "commands": {
       "format": {
-        "command": "scripts/validate/format.sh",
+        "command": {
+          "full": "scripts/validate/format-full.sh",
+          "changed": "scripts/validate/format-changed.sh"
+        },
         "cost": 1,
-        "description": "Format changed files"
+        "description": "Format project files",
+        "pathArgs": "forbid"
       },
       "lint": {
-        "command": "scripts/validate/lint.sh",
-        "cost": 1
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint-changed.sh"
+        },
+        "cost": 1,
+        "pathArgs": "forbid"
       },
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
-        "cost": 1
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
+        "cost": 1,
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full.sh",
+          "changed": "scripts/validate/test-changed.sh"
+        },
         "cost": 4,
         "timeoutMs": 900000,
-        "scopeArgs": "paths"
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["format", "lint", "typecheck", "test"],
@@ -184,7 +199,7 @@ For `CommandCenter.json`, use this shape and include only detected commands:
 }
 ```
 
-Set `initScriptPath` to `null` when no init script is needed. `timeoutMs` and `description` are optional; `cost` is required. Do not add `devServers`; preserve an existing array and use `dev-server-setup` for additions.
+Set `initScriptPath` to `null` when no init script is needed. `command.full` and `cost` are required; `command.changed`, `pathArgs`, `timeoutMs`, and `description` are optional. Omitted `pathArgs` defaults to `"forbid"`. Do not add `devServers`; preserve an existing array and use `dev-server-setup` for additions.
 
 Use the matching tool reference to build each wrapper. The wrapper is authoritative: it must set the fixed worker count and inherited heap cap before invoking the runner, and its launcher must reapply a final worker `execArgv` when the runner gives that field precedence over the inherited cap. Test-runner config may mirror values only below that final override; do not present a cost that assumes fewer workers than the wrapper permits.
 
@@ -210,8 +225,8 @@ After writing:
 
 1. Read back every created or modified file.
 2. Verify wrapper shebangs and executable permissions.
-3. Verify every `preMerge` and `laneMerge` name is registered.
-4. Verify each declared cost matches the wrapper's fixed worker/resource profile.
+3. Verify every `preMerge` and `laneMerge` name is registered and every command has `command.full`.
+4. Verify each shared cost matches the maximum fixed worker/resource profile of both variants.
 5. Verify every test wrapper pins workers and overwrites `NODE_OPTIONS` with its inherited per-process heap cap; for Vitest, verify the canonical launcher supplies the final `poolOptions.forks.execArgv` after candidate configuration resolution.
 6. Verify each wrapper is silent on success, complete on failure, and colorless.
 
@@ -225,7 +240,7 @@ List all created and modified files, explain the selected cost and scoping for e
 
 **Existing CommandCenter.json:** Merge the `validation` registry and preserve unrelated fields, especially `devServers`. Never silently overwrite.
 
-**Existing monolithic validation script:** Propose splitting its tool phases into one wrapper per command under `scripts/validate/`, then preserve ordering through `preMerge` and `laneMerge` lists.
+**Existing monolithic validation script:** Propose splitting its tool phases into logical commands with fixed full/changed wrappers under `scripts/validate/`, then preserve ordering through `preMerge` and `laneMerge` lists.
 
 **Existing test config with dynamic parallelism:** Make the canonical wrapper enforce a fixed command profile whose maximum worker count and inherited heap match its declared cost. When candidate worker `execArgv` can override the inherited heap, the wrapper-owned launcher must supply the final fixed `execArgv`. Runner config may mirror only beneath that override and cannot own the profile. A separate resource profile becomes a separate registered command.
 

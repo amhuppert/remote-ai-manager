@@ -3951,14 +3951,14 @@ describe("execution loop — parallel integration", () => {
         validation: {
           commands: {
             typecheck: {
-              command: "scripts/typecheck.sh",
+              command: { full: "scripts/typecheck.sh" },
               cost: 1,
-              scopeArgs: "forbid" as const,
+              pathArgs: "forbid" as const,
             },
             test: {
-              command: "scripts/test.sh",
+              command: { full: "scripts/test.sh" },
               cost: 2,
-              scopeArgs: "forbid" as const,
+              pathArgs: "forbid" as const,
             },
           },
           preMerge: ["typecheck"],

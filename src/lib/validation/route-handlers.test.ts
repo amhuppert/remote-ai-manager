@@ -56,7 +56,8 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
         name: "test",
         cost: 4,
         description: "Run focused tests",
-        scopeArgs: "paths",
+        pathArgs: "paths",
+        changedScope: "native",
         timeoutMs: null,
         enabled: true,
       },
@@ -85,6 +86,8 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
             token: "lease-1",
             expiresAt: "2026-08-05T12:00:00.000Z",
           },
+          requestedScope: "changed",
+          effectiveScope: "changed",
         };
       },
       async list(caller) {
@@ -106,6 +109,8 @@ function serviceFake(overrides: Partial<ValidationService> = {}): {
           status: "queued",
           position: 2,
           result: null,
+          requestedScope: "changed",
+          effectiveScope: "changed",
         };
       },
       async cancel(runId, leaseToken) {
@@ -170,6 +175,7 @@ describe("validation route composition", () => {
       {
         source: "agent_cli",
         commandName: "test",
+        scope: "changed",
         wait: true,
         scopePaths: ["src/example.test.ts"],
         nestedValidationRunId: null,
@@ -235,8 +241,39 @@ describe("validation route composition", () => {
       status: "queued",
       position: 2,
       result: null,
+      requestedScope: "changed",
+      effectiveScope: "changed",
     });
     expect(fake.polls).toEqual([{ runId: "vrun-1", leaseToken: "lease-1" }]);
+  });
+
+  it.each([
+    "path_args_forbidden",
+    "path_args_rejected",
+    "path_args_require_changed",
+  ] as const)("maps %s to its stable HTTP 400 code", async (reason) => {
+    const fake = serviceFake({
+      submit: async () => ({ kind: "invalid", reason, message: "refused" }),
+    });
+    const handlers = createSessionValidationHandlers({
+      auth: auth(),
+      service: fake.service,
+      resolveProjectPath: async () => PROJECT_PATH,
+      getSession: async () => ({ conversations: [conversation()] }),
+    });
+
+    const response = await handlers.POST(
+      new Request("http://cc.test/validation", {
+        method: "POST",
+        body: JSON.stringify({ commandName: "test" }),
+      }),
+      context(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      code: `validation_${reason}`,
+    });
   });
 
   it("maps cancel authorization failures to stable error codes", async () => {
@@ -319,15 +356,18 @@ describe("GET /api/validation-commands", () => {
               validation: {
                 commands: {
                   typecheck: {
-                    command: "scripts/tc.sh",
+                    command: { full: "scripts/tc.sh" },
                     cost: 2,
-                    scopeArgs: "forbid",
+                    pathArgs: "forbid",
                   },
                   test: {
-                    command: "scripts/test.sh",
+                    command: {
+                      full: "scripts/test-full.sh",
+                      changed: "scripts/test.sh",
+                    },
                     cost: 4,
                     description: "Scoped vitest",
-                    scopeArgs: "paths",
+                    pathArgs: "paths",
                   },
                 },
                 preMerge: [],
@@ -338,14 +378,27 @@ describe("GET /api/validation-commands", () => {
 
     const response = await GET();
     expect(response.status).toBe(200);
-    const body = validationCommandsResponseSchema.parse(await response.json());
+    const rawBody: unknown = await response.json();
+    expect(JSON.stringify(rawBody)).not.toContain("scripts/");
+    const body = validationCommandsResponseSchema.parse(rawBody);
     expect(body).toEqual({
       projects: [
         {
           projectName: "alpha",
           commands: [
-            { name: "test", cost: 4, description: "Scoped vitest" },
-            { name: "typecheck", cost: 2 },
+            {
+              name: "test",
+              cost: 4,
+              description: "Scoped vitest",
+              pathArgs: "paths",
+              changedScope: "native",
+            },
+            {
+              name: "typecheck",
+              cost: 2,
+              pathArgs: "forbid",
+              changedScope: "full_fallback",
+            },
           ],
         },
         // No CommandCenter.json → readable-but-empty registry, still listed.

@@ -252,9 +252,9 @@ describe("join-runner", () => {
           validation: {
             commands: {
               typecheck: {
-                command: "scripts/typecheck.sh",
+                command: { full: "scripts/typecheck.sh" },
                 cost: 1,
-                scopeArgs: "forbid",
+                pathArgs: "forbid",
               },
             },
             preMerge: ["typecheck"],
@@ -506,14 +506,14 @@ describe("join-runner", () => {
         validation: {
           commands: {
             typecheck: {
-              command: "scripts/typecheck.sh",
+              command: { full: "scripts/typecheck.sh" },
               cost: 1,
-              scopeArgs: "forbid",
+              pathArgs: "forbid",
             },
             test: {
-              command: "scripts/test.sh",
+              command: { full: "scripts/test.sh" },
               cost: 2,
-              scopeArgs: "forbid",
+              pathArgs: "forbid",
             },
           },
           preMerge: ["typecheck"],

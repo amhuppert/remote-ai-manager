@@ -117,6 +117,8 @@ const validationRunTableRowSchema = registerTrustedSchema(
     finished_at: z.string().nullable(),
     queue_ms: z.number().int().nullable(),
     exec_ms: z.number().int().nullable(),
+    requested_scope: z.string().nullable(),
+    effective_scope: z.string().nullable(),
     scoped: z.number().int(),
     scoped_path_count: z.number().int(),
     exit_code: z.number().int().nullable(),
@@ -149,6 +151,8 @@ interface SqlBindRow {
   finished_at: string | null;
   queue_ms: number | null;
   exec_ms: number | null;
+  requested_scope: string | null;
+  effective_scope: string | null;
   scoped: number;
   scoped_path_count: number;
   exit_code: number | null;
@@ -179,7 +183,9 @@ function recordToSqlBind(record: ValidationRunRecord): SqlBindRow {
     finished_at: record.finishedAt,
     queue_ms: record.queueMs,
     exec_ms: record.execMs,
-    scoped: record.scoped ? 1 : 0,
+    requested_scope: record.requestedScope,
+    effective_scope: record.effectiveScope,
+    scoped: record.scopedPathCount > 0 ? 1 : 0,
     scoped_path_count: record.scopedPathCount,
     exit_code: record.exitCode,
     timed_out: record.timedOut ? 1 : 0,
@@ -239,7 +245,8 @@ function rowToDomain(rawRow: unknown): ValidationRunRecord {
     finishedAt: row.finished_at,
     queueMs: row.queue_ms,
     execMs: row.exec_ms,
-    scoped: row.scoped === 1,
+    requestedScope: row.requested_scope,
+    effectiveScope: row.effective_scope,
     scopedPathCount: row.scoped_path_count,
     exitCode: row.exit_code,
     timedOut: row.timed_out === 1,
@@ -258,6 +265,7 @@ export function createValidationRunsRepo(db: Db): ValidationRunsRepo {
        project_path, worktree_path, session_name, conversation_id,
        workflow_execution_id, workflow_context_id, workflow_role,
        submitted_at, started_at, finished_at, queue_ms, exec_ms,
+       requested_scope, effective_scope,
        scoped, scoped_path_count, exit_code, timed_out
      ) VALUES (
        @run_id, @source, @command_name, @cost, @queue_order, @status, @nonce,
@@ -265,6 +273,7 @@ export function createValidationRunsRepo(db: Db): ValidationRunsRepo {
        @project_path, @worktree_path, @session_name, @conversation_id,
        @workflow_execution_id, @workflow_context_id, @workflow_role,
        @submitted_at, @started_at, @finished_at, @queue_ms, @exec_ms,
+       @requested_scope, @effective_scope,
        @scoped, @scoped_path_count, @exit_code, @timed_out
      )`,
   );

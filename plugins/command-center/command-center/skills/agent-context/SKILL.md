@@ -48,7 +48,7 @@ CC provides a command-line tool, **`cctl`**, on your `PATH` for session actions:
 
 ### Validation commands and global capacity
 
-Run `cctl validate list` to inspect the project's registered command names, declared costs, scope support, caller policy, and current capacity. Run one with `cctl validate run <name>`; add `--wait` when the turn should join the strict FIFO queue instead of using fail-fast admission. Use values after `--` only to narrow a command whose registration permits path scoping.
+Run `cctl validate list` to inspect the project's registered command names, declared costs, native/fallback changed support, caller policy, and current capacity. Run one with `cctl validate run <name>`; scope defaults to changed, `--scope full` requests full evidence, and full-only commands fall back automatically. Add `--wait` when the turn should join the strict FIFO queue instead of using fail-fast admission. Use values after `--` only to narrow a native changed command whose registration permits paths.
 
 Every validation execution shares one server-owned global cost budget across all projects, sessions, conversations, graph workflows, and merge flows. A capacity refusal reports systemic capacity or an older queued request, not a validation-tool error. Decide whether waiting fits the turn; never respond by invoking the registered tool, package alias, or wrapper directly. A declared cost above the machine limit is a configuration error that must be fixed rather than queued.
 

@@ -181,7 +181,7 @@ export function buildValidationCommandsSection(
 ): string {
   const lines = [
     "## Validation Commands",
-    "Run registered validation only through `cctl validate run <name>`. Do not invoke test runners, type checkers, linters, formatters, or builds directly, and never bypass the wrapper to avoid a queue or an execution-context policy.",
+    "Run registered validation only through `cctl validate run <name>`. Runs default to changed scope; use `--scope full` when full-project evidence is required. A full-only command falls back automatically. Do not invoke test runners, type checkers, linters, formatters, or builds directly, and never bypass the wrapper to avoid a queue or an execution-context policy.",
     enabledLine(selections.enabled),
   ];
   if (selections.disabled.length > 0) {

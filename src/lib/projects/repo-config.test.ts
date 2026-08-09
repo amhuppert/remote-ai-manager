@@ -19,44 +19,48 @@ describe("readRepoConfig", () => {
     expect(result?.validation).toEqual({
       commands: {
         "pre-merge": {
-          command: "scripts/pre-merge-validate.sh",
+          command: {
+            full: "scripts/pre-merge-validate-full.sh",
+            changed: "scripts/pre-merge-validate.sh",
+          },
           cost: 8,
           timeoutMs: 3_600_000,
-          scopeArgs: "forbid",
+          pathArgs: "forbid",
         },
         format: {
-          command: "scripts/validate/format.sh",
+          command: {
+            full: "scripts/validate/format-full.sh",
+            changed: "scripts/validate/format.sh",
+          },
           cost: 1,
-          description: "Format changed files",
-          scopeArgs: "forbid",
+          description: "Format project files",
+          pathArgs: "forbid",
         },
         lint: {
-          command: "scripts/validate/lint.sh",
+          command: {
+            full: "scripts/validate/lint-full.sh",
+            changed: "scripts/validate/lint.sh",
+          },
           cost: 2,
-          description: "Lint changed files",
-          scopeArgs: "forbid",
+          description: "Lint project files",
+          pathArgs: "forbid",
         },
         typecheck: {
-          command: "scripts/validate/typecheck.sh",
+          command: { full: "scripts/validate/typecheck.sh" },
           cost: 2,
           timeoutMs: 3_600_000,
           description: "Run full-project static and build checks",
-          scopeArgs: "forbid",
+          pathArgs: "forbid",
         },
         test: {
-          command: "scripts/validate/test.sh",
+          command: {
+            full: "scripts/validate/test-full-suite.sh",
+            changed: "scripts/validate/test.sh",
+          },
           cost: 8,
           timeoutMs: 3_600_000,
-          description: "Run affected unit tests with up to eight workers",
-          scopeArgs: "paths",
-        },
-        "test-full-suite": {
-          command: "scripts/validate/test-full-suite.sh",
-          cost: 8,
-          timeoutMs: 3_600_000,
-          description:
-            "Run the full unit test suite with up to eight workers, unscoped and without bail",
-          scopeArgs: "forbid",
+          description: "Run unit tests with eight workers",
+          pathArgs: "paths",
         },
       },
       preMerge: ["format", "lint", "typecheck", "test"],
@@ -80,12 +84,19 @@ describe("readRepoConfig", () => {
       JSON.stringify({
         validation: {
           commands: {
-            lint: { command: "scripts/validate/lint.sh", cost: 2 },
+            lint: {
+              command: { full: "scripts/validate/lint.sh" },
+              cost: 2,
+              pathArgs: "forbid",
+            },
             test: {
-              command: "scripts/validate/test.sh",
+              command: {
+                full: "scripts/validate/test-full-suite.sh",
+                changed: "scripts/validate/test.sh",
+              },
               cost: 8,
               timeoutMs: 900_000,
-              scopeArgs: "paths",
+              pathArgs: "paths",
             },
           },
           preMerge: ["lint", "test"],
@@ -100,7 +111,7 @@ describe("readRepoConfig", () => {
     expect(result?.validation?.preMerge).toEqual(["lint", "test"]);
     expect(result?.validation?.laneMerge).toEqual(["test"]);
     expect(result?.validation?.commands.test?.cost).toBe(8);
-    expect(result?.validation?.commands.lint?.scopeArgs).toBe("forbid");
+    expect(result?.validation?.commands.lint?.pathArgs).toBe("forbid");
   });
 
   it("rejects preMergeCommand with the registry replacement path", async () => {

@@ -234,6 +234,7 @@ export function createScriptValidatorRunner(
         submission = await deps.validationService.submitSystem({
           source: "graph_script_validator",
           command: commandRef,
+          scope: "changed",
           projectPath: input.projectPath,
           workflow: {
             executionId: input.executionId,

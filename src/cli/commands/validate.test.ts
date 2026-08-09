@@ -97,7 +97,8 @@ const listBody = {
       name: "test",
       cost: 4,
       description: "Run focused tests",
-      scopeArgs: "paths",
+      pathArgs: "paths",
+      changedScope: "native",
       timeoutMs: 600_000,
       enabled: true,
       command: "scripts/validate/test.sh",
@@ -106,7 +107,8 @@ const listBody = {
       name: "format",
       cost: 1,
       description: null,
-      scopeArgs: "forbid",
+      pathArgs: "forbid",
+      changedScope: "full_fallback",
       timeoutMs: null,
       enabled: false,
       command: "scripts/validate/format.sh",
@@ -126,6 +128,8 @@ describe("cctl validate list", () => {
     expect(result.stdout).toContain("test");
     expect(result.stdout).toContain("cost 4");
     expect(result.stdout).toContain("enabled");
+    expect(result.stdout).toContain("changed native");
+    expect(result.stdout).toContain("changed → full");
     expect(result.stdout).toContain("3 of 8 capacity units in use");
     expect(result.stdout).not.toContain("scripts/validate");
     expect(host.requests[0]?.path).toBe(
@@ -149,6 +153,8 @@ describe("cctl validate run", () => {
               token: "lease-1",
               expiresAt: "2026-08-05T12:00:00.000Z",
             },
+            requestedScope: "changed",
+            effectiveScope: "changed",
           },
           202,
         );
@@ -159,6 +165,8 @@ describe("cctl validate run", () => {
           status: "queued",
           position: 1,
           result: null,
+          requestedScope: "changed",
+          effectiveScope: "changed",
         });
       }
       if (index === 2) {
@@ -167,12 +175,16 @@ describe("cctl validate run", () => {
           status: "running",
           position: null,
           result: null,
+          requestedScope: "changed",
+          effectiveScope: "changed",
         });
       }
       return json({
         runId: "vrun-1",
         status: "passed",
         position: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
         result: {
           kind: "passed",
           runId: "vrun-1",
@@ -194,6 +206,7 @@ describe("cctl validate run", () => {
     expect(host.progress.join("")).toContain("queue position 2");
     expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toEqual({
       commandName: "test",
+      scope: "changed",
       wait: true,
       scopePaths: ["src/example.test.ts"],
       workflowExecutionId: "exec-1",
@@ -208,6 +221,56 @@ describe("cctl validate run", () => {
       expect.objectContaining({ content: "lease-1\n" }),
     ]);
     expect(host.removedFiles).toEqual([host.privateWrites[0]?.path]);
+  });
+
+  it("sends explicit full scope for the same logical command", async () => {
+    const host = hostWith(() =>
+      json({
+        kind: "not_started",
+        result: {
+          kind: "skipped_by_policy",
+          message: "Skipped by policy.",
+        },
+      }),
+    );
+
+    const result = await runCli(
+      ["validate", "run", "test", "--scope", "full"],
+      env,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).toMatchObject({
+      commandName: "test",
+      scope: "full",
+    });
+  });
+
+  it.each([
+    {
+      name: "unknown scope",
+      args: ["validate", "run", "test", "--scope", "partial"],
+    },
+    {
+      name: "full scope with paths",
+      args: [
+        "validate",
+        "run",
+        "test",
+        "--scope",
+        "full",
+        "--",
+        "src/example.test.ts",
+      ],
+    },
+  ])("rejects $name before any request", async ({ args }) => {
+    const host = hostWith(() => json({}));
+
+    const result = await runCli(args, env, host);
+
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toEqual([]);
   });
 
   it("reports fail-fast capacity with both numbers and a hint", async () => {
@@ -339,6 +402,8 @@ describe("cctl validate run", () => {
               token: "lease-oversized",
               expiresAt: "2026-08-05T12:00:00.000Z",
             },
+            requestedScope: "changed",
+            effectiveScope: "changed",
           },
           202,
         );
@@ -347,6 +412,8 @@ describe("cctl validate run", () => {
         runId: "vrun-oversized",
         status: "cost_exceeds_limit",
         position: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
         result: {
           kind: "cost_exceeds_limit",
           name: "test",
@@ -389,6 +456,8 @@ describe("cctl validate run", () => {
                   token: "lease-1",
                   expiresAt: "2026-08-05T12:00:00.000Z",
                 },
+                requestedScope: "changed",
+                effectiveScope: "changed",
               },
               202,
             );
@@ -401,6 +470,8 @@ describe("cctl validate run", () => {
             status: "queued",
             position: 0,
             result: null,
+            requestedScope: "changed",
+            effectiveScope: "changed",
           });
         },
         { signalOnSleep: signal },
@@ -440,6 +511,8 @@ describe("cctl validate run", () => {
               token: "lease-failed",
               expiresAt: "2026-08-05T12:00:00.000Z",
             },
+            requestedScope: "changed",
+            effectiveScope: "changed",
           },
           202,
         );
@@ -448,6 +521,8 @@ describe("cctl validate run", () => {
         runId: "vrun-failed",
         status: "failed",
         position: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
         result: {
           kind: "failed",
           runId: "vrun-failed",
@@ -471,12 +546,12 @@ describe("cctl validate run", () => {
     });
   });
 
-  it("keeps server-side scope validation as a structured usage error", async () => {
+  it("keeps server-side path validation as a structured usage error", async () => {
     const host = hostWith(() =>
       json(
         {
-          error: 'Scope argument "--pool" was refused (option_token)',
-          code: "validation_scope_args_rejected",
+          error: 'Path argument "--pool" was refused (option_token)',
+          code: "validation_path_args_rejected",
           issues: [
             {
               path: "scopePaths.0",
@@ -496,7 +571,7 @@ describe("cctl validate run", () => {
 
     expect(result.exitCode).toBe(2);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      code: "validation_scope_args_rejected",
+      code: "validation_path_args_rejected",
       issues: [
         {
           path: "scopePaths.0",
@@ -521,6 +596,8 @@ describe("cctl validate status and cancel", () => {
             source: "agent_cli",
             projectPath: "/repos/cc",
             conversationId: "conv-2",
+            requestedScope: "changed",
+            effectiveScope: "changed",
             position: 1,
           },
         ],
@@ -530,6 +607,7 @@ describe("cctl validate status and cancel", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("vrun-2");
     expect(result.stdout).toContain("queue position 2");
+    expect(result.stdout).toContain("scope changed");
   });
 
   it("polls one run and maps a standalone cancel request", async () => {
@@ -538,6 +616,8 @@ describe("cctl validate status and cancel", () => {
         runId: "vrun-2",
         status: "failed",
         position: null,
+        requestedScope: "changed",
+        effectiveScope: "changed",
         result: {
           kind: "failed",
           runId: "vrun-2",
@@ -556,6 +636,8 @@ describe("cctl validate status and cancel", () => {
       ok: true,
       runId: "vrun-2",
       status: "failed",
+      requestedScope: "changed",
+      effectiveScope: "changed",
     });
 
     const cancelHost = hostWith(() => json({ cancelled: true }));
