@@ -1,7 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { computeCandidateSnapshot } from "@/lib/git/diff";
+import { resyncSharedIndexToHead } from "@/lib/git/shared-index";
 import type {
   CleanupLaneInput,
   DisposeInput,
@@ -11,12 +22,19 @@ import type {
   ProvisionLaneInput,
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
+import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import {
   createExecutionTargetResolver,
   type ExecutionTarget,
 } from "@/lib/workflow-graph/execution-target-resolver";
-import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
-import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
+import type {
+  GraphMergeRunner,
+  GraphMergeRunnerInput,
+} from "@/lib/workflow-graph/graph-merge-runner";
+import {
+  applyJoinProgress,
+  transitionContextStatus,
+} from "@/lib/workflow-graph/context-transitions";
 import {
   createJoinRunner,
   type JoinRunner,
@@ -30,7 +48,9 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import type {
+  GraphWorkflowResolvedContext,
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
@@ -52,6 +72,19 @@ import type { FsWritePolicy } from "@/lib/agent-backends/task";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
 import { resolveUpstreamInputs } from "./context-outputs";
+import { createLaneCommitter } from "./lane-committer";
+import { resolveApprovalSnapshot } from "./approval-snapshot";
+import { planContextJoin } from "./lane-join";
+import { applyLiveExecutionEdits } from "./runtime-edits";
+import {
+  P1_JUDGE,
+  P1_WORKER,
+  P2_JUDGE,
+  P2_WORKER,
+  executionFor,
+  makeLiveEditDeps,
+  workerJudgeDefinition,
+} from "./loop-test-fixtures";
 
 /** Synthetic worktrees in this suite have no Git index to prepare. */
 function createGraphWorkflowExecutionLoop(
@@ -1672,8 +1705,8 @@ describe("execution loop — parallel integration", () => {
     }
     expect(synthesisInputs).toHaveLength(3);
     expect(
-      synthesisInputs.map((input) =>
-        (input as { output: { result: string } }).output.result,
+      synthesisInputs.map(
+        (input) => (input as { output: { result: string } }).output.result,
       ),
     ).toEqual([...readerIds]);
     expect(result.executionLanes[SESSION_LANE_ID]).toBeUndefined();
@@ -3626,4 +3659,902 @@ describe("execution loop — parallel integration", () => {
     expect(freshFinalPublish?.status).toBe("succeeded");
     expect(freshFinalPublish?.sourceLaneIds).toEqual(["ctx-a", sweepLaneId]);
   });
+
+  it("scenario 21: the composed authored-lane graph shares substrates, survives restart, validates once per lane, and cleans up exactly once", async () => {
+    _resetActiveLoopsForTesting();
+
+    const DELIVERY_LANE = "delivery";
+    const DOCS_LANE = "docs";
+    const LOOP_LANE = "loop";
+    const PUBLISH_LANE = "publish";
+    const EXPANDED_LANE = "expanded";
+    const OWNER_A = "owner-a";
+    const OWNER_B = "owner-b";
+    const INTEGRATOR = "integrator";
+    const DOCS_WRITER = "docs-writer";
+    const DOCS_READER = "docs-reader";
+    const PUBLISH_BASE = "publish-base";
+    const EXPANDED_BASE = "expanded-base";
+    const EXPANDED = "expanded-context";
+    const READ_ONLY_OUTPUT_SCHEMA = {
+      type: "object",
+      properties: { inclusion: { type: "string" } },
+      required: ["inclusion"],
+      additionalProperties: false,
+    };
+    const namedLaneIds = [
+      DELIVERY_LANE,
+      DOCS_LANE,
+      LOOP_LANE,
+      PUBLISH_LANE,
+      EXPANDED_LANE,
+    ];
+
+    const baseDefinition = workerJudgeDefinition();
+    const baseContext = baseDefinition.executionContexts.find(
+      (context) => context.id === "seed",
+    );
+    if (!baseContext) throw new Error("loop fixture is missing its seed");
+
+    const extraContext = (
+      id: string,
+      placement: GraphWorkflowResolvedContext["placement"],
+      overrides: Partial<GraphWorkflowResolvedContext> = {},
+    ): GraphWorkflowResolvedContext => ({
+      ...structuredClone(baseContext),
+      id,
+      title: id,
+      acceptanceCriteria: `${id} is complete`,
+      placement,
+      outputSchema: undefined,
+      ...overrides,
+    });
+    const placeLoopContext = (
+      context: GraphWorkflowResolvedContext,
+    ): GraphWorkflowResolvedContext => {
+      const authoredId = context.id.includes("__p")
+        ? (context.id.split("__").at(-1) ?? context.id)
+        : context.id;
+      if (authoredId === "seed") {
+        return {
+          ...context,
+          placement: { lane: "session", mode: "readOnly" },
+          outputSchema: READ_ONLY_OUTPUT_SCHEMA,
+        };
+      }
+      if (authoredId === "worker" || authoredId === "judge") {
+        return {
+          ...context,
+          placement: {
+            lane: LOOP_LANE,
+            mode: "owned",
+            ownedPaths: ["loop"],
+          },
+        };
+      }
+      if (authoredId === "publish") {
+        return {
+          ...context,
+          placement: { lane: PUBLISH_LANE, mode: "full" },
+        };
+      }
+      return context;
+    };
+
+    const definition: ResolvedWorkflowSemanticDefinition = {
+      ...baseDefinition,
+      laneMergeValidation: {
+        strategy: "every-merge",
+        commands: { mode: "only", commands: ["test"] },
+      },
+      executionContexts: [
+        ...baseDefinition.executionContexts.map(placeLoopContext),
+        extraContext(
+          OWNER_A,
+          {
+            lane: DELIVERY_LANE,
+            mode: "owned",
+            ownedPaths: ["delivery/a"],
+          },
+          { humanApprovalGate: { enabled: true } },
+        ),
+        extraContext(OWNER_B, {
+          lane: DELIVERY_LANE,
+          mode: "owned",
+          ownedPaths: ["delivery/b"],
+        }),
+        extraContext(INTEGRATOR, { lane: DELIVERY_LANE, mode: "full" }),
+        extraContext(DOCS_WRITER, { lane: DOCS_LANE, mode: "full" }),
+        extraContext(
+          DOCS_READER,
+          { lane: DOCS_LANE, mode: "readOnly" },
+          { outputSchema: READ_ONLY_OUTPUT_SCHEMA },
+        ),
+        extraContext(PUBLISH_BASE, { lane: PUBLISH_LANE, mode: "full" }),
+        extraContext(EXPANDED_BASE, { lane: EXPANDED_LANE, mode: "full" }),
+      ],
+      tasks: [
+        ...baseDefinition.tasks,
+        ...[
+          OWNER_A,
+          OWNER_B,
+          INTEGRATOR,
+          DOCS_WRITER,
+          DOCS_READER,
+          PUBLISH_BASE,
+          EXPANDED_BASE,
+        ].map((contextId) => ({
+          id: `task-${contextId}`,
+          contextId,
+          order: 1,
+          title: `Task ${contextId}`,
+          instructions: `Complete ${contextId}`,
+          source: "user" as const,
+        })),
+      ],
+      edges: [
+        ...baseDefinition.edges,
+        ...[OWNER_A, OWNER_B, DOCS_WRITER, PUBLISH_BASE, EXPANDED_BASE].map(
+          (targetContextId) => ({
+            id: `seed__${targetContextId}`,
+            sourceContextId: "seed",
+            targetContextId,
+          }),
+        ),
+        {
+          id: `${OWNER_A}__${INTEGRATOR}`,
+          sourceContextId: OWNER_A,
+          targetContextId: INTEGRATOR,
+        },
+        {
+          id: `${OWNER_B}__${INTEGRATOR}`,
+          sourceContextId: OWNER_B,
+          targetContextId: INTEGRATOR,
+        },
+        {
+          id: `${DOCS_WRITER}__${DOCS_READER}`,
+          sourceContextId: DOCS_WRITER,
+          targetContextId: DOCS_READER,
+        },
+        {
+          id: `${PUBLISH_BASE}__publish`,
+          sourceContextId: PUBLISH_BASE,
+          targetContextId: "publish",
+        },
+      ],
+      loopGroups: baseDefinition.loopGroups?.map((group) => ({
+        ...group,
+        template: {
+          ...group.template,
+          contexts: group.template.contexts.map(placeLoopContext),
+        },
+      })),
+    };
+
+    const installRuntimeExpansion = (execution: GraphWorkflowExecution) =>
+      applyLiveExecutionEdits(
+        execution,
+        {
+          operations: [
+            {
+              type: "add-context",
+              id: EXPANDED,
+              title: EXPANDED,
+              acceptanceCriteria: `${EXPANDED} is complete`,
+              placement: { lane: EXPANDED_LANE, mode: "full" },
+              configFromContextId: EXPANDED_BASE,
+            },
+            {
+              type: "add-task",
+              id: `task-${EXPANDED}`,
+              contextId: EXPANDED,
+              title: `Task ${EXPANDED}`,
+              instructions: `Complete ${EXPANDED}`,
+            },
+            ...["seed", INTEGRATOR, DOCS_READER, "publish", EXPANDED_BASE].map(
+              (sourceContextId) => ({
+                type: "add-edge" as const,
+                sourceContextId,
+                targetContextId: EXPANDED,
+              }),
+            ),
+          ],
+        },
+        makeLiveEditDeps(),
+        { structuralSource: "lane-agent-expansion" },
+      );
+    const initial = executionFor(definition);
+    expect(initial.contextStates[EXPANDED]).toBeUndefined();
+
+    const projectPath = mkdtempSync(path.join(os.tmpdir(), "cc-t18-"));
+    const approvalFrozen = deferred<void>();
+    let teardownManager: ReturnType<typeof createGraphWorkflowManager> | null =
+      null;
+    let teardownRun: Promise<GraphWorkflowExecution> | null = null;
+    const git = (cwd: string, args: string[]): string =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: process.env,
+      }).trim();
+    const write = (
+      worktreePath: string,
+      relativePath: string,
+      contents: string,
+    ): void => {
+      const absolutePath = path.join(worktreePath, relativePath);
+      mkdirSync(path.dirname(absolutePath), { recursive: true });
+      writeFileSync(absolutePath, contents, "utf8");
+    };
+
+    try {
+      git(projectPath, ["init", "--initial-branch=csm/session-1", "."]);
+      git(projectPath, ["config", "user.email", "test@command-center.dev"]);
+      git(projectPath, ["config", "user.name", "Command Center Test"]);
+      write(projectPath, "README.md", "composed lane proof\n");
+      git(projectPath, ["add", "-A"]);
+      git(projectPath, ["commit", "-m", "session base"]);
+
+      const session = createSession({
+        worktreePath: projectPath,
+        branchName: "csm/session-1",
+      });
+      const stoppedWorktrees: string[] = [];
+      const realParallelWorktrees = createParallelWorktrees({
+        readGlobalConfig: async () => ({ branchPrefix: "csm" }),
+        readRepoConfig: async () => null,
+        stopDevServersForWorktree: async ({ worktreePath }) => {
+          stoppedWorktrees.push(worktreePath);
+        },
+      });
+      const provisionedLaneIds: string[] = [];
+      const cleanupLaneIds: string[] = [];
+      const parallelWorktrees: ParallelWorktrees = {
+        provision: (input) => realParallelWorktrees.provision(input),
+        provisionBatch: (inputs) =>
+          realParallelWorktrees.provisionBatch(inputs),
+        dispose: (input) => realParallelWorktrees.dispose(input),
+        async provisionLane(input) {
+          provisionedLaneIds.push(input.laneId);
+          return realParallelWorktrees.provisionLane(input);
+        },
+        async provisionLaneBatch(inputs) {
+          provisionedLaneIds.push(...inputs.map((input) => input.laneId));
+          return realParallelWorktrees.provisionLaneBatch(inputs);
+        },
+        disposeLane: (input) => realParallelWorktrees.disposeLane(input),
+        async cleanupLane(input) {
+          cleanupLaneIds.push(input.contextId);
+          return realParallelWorktrees.cleanupLane(input);
+        },
+      };
+
+      const mergeInputs: GraphMergeRunnerInput[] = [];
+      const mergeRunner: GraphMergeRunner = {
+        async run(input) {
+          mergeInputs.push(structuredClone(input));
+          git(input.targetWorktreePath, [
+            "merge",
+            "--no-edit",
+            "--no-ff",
+            input.branchName,
+          ]);
+          const landed = git(input.targetWorktreePath, ["rev-parse", "HEAD"]);
+          return {
+            ...buildSuccessMergeOutput(),
+            mergeHash: landed,
+            commitHash: landed,
+          };
+        },
+      };
+      const validationConfig = async () => ({
+        validation: {
+          commands: {
+            typecheck: {
+              command: "scripts/typecheck.sh",
+              cost: 1,
+              scopeArgs: "forbid" as const,
+            },
+            test: {
+              command: "scripts/test.sh",
+              cost: 2,
+              scopeArgs: "forbid" as const,
+            },
+          },
+          preMerge: ["typecheck"],
+          laneMerge: ["test"],
+        },
+      });
+      const mergeMutex = createPerSessionMergeMutex();
+      const sessionGitLock = createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      });
+      const realJoinRunner = createJoinRunner({
+        mergeRunner,
+        mergeMutex,
+        sessionGitLock,
+        readRepoConfig: validationConfig,
+      });
+
+      let activeRepository = createRepository(initial);
+      let activeManager: ReturnType<typeof createGraphWorkflowManager>;
+      let approvalAtPark: Awaited<
+        ReturnType<typeof resolveApprovalSnapshot>
+      > | null = null;
+      let approvalHeadAtPark: string | null = null;
+      const iterationCalls: string[] = [];
+      const dispatchTargets = new Map<string, ExecutionTarget[]>();
+      const laneCommitCalls: string[] = [];
+      const realLaneCommitter = createLaneCommitter();
+      const laneCommitter = {
+        async commit(input: Parameters<typeof realLaneCommitter.commit>[0]) {
+          laneCommitCalls.push(input.contextId);
+          return realLaneCommitter.commit(input);
+        },
+        resolveHead: (worktreePath: string) =>
+          realLaneCommitter.resolveHead(worktreePath),
+      };
+      let midLoopJoinPlan: ReturnType<typeof planContextJoin> | undefined;
+
+      const iterationOrchestrator = {
+        async runIteration(input: {
+          contextId: string;
+          executionTarget?: ExecutionTarget;
+        }): Promise<GraphWorkflowIterationResult> {
+          const target = input.executionTarget;
+          if (!target)
+            throw new Error("composed run lost its execution target");
+          iterationCalls.push(input.contextId);
+          const targets = dispatchTargets.get(input.contextId) ?? [];
+          targets.push(structuredClone(target));
+          dispatchTargets.set(input.contextId, targets);
+
+          if (input.contextId === OWNER_B) {
+            await approvalFrozen.promise;
+          }
+
+          if (input.contextId === OWNER_A) {
+            write(target.worktreePath, "delivery/a/owner.ts", "owner a\n");
+            const snapshot = await computeCandidateSnapshot(
+              target.worktreePath,
+              { mode: "owned", ownedPaths: ["delivery/a"] },
+            );
+            if (!snapshot) throw new Error("could not freeze owner A");
+            const headSha = git(target.worktreePath, ["rev-parse", "HEAD"]);
+            approvalHeadAtPark = headSha;
+            const parked = await activeManager.mutateActive(
+              projectPath,
+              "session-1",
+              (execution) => {
+                const next = structuredClone(execution);
+                const state = next.contextStates[OWNER_A]!;
+                state.iterationCount += 1;
+                state.completedTaskCount = state.totalTaskCount;
+                transitionContextStatus(next, OWNER_A, "awaiting_approval", {
+                  reason: "test.composed.approval_park",
+                });
+                state.pendingApproval = {
+                  conversationId: "conv-owner-a",
+                  requestedAt: "2026-08-09T12:00:00.000Z",
+                  decision: null,
+                  approvalScope: {
+                    kind: "scoped",
+                    ownedPaths: ["delivery/a"],
+                    treeHash: snapshot.treeHash,
+                    headSha,
+                  },
+                };
+                for (const task of next.workingDefinition.tasks) {
+                  if (task.contextId !== OWNER_A) continue;
+                  const taskState = next.taskStates[task.id];
+                  if (!taskState) continue;
+                  taskState.status = "completed";
+                  taskState.completedAt = "2026-08-09T12:00:00.000Z";
+                }
+                next.activeContextIds = next.activeContextIds.filter(
+                  (contextId) => contextId !== OWNER_A,
+                );
+                return next;
+              },
+            );
+            approvalAtPark = await resolveApprovalSnapshot({
+              execution: parked,
+              contextId: OWNER_A,
+              sessionWorktreePath: projectPath,
+            });
+            approvalFrozen.resolve();
+            return {
+              conversationId: "conv-owner-a",
+              execution: parked,
+              shouldContinueInContext: false,
+            };
+          }
+
+          if (input.contextId === OWNER_B) {
+            write(target.worktreePath, "delivery/b/owner.ts", "owner b\n");
+          } else if (input.contextId === INTEGRATOR) {
+            expect(
+              readFileSync(
+                path.join(target.worktreePath, "delivery/a/owner.ts"),
+                "utf8",
+              ),
+            ).toBe("owner a\n");
+            expect(
+              readFileSync(
+                path.join(target.worktreePath, "delivery/b/owner.ts"),
+                "utf8",
+              ),
+            ).toBe("owner b\n");
+            write(
+              target.worktreePath,
+              "delivery/integrated.ts",
+              "integrated\n",
+            );
+          } else if (input.contextId === DOCS_WRITER) {
+            write(target.worktreePath, "docs/source.md", "docs\n");
+          } else if (input.contextId === DOCS_READER) {
+            expect(
+              readFileSync(
+                path.join(target.worktreePath, "docs/source.md"),
+                "utf8",
+              ),
+            ).toBe("docs\n");
+          } else if (input.contextId === PUBLISH_BASE) {
+            write(target.worktreePath, "publish/base.txt", "publish base\n");
+          } else if (input.contextId === EXPANDED_BASE) {
+            write(target.worktreePath, "expanded/base.txt", "expanded base\n");
+          } else if (
+            [P1_WORKER, P1_JUDGE, P2_WORKER, P2_JUDGE].includes(input.contextId)
+          ) {
+            write(
+              target.worktreePath,
+              `loop/${input.contextId}.txt`,
+              `${input.contextId}\n`,
+            );
+          } else if (input.contextId === "publish") {
+            expect(
+              readFileSync(
+                path.join(target.worktreePath, `loop/${P2_JUDGE}.txt`),
+                "utf8",
+              ),
+            ).toBe(`${P2_JUDGE}\n`);
+            write(target.worktreePath, "publish/final.txt", "published\n");
+          } else if (input.contextId === EXPANDED) {
+            const current = activeRepository.read();
+            if (!current) throw new Error("execution disappeared");
+            const upstreamInputs = resolveUpstreamInputs(current, EXPANDED);
+            expect(
+              upstreamInputs.find((row) => row.contextId === "seed")?.output,
+            ).toEqual({ inclusion: "seed" });
+            expect(
+              upstreamInputs.find((row) => row.contextId === DOCS_READER)
+                ?.output,
+            ).toEqual({ inclusion: DOCS_READER });
+            for (const relativePath of [
+              "delivery/integrated.ts",
+              "docs/source.md",
+              "publish/final.txt",
+              "expanded/base.txt",
+            ]) {
+              expect(
+                existsSync(path.join(target.worktreePath, relativePath)),
+              ).toBe(true);
+            }
+            write(target.worktreePath, "expanded/final.txt", "expanded\n");
+          }
+
+          let next = await activeManager.mutateActive(
+            projectPath,
+            "session-1",
+            (execution) => {
+              const updated = structuredClone(execution);
+              const state = updated.contextStates[input.contextId]!;
+              state.iterationCount += 1;
+              state.completedTaskCount = state.totalTaskCount;
+              for (const task of updated.workingDefinition.tasks) {
+                if (task.contextId !== input.contextId) continue;
+                const taskState = updated.taskStates[task.id];
+                if (!taskState) continue;
+                taskState.status = "completed";
+                taskState.completedAt = "2026-08-09T12:01:00.000Z";
+              }
+              if (input.contextId === P1_JUDGE) {
+                updated.contextOutputs[input.contextId] = {
+                  value: { verdict: "fail", notes: "run pass two" },
+                  iteration: 1,
+                  capturedAt: "2026-08-09T12:01:00.000Z",
+                  parse: { source: "native" },
+                };
+              } else if (input.contextId === P2_JUDGE) {
+                updated.contextOutputs[input.contextId] = {
+                  value: { verdict: "pass", notes: "done" },
+                  iteration: 1,
+                  capturedAt: "2026-08-09T12:01:00.000Z",
+                  parse: { source: "native" },
+                };
+              } else if (
+                input.contextId === "seed" ||
+                input.contextId === DOCS_READER
+              ) {
+                updated.contextOutputs[input.contextId] = {
+                  value: { inclusion: input.contextId },
+                  iteration: 1,
+                  capturedAt: "2026-08-09T12:01:00.000Z",
+                  parse: { source: "native" },
+                };
+              }
+              transitionContextStatus(updated, input.contextId, "completed", {
+                reason: "test.composed.complete",
+              });
+              updated.activeContextIds = updated.activeContextIds.filter(
+                (contextId) => contextId !== input.contextId,
+              );
+              return updated;
+            },
+          );
+          if (input.contextId === "seed") {
+            next = await activeManager.mutateActive(
+              projectPath,
+              "session-1",
+              (execution) => {
+                const installed = installRuntimeExpansion(execution);
+                if (installed.ok) return installed.execution;
+                throw new Error(
+                  `runtime expansion failed: ${installed.issues
+                    .map((issue) => issue.message)
+                    .join("; ")}`,
+                );
+              },
+            );
+          }
+          if (input.contextId === P1_JUDGE) {
+            midLoopJoinPlan = planContextJoin({
+              contextId: "publish",
+              execution: next,
+              now: () => "2026-08-09T12:01:00.000Z",
+              generateJoinId: () => "join-too-early",
+            });
+          }
+          return {
+            conversationId: `conv-${input.contextId}`,
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      };
+
+      let finalFilesystemCheckpoint:
+        | { worktreePaths: string[]; branches: string[] }
+        | undefined;
+      const loopLaneJoinActivations: string[] = [];
+      const joinRunner: JoinRunner = {
+        async run(input) {
+          const execution = activeRepository.read();
+          const join = execution?.joins[input.joinId];
+          if (join?.sourceLaneIds.includes(LOOP_LANE)) {
+            loopLaneJoinActivations.push(
+              execution?.loopStates.refine?.activation ?? "missing",
+            );
+          }
+          if (join?.kind === "final_publish" && !finalFilesystemCheckpoint) {
+            finalFilesystemCheckpoint = {
+              worktreePaths: git(projectPath, [
+                "worktree",
+                "list",
+                "--porcelain",
+              ])
+                .split("\n")
+                .filter((line) => line.startsWith("worktree "))
+                .map((line) => line.slice("worktree ".length)),
+              branches: git(projectPath, [
+                "branch",
+                "--format=%(refname:short)",
+              ]).split("\n"),
+            };
+          }
+          return realJoinRunner.run(input);
+        },
+      };
+
+      const makeManager = (repository: InMemoryExecutionRepository) =>
+        createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return null;
+          },
+          parallelWorktrees,
+          async getSession() {
+            return session;
+          },
+        });
+      const makeLoop = (
+        manager: ReturnType<typeof createGraphWorkflowManager>,
+      ) =>
+        createGraphWorkflowExecutionLoop({
+          workflowManager: manager,
+          iterationOrchestrator,
+          parallelWorktrees,
+          mergeMutex,
+          sessionGitLock,
+          mergeRunner,
+          joinRunner,
+          soloContextCommitter: {
+            async commit() {
+              throw new Error("the session read-only reader must not commit");
+            },
+          },
+          laneCommitter,
+          executionTargetResolver: createExecutionTargetResolver(),
+          getSession: async () => session,
+          getMaxConcurrentQueries: async () => 8,
+          readRepoConfig: validationConfig,
+          buildLiveEditDeps: async () => makeLiveEditDeps(),
+          resyncSharedIndex: resyncSharedIndexToHead,
+          waitForApprovalProgress: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          },
+          isConversationBusy: () => false,
+          acquireConversationLock: () => () => {},
+        });
+
+      activeManager = makeManager(activeRepository);
+      teardownManager = activeManager;
+      const firstRun = makeLoop(activeManager).run({
+        projectPath,
+        projectName: "composed",
+        sessionName: "session-1",
+        execution: initial,
+      });
+      teardownRun = firstRun;
+
+      await vi.waitFor(
+        () => {
+          const current = activeRepository.read();
+          expect(current?.contextStates[OWNER_A]?.status).toBe(
+            "awaiting_approval",
+          );
+          expect(current?.contextStates[OWNER_B]?.mergeStatus).toBe(
+            "merged-success",
+          );
+          expect(current?.contextStates.publish?.mergeStatus).toBe(
+            "merged-success",
+          );
+        },
+        { timeout: 15_000 },
+      );
+
+      const beforePause = activeRepository.read();
+      if (!beforePause) throw new Error("execution disappeared before pause");
+      const deliveryWorktreePath =
+        beforePause.contextStates[OWNER_B]?.worktreePath;
+      if (!deliveryWorktreePath)
+        throw new Error("delivery worktree disappeared");
+      expect(approvalHeadAtPark).not.toBeNull();
+      expect(git(deliveryWorktreePath, ["rev-parse", "HEAD"])).not.toBe(
+        approvalHeadAtPark,
+      );
+      expect(
+        beforePause.executionLanes[DELIVERY_LANE]?.commitSnapshots.filter(
+          (snapshot) => snapshot.contextId === OWNER_B,
+        ),
+      ).toHaveLength(1);
+      const afterSiblingLanding = await resolveApprovalSnapshot({
+        execution: beforePause,
+        contextId: OWNER_A,
+        sessionWorktreePath: projectPath,
+      });
+      expect(approvalAtPark).not.toBeNull();
+      expect(afterSiblingLanding).toEqual(approvalAtPark);
+      expect(afterSiblingLanding.kind).toBe("scoped");
+      if (afterSiblingLanding.kind === "scoped") {
+        expect(
+          afterSiblingLanding.snapshot.diff.files.map((file) => file.filePath),
+        ).toEqual(["delivery/a/owner.ts"]);
+      }
+
+      await activeManager.send(projectPath, "session-1", { type: "pause" });
+      const paused = await firstRun;
+      teardownRun = null;
+      expect(paused.status).toBe("paused");
+      const ownerBSnapshotsBeforeRestart = paused.executionLanes[
+        DELIVERY_LANE
+      ]?.commitSnapshots.filter((snapshot) => snapshot.contextId === OWNER_B);
+      expect(ownerBSnapshotsBeforeRestart).toHaveLength(1);
+
+      const replayed = graphWorkflowExecutionSchema.parse(
+        JSON.parse(JSON.stringify(paused)),
+      );
+      activeRepository = createRepository(replayed);
+      activeManager = makeManager(activeRepository);
+      teardownManager = activeManager;
+      const resumed = await activeManager.resume(projectPath, "session-1");
+      await activeManager.mutateActive(
+        projectPath,
+        "session-1",
+        (execution) => {
+          const next = structuredClone(execution);
+          const pending = next.contextStates[OWNER_A]?.pendingApproval;
+          if (!pending) throw new Error("approval gate was not durable");
+          pending.decision = {
+            type: "approved",
+            decidedAt: "2026-08-09T12:02:00.000Z",
+          };
+          return next;
+        },
+      );
+
+      const secondRun = makeLoop(activeManager).run({
+        projectPath,
+        projectName: "composed",
+        sessionName: "session-1",
+        execution: activeRepository.read() ?? resumed,
+      });
+      teardownRun = secondRun;
+      const result = await secondRun;
+      teardownRun = null;
+
+      expect(result.status).toBe("completed");
+      expect(midLoopJoinPlan).toBeNull();
+      expect(loopLaneJoinActivations).toEqual(["concluded"]);
+      expect(iterationCalls.filter((id) => id === OWNER_A)).toHaveLength(1);
+      expect(iterationCalls.filter((id) => id === OWNER_B)).toHaveLength(1);
+      expect(laneCommitCalls.filter((id) => id === OWNER_B)).toHaveLength(1);
+      expect(
+        result.executionLanes[DELIVERY_LANE]?.commitSnapshots.filter(
+          (snapshot) => snapshot.contextId === OWNER_B,
+        ),
+      ).toHaveLength(1);
+
+      for (const context of result.workingDefinition.executionContexts) {
+        const expectedLaneId =
+          context.placement.lane === "session" ? null : context.placement.lane;
+        expect(result.contextStates[context.id]?.laneId).toBe(expectedLaneId);
+        const targets = dispatchTargets.get(context.id) ?? [];
+        expect(targets).toHaveLength(1);
+        expect(targets[0]?.laneId).toBe(expectedLaneId);
+        expect(
+          iterationCalls.filter((contextId) => contextId === context.id),
+        ).toHaveLength(1);
+      }
+      const deliveryMembers = Object.values(result.contextStates)
+        .filter((state) => state.laneId === DELIVERY_LANE)
+        .map((state) => state.contextId)
+        .sort();
+      expect(deliveryMembers).toEqual([INTEGRATOR, OWNER_A, OWNER_B].sort());
+      expect(
+        provisionedLaneIds.filter((laneId) => laneId === DELIVERY_LANE),
+      ).toHaveLength(1);
+      const deliverySourceJoins = Object.values(result.joins).filter((join) =>
+        join.sourceLaneIds.includes(DELIVERY_LANE),
+      );
+      expect(deliverySourceJoins).toHaveLength(1);
+      expect(
+        [
+          ...(deliverySourceJoins[0]?.sourceLaneContextIds?.[DELIVERY_LANE] ??
+            []),
+        ].sort(),
+      ).toEqual(deliveryMembers);
+
+      expect(result.contextStates.seed?.laneId).toBeNull();
+      expect(result.contextStates.seed?.landingIntent).toBeNull();
+      expect(result.contextStates[DOCS_READER]?.landingIntent).toBeNull();
+      expect(result.executionLanes[DOCS_LANE]?.includedContextIds).toContain(
+        DOCS_READER,
+      );
+      expect(result.contextOutputs.seed?.value).toEqual({ inclusion: "seed" });
+      expect(result.contextOutputs[DOCS_READER]?.value).toEqual({
+        inclusion: DOCS_READER,
+      });
+      expect(
+        provisionedLaneIds.filter((laneId) => laneId === DOCS_LANE),
+      ).toHaveLength(1);
+      expect(provisionedLaneIds).not.toContain("session");
+      expect(provisionedLaneIds).not.toContain(SESSION_LANE_ID);
+
+      const validationRuns = mergeInputs.filter(
+        (input) => input.validationMode.mode === "run",
+      );
+      for (const laneId of namedLaneIds) {
+        const laneRuns = validationRuns.filter(
+          (input) =>
+            input.validationMode.mode === "run" &&
+            input.validationMode.coveredLaneIds?.includes(laneId) === true,
+        );
+        expect(laneRuns).toHaveLength(1);
+        const laneRun = laneRuns[0];
+        if (!laneRun || laneRun.validationMode.mode !== "run") continue;
+        const authoredMembers = result.workingDefinition.executionContexts
+          .filter((context) => context.placement.lane === laneId)
+          .map((context) => context.id);
+        expect(laneRun.validationMode.coveredContextIds ?? []).toEqual(
+          expect.arrayContaining(authoredMembers),
+        );
+      }
+      const replayedResult = graphWorkflowExecutionSchema.parse(
+        JSON.parse(JSON.stringify(result)),
+      );
+      const durableEvidence = Object.values(replayedResult.joins).flatMap(
+        (join) => join.validationEvidence,
+      );
+      for (const laneId of namedLaneIds) {
+        const laneEvidence = durableEvidence.filter(
+          (evidence) => evidence?.sourceLaneIds.includes(laneId) === true,
+        );
+        expect(laneEvidence).toHaveLength(1);
+        const authoredMembers = result.workingDefinition.executionContexts
+          .filter((context) => context.placement.lane === laneId)
+          .map((context) => context.id);
+        expect(laneEvidence[0]?.contextIds ?? []).toEqual(
+          expect.arrayContaining(authoredMembers),
+        );
+      }
+      expect(
+        [
+          ...(durableEvidence.find((evidence) =>
+            evidence?.sourceLaneIds.includes(DELIVERY_LANE),
+          )?.contextIds ?? []),
+        ].sort(),
+      ).toEqual(deliveryMembers);
+
+      expect(finalFilesystemCheckpoint).toBeDefined();
+      const sessionDir = path.basename(projectPath);
+      expect(
+        finalFilesystemCheckpoint?.worktreePaths.filter(
+          (worktreePath) =>
+            path.basename(worktreePath) === `${sessionDir}.${DELIVERY_LANE}`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        finalFilesystemCheckpoint?.branches.filter((branch) =>
+          branch.endsWith(`-${DELIVERY_LANE}`),
+        ),
+      ).toHaveLength(1);
+      expect(Object.keys(result.executionLanes)).toContain(DELIVERY_LANE);
+
+      expect([...cleanupLaneIds].sort()).toEqual([...namedLaneIds].sort());
+      expect(new Set(cleanupLaneIds).size).toBe(namedLaneIds.length);
+      expect(stoppedWorktrees).toHaveLength(namedLaneIds.length);
+      expect(new Set(stoppedWorktrees).size).toBe(namedLaneIds.length);
+      for (const laneId of namedLaneIds) {
+        expect(
+          existsSync(
+            path.join(projectPath, ".worktrees", `${sessionDir}.${laneId}`),
+          ),
+        ).toBe(false);
+        expect(
+          git(projectPath, ["branch", "--list", `csm/${sessionDir}-${laneId}`]),
+        ).toBe("");
+      }
+      for (const relativePath of [
+        "delivery/a/owner.ts",
+        "delivery/b/owner.ts",
+        "delivery/integrated.ts",
+        "docs/source.md",
+        "publish/final.txt",
+        "expanded/final.txt",
+      ]) {
+        expect(existsSync(path.join(projectPath, relativePath))).toBe(true);
+      }
+    } finally {
+      approvalFrozen.resolve();
+      if (teardownRun !== null && teardownManager !== null) {
+        try {
+          const active = await teardownManager.getActive(
+            projectPath,
+            "session-1",
+          );
+          if (active?.status === "running") {
+            await teardownManager.send(projectPath, "session-1", {
+              type: "abort",
+            });
+          }
+        } catch {
+          // Teardown is best-effort; awaiting the run below drains any rejection.
+        }
+        await teardownRun.catch(() => {});
+      }
+      _resetActiveLoopsForTesting();
+      rmSync(projectPath, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
