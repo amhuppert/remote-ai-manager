@@ -687,6 +687,41 @@ async function issueCandidateProof(
     return;
   }
 
+  if (contract.strategy.kinds.includes("commit")) {
+    const existing = deps.deliveryRepo
+      .findEvidenceByCriterionRevision(contract.id, execution.revision_id)
+      .some(
+        (record) =>
+          record.kind === "commit" &&
+          gitObjectRef(record) === input.preparedSha,
+      );
+    if (!existing) {
+      const attached = await deps.evidenceService.attachEvidence({
+        specId: execution.spec_id,
+        criterionElementId: contract.id,
+        revisionId: execution.revision_id,
+        kind: "commit",
+        ref: { type: "git_object", objectId: input.preparedSha },
+        evaluatedState: {
+          commitSha: input.preparedSha,
+          relevantPaths: [],
+        },
+        producer: source.producer,
+        executionId: execution.id,
+      });
+      if (!attached.ok) {
+        logger.warn("specs.delivery-gate.candidate-evidence-refused", {
+          specExecutionId: execution.id,
+          criterionElementId: contract.id,
+          validationRef: candidate.validationRef,
+          kind: "commit",
+          code: attached.refusal.code,
+        });
+        return;
+      }
+    }
+  }
+
   for (const kind of machineKinds) {
     const existing = deps.deliveryRepo
       .findEvidenceByMergeValidationRef(
@@ -727,11 +762,12 @@ async function issueCandidateProof(
   }
 
   if (
-    verdictAlreadyCitesValidation(
+    verdictAlreadyCitesCandidateProof(
       deps.deliveryRepo,
       contract,
       execution,
       candidate.validationRef,
+      input.preparedSha,
     )
   ) {
     return;
@@ -808,25 +844,24 @@ async function freshEvidenceIdsForStrategy(
   return evidenceIds;
 }
 
-function verdictAlreadyCitesValidation(
+function verdictAlreadyCitesCandidateProof(
   repo: SpecDeliveryRepo,
   contract: CriterionContract,
   execution: SpecExecutionRow,
   validationRef: string,
+  preparedSha: string,
 ): boolean {
-  const machineKinds = [...new Set(contract.strategy.kinds)].filter(
-    isMachineValidationEvidenceKind,
-  );
   return repo
     .findProofVerdictsByCriterionRevision(contract.id, execution.revision_id)
     .some((verdict) => {
       const evidence = evidenceForVerdict(repo, verdict, contract, execution);
-      return machineKinds.every((kind) =>
-        evidence?.some(
-          (record) =>
-            record.kind === kind &&
-            mergeValidationRef(record) === validationRef,
-        ),
+      return [...new Set(contract.strategy.kinds)].every((kind) =>
+        evidence?.some((record) => {
+          if (record.kind !== kind) return false;
+          return kind === "commit"
+            ? gitObjectRef(record) === preparedSha
+            : mergeValidationRef(record) === validationRef;
+        }),
       );
     });
 }
@@ -952,6 +987,19 @@ function mergeValidationRef(evidence: SpecEvidenceRow): string | null {
       ref.type === "merge_validation" &&
       typeof ref.validationRef === "string"
       ? ref.validationRef
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function gitObjectRef(evidence: SpecEvidenceRow): string | null {
+  try {
+    const ref: unknown = JSON.parse(evidence.ref_json);
+    return isRecord(ref) &&
+      ref.type === "git_object" &&
+      typeof ref.objectId === "string"
+      ? ref.objectId
       : null;
   } catch {
     return null;
