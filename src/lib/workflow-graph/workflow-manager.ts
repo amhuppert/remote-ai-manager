@@ -630,6 +630,10 @@ function recordDispatchLandingIntent(
 ): void {
   const state = execution.contextStates[contextId];
   if (!state) return;
+  const placement = execution.workingDefinition.executionContexts.find(
+    (context) => context.id === contextId,
+  )?.placement;
+  if (placement?.mode === "readOnly") return;
   const mode =
     state.laneId !== null
       ? "lane_commit"
@@ -2830,6 +2834,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             contextState.reservedByBatchId = null;
             const refrozen = recanonicalized.get(contextId);
             if (refrozen) contextState.reservedOwnership = refrozen;
+
+            const placement = running.workingDefinition.executionContexts.find(
+              (context) => context.id === contextId,
+            )?.placement;
+            if (
+              placement?.lane === SESSION_LANE_NAME &&
+              placement.mode === "readOnly"
+            ) {
+              contextState.laneId = null;
+              contextState.worktreePath = null;
+              contextState.branchName = null;
+              contextState.isolation = "session";
+              contextState.batchId = null;
+              continue;
+            }
 
             const lane = running.executionLanes[laneId];
             if (!lane) {

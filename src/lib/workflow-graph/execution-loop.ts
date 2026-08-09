@@ -1904,7 +1904,26 @@ export function createGraphWorkflowExecutionLoop(
       let preTurnLaneHeadSha: string | null = null;
       let laneHeadCaptured = false;
 
+      const contextIsReadOnly = (): boolean =>
+        execution.workingDefinition.executionContexts.find(
+          (context) => context.id === contextId,
+        )?.placement.mode === "readOnly";
+
       async function runCommitPhase(): Promise<void> {
+        if (contextIsReadOnly()) {
+          execLogger?.iteration(
+            contextId,
+            "read_only.completed_without_commit",
+            { laneId: featureLaneId, isolation },
+          );
+          logger.info("graph-workflow.read_only.completed_without_commit", {
+            executionId: execution.id,
+            contextId,
+            laneId: featureLaneId,
+            isolation,
+          });
+          return;
+        }
         if (
           isolation === "worktree" &&
           featureWorktreePath !== null &&
@@ -1956,7 +1975,11 @@ export function createGraphWorkflowExecutionLoop(
           if (target.isolation === "worktree") {
             featureWorktreePath = target.worktreePath;
             featureBranchName = target.branchName;
-            if (target.laneId !== null && !laneHeadCaptured) {
+            if (
+              target.laneId !== null &&
+              !laneHeadCaptured &&
+              !contextIsReadOnly()
+            ) {
               laneHeadCaptured = true;
               try {
                 preTurnLaneHeadSha = await deps.laneCommitter.resolveHead(
@@ -1971,7 +1994,7 @@ export function createGraphWorkflowExecutionLoop(
               );
               await persistLandingBaseline(contextId, preTurnLaneHeadSha);
             }
-          } else if (!laneHeadCaptured) {
+          } else if (!laneHeadCaptured && !contextIsReadOnly()) {
             // Session isolation: the same self-commit adoption baseline,
             // captured against the session worktree, so solo runs also carry
             // commit evidence when the implementer commits its own work.
@@ -3293,6 +3316,14 @@ export function createGraphWorkflowExecutionLoop(
       }
       if (selection.requiredCandidateExists) return "none";
 
+      const finalPublish = planFinalPublishJoin({
+        execution,
+        sessionLaneId: SESSION_LANE_ID,
+        now: () => new Date().toISOString(),
+        generateJoinId: () => createJobId(),
+      });
+      if (!finalPublish) return "none";
+
       const session = await deps.getSession(
         input.projectPath,
         input.sessionName,
@@ -3318,13 +3349,6 @@ export function createGraphWorkflowExecutionLoop(
       );
       adoptExecution(materialized);
 
-      const finalPublish = planFinalPublishJoin({
-        execution,
-        sessionLaneId: SESSION_LANE_ID,
-        now: () => new Date().toISOString(),
-        generateJoinId: () => createJobId(),
-      });
-      if (!finalPublish) return "none";
       return executeJoin(finalPublish, "final_publish", false);
     }
 

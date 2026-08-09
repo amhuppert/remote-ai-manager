@@ -477,6 +477,24 @@ export function classifyContextSchedulability(
     return { kind: "wait-for-capacity" };
   }
 
+  // The authored session lane is a sentinel for read-only contexts, not a
+  // persisted execution lane. Its only delivery channel is structured output,
+  // so it neither needs repository ancestry nor participates in the legacy
+  // session-worktree safety rules that could redirect it into a fork. This
+  // branch deliberately precedes execution-lane lookup: a final-publish row for
+  // the physical session lane must never capture a reader onto __session__.
+  if (
+    placement.lane === SESSION_LANE_NAME &&
+    placement.mode === "readOnly"
+  ) {
+    return {
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: false,
+      forkFromLaneId: null,
+    };
+  }
+
   // Phase 2: the authored lane already exists — run there.
   const targetLaneId = resolveAuthoredLaneId(placement.lane, execution);
   if (targetLaneId !== null) {

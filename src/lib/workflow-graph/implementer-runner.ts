@@ -234,6 +234,8 @@ export function createGraphWorkflowImplementerRunner(
           worktreePath,
           ownedPaths:
             input.placement.mode === "owned" ? input.placement.ownedPaths : [],
+          payloadLocation:
+            input.placement.mode === "readOnly" ? "scratch" : "worktree",
         });
       } catch (error) {
         const message = `Cannot establish the implementer write envelope for context "${input.contextId}": ${getErrorMessage(error)}`;

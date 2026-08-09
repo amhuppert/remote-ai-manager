@@ -229,23 +229,28 @@ describe("the implementer dispatch path composes the envelope before dispatching
   }
 
   it("carries a read-only context's policy, allowing no repository path at all", async () => {
-    const { fsWritePolicy } = await runIterationCapturingOptions({
+    const { fsWritePolicy, prompt } = await runIterationCapturingOptions({
       lane: "session",
       mode: "readOnly",
     });
 
     const canonicalRoot = realpathSync(worktreePath);
+    expect(fsWritePolicy?.allowWrite).toHaveLength(2);
+    expect(fsWritePolicy?.allowWrite[1]).toBe(
+      path.join(fsWritePolicy?.allowWrite[0] ?? "", "tmp"),
+    );
     for (const allowed of fsWritePolicy?.allowWrite ?? []) {
       const insideRepo =
         allowed.startsWith(`${canonicalRoot}${path.sep}`) ||
         allowed === canonicalRoot;
-      // The one exception is the injected payload directory, which is inside
-      // the repo by construction and git-ignored. Its final segment is the
-      // escaped context id, so the check is on its parent namespace.
-      expect(insideRepo).toBe(
-        path.dirname(allowed) === path.join(canonicalRoot, ".cc", "temp"),
-      );
+      expect(insideRepo).toBe(false);
     }
+    expect(prompt).toContain(
+      `Payload directory (write \`--file\` JSON and scratch files here): ${fsWritePolicy?.allowWrite[0]}`,
+    );
+    expect(prompt).not.toContain(
+      path.join(canonicalRoot, ".cc", "temp", "context-build"),
+    );
   });
 
   it("leaves a full-access context unconfined, because it holds its lane alone", async () => {

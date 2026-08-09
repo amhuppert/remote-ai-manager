@@ -1,6 +1,7 @@
 import { createLogger } from "@/lib/logging";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { SESSION_LANE_NAME } from "@/lib/workflow-graph/lane-identity";
 const logger = createLogger("graph-workflow-execution-target-resolver");
 
 export interface ExecutionTarget {
@@ -35,6 +36,27 @@ export function createExecutionTargetResolver(): ExecutionTargetResolver {
           contextId,
         )} not found in execution.contextStates (executionId=${execution.id})`,
       );
+    }
+
+    const placement = execution.workingDefinition.executionContexts.find(
+      (context) => context.id === contextId,
+    )?.placement;
+    if (
+      placement?.lane === SESSION_LANE_NAME &&
+      placement.mode === "readOnly"
+    ) {
+      logger.debug("resolve_read_only_session_sentinel", {
+        executionId: execution.id,
+        contextId,
+        worktreePath: session.worktreePath,
+        branchName: session.branchName,
+      });
+      return {
+        worktreePath: session.worktreePath,
+        branchName: session.branchName,
+        isolation: "session",
+        laneId: null,
+      };
     }
 
     const { laneId } = contextState;

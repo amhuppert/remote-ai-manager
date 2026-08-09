@@ -5028,7 +5028,6 @@ describe("graph workflow manager", () => {
       const result = await manager.scheduleEligibleContexts({
         projectPath: "/repo",
         sessionName: "session-1",
-        sessionLaneEnabled: true,
       });
 
       expect(result.scheduled).toEqual({
@@ -5042,6 +5041,9 @@ describe("graph workflow manager", () => {
       expect(planState?.worktreePath).toBeNull();
       expect(planState?.branchName).toBeNull();
       expect(planState?.batchId).toBeNull();
+      expect(planState?.laneId).toBeNull();
+      expect(planState?.landingIntent).toBeNull();
+      expect(result.execution.executionLanes[SESSION_LANE_ID]).toBeUndefined();
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });
 
@@ -7226,16 +7228,18 @@ describe("graph workflow manager", () => {
         sessionName: "session-1",
       });
 
-      expect(result.scheduled.kind).toBe("parallel");
-      if (result.scheduled.kind !== "parallel") return;
-      expect(result.scheduled.contextIds).toEqual(["context-implement"]);
+      expect(result.scheduled).toEqual({
+        kind: "solo",
+        contextId: "context-implement",
+      });
 
       const implState = result.execution.contextStates["context-implement"];
       expect(implState?.status).toBe("running");
-      expect(implState?.laneId).toBe(SESSION_LANE_ID);
+      expect(implState?.laneId).toBeNull();
       expect(implState?.isolation).toBe("session");
       expect(implState?.worktreePath).toBeNull();
       expect(implState?.branchName).toBeNull();
+      expect(implState?.landingIntent).toBeNull();
 
       expect(parallelWorktrees.provisionCalls).toEqual([]);
     });

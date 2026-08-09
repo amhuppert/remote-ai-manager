@@ -7,11 +7,10 @@ import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 const logger = createLogger("graph-workflow-dev-server-cleanup");
 
 /**
- * Collect the distinct worktree paths of an execution's worktree-isolated
- * contexts (graph-workflow lanes). Pure: derives paths from `contextStates`
- * so it can be read before a terminal transition (e.g. reset) drops the lane
- * association. Pass `contextIds` to scope to specific contexts (used by reset,
- * which affects a single context).
+ * Collect the distinct worktree paths of an execution's worktree lanes. A
+ * terminal sweep reads lane rows directly so it still finds a shared worktree
+ * after member state has been cleared. A context-scoped reset preserves a
+ * shared lane while any unselected member remains on it.
  */
 export function collectLaneWorktreePaths(
   execution: GraphWorkflowExecution,
@@ -20,14 +19,44 @@ export function collectLaneWorktreePaths(
   const filter = opts?.contextIds ? new Set(opts.contextIds) : null;
   const seen = new Set<string>();
   const result: string[] = [];
+
+  const addPath = (worktreePath: string): void => {
+    const normalized = path.resolve(worktreePath);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(worktreePath);
+  };
+
+  if (filter === null) {
+    for (const lane of Object.values(execution.executionLanes)) {
+      if (lane.kind !== "worktree" || lane.worktreePath === null) continue;
+      addPath(lane.worktreePath);
+    }
+  }
+
   for (const cs of Object.values(execution.contextStates)) {
     if (cs.isolation !== "worktree") continue;
-    if (cs.worktreePath === null) continue;
     if (filter && !filter.has(cs.contextId)) continue;
-    const normalized = path.resolve(cs.worktreePath);
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(cs.worktreePath);
+
+    if (filter && cs.laneId !== null) {
+      const unselectedMemberRemains = Object.values(
+        execution.contextStates,
+      ).some(
+        (candidate) =>
+          candidate.contextId !== cs.contextId &&
+          candidate.laneId === cs.laneId &&
+          !filter.has(candidate.contextId),
+      );
+      if (unselectedMemberRemains) continue;
+    }
+
+    const lanePath =
+      cs.laneId === null
+        ? null
+        : execution.executionLanes[cs.laneId]?.worktreePath;
+    const worktreePath = lanePath ?? cs.worktreePath;
+    if (worktreePath === null) continue;
+    addPath(worktreePath);
   }
   return result;
 }

@@ -605,13 +605,28 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("holds a session-lane context back by default because sessionLaneEnabled defaults to false", () => {
+  it("schedules a read-only session sentinel without opt-in, even when an execution lane row exists", () => {
     const definition = withPlacement(createWorkflowDefinition(), {
       "context-implement": { lane: SESSION_LANE_NAME, mode: "readOnly" },
     });
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
       ...base,
+      executionLanes: {
+        [SESSION_LANE_ID]: {
+          laneId: SESSION_LANE_ID,
+          kind: "session",
+          status: "active",
+          worktreePath: null,
+          branchName: "csm/session-1",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          ignoredBaseline: [],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      },
       contextStates: {
         ...base.contextStates,
         "context-plan": {
@@ -627,9 +642,12 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution,
     });
-    // The session lane is the session worktree: it is never forked into a lane
-    // of its own, so an un-opted-in caller means WAIT, not provision.
-    expect(result).toEqual({ kind: "wait-for-lane", laneId: SESSION_LANE_ID });
+    expect(result).toEqual({
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: false,
+      forkFromLaneId: null,
+    });
   });
 
   it("requires fork for a context authored onto a group lane even when its upstream landed in session", () => {
@@ -1267,7 +1285,7 @@ describe("classifyContextSchedulability", () => {
     }
   });
 
-  it("a terminal session-lane context with multi-worktree-lane upstreams stays unschedulable until a final_publish join lands the lanes on the session lane", () => {
+  it("a read-only session sentinel consumes structured outputs without waiting for upstream worktree publication", () => {
     const definition = withPlacement(
       createWorkflowDefinition({
         edges: [
@@ -1335,7 +1353,12 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution: preJoin,
     });
-    expect(before.kind).toBe("wait-for-join");
+    expect(before).toEqual({
+      kind: "schedulable",
+      targetLaneId: null,
+      requiresFork: false,
+      forkFromLaneId: null,
+    });
 
     const postPublish: GraphWorkflowExecution = {
       ...preJoin,
@@ -1356,11 +1379,7 @@ describe("classifyContextSchedulability", () => {
       definition,
       execution: postPublish,
     });
-    expect(after.kind).toBe("schedulable");
-    if (after.kind === "schedulable") {
-      expect(after.targetLaneId).toBe(sessionLaneId);
-      expect(after.requiresFork).toBe(false);
-    }
+    expect(after).toEqual(before);
   });
 
   describe("authored placement drives the target lane (R2, R3, R5)", () => {

@@ -168,6 +168,16 @@ export function transitionContextStatus(
     );
   }
   contextState.status = next;
+  if (next !== "completed" || contextState.laneId === null) return;
+
+  const placement = draft.workingDefinition.executionContexts.find(
+    (context) => context.id === contextId,
+  )?.placement;
+  if (placement?.mode !== "readOnly") return;
+
+  const lane = draft.executionLanes[contextState.laneId];
+  if (!lane || lane.includedContextIds.includes(contextId)) return;
+  lane.includedContextIds = [...lane.includedContextIds, contextId];
 }
 
 /**

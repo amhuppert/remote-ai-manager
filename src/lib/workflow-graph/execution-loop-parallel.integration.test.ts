@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type {
   CleanupLaneInput,
   DisposeInput,
@@ -8,7 +11,10 @@ import type {
   ProvisionLaneInput,
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
-import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
+import {
+  createExecutionTargetResolver,
+  type ExecutionTarget,
+} from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import { applyJoinProgress } from "@/lib/workflow-graph/context-transitions";
 import {
@@ -42,6 +48,10 @@ import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
+import type { FsWritePolicy } from "@/lib/agent-backends/task";
+import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
+import { composeImplementerLaneWriteEnvelope } from "./implementer-lane-write-envelope";
+import { resolveUpstreamInputs } from "./context-outputs";
 
 /** Synthetic worktrees in this suite have no Git index to prepare. */
 function createGraphWorkflowExecutionLoop(
@@ -1446,12 +1456,12 @@ describe("execution loop — parallel integration", () => {
     expect(idempotent?.haltReason).toEqual(haltReason);
   });
 
-  it("scenario 7: session-lane context — no worktree provisioned, no merge invoked", async () => {
+  it("scenario 7: three session readers feed synthesis with zero reader worktrees, landings, joins, or repository writes", async () => {
     _resetActiveLoopsForTesting();
 
-    const definition = createParallelDefinition(["ctx-solo"]);
-    // Authored onto the session worktree itself, which is the one placement
-    // that provisions nothing and lands through no join.
+    const readerIds = ["reader-a", "reader-b", "reader-c"] as const;
+    const synthesisId = "synthesis";
+    const definition = createParallelDefinition([...readerIds, synthesisId]);
     definition.executionContexts = definition.executionContexts.map(
       (context) => ({
         ...context,
@@ -1462,9 +1472,55 @@ describe("execution loop — parallel integration", () => {
         },
       }),
     );
+    definition.edges = readerIds.map((readerId) => ({
+      id: `edge-${readerId}-synthesis`,
+      sourceContextId: readerId,
+      targetContextId: synthesisId,
+    }));
     const initial = createInitialExecution(definition);
     const repository = createRepository(initial);
     const parallelWorktrees = createParallelWorktreesStub();
+    const fixtureRoot = realpathSync(
+      mkdtempSync(path.join(os.tmpdir(), "cc-session-readers-")),
+    );
+    const sessionWorktreePath = path.join(fixtureRoot, "session-worktree");
+    const scratchRootDir = path.join(fixtureRoot, "scratch");
+    mkdirSync(sessionWorktreePath, { recursive: true });
+    const session = createSession({ worktreePath: sessionWorktreePath });
+    const capturedPolicies = new Map<string, FsWritePolicy>();
+    const capturedPrompts = new Map<string, string>();
+    const synthesisInputs: unknown[] = [];
+
+    const implementerRunner = createGraphWorkflowImplementerRunner({
+      executePromptStream: async (
+        _projectPath,
+        _session,
+        promptText,
+        _emit,
+        conversationId,
+        _model,
+        _images,
+        options,
+      ) => {
+        const contextId = options?.workflowContext?.contextId;
+        if (contextId && options.fsWritePolicy) {
+          capturedPolicies.set(contextId, options.fsWritePolicy);
+          capturedPrompts.set(contextId, promptText);
+        }
+        return {
+          conversationId: conversationId ?? "conversation",
+          contextTokens: null,
+          contextWindowMax: null,
+          compacted: false,
+          error: null,
+          aborted: false,
+        } as never;
+      },
+      getConversation: (async () => null) as never,
+      mintLaneCapability: () => null,
+      composeWriteEnvelope: (input) =>
+        composeImplementerLaneWriteEnvelope(input, { scratchRootDir }),
+    });
 
     const manager = createGraphWorkflowManager({
       executionRepository: repository,
@@ -1473,14 +1529,41 @@ describe("execution loop — parallel integration", () => {
       },
       parallelWorktrees,
       async getSession() {
-        return createSession();
+        return session;
       },
     });
 
     const iterationOrchestrator = {
       async runIteration(input: {
         contextId: string;
+        executionTarget?: ExecutionTarget;
       }): Promise<GraphWorkflowIterationResult> {
+        const before = repository.read();
+        if (!before) throw new Error("execution disappeared");
+        const placement = before.workingDefinition.executionContexts.find(
+          (context) => context.id === input.contextId,
+        )?.placement;
+        if (!placement) throw new Error("context placement disappeared");
+        const upstreamInputs = resolveUpstreamInputs(before, input.contextId);
+        if (input.contextId === synthesisId) {
+          synthesisInputs.push(...upstreamInputs);
+        }
+
+        await implementerRunner.runIteration({
+          projectPath: "/repo",
+          session,
+          prompt: `Inputs: ${JSON.stringify(upstreamInputs)}`,
+          conversationId: `conv-${input.contextId}`,
+          executionId: before.id,
+          contextId: input.contextId,
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+          toolServer: { servers: [] },
+          executionTarget: input.executionTarget,
+          placement,
+        });
+
         const next = await manager.mutateActive("/repo", "session-1", (e) => {
           const updated = structuredClone(e);
           const cs = updated.contextStates[input.contextId];
@@ -1493,7 +1576,7 @@ describe("execution loop — parallel integration", () => {
           // Structured output is a read-only context's ONLY delivery channel,
           // so the run cannot finish until the declared contract is satisfied.
           updated.contextOutputs[input.contextId] = {
-            value: { result: "done" },
+            value: { result: input.contextId },
             capturedAt: "2026-03-27T12:05:00.000Z",
             iteration: 1,
             parse: { source: "native" },
@@ -1512,7 +1595,13 @@ describe("execution loop — parallel integration", () => {
       run: vi.fn(),
     };
 
-    const soloCommitCalls: string[] = [];
+    const soloCommit = vi.fn(async () => ({
+      status: "committed" as const,
+      hash: "unexpected",
+    }));
+    const laneCommit = vi.fn(async () => ({ status: "skipped" as const }));
+    const resolveHead = vi.fn(async () => null);
+    const joinRun = vi.fn();
     const loop = createGraphWorkflowExecutionLoop({
       workflowManager: manager,
       iterationOrchestrator,
@@ -1522,41 +1611,73 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
-      joinRunner: createNoopJoinRunner(),
+      joinRunner: { run: joinRun },
       soloContextCommitter: {
-        commit: async (input) => {
-          soloCommitCalls.push(input.contextId);
-          return { status: "committed", hash: "abc" };
-        },
+        commit: soloCommit,
       },
       laneCommitter: {
-        commit: async () => ({ status: "skipped" }),
-        resolveHead: async () => null,
+        commit: laneCommit,
+        resolveHead,
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
-        return createSession();
+        return session;
       },
     });
 
-    const result = await loop.run({
-      projectPath: "/repo",
-      projectName: "test",
-      sessionName: "session-1",
-      execution: initial,
-      sessionLaneEnabled: true,
-    });
+    let result: GraphWorkflowExecution;
+    try {
+      result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
 
     expect(result.status).toBe("completed");
     expect(parallelWorktrees.provisionCalls).toEqual([]);
     expect(parallelWorktrees.disposeCalls).toEqual([]);
     expect(mergeRunner.run).not.toHaveBeenCalled();
-    expect(soloCommitCalls).toEqual(["ctx-solo"]);
-    const cs = result.contextStates["ctx-solo"];
-    expect(cs?.isolation).toBe("session");
-    expect(cs?.worktreePath).toBeNull();
-    expect(cs?.branchName).toBeNull();
-    expect(cs?.mergeStatus).toBe("not-applicable");
+    expect(joinRun).not.toHaveBeenCalled();
+    expect(soloCommit).not.toHaveBeenCalled();
+    expect(laneCommit).not.toHaveBeenCalled();
+    expect(resolveHead).not.toHaveBeenCalled();
+    for (const readerId of readerIds) {
+      const state = result.contextStates[readerId];
+      expect(state?.isolation).toBe("session");
+      expect(state?.worktreePath).toBeNull();
+      expect(state?.branchName).toBeNull();
+      expect(state?.laneId).toBeNull();
+      expect(state?.landingIntent).toBeNull();
+      expect(state?.mergeStatus).toBe("not-applicable");
+
+      const policy = capturedPolicies.get(readerId);
+      expect(policy?.allowWrite).toHaveLength(2);
+      expect(policy?.allowWrite[1]).toBe(
+        path.join(policy?.allowWrite[0] ?? "", "tmp"),
+      );
+      expect(
+        policy?.allowWrite.some(
+          (allowed) =>
+            allowed === sessionWorktreePath ||
+            allowed.startsWith(`${sessionWorktreePath}${path.sep}`),
+        ),
+      ).toBe(false);
+      expect(capturedPrompts.get(readerId)).toContain(
+        `Payload directory (write \`--file\` JSON and scratch files here): ${policy?.allowWrite[0]}`,
+      );
+    }
+    expect(synthesisInputs).toHaveLength(3);
+    expect(
+      synthesisInputs.map((input) =>
+        (input as { output: { result: string } }).output.result,
+      ),
+    ).toEqual([...readerIds]);
+    expect(result.executionLanes[SESSION_LANE_ID]).toBeUndefined();
+    expect(result.joins).toEqual({});
   });
 
   it("scenario 8: user merge job overlaps the final publish — the publish join waits on the session git lock", async () => {

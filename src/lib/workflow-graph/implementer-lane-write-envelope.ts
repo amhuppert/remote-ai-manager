@@ -23,8 +23,10 @@
  *  - containment is re-checked AFTER symlink resolution, so an owned path that
  *    is a symlink out of the worktree is refused rather than silently widening
  *    the envelope to wherever it points;
- *  - the payload directory is verified to sit beneath the worktree's own `.cc`
- *    namespace after resolution, for the same reason;
+ *  - a write-capable context's payload directory is verified to sit beneath
+ *    the worktree's own `.cc` namespace after resolution, for the same reason;
+ *    a read-only context instead uses its private scratch root for payloads and
+ *    creates no repository directory;
  *  - `.git` is denied unconditionally. An agent that can write it can commit,
  *    branch, or reset the lane out from under the engine, which is precisely
  *    what the envelope exists to make impossible.
@@ -32,7 +34,8 @@
  * `allowWrite` order is the backend contract, not incidental: the first entry
  * is the run's writable working root (per-context scratch — the repository
  * target is threaded to the prompt and tooling separately) and the last is its
- * temp. See `fsWritePolicySchema`.
+ * temp. Read-only contexts therefore have exactly those two entries. See
+ * `fsWritePolicySchema`.
  *
  * That working root is load-bearing rather than cosmetic, and it is why this
  * envelope does NOT deny the worktree the way the validator's does. Both native
@@ -66,11 +69,9 @@ const SCRATCH_ROOT_DIR_NAME = "cc-implementer-contexts";
 const CONTEXT_TMP_DIR_NAME = "tmp";
 
 /**
- * The git-ignored namespace inside the worktree that the payload directory
- * lives in. `cctl … --file` guidance points agents at `.cc/temp`, so the
- * envelope has to keep that path writable for the injected per-context
- * directory; `.cc` is reserved from authored ownership so the two cannot
- * disagree about who owns it.
+ * The git-ignored namespace inside the worktree where write-capable contexts
+ * keep payloads. `.cc` is reserved from authored ownership so the envelope and
+ * an authored ownership declaration cannot disagree about who owns it.
  */
 const PAYLOAD_NAMESPACE_DIR = ".cc";
 const PAYLOAD_PARENT_DIR = "temp";
@@ -86,7 +87,7 @@ export interface ImplementerLaneWriteEnvelope {
   contextScratchDir: string;
   /** The context's private temp directory, beneath {@link contextScratchDir}. */
   contextTmpDir: string;
-  /** The injected `.cc/temp` payload directory, surfaced to the agent. */
+  /** Effective payload location: repository `.cc/temp` or private scratch. */
   payloadDir: string;
   /** The owned prefixes, canonicalized against {@link worktreeRoot}. */
   ownedPrefixes: readonly string[];
@@ -100,6 +101,8 @@ export interface ComposeImplementerLaneWriteEnvelopeInput {
   worktreePath: string;
   /** Authored repo-relative ownership entries; empty for a read-only context. */
   ownedPaths: readonly string[];
+  /** Read-only turns keep cctl payloads in scratch and create nothing in-repo. */
+  payloadLocation?: "worktree" | "scratch";
 }
 
 export interface ImplementerLaneWriteEnvelopeDeps {
@@ -212,28 +215,32 @@ export function composeImplementerLaneWriteEnvelope(
     return canonical;
   });
 
-  const rawPayloadDir = path.join(
-    worktreeRoot,
-    PAYLOAD_NAMESPACE_DIR,
-    PAYLOAD_PARENT_DIR,
-    contextSegment,
-  );
-  let payloadNamespace: string;
-  let payloadDir: string;
-  try {
-    ensureDir(rawPayloadDir);
-    payloadNamespace = realpath(path.join(worktreeRoot, PAYLOAD_NAMESPACE_DIR));
-    payloadDir = realpath(rawPayloadDir);
-  } catch (error) {
-    fail(`payload directory "${rawPayloadDir}": ${getErrorMessage(error)}`);
-  }
-  if (
-    !isInsideLanePath(worktreeRoot, payloadNamespace) ||
-    !isInsideLanePath(payloadNamespace, payloadDir)
-  ) {
-    fail(
-      `payload directory "${payloadDir}" does not sit beneath the worktree's "${PAYLOAD_NAMESPACE_DIR}" namespace`,
+  let payloadDir = contextScratchDir;
+  if ((input.payloadLocation ?? "worktree") === "worktree") {
+    const rawPayloadDir = path.join(
+      worktreeRoot,
+      PAYLOAD_NAMESPACE_DIR,
+      PAYLOAD_PARENT_DIR,
+      contextSegment,
     );
+    let payloadNamespace: string;
+    try {
+      ensureDir(rawPayloadDir);
+      payloadNamespace = realpath(
+        path.join(worktreeRoot, PAYLOAD_NAMESPACE_DIR),
+      );
+      payloadDir = realpath(rawPayloadDir);
+    } catch (error) {
+      fail(`payload directory "${rawPayloadDir}": ${getErrorMessage(error)}`);
+    }
+    if (
+      !isInsideLanePath(worktreeRoot, payloadNamespace) ||
+      !isInsideLanePath(payloadNamespace, payloadDir)
+    ) {
+      fail(
+        `payload directory "${payloadDir}" does not sit beneath the worktree's "${PAYLOAD_NAMESPACE_DIR}" namespace`,
+      );
+    }
   }
 
   return {
@@ -242,7 +249,7 @@ export function composeImplementerLaneWriteEnvelope(
       allowWrite: [
         contextScratchDir,
         ...ownedPrefixes,
-        payloadDir,
+        ...(payloadDir === contextScratchDir ? [] : [payloadDir]),
         contextTmpDir,
       ],
       denyWrite: [deniedGitDir],
