@@ -11,6 +11,7 @@ import {
   deriveOutputSchemaHaltEvidenceByContext,
 } from "@/components/workflow-graph/derive-output-schema-halt";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
+import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
 import HaltDetailsDialog from "./HaltDetailsDialog";
 
 export type ExecutionControlAction = "pause" | "resume" | "abort" | "clear";
@@ -134,6 +135,13 @@ export default function ExecutionStatusBar({
   const contextTitle = getActiveContextTitle(execution, index);
   const awaitingApprovalCount = countAwaitingApproval(execution);
   const taskTitle = getFirstIncompleteTaskTitle(execution, index);
+  const activeLanes = useMemo(
+    () =>
+      deriveExecutionLaneActivities(execution).filter((lane) =>
+        lane.members.some((member) => member.activity === "active"),
+      ),
+    [execution],
+  );
   const showPause = execution.status === "running";
   const showResume = resumableStatuses.has(execution.status);
   const showAbort =
@@ -204,8 +212,37 @@ export default function ExecutionStatusBar({
           </button>
         </div>
       ) : (
-        <div className="text-[0.72rem] text-text-secondary max-768:hidden">
-          {contextTitle && (
+        <div
+          className="min-w-0 truncate text-[0.72rem] text-text-secondary max-768:hidden"
+          {...(activeLanes.length > 0
+            ? { "data-testid": "execution-lane-activity" }
+            : {})}
+        >
+          {activeLanes.length > 0
+            ? activeLanes.map((lane, laneIndex) => (
+                <span key={lane.runtimeLaneId}>
+                  {laneIndex > 0 && " · "}
+                  Lane{" "}
+                  <strong className="font-semibold text-text-primary">
+                    {lane.laneId}
+                  </strong>
+                  {": "}
+                  {lane.members
+                    .filter((member) => member.activity === "active")
+                    .map((member) => `${member.contextId}: ${member.status}`)
+                    .join(", ")}
+                </span>
+              ))
+            : contextTitle && (
+                <>
+                  Context:{" "}
+                  <strong className="font-semibold text-text-primary">
+                    {contextTitle}
+                  </strong>
+                </>
+              )}
+          {activeLanes.length > 0 && contextTitle && " · "}
+          {activeLanes.length > 0 && contextTitle && (
             <>
               Context:{" "}
               <strong className="font-semibold text-text-primary">

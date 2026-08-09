@@ -28,7 +28,11 @@ import {
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowContextStatusEventSchema,
   graphWorkflowJoinStatusEventSchema,
+  graphWorkflowLaneConcurrentAdmissionEventSchema,
   graphWorkflowLaneCommitEventSchema,
+  graphWorkflowLaneCreatedEventSchema,
+  graphWorkflowLaneDriftHaltedEventSchema,
+  graphWorkflowLaneLandedEventSchema,
   graphWorkflowLaneStatusEventSchema,
   graphWorkflowLiveEditAppliedEventSchema,
   graphWorkflowMergeStatusEventSchema,
@@ -154,6 +158,30 @@ export function registerWorkflowSseReactions(
     queryClient,
     "graph-workflow-lane-status",
     graphWorkflowLaneStatusEventSchema,
+  );
+  registerDetailAndEventsInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-lane-created",
+    graphWorkflowLaneCreatedEventSchema,
+  );
+  registerDetailAndEventsInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-lane-concurrent-admission",
+    graphWorkflowLaneConcurrentAdmissionEventSchema,
+  );
+  registerDetailAndEventsInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-lane-landed",
+    graphWorkflowLaneLandedEventSchema,
+  );
+  registerDetailAndEventsInvalidation(
+    es,
+    queryClient,
+    "graph-workflow-lane-drift-halted",
+    graphWorkflowLaneDriftHaltedEventSchema,
   );
   registerDetailAndEventsInvalidation(
     es,

@@ -36,6 +36,7 @@ import {
 } from "@/lib/workflow-graph/lifecycle-classifier";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import { deriveExecutionLaneActivities } from "@/lib/workflow-graph/lane-activity";
 import type {
   CollaborationConfigSource,
   ResolvedCollaborationConfig,
@@ -794,6 +795,9 @@ export default function ContextConfigTab({
 
   const iterationCount = contextState?.iterationCount ?? 0;
   const maxIterations = draft.iterationPolicy.maxIterations;
+  const laneActivity = deriveExecutionLaneActivities(execution).find(
+    (lane) => lane.laneId === context.placement?.lane,
+  );
   function patch(next: Partial<ConfigDraft>) {
     setDraft((prev) => (prev ? { ...prev, ...next } : prev));
   }
@@ -1296,6 +1300,20 @@ export default function ContextConfigTab({
                 label="Lane"
                 value={contextState.laneId}
                 testId="runtime-lane"
+              />
+              <RuntimeRow
+                label="Lane activity"
+                value={
+                  laneActivity
+                    ? laneActivity.members
+                        .map(
+                          (member) =>
+                            `${member.contextId}: ${member.activity} (${member.status})`,
+                        )
+                        .join(", ")
+                    : null
+                }
+                testId="runtime-lane-activity"
               />
               <RuntimeRow
                 label="Join"

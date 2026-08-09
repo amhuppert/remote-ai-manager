@@ -299,6 +299,12 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: subset of that join's source lanes.",
       "event.conflicts.**":
         "bounded: the conflicting files of ONE merge attempt plus their per-file resolver analysis, written once when that attempt fails.",
+      "event.memberContextIds":
+        "bounded: the contexts concurrently admitted to one lane, a subset of the execution contexts.",
+      "event.ownedPathspec":
+        "bounded: one canonical path per prefix the landed context's authored placement declares, so it is sized by the definition rather than by the run.",
+      "event.unattributedPaths":
+        "bounded: one ownership-violation halt's unattributed paths, capped at 50 by the halt schema and execution-loop reporting boundary.",
       // --- structural edits (D4) ---
       "event.affectedContextIds":
         "bounded: the contexts one accepted live-edit batch touched; a batch is bounded by its own operation payload, not by edit history.",

@@ -44,6 +44,7 @@ import type { ValidatorRunResult } from "@/lib/workflow-graph/validator-runner";
 import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import { stubValidationRoundService } from "@/lib/workflow-graph/test-fixtures";
 import {
@@ -83,6 +84,15 @@ const PROJECT_NAME = "compat-repo";
 const SESSION_NAME = "session-1";
 const DEFINITION_ID = "compat-definition";
 const EXECUTION_ID = "compat-execution";
+
+const POST_D4_OBSERVABILITY_EVENT_TYPES = new Set<
+  GraphWorkflowSSEEvent["type"]
+>([
+  "graph-workflow-lane-created",
+  "graph-workflow-lane-concurrent-admission",
+  "graph-workflow-lane-landed",
+  "graph-workflow-lane-drift-halted",
+]);
 
 /** What the fixture implementer does on one agent turn. */
 export type CompatibilityAgentTurn = "complete-next-task" | "no-task-progress";
@@ -345,7 +355,12 @@ export async function runEngineScenario<T>(
 
     const publisher = createGraphWorkflowExecutionEventPublisher({
       broadcast: (event) => {
-        events.push(projectTypedEvent(event));
+        const projected = projectTypedEvent(event);
+        // This corpus compares its pre-D4 event vocabulary. Lane decision
+        // records have independent durable event contracts and are excluded
+        // from this historical baseline.
+        if (POST_D4_OBSERVABILITY_EVENT_TYPES.has(event.type)) return;
+        events.push(projected);
       },
       now,
       dispatchPush: () => {},

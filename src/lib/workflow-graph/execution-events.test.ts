@@ -1097,6 +1097,352 @@ describe("graph workflow execution event publisher", () => {
     });
   });
 
+  it("persists and publishes lane creation, two-member admission, each landing, and an ownership drift halt", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-08-09T12:00:00.000Z",
+    });
+    const base = createWorkflowExecution({ status: "running" });
+    const workingDefinition = {
+      ...base.workingDefinition,
+      executionContexts: base.workingDefinition.executionContexts.map(
+        (context) => {
+          if (context.id === "context-plan") {
+            return {
+              ...context,
+              placement: {
+                lane: "delivery",
+                mode: "owned" as const,
+                ownedPaths: ["src/plan"],
+              },
+            };
+          }
+          if (context.id === "context-implement") {
+            return {
+              ...context,
+              placement: {
+                lane: "delivery",
+                mode: "owned" as const,
+                ownedPaths: ["src/implement"],
+              },
+            };
+          }
+          return context;
+        },
+      ),
+    };
+    const initial = createWorkflowExecution({
+      ...base,
+      workingDefinition,
+      executionLanes: {},
+      laneReservations: {},
+    });
+    const reserved = createWorkflowExecution({
+      ...initial,
+      contextStates: {
+        ...initial.contextStates,
+        "context-plan": {
+          ...initial.contextStates["context-plan"]!,
+          status: "ready",
+          reservedByBatchId: "batch-1",
+          reservedOwnership: {
+            mode: "owned",
+            canonicalPrefixes: ["/repo/.worktrees/delivery/src/plan"],
+          },
+        },
+        "context-implement": {
+          ...initial.contextStates["context-implement"]!,
+          status: "ready",
+          reservedByBatchId: "batch-1",
+          reservedOwnership: {
+            mode: "owned",
+            canonicalPrefixes: ["/repo/.worktrees/delivery/src/implement"],
+          },
+        },
+      },
+      laneReservations: {
+        delivery: {
+          laneId: "delivery",
+          batchId: "batch-1",
+          provisioning: true,
+          members: [
+            {
+              contextId: "context-plan",
+              ownership: {
+                mode: "owned",
+                canonicalPrefixes: ["/repo/.worktrees/delivery/src/plan"],
+              },
+            },
+            {
+              contextId: "context-implement",
+              ownership: {
+                mode: "owned",
+                canonicalPrefixes: ["/repo/.worktrees/delivery/src/implement"],
+              },
+            },
+          ],
+          createdAt: "2026-08-09T11:59:00.000Z",
+        },
+      },
+    });
+    const pendingIntent = (contextId: string) => ({
+      mode: "lane_commit" as const,
+      attempt: 1,
+      token: `landing-${contextId}`,
+      laneId: "delivery",
+      worktreePath: "/repo/.worktrees/delivery",
+      baselineSha: "base-sha",
+      headSha: null,
+      joinId: null,
+      state: "pending" as const,
+      evidence: null,
+      recordedAt: "2026-08-09T11:59:30.000Z",
+      settledAt: null,
+    });
+    const lane = {
+      laneId: "delivery",
+      kind: "worktree" as const,
+      status: "active" as const,
+      worktreePath: "/repo/.worktrees/delivery",
+      branchName: "csm/delivery",
+      includedContextIds: [],
+      lastCommittingContextId: null,
+      commitSnapshots: [],
+      ignoredBaseline: [],
+      createdAt: "2026-08-09T11:59:30.000Z",
+      updatedAt: "2026-08-09T11:59:30.000Z",
+    };
+    const admitted = createWorkflowExecution({
+      ...reserved,
+      activeContextIds: ["context-plan", "context-implement"],
+      contextStates: {
+        ...reserved.contextStates,
+        "context-plan": {
+          ...reserved.contextStates["context-plan"]!,
+          status: "running",
+          reservedByBatchId: null,
+          laneId: "delivery",
+          batchId: "batch-1",
+          isolation: "worktree",
+          worktreePath: lane.worktreePath,
+          branchName: lane.branchName,
+          landingIntent: pendingIntent("context-plan"),
+        },
+        "context-implement": {
+          ...reserved.contextStates["context-implement"]!,
+          status: "running",
+          reservedByBatchId: null,
+          laneId: "delivery",
+          batchId: "batch-1",
+          isolation: "worktree",
+          worktreePath: lane.worktreePath,
+          branchName: lane.branchName,
+          landingIntent: pendingIntent("context-implement"),
+        },
+      },
+      executionLanes: { delivery: lane },
+      laneReservations: {},
+    });
+    const firstLandedAt = "2026-08-09T12:01:00.000Z";
+    const firstLanded = createWorkflowExecution({
+      ...admitted,
+      contextStates: {
+        ...admitted.contextStates,
+        "context-plan": {
+          ...admitted.contextStates["context-plan"]!,
+          landingIntent: {
+            ...pendingIntent("context-plan"),
+            state: "landed",
+            evidence: "commit",
+            headSha: "plan-sha",
+            settledAt: firstLandedAt,
+          },
+        },
+      },
+      executionLanes: {
+        delivery: {
+          ...lane,
+          includedContextIds: ["context-plan"],
+          lastCommittingContextId: "context-plan",
+          commitSnapshots: [
+            {
+              contextId: "context-plan",
+              sha: "plan-sha",
+              committedAt: firstLandedAt,
+            },
+          ],
+          updatedAt: firstLandedAt,
+        },
+      },
+    });
+    const secondLandedAt = "2026-08-09T12:02:00.000Z";
+    const secondLanded = createWorkflowExecution({
+      ...firstLanded,
+      contextStates: {
+        ...firstLanded.contextStates,
+        "context-implement": {
+          ...firstLanded.contextStates["context-implement"]!,
+          landingIntent: {
+            ...pendingIntent("context-implement"),
+            state: "landed",
+            evidence: "no-changes",
+            settledAt: secondLandedAt,
+          },
+        },
+      },
+      executionLanes: {
+        delivery: {
+          ...firstLanded.executionLanes.delivery!,
+          includedContextIds: ["context-plan", "context-implement"],
+          updatedAt: secondLandedAt,
+        },
+      },
+    });
+    const drifted = createWorkflowExecution({
+      ...secondLanded,
+      pendingHaltReason: {
+        type: "ownership_violation",
+        laneId: "delivery",
+        contextId: "context-implement",
+        unattributedPaths: ["src/unowned.ts"],
+        message: "Unattributed lane write",
+      },
+    });
+
+    const deliveries = [
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: initial,
+        nextExecution: reserved,
+      }),
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: reserved,
+        nextExecution: admitted,
+      }),
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: admitted,
+        nextExecution: firstLanded,
+      }),
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: firstLanded,
+        nextExecution: secondLanded,
+      }),
+      publisher.publishExecutionUpdate({
+        projectPath: "/projects/repo",
+        sessionName: "session-1",
+        previousExecution: secondLanded,
+        nextExecution: drifted,
+      }),
+    ];
+    for (const delivery of deliveries) publisher.deliver(delivery);
+    const decisions = deliveries
+      .flatMap((delivery) => delivery.events)
+      .filter((row) =>
+        [
+          "graph-workflow-lane-created",
+          "graph-workflow-lane-concurrent-admission",
+          "graph-workflow-lane-landed",
+          "graph-workflow-lane-drift-halted",
+        ].includes(row.event.type),
+      );
+
+    expect(decisions.map((row) => row.event)).toEqual([
+      {
+        type: "graph-workflow-lane-created",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: admitted.id,
+        laneId: "delivery",
+        kind: "worktree",
+        placementSource: "authored",
+      },
+      {
+        type: "graph-workflow-lane-concurrent-admission",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: admitted.id,
+        laneId: "delivery",
+        batchId: "batch-1",
+        memberContextIds: ["context-plan", "context-implement"],
+        canonicalCheckResult: "passed",
+      },
+      {
+        type: "graph-workflow-lane-landed",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: admitted.id,
+        laneId: "delivery",
+        contextId: "context-plan",
+        ownedPathspec: ["src/plan"],
+        commitSha: "plan-sha",
+        landedAt: firstLandedAt,
+      },
+      {
+        type: "graph-workflow-lane-landed",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: admitted.id,
+        laneId: "delivery",
+        contextId: "context-implement",
+        ownedPathspec: ["src/implement"],
+        commitSha: null,
+        landedAt: secondLandedAt,
+      },
+      {
+        type: "graph-workflow-lane-drift-halted",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: admitted.id,
+        laneId: "delivery",
+        contextId: "context-implement",
+        unattributedPaths: ["src/unowned.ts"],
+      },
+    ]);
+    expect(
+      decisions.map((row) =>
+        graphWorkflowExecutionEventSchema.parse(
+          JSON.parse(JSON.stringify(row)),
+        ),
+      ),
+    ).toEqual(decisions);
+    expect(
+      broadcast.mock.calls
+        .map(([event]) => event.type)
+        .filter((type) =>
+          [
+            "graph-workflow-lane-created",
+            "graph-workflow-lane-concurrent-admission",
+            "graph-workflow-lane-landed",
+            "graph-workflow-lane-drift-halted",
+          ].includes(type),
+        ),
+    ).toEqual(decisions.map((row) => row.event.type));
+
+    const replay = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution: drifted,
+      nextExecution: createWorkflowExecution({
+        ...drifted,
+        pendingHaltReason: null,
+        haltReason: drifted.pendingHaltReason,
+      }),
+    });
+    expect(
+      replay.events.filter(
+        (row) => row.event.type === "graph-workflow-lane-drift-halted",
+      ),
+    ).toEqual([]);
+  });
+
   it("emits a graph-workflow-join-status event when a join is newly created (pending)", () => {
     const broadcast = vi.fn();
     const publisher = createGraphWorkflowExecutionEventPublisher({

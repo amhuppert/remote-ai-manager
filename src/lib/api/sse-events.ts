@@ -31,7 +31,11 @@ import type {
   GraphWorkflowLoopDecisionEvent,
   GraphWorkflowContextStatusEvent,
   GraphWorkflowJoinStatusEvent,
+  GraphWorkflowLaneConcurrentAdmissionEvent,
   GraphWorkflowLaneCommitEvent,
+  GraphWorkflowLaneCreatedEvent,
+  GraphWorkflowLaneDriftHaltedEvent,
+  GraphWorkflowLaneLandedEvent,
   GraphWorkflowLaneStatusEvent,
   GraphWorkflowGraphExpandedEvent,
   GraphWorkflowLiveEditAppliedEvent,
@@ -230,6 +234,10 @@ export type SSEEvent =
   | GraphWorkflowMergeStatusEvent
   | GraphWorkflowBatchScheduledEvent
   | GraphWorkflowLaneStatusEvent
+  | GraphWorkflowLaneCreatedEvent
+  | GraphWorkflowLaneConcurrentAdmissionEvent
+  | GraphWorkflowLaneLandedEvent
+  | GraphWorkflowLaneDriftHaltedEvent
   | GraphWorkflowLaneCommitEvent
   | GraphWorkflowJoinStatusEvent
   | GraphWorkflowApprovalPendingEvent
