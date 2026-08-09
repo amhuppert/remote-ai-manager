@@ -16,10 +16,6 @@
 /** Fraction of total RAM the Vitest process fleet may budget for its heaps. */
 const RAM_BUDGET_FRACTION = 0.55;
 
-// The coordinator must keep processing worker RPCs while every worker is busy.
-// Reserve one worker-sized heap so it cannot be starved by the worker ceiling.
-const COORDINATOR_PROCESS_RESERVATION = 1;
-
 /**
  * Floor for the RAM-derived ceiling. Below two workers a full-suite run takes
  * long enough to be its own problem, and a machine that cannot hold two is one
@@ -34,6 +30,7 @@ const BYTES_PER_GB = 1024 ** 3;
  * @param {number} [input.requestedWorkers] Worker count the caller asked for.
  *   Treated as a request, not an instruction: it is clamped DOWN to the
  *   machine's ceiling and never raised up to it.
+ * @param {number} input.coordinatorHeapMb Coordinator heap cap, in MB.
  * @param {number} input.workerHeapMb Per-worker heap cap, in MB.
  * @param {number} input.totalMemoryBytes Total machine RAM, `os.totalmem()`.
  * @param {number} input.availableParallelism `os.availableParallelism()`.
@@ -41,16 +38,15 @@ const BYTES_PER_GB = 1024 ** 3;
  */
 export function resolveWorkerBudget({
   requestedWorkers,
+  coordinatorHeapMb,
   workerHeapMb,
   totalMemoryBytes,
   availableParallelism,
 }) {
-  const affordableProcesses = Math.floor(
-    ((totalMemoryBytes / BYTES_PER_GB) * RAM_BUDGET_FRACTION) /
-      (workerHeapMb / 1024),
-  );
-  const affordableWorkers =
-    affordableProcesses - COORDINATOR_PROCESS_RESERVATION;
+  const workerBudgetMb =
+    (totalMemoryBytes / BYTES_PER_GB) * 1024 * RAM_BUDGET_FRACTION -
+    coordinatorHeapMb;
+  const affordableWorkers = Math.floor(workerBudgetMb / workerHeapMb);
   const ceiling = Math.max(
     MIN_WORKERS,
     Math.min(availableParallelism, affordableWorkers),

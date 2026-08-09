@@ -5,23 +5,26 @@ const GB = 1024 ** 3;
 
 /** The heap both the vitest config and the validation launcher size against. */
 const WORKER_HEAP_MB = 1536;
+const COORDINATOR_HEAP_MB = 3072;
 
 describe("resolveWorkerBudget", () => {
-  it("reserves coordinator memory before bounding workers by RAM", () => {
-    // The 55% budget holds five 1.5 GB Node heaps. One belongs to the Vitest
-    // coordinator, leaving four worker heaps.
+  it("budgets the coordinator heap separately from worker heaps", () => {
+    // The coordinator retains the full task graph and needs more heap than an
+    // individual worker. The remaining 55% RAM budget holds three workers.
     expect(
       resolveWorkerBudget({
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(4);
+    ).toBe(3);
   });
 
   it("bounds parallelism by core count when RAM is plentiful", () => {
     expect(
       resolveWorkerBudget({
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 128 * GB,
         availableParallelism: 8,
@@ -32,6 +35,7 @@ describe("resolveWorkerBudget", () => {
   it("keeps a two-worker floor on a machine whose RAM affords fewer", () => {
     expect(
       resolveWorkerBudget({
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 4 * GB,
         availableParallelism: 8,
@@ -46,11 +50,12 @@ describe("resolveWorkerBudget", () => {
     expect(
       resolveWorkerBudget({
         requestedWorkers: 8,
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,
       }),
-    ).toBe(4);
+    ).toBe(3);
   });
 
   it("honours a caller that asks for fewer workers than the budget allows", () => {
@@ -59,6 +64,7 @@ describe("resolveWorkerBudget", () => {
     expect(
       resolveWorkerBudget({
         requestedWorkers: 3,
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 128 * GB,
         availableParallelism: 16,
@@ -70,6 +76,7 @@ describe("resolveWorkerBudget", () => {
     expect(
       resolveWorkerBudget({
         requestedWorkers: 0,
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB,
         totalMemoryBytes: 128 * GB,
         availableParallelism: 16,
@@ -81,6 +88,7 @@ describe("resolveWorkerBudget", () => {
     // Same machine, twice the heap per worker, so half the workers fit.
     expect(
       resolveWorkerBudget({
+        coordinatorHeapMb: COORDINATOR_HEAP_MB,
         workerHeapMb: WORKER_HEAP_MB * 2,
         totalMemoryBytes: 16 * GB,
         availableParallelism: 16,

@@ -44,7 +44,9 @@ const nodeTestFiles = unitTestFiles.filter(
 // and for the validation launcher alike. The unit projects use Node or jsdom,
 // so ~1.5 GB per worker is ample.
 const WORKER_HEAP_MB = 1536;
+const COORDINATOR_HEAP_MB = 3072;
 const maxForks = resolveWorkerBudget({
+  coordinatorHeapMb: COORDINATOR_HEAP_MB,
   workerHeapMb: WORKER_HEAP_MB,
   totalMemoryBytes: os.totalmem(),
   availableParallelism: os.availableParallelism(),
