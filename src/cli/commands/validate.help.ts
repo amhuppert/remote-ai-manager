@@ -50,11 +50,18 @@ export const validateHelpEntries: CommandHelpEntry[] = [
     path: ["validate", "run"],
     summary: "run one registered validation command",
     description:
-      "Submit one command through ValidationService. Admission is fail-fast by default; --wait joins the strict FIFO queue. Once admitted, the CLI polls through completion and renews its private lease. Values after `--` are server-validated narrowing paths, never tool options.",
+      "Submit one logical command through ValidationService. Scope defaults to changed; a command without native changed support falls back to full. Admission is fail-fast by default; --wait joins the strict FIFO queue. Values after `--` are changed-run narrowing paths, never tool options.",
     usage: [
-      "cctl validate run <name> [--wait] [--json] [-- <validated paths>]",
+      "cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]",
     ],
     flags: [
+      {
+        name: "scope",
+        kind: "value",
+        valuePlaceholder: "<changed|full>",
+        description:
+          "request affected-work or full validation (default: changed)",
+      },
       {
         name: "wait",
         kind: "boolean",
@@ -66,6 +73,11 @@ export const validateHelpEntries: CommandHelpEntry[] = [
         invocation: "cctl validate run test --wait -- src/lib/example.test.ts",
         explanation:
           "queue a focused test run; the server rejects option tokens and paths escaping the target worktree",
+      },
+      {
+        invocation: "cctl validate run test --scope full --wait",
+        explanation:
+          "run the full variant of the same logical test command under its shared cost and timeout",
       },
     ],
     domainContext: VALIDATION_CONTEXT,

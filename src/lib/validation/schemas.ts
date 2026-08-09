@@ -16,20 +16,43 @@ export const validationCommandNameSchema = z
   );
 export type ValidationCommandName = z.infer<typeof validationCommandNameSchema>;
 
-export const validationCommandConfigSchema = z.object({
-  // Script path resolved from the canonical project root and run with
-  // execFile — never a shell string. The candidate worktree is only cwd, so a
-  // branch cannot validate itself with a script it modified.
-  command: z.string().trim().min(1),
-  // Reservation weight against the global budget. Required with no default:
-  // a project must state its weight, and admission math depends on it.
-  cost: z.number().int().positive(),
-  timeoutMs: z.number().int().positive().optional(),
-  description: z.string().optional(),
-  // "paths" permits forwarding worktree-contained file paths (narrowing
-  // only); "forbid" rejects every forwarded token.
-  scopeArgs: z.enum(["forbid", "paths"]).default("forbid"),
-});
+export const validationScopeSchema = z.enum(["changed", "full"]);
+export type ValidationScope = z.infer<typeof validationScopeSchema>;
+
+const validationExecutablePathSchema = z.string().trim().min(1);
+
+export const validationCommandExecutablesSchema = z
+  .object({
+    // Paths resolve from the canonical project root and execute without a
+    // shell. The candidate worktree is only cwd, so it cannot replace the
+    // registered executable with an unmerged edit.
+    full: validationExecutablePathSchema,
+    changed: validationExecutablePathSchema.optional(),
+  })
+  .strict();
+
+export const validationCommandConfigSchema = z
+  .object({
+    command: validationCommandExecutablesSchema,
+    // Reservation weight against the global budget. Required with no default:
+    // both variants share one honest maximum resource profile.
+    cost: z.number().int().positive(),
+    timeoutMs: z.number().int().positive().optional(),
+    description: z.string().trim().min(1).optional(),
+    // Paths are a narrower changed execution, never arbitrary tool options.
+    pathArgs: z.enum(["forbid", "paths"]).default("forbid"),
+  })
+  .strict()
+  .superRefine((profile, ctx) => {
+    if (profile.pathArgs !== "paths" || profile.command.changed !== undefined) {
+      return;
+    }
+    ctx.addIssue({
+      code: "custom",
+      path: ["pathArgs"],
+      message: 'pathArgs "paths" requires command.changed',
+    });
+  });
 export type ValidationCommandConfig = z.infer<
   typeof validationCommandConfigSchema
 >;
@@ -89,6 +112,8 @@ export const validationCommandSummarySchema = z.object({
   name: validationCommandNameSchema,
   cost: z.number().int().positive(),
   description: z.string().optional(),
+  pathArgs: z.enum(["forbid", "paths"]),
+  changedScope: z.enum(["native", "full_fallback"]),
 });
 export type ValidationCommandSummary = z.infer<
   typeof validationCommandSummarySchema
@@ -232,6 +257,8 @@ export const validationRunEventSchema = z.object({
   source: validationRunSourceSchema,
   projectPath: z.string(),
   conversationId: z.string().nullable(),
+  requestedScope: validationScopeSchema.nullable(),
+  effectiveScope: validationScopeSchema.nullable(),
   /** Result kind for rejected/terminal phases (e.g. passed, cost_exceeds_limit). */
   outcome: z.string().nullable(),
   timestamp: z.string(),
@@ -303,10 +330,11 @@ export const validationRunRecordSchema = registerTrustedSchema(
     finishedAt: z.string().trim().min(1).nullable(),
     queueMs: z.number().int().nonnegative().nullable(),
     execMs: z.number().int().nonnegative().nullable(),
-    // Whether scope paths were forwarded, and how many: a scoped TDD run and a
-    // full-suite run of the same command must never share one duration
-    // distribution.
-    scoped: z.boolean(),
+    // Nullable only for rows written before scope became durable. Every new
+    // submission snapshots both values before scheduler admission.
+    requestedScope: validationScopeSchema.nullable(),
+    effectiveScope: validationScopeSchema.nullable(),
+    // Explicit path narrowing is a separate timing dimension within changed.
     scopedPathCount: z.number().int().nonnegative(),
     exitCode: z.number().int().nullable(),
     timedOut: z.boolean(),

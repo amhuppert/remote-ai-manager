@@ -973,9 +973,25 @@ describe("ContextConfigTab — validation command selectors", () => {
         contextId="context-impl"
         onSaveContextConfig={onSaveContextConfig}
         commandOptions={[
-          { name: "typecheck", cost: 2 },
-          { name: "test", cost: 4, description: "Scoped vitest" },
-          { name: "lint", cost: 1 },
+          {
+            name: "typecheck",
+            cost: 2,
+            pathArgs: "forbid",
+            changedScope: "full_fallback",
+          },
+          {
+            name: "test",
+            cost: 4,
+            description: "Scoped vitest",
+            pathArgs: "paths",
+            changedScope: "native",
+          },
+          {
+            name: "lint",
+            cost: 1,
+            pathArgs: "forbid",
+            changedScope: "native",
+          },
         ]}
       />,
     );
@@ -1018,7 +1034,14 @@ describe("ContextConfigTab — validation command selectors", () => {
         execution={execution}
         contextId="context-impl"
         onSaveContextConfig={vi.fn()}
-        commandOptions={[{ name: "typecheck", cost: 2 }]}
+        commandOptions={[
+          {
+            name: "typecheck",
+            cost: 2,
+            pathArgs: "forbid",
+            changedScope: "full_fallback",
+          },
+        ]}
       />,
     );
 

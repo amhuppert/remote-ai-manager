@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Shared launch surface for the `test` and `test-full-suite` commands. Worker
-# count and heap live here so the scoped and the full run cannot drift into
-# different memory footprints — the two compete for the same global validation
-# budget and are sized against the same machine.
+# Shared launch surface for the changed and full variants of the `test`
+# profile. Worker count and heap live here so the variants cannot drift into
+# different memory footprints — both use the same global validation reservation
+# and are sized against the same machine.
 #
 # Callers must set SCRIPT_DIR and source common.sh first.
 

@@ -357,7 +357,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl validate list` — list commands, policy enablement, and current capacity
   - `cctl validate list [--json]`
 - `cctl validate run` — run one registered validation command
-  - `cctl validate run <name> [--wait] [--json] [-- <validated paths>]`
+  - `cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]`
 - `cctl validate status` — inspect active validation or one run
   - `cctl validate status [run-id] [--json]`
 - `cctl validate cancel` — cancel an owned validation run
@@ -505,7 +505,7 @@ List and execute the project's registered validation commands through the server
 
 ```
 cctl validate list [--json]
-cctl validate run <name> [--wait] [--json] [-- <validated paths>]
+cctl validate run <name> [--scope changed|full] [--wait] [--json] [-- <validated paths>]
 cctl validate status [run-id] [--json]
 cctl validate cancel <run-id> [--json]
 ```
@@ -516,7 +516,7 @@ cctl validate cancel <run-id> [--json]
 - A command disabled for the caller's graph role exits successfully as a policy no-op, consumes no capacity, and spawns nothing. Do not retry it or bypass the policy.
 - `status` without an id lists active queued/running jobs and capacity; with an id it reports that run's queue or terminal state. `cancel` requires the submitter's private lease. A blocking `run` renews its lease and attempts cancellation on SIGINT/SIGTERM; lease expiry is the fallback for a dead client.
 
-Run registered validation only through `cctl validate run <name>`. Do not invoke Vitest, ESLint, TypeScript, formatters, builds, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
+Run registered validation only through `cctl validate run <name>`. Scope defaults to changed; use `--scope full` when full-project evidence is required. Full-only commands fall back automatically. Paths after `--` narrow native changed runs only. Do not invoke Vitest, ESLint, TypeScript, formatters, builds, their package-script aliases, or registered validation scripts directly. Never bypass the wrapper to avoid a queue or an execution-context policy. A direct invocation is allowed only for a narrow diagnostic the registered commands cannot express — state the reason first and use the smallest possible scope. If it is resource-intensive or repeatable, register a command instead.
 
 Use `cctl validate list` before assuming a conventional name such as `test`, `lint`, or `typecheck`; projects may register arbitrary kebab-case names. Use the `project-setup` skill when adding or changing registry entries and wrappers.
 

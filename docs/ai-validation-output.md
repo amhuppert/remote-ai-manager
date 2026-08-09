@@ -30,22 +30,36 @@ Projects register granular wrappers under `validation.commands` in `CommandCente
   "validation": {
     "commands": {
       "format": {
-        "command": "scripts/validate/format.sh",
-        "cost": 1
+        "command": {
+          "full": "scripts/validate/format-full.sh",
+          "changed": "scripts/validate/format-changed.sh"
+        },
+        "cost": 1,
+        "pathArgs": "forbid"
       },
       "lint": {
-        "command": "scripts/validate/lint.sh",
-        "cost": 2
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint-changed.sh"
+        },
+        "cost": 2,
+        "pathArgs": "forbid"
       },
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
-        "cost": 2
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
+        "cost": 2,
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full.sh",
+          "changed": "scripts/validate/test-changed.sh"
+        },
         "cost": 8,
         "timeoutMs": 900000,
-        "scopeArgs": "paths"
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["format", "lint", "typecheck", "test"],
@@ -54,9 +68,9 @@ Projects register granular wrappers under `validation.commands` in `CommandCente
 }
 ```
 
-Every execution goes through Command Center's server-owned validation service. The service resolves the registered command, enforces the allowed-command policy and global weighted budget, targets the correct worktree, and records queue and execution timing. A command whose configured cost exceeds the global limit is rejected rather than clamped.
+Every execution goes through Command Center's server-owned validation service. The service resolves the registered command and requested scope, enforces the allowed-command policy and global weighted budget, targets the correct worktree, and records queue and execution timing. Scope defaults to `changed`; when a command has no changed executable, Command Center selects its full executable and reports effective scope `full`. A command whose configured cost exceeds the global limit is rejected rather than clamped.
 
-Use one executable wrapper per command. Keep the configured `cost` honest: a test wrapper pinned to eight workers should reserve eight units. Use `scopeArgs: "paths"` only when the wrapper safely accepts forwarded repository-relative paths; otherwise omit it so extra arguments fail closed.
+Give each wrapper one fixed behavior and register its full and changed paths under one logical command. Both variants share `cost` and `timeoutMs`; keep the cost honest for the more expensive variant. Use `pathArgs: "paths"` only when the changed wrapper safely accepts forwarded repository-relative paths. Full requests and changed-to-full fallbacks never accept paths.
 
 The selected commands run in order. A non-zero exit aborts the gate and preserves the full failure output. Successful wrappers should emit nothing.
 
@@ -85,7 +99,7 @@ Each command may set `timeoutMs`; otherwise the service default applies. Time sp
 
 ### Wrapper Pattern
 
-Wrappers must have a shebang and executable permission. Suppress passing output, preserve failing output, and pin internal parallelism so the registered cost remains true. Scope formatting and linting to files changed from `TARGET_BRANCH` when safe; keep type checking full-project because a changed declaration can break unchanged dependents. A test wrapper may accept forwarded path filters when its registration uses `scopeArgs: "paths"`.
+Wrappers must have a shebang and executable permission. Suppress passing output, preserve failing output, and pin internal parallelism so the registered cost remains true. Changed formatting and linting wrappers may use `TARGET_BRANCH`; full wrappers must ignore the diff. Keep type checking full-project when a changed declaration can break unchanged dependents, registering only `command.full` so changed requests fall back automatically. A changed test wrapper may accept path filters when its registration uses `pathArgs: "paths"`. Wrappers never receive or parse Command Center's scope value.
 
 ```bash
 #!/usr/bin/env bash
@@ -403,21 +417,35 @@ Place this file in your project root to configure CC integration:
   "validation": {
     "commands": {
       "format": {
-        "command": "scripts/validate/format.sh",
-        "cost": 1
+        "command": {
+          "full": "scripts/validate/format-full.sh",
+          "changed": "scripts/validate/format-changed.sh"
+        },
+        "cost": 1,
+        "pathArgs": "forbid"
       },
       "lint": {
-        "command": "scripts/validate/lint.sh",
-        "cost": 2
+        "command": {
+          "full": "scripts/validate/lint-full.sh",
+          "changed": "scripts/validate/lint-changed.sh"
+        },
+        "cost": 2,
+        "pathArgs": "forbid"
       },
       "typecheck": {
-        "command": "scripts/validate/typecheck.sh",
-        "cost": 2
+        "command": {
+          "full": "scripts/validate/typecheck.sh"
+        },
+        "cost": 2,
+        "pathArgs": "forbid"
       },
       "test": {
-        "command": "scripts/validate/test.sh",
+        "command": {
+          "full": "scripts/validate/test-full.sh",
+          "changed": "scripts/validate/test-changed.sh"
+        },
         "cost": 8,
-        "scopeArgs": "paths"
+        "pathArgs": "paths"
       }
     },
     "preMerge": ["format", "lint", "typecheck", "test"],
@@ -430,16 +458,19 @@ This is the concrete `validation.commands` registry and its `validation.preMerge
 
 ### 2. Create Granular Wrappers
 
-Create one executable script per registered command under `scripts/validate/`:
+Create fixed full and changed scripts where both modes are sound, and a full-only script where changed execution is not sound:
 
 ```bash
-scripts/validate/format.sh
-scripts/validate/lint.sh
+scripts/validate/format-full.sh
+scripts/validate/format-changed.sh
+scripts/validate/lint-full.sh
+scripts/validate/lint-changed.sh
 scripts/validate/typecheck.sh
-scripts/validate/test.sh
+scripts/validate/test-full.sh
+scripts/validate/test-changed.sh
 ```
 
-Each wrapper should use the AI-quiet pattern above: no output on success and complete, colorless diagnostics on failure. Pin test workers and register the same number as the command cost. Formatting and lint wrappers can use `TARGET_BRANCH` to select changed files; type checking should remain full-project. When `test.sh` accepts path arguments, pass them only as test-file filters and set `scopeArgs` to `"paths"`.
+Each wrapper should use the AI-quiet pattern above: no output on success and complete, colorless diagnostics on failure. Pin test workers and register the same number as the command cost. Changed wrappers can use `TARGET_BRANCH`; full wrappers must cover the whole project. When the changed test wrapper accepts path arguments, use them only as test-file filters and set `pathArgs` to `"paths"`.
 
 ### 3. Set Up the Pre-Commit Hook
 
