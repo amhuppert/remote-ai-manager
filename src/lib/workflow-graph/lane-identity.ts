@@ -56,6 +56,22 @@ export const SESSION_LANE_NAME = "session";
 export const SESSION_LANE_ID = "__session__";
 
 /**
+ * The runtime lane id an AUTHORED lane name addresses.
+ *
+ * Only the session lane is spelled differently at the two tiers — an author
+ * writes {@link SESSION_LANE_NAME} and the engine keys its record under
+ * {@link SESSION_LANE_ID} — so every surface that looks a placement's lane up in
+ * `executionLanes`, `joins`, or a context state's `laneId` has to fold that one
+ * name. Owning the fold here keeps the two spellings from drifting apart across
+ * the readiness classifier, join planning, provisioning, and lane lifecycle.
+ *
+ * Total by construction: a group lane's authored name IS its runtime id.
+ */
+export function executionLaneIdFor(laneName: string): string {
+  return laneName === SESSION_LANE_NAME ? SESSION_LANE_ID : laneName;
+}
+
+/**
  * Why `laneId` is unsafe to splice into a git branch name and a filesystem
  * path, or null when it is safe.
  *

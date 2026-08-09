@@ -17,6 +17,7 @@ import {
 } from "./runtime-edits";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionJoinState,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 import { workflowLiveEditOperationSchema } from "@/lib/workflows/edit-schemas";
@@ -3562,6 +3563,206 @@ describe("applyLiveExecutionEdits — placement (lwp R10.2)", () => {
       "placement-owned-paths-overlap",
     );
   });
+
+  /**
+   * Lane membership freezes at join intent (lwp R10, decision D11): once a join
+   * has promised the lane's content to a merge, a member added afterwards would
+   * either miss that merge or reshape work already committed to it. There is no
+   * reopen verb — dynamic work targets a NEW lane.
+   */
+  describe("a closed lane refuses new members", () => {
+    /** Stamp the join intent that consumes DELIVERY_LANE into `landing`. */
+    function withJoinIntent(
+      execution: GraphWorkflowExecution,
+      status: GraphWorkflowExecutionJoinState["status"] = "pending",
+    ): GraphWorkflowExecution {
+      return {
+        ...execution,
+        joins: {
+          "join-1": {
+            joinId: "join-1",
+            kind: "context_merge",
+            contextId: "context-verify",
+            targetLaneId: "landing",
+            sourceLaneIds: [DELIVERY_LANE, "landing"],
+            mergedSourceLaneIds: [],
+            validationDebtSourceLaneIds: [],
+            status,
+            errorMessage: null,
+            conflicts: null,
+            conflictGuidance: null,
+            createdAt: "2026-08-08T00:00:00.000Z",
+            updatedAt: "2026-08-08T00:00:00.000Z",
+            completedAt: null,
+          },
+        },
+      };
+    }
+
+    it("refuses an add-context onto a lane whose join intent already exists", () => {
+      const result = apply(
+        withJoinIntent(sharedLaneExecution({ status: "paused" })),
+        [
+          {
+            type: "add-context",
+            id: "context-docs",
+            title: "Document",
+            acceptanceCriteria: "Docs describe the change.",
+            placement: {
+              lane: DELIVERY_LANE,
+              mode: "owned",
+              ownedPaths: ["reference"],
+            },
+          },
+        ],
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.code)).toContain("lane_closed");
+      expect(result.issues[0]?.message).toContain("join_planned");
+    });
+
+    it("refuses an add-context onto a lane a succeeded join already consumed", () => {
+      const result = apply(
+        withJoinIntent(sharedLaneExecution({ status: "paused" }), "succeeded"),
+        [
+          {
+            type: "add-context",
+            id: "context-docs",
+            title: "Document",
+            acceptanceCriteria: "Docs describe the change.",
+            placement: { lane: DELIVERY_LANE, mode: "full" },
+          },
+        ],
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.code)).toContain("lane_closed");
+    });
+
+    it("refuses moving an existing context onto a closed lane", () => {
+      const base = withJoinIntent(sharedLaneExecution({ status: "paused" }));
+      const elsewhere: GraphWorkflowExecution = {
+        ...base,
+        workingDefinition: {
+          ...base.workingDefinition,
+          executionContexts: base.workingDefinition.executionContexts.map(
+            (context) =>
+              context.id === "context-verify"
+                ? {
+                    ...context,
+                    placement: { lane: "scratch", mode: "full" as const },
+                  }
+                : context,
+          ),
+        },
+      };
+
+      const result = apply(elsewhere, [
+        {
+          type: "update-context",
+          contextId: "context-verify",
+          placement: {
+            lane: DELIVERY_LANE,
+            mode: "owned",
+            ownedPaths: ["ref"],
+          },
+        },
+      ]);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues.map((issue) => issue.code)).toContain("lane_closed");
+    });
+
+    it("admits the SAME batch onto a brand-new lane", () => {
+      const result = apply(
+        withJoinIntent(sharedLaneExecution({ status: "paused" })),
+        [
+          {
+            type: "add-context",
+            id: "context-docs",
+            title: "Document",
+            acceptanceCriteria: "Docs describe the change.",
+            placement: {
+              lane: "follow-up",
+              mode: "owned",
+              ownedPaths: ["reference"],
+            },
+          },
+        ],
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(placementOf(result.execution, "context-docs")).toEqual({
+        lane: "follow-up",
+        mode: "owned",
+        ownedPaths: ["reference"],
+      });
+    });
+
+    it("leaves the join's own TARGET lane open to new members", () => {
+      const result = apply(
+        withJoinIntent(sharedLaneExecution({ status: "paused" })),
+        [
+          {
+            type: "add-context",
+            id: "context-docs",
+            title: "Document",
+            acceptanceCriteria: "Docs describe the change.",
+            placement: {
+              lane: "landing",
+              mode: "owned",
+              ownedPaths: ["reference"],
+            },
+          },
+        ],
+      );
+
+      expect(result.ok).toBe(true);
+    });
+
+    it("leaves an untouched lane's members alone — closure gates ARRIVALS, not residents", () => {
+      // `context-plan` already lives on the now-closed lane. Editing its prose
+      // is not a placement act and must not be refused by the freeze.
+      const result = apply(
+        withJoinIntent(sharedLaneExecution({ status: "paused" })),
+        [
+          {
+            type: "update-context",
+            contextId: "context-plan",
+            title: "Plan the change",
+          },
+        ],
+      );
+
+      expect(result.ok).toBe(true);
+    });
+
+    it("admits a re-statement of a resident's OWN placement on a closed lane", () => {
+      // The lane it names is the lane it is already on, so nothing arrives.
+      const result = apply(
+        withJoinIntent(sharedLaneExecution({ status: "paused" })),
+        [
+          {
+            type: "update-context",
+            contextId: "context-plan",
+            placement: {
+              lane: DELIVERY_LANE,
+              mode: "owned",
+              ownedPaths: ["docs", "README.md"],
+            },
+          },
+        ],
+      );
+
+      expect(result.ok).toBe(true);
+    });
+  });
+
   it("persists an accepted ownership change as what the context's next turn is composed from", () => {
     const fixture = createPersistenceFixture();
     try {

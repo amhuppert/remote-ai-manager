@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type {
-  GraphWorkflowAgentSessionState,
-  GraphWorkflowExecution,
-  GraphWorkflowExecutionJoinState,
-  GraphWorkflowExecutionLaneState,
-  GraphWorkflowTaskState,
+import {
+  graphWorkflowLoopStateSchema,
+  type GraphWorkflowAgentSessionState,
+  type GraphWorkflowExecution,
+  type GraphWorkflowExecutionJoinState,
+  type GraphWorkflowExecutionLaneState,
+  type GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowContextStatus } from "@/lib/workflow-graph/definition-schemas";
 import {
@@ -341,6 +342,209 @@ describe("planContextJoin targets the authored lane (R3, decision D5)", () => {
         generateJoinId: () => "join-same",
       }),
     ).toBeNull();
+  });
+
+  /**
+   * A lane holding an unconcluded loop body is not quiescent (lwp R10, decision
+   * D11): later passes materialize onto it, so merging its work AWAY now would
+   * land a branch the loop is still writing to, and the freeze that intent
+   * stamps would strand every pass after this one.
+   *
+   * Scoped to joins that LEAVE the loop. A body member on one lane feeding a
+   * body member on another needs a real merge on every pass, and refusing that
+   * deadlocks the loop on its own dataflow.
+   */
+  describe("a loop-open source lane defers the join that leaves the loop", () => {
+    /** Put the loop body on `bodyLanes`, out of the scheduled graph. */
+    function withLoopBodyOn(
+      execution: GraphWorkflowExecution,
+      bodyLanes: readonly string[],
+      activation: "unstarted" | "running" | "concluded" | "skipped",
+    ): GraphWorkflowExecution {
+      const bodyTemplate = execution.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-verify",
+      );
+      if (!bodyTemplate) throw new Error("fixture lost context-verify");
+      return {
+        ...execution,
+        workingDefinition: {
+          ...execution.workingDefinition,
+          executionContexts:
+            execution.workingDefinition.executionContexts.filter(
+              (context) => context.id !== "context-verify",
+            ),
+          loopGroups: [
+            {
+              id: "refine",
+              entryContextId: "context-verify",
+              exitContextId: "context-verify",
+              until: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "pass" } },
+                  required: ["verdict"],
+                },
+              },
+              maxPasses: 3,
+              templateVersion: 1,
+              planRepair: { enabled: false, maxAttemptsPerContext: 1 },
+              template: {
+                contexts: bodyLanes.map((lane, index) => ({
+                  ...bodyTemplate,
+                  id: `${bodyTemplate.id}-${index}`,
+                  placement: { lane, mode: "full" as const },
+                })),
+                tasks: [],
+                edges: [],
+              },
+            },
+          ],
+        },
+        loopStates: {
+          refine: graphWorkflowLoopStateSchema.parse({
+            loopGroupId: "refine",
+            activation,
+            passCount: activation === "unstarted" ? 0 : 1,
+          }),
+        },
+      };
+    }
+
+    function withLoopBodyOnLaneUp(
+      execution: GraphWorkflowExecution,
+      activation: "unstarted" | "running" | "concluded" | "skipped",
+    ): GraphWorkflowExecution {
+      return withLoopBodyOn(execution, ["lane-up"], activation);
+    }
+
+    it("plans a join BETWEEN two lanes of the same open loop body", () => {
+      // The regression the Loop-Until-Done proof caught: a cross-lane body
+      // exchanges work through a real merge on every pass, so a blanket refusal
+      // deadlocks the loop before it can ever conclude.
+      const plan = planContextJoin({
+        contextId: "context-implement",
+        execution: withLoopBodyOn(
+          makeTargetedFixture({}),
+          ["lane-up", "lane-down"],
+          "running",
+        ),
+        now: () => t1,
+        generateJoinId: () => "join-intra-loop",
+      });
+
+      expect(plan).not.toBeNull();
+      expect(plan!.targetLaneId).toBe("lane-down");
+      expect(plan!.sourceLaneIds.sort()).toEqual(["lane-down", "lane-up"]);
+    });
+
+    it("returns null while the source lane's loop is still running", () => {
+      expect(
+        planContextJoin({
+          contextId: "context-implement",
+          execution: withLoopBodyOnLaneUp(makeTargetedFixture({}), "running"),
+          now: () => t1,
+          generateJoinId: () => "join-loop",
+        }),
+      ).toBeNull();
+    });
+
+    it("returns null while the source lane's loop has not activated yet", () => {
+      expect(
+        planContextJoin({
+          contextId: "context-implement",
+          execution: withLoopBodyOnLaneUp(makeTargetedFixture({}), "unstarted"),
+          now: () => t1,
+          generateJoinId: () => "join-loop",
+        }),
+      ).toBeNull();
+    });
+
+    it("plans the join once the loop concludes", () => {
+      const plan = planContextJoin({
+        contextId: "context-implement",
+        execution: withLoopBodyOnLaneUp(makeTargetedFixture({}), "concluded"),
+        now: () => t1,
+        generateJoinId: () => "join-loop",
+      });
+
+      expect(plan).not.toBeNull();
+      expect(plan!.targetLaneId).toBe("lane-down");
+      expect(plan!.sourceLaneIds.sort()).toEqual(["lane-down", "lane-up"]);
+    });
+
+    it("plans the join when the loop's activation path was never taken", () => {
+      expect(
+        planContextJoin({
+          contextId: "context-implement",
+          execution: withLoopBodyOnLaneUp(makeTargetedFixture({}), "skipped"),
+          now: () => t1,
+          generateJoinId: () => "join-loop",
+        }),
+      ).not.toBeNull();
+    });
+
+    it("still plans a join INTO a loop-open lane — the target is written to, not consumed", () => {
+      // The loop body sits on `lane-down`, the join's target. Deferring here
+      // would deadlock: the loop's own upstream inputs would never arrive.
+      const base = makeTargetedFixture({});
+      const bodyTemplate = base.workingDefinition.executionContexts.find(
+        (context) => context.id === "context-verify",
+      );
+      if (!bodyTemplate) throw new Error("fixture lost context-verify");
+      const loopOnTarget: GraphWorkflowExecution = {
+        ...base,
+        workingDefinition: {
+          ...base.workingDefinition,
+          executionContexts: base.workingDefinition.executionContexts.filter(
+            (context) => context.id !== "context-verify",
+          ),
+          loopGroups: [
+            {
+              id: "refine",
+              entryContextId: "context-verify",
+              exitContextId: "context-verify",
+              until: {
+                schema: {
+                  type: "object",
+                  properties: { verdict: { const: "pass" } },
+                  required: ["verdict"],
+                },
+              },
+              maxPasses: 3,
+              templateVersion: 1,
+              planRepair: { enabled: false, maxAttemptsPerContext: 1 },
+              template: {
+                contexts: [
+                  {
+                    ...bodyTemplate,
+                    placement: { lane: "lane-down", mode: "full" as const },
+                  },
+                ],
+                tasks: [],
+                edges: [],
+              },
+            },
+          ],
+        },
+        loopStates: {
+          refine: graphWorkflowLoopStateSchema.parse({
+            loopGroupId: "refine",
+            activation: "running",
+            passCount: 1,
+          }),
+        },
+      };
+
+      const plan = planContextJoin({
+        contextId: "context-implement",
+        execution: loopOnTarget,
+        now: () => t1,
+        generateJoinId: () => "join-into-loop",
+      });
+
+      expect(plan).not.toBeNull();
+      expect(plan!.targetLaneId).toBe("lane-down");
+    });
   });
 });
 
@@ -775,6 +979,94 @@ describe("planFinalPublishJoin", () => {
     expect(plan!.sourceLaneContextIds).toEqual({
       "lane-a": ["context-plan", "context-implement", "context-verify"],
     });
+  });
+
+  it("excludes a lane whose loop has not concluded, then publishes it once it has (lwp R10)", () => {
+    // Between two passes every materialized context reads complete, so the
+    // unfinished-task guard alone would let the publish consume a lane the loop
+    // is about to write another pass onto.
+    const base = completeAllContextTasks(createWorkflowExecution());
+    const sessionLaneId = "session-lane";
+    const bodyTemplate = base.workingDefinition.executionContexts.find(
+      (context) => context.id === "context-verify",
+    );
+    if (!bodyTemplate) throw new Error("fixture lost context-verify");
+    const withLoop = (
+      activation: "running" | "concluded",
+    ): GraphWorkflowExecution => ({
+      ...base,
+      workingDefinition: {
+        ...base.workingDefinition,
+        executionContexts: base.workingDefinition.executionContexts.filter(
+          (context) => context.id !== "context-verify",
+        ),
+        loopGroups: [
+          {
+            id: "refine",
+            entryContextId: "context-verify",
+            exitContextId: "context-verify",
+            until: {
+              schema: {
+                type: "object",
+                properties: { verdict: { const: "pass" } },
+                required: ["verdict"],
+              },
+            },
+            maxPasses: 3,
+            templateVersion: 1,
+            planRepair: { enabled: false, maxAttemptsPerContext: 1 },
+            template: {
+              contexts: [
+                {
+                  ...bodyTemplate,
+                  placement: { lane: "lane-a", mode: "full" as const },
+                },
+              ],
+              tasks: [],
+              edges: [],
+            },
+          },
+        ],
+      },
+      loopStates: {
+        refine: graphWorkflowLoopStateSchema.parse({
+          loopGroupId: "refine",
+          activation,
+          passCount: 1,
+        }),
+      },
+      executionLanes: {
+        [sessionLaneId]: makeLane({
+          laneId: sessionLaneId,
+          branchName: "csm/session",
+          kind: "session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/test-a",
+          includedContextIds: ["context-plan"],
+        }),
+      },
+    });
+
+    expect(
+      planFinalPublishJoin({
+        execution: withLoop("running"),
+        sessionLaneId,
+        now: () => t1,
+        generateJoinId: () => "join-final",
+      }),
+    ).toBeNull();
+
+    const afterConclusion = planFinalPublishJoin({
+      execution: withLoop("concluded"),
+      sessionLaneId,
+      now: () => t1,
+      generateJoinId: () => "join-final",
+    });
+    expect(afterConclusion).not.toBeNull();
+    expect(afterConclusion!.sourceLaneIds).toEqual(["lane-a"]);
   });
 
   it("excludes a lane whose currently-assigned context has not completed (never publishes partial work)", () => {

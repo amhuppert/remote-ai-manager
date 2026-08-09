@@ -15,7 +15,8 @@ import {
   landGatedPublishSettlement,
   reachableLanesFrom,
 } from "./lane-readiness";
-import { SESSION_LANE_ID, SESSION_LANE_NAME } from "./lane-identity";
+import { executionLaneIdFor } from "./lane-identity";
+import { joinLeavesOpenLoop, openLoopLanes } from "./lane-lifecycle";
 import type { RoutePublishSettlement } from "./route-projection";
 
 type PlanningDefinition =
@@ -143,11 +144,7 @@ export function planContextJoin(
     (context) => context.id === contextId,
   )?.placement.lane;
   const authoredTargetLaneId =
-    authoredLane === undefined
-      ? undefined
-      : authoredLane === SESSION_LANE_NAME
-        ? SESSION_LANE_ID
-        : authoredLane;
+    authoredLane === undefined ? undefined : executionLaneIdFor(authoredLane);
   const targetExists =
     authoredTargetLaneId !== undefined &&
     execution.executionLanes[authoredTargetLaneId] !== undefined;
@@ -196,6 +193,21 @@ export function planContextJoin(
     execution,
     authoredTargetLaneId,
   );
+
+  // A lane holding an unconcluded loop body is not quiescent (lwp R10, decision
+  // D11): later passes materialize onto it after this scheduling pass, so
+  // merging its work AWAY now would consume a branch the loop is still writing,
+  // and the membership freeze the intent stamps would leave those passes with
+  // nowhere to land. Deferring is safe: loop conclusion is driven by the loop's
+  // own settlement, never by this join, so it is planned on a later pass.
+  //
+  // Scoped to joins that leave the loop. A body member on one lane feeding a
+  // body member on another needs a real merge on every pass, and refusing that
+  // would deadlock the loop on its own dataflow.
+  if (joinLeavesOpenLoop(execution, targetLaneId, laneIdsArray)) {
+    return null;
+  }
+
   // The target is one of the join's own sources: `remainingSourceLanes` filters
   // it back out for the merge itself, while `findBusyJoinSourceLaneIds` still
   // sees it — a target holding a live turn must defer the merge like any other
@@ -363,12 +375,20 @@ export function planFinalPublishJoin(
     publish,
   );
 
+  // Between two passes every materialized context reads complete, so the
+  // unfinished-task guard above cannot see a loop that is about to unroll again.
+  // The lane it will unroll onto is not quiescent until the loop concludes (lwp
+  // R10, decision D11). Unscoped here, unlike the context join above: the final
+  // publish always leaves every loop, so a loop-open lane is never publishable.
+  const loopOpen = openLoopLanes(execution).all;
+
   const unpublishedSources: string[] = [];
   for (const lane of Object.values(execution.executionLanes)) {
     if (lane.laneId === sessionLaneId) continue;
     if (lane.kind === "session") continue;
     if (consumedLaneIds.has(lane.laneId)) continue;
     if (lanesWithIncompleteWork.has(lane.laneId)) continue;
+    if (loopOpen.has(lane.laneId)) continue;
     const reachable = reachableLanesFrom(lane.laneId, execution);
     if (reachable.has(sessionLaneId)) continue;
     unpublishedSources.push(lane.laneId);

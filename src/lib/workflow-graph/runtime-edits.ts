@@ -56,6 +56,14 @@ import {
   validateExpansionPayloadLoopDeclarations,
   type LoopActivationReader,
 } from "./loop-resolver";
+import { executionLaneIdFor } from "./lane-identity";
+import {
+  laneClosure,
+  laneClosureFromPin,
+  pinLaneClosure,
+  LANE_CLOSED_CODE,
+  type LaneClosurePin,
+} from "./lane-lifecycle";
 import { mintEdgeId } from "./edge-identity";
 import { resolvedContextConfig } from "./generated-child-config";
 import { findCriteriaWithoutMustRunCoverage } from "./criterion-coverage";
@@ -980,6 +988,24 @@ interface PreparedFrontierWitness {
   >;
   /** Lock state of every task the delta's definition footprint covers. */
   readonly taskLocks: Readonly<Record<string, boolean>>;
+  /**
+   * Every lane the delta makes a context ARRIVE on, pinned so closure can be
+   * re-derived inside the lock (R10, decision D11).
+   *
+   * `structuralRevision` cannot stand in for this one. A lane closes when a join
+   * intent names it as a source, and planning a join writes `joins` and the
+   * downstream context's `joinId` — never `workingDefinition` — so the fence
+   * that covers every other prepare-time decision does not move. Without this,
+   * a member validated against an open lane installs onto a lane whose content
+   * was already promised to a merge it will miss.
+   */
+  readonly laneArrivals: readonly PreparedLaneArrival[];
+}
+
+/** One context's arrival onto a lane, with the evidence to re-check its closure. */
+interface PreparedLaneArrival {
+  readonly contextId: string;
+  readonly pin: LaneClosurePin;
 }
 
 /**
@@ -997,6 +1023,7 @@ export type PreparedEditsRepreparReason =
   | { kind: "editability_changed" }
   | { kind: "context_lifecycle_changed"; contextId: string }
   | { kind: "task_lock_changed"; taskId: string }
+  | { kind: "lane_closed"; laneId: string; contextId: string }
   | { kind: "concurrent_write"; field: string }
   | { kind: "unmergeable_change"; field: string };
 
@@ -1205,6 +1232,42 @@ function collectDeltaFootprint(
   return { contextIds, taskIds };
 }
 
+/**
+ * Every context the batch places on a lane it was not already on — a new
+ * context, or one whose placement moved. DERIVED by diffing the validated result
+ * against the snapshot, so it is exactly the set {@link refuseClosedLaneArrival}
+ * gated at validation: same-lane residents are not arrivals, and a lane's
+ * closure has never applied to the members it already holds.
+ */
+function collectLaneArrivals(
+  base: GraphWorkflowExecution,
+  next: GraphWorkflowExecution,
+): PreparedLaneArrival[] {
+  const baseLaneByContext = new Map(
+    base.workingDefinition.executionContexts.map((context) => [
+      context.id,
+      context.placement.lane,
+    ]),
+  );
+
+  // Keyed by lane, not by context: closure is a property of the lane, and a
+  // fan-out placing eight readers on one group lane asks the same question eight
+  // times. The first arrival's id rides along for the reprepare diagnostic.
+  const arrivals = new Map<string, PreparedLaneArrival>();
+  for (const context of next.workingDefinition.executionContexts) {
+    const before = baseLaneByContext.get(context.id);
+    const lane = context.placement.lane;
+    const laneId = executionLaneIdFor(lane);
+    if (before !== undefined && executionLaneIdFor(before) === laneId) continue;
+    if (arrivals.has(laneId)) continue;
+    arrivals.set(laneId, {
+      contextId: context.id,
+      pin: pinLaneClosure(base, lane),
+    });
+  }
+  return Array.from(arrivals.values());
+}
+
 function describeEditability(execution: GraphWorkflowExecution): string {
   const editability = classifyExecutionEditability(execution);
   return editability.kind === "editable"
@@ -1243,6 +1306,7 @@ function captureFrontierWitness(
     editability: describeEditability(base),
     contextLifecycles,
     taskLocks,
+    laneArrivals: collectLaneArrivals(base, next),
   };
 }
 
@@ -1346,6 +1410,18 @@ function checkDeltaPreconditions(
   for (const [taskId, locked] of Object.entries(witness.taskLocks)) {
     if (isLiveTaskLocked(current, taskId) !== locked) {
       return { kind: "task_lock_changed", taskId };
+    }
+  }
+
+  // Re-derived rather than fenced by a counter: no revision moves when a join
+  // intent freezes a lane, so this is the only evidence that the lane the batch
+  // validated against still accepts members. Ordered after the structural check
+  // so the pins — whose loop membership is definition-derived — are known to
+  // describe the definition `current` actually carries. O(arrivals × joins);
+  // both are payload-sized, and nothing here walks the graph.
+  for (const { contextId, pin } of witness.laneArrivals) {
+    if (laneClosureFromPin(current, pin) !== null) {
+      return { kind: "lane_closed", laneId: pin.laneId, contextId };
     }
   }
 
@@ -1582,6 +1658,54 @@ function findLiveContext(
 ): GraphWorkflowResolvedContext | undefined {
   return execution.workingDefinition.executionContexts.find(
     (entry) => entry.id === contextId,
+  );
+}
+
+/**
+ * The lane-membership freeze (lwp R10, decision D11) — the shared gate every
+ * placement-establishing op passes through, so a lane agent's expansion, an
+ * operator's live edit, and the plan-repair supervisor are all refused on the
+ * same evidence and told the same typed code.
+ *
+ * Closure gates ARRIVALS, not residents: a context that is already on the lane
+ * may keep editing its own envelope, because nothing new is joining a merge that
+ * has already been promised. Only a placement naming a DIFFERENT lane than the
+ * context currently sits on is an arrival.
+ *
+ * The engine's loop-pass unrolling is deliberately not routed through here. It
+ * writes its instances into the definition directly, and the lane they inherit
+ * cannot be closed: `planContextJoin` and `planFinalPublishJoin` both refuse to
+ * consume a lane while its loop is open, so the freeze cannot fire before the
+ * loop concludes.
+ */
+function refuseClosedLaneArrival(
+  next: GraphWorkflowExecution,
+  input: {
+    contextId: string;
+    lane: string;
+    /** Where the context sits today; absent when the op is creating it. */
+    currentLane?: string | undefined;
+    index: number;
+  },
+): LiveEditRejection | null {
+  if (
+    input.currentLane !== undefined &&
+    executionLaneIdFor(input.currentLane) === executionLaneIdFor(input.lane)
+  ) {
+    return null;
+  }
+
+  const closure = laneClosure(next, input.lane);
+  if (closure === null) return null;
+
+  return rejectLiveEdit(
+    "invalid_edit",
+    liveEditIssue(
+      LANE_CLOSED_CODE,
+      `Lane "${input.lane}" no longer accepts members (${closure.reason}): its content is already committed to a join, and there is no reopen verb. Place "${input.contextId}" on a new lane instead`,
+      input.index,
+      { contextId: input.contextId },
+    ),
   );
 }
 
@@ -1993,6 +2117,13 @@ function applyUpdateContext(
   // WHETHER the new envelope can coexist with the lane's other members is the
   // frontier's question, because only the post-batch graph knows (lwp R10.2).
   if (op.placement !== undefined) {
+    const closed = refuseClosedLaneArrival(next, {
+      contextId: op.contextId,
+      lane: op.placement.lane,
+      currentLane: context.placement.lane,
+      index,
+    });
+    if (closed) return closed;
     context.placement = op.placement;
     ctx.placementTouched = true;
   }
@@ -2418,6 +2549,16 @@ function applyAddContext(
     );
   }
 
+  // Ahead of the config seeding: an add onto a frozen lane is refused on the
+  // lane alone, so it should not first resolve a config source it will discard.
+  const placement = op.placement ?? { lane: op.id, mode: "full" as const };
+  const closed = refuseClosedLaneArrival(next, {
+    contextId: op.id,
+    lane: placement.lane,
+    index,
+  });
+  if (closed) return closed;
+
   let base: ResolvedContextConfig;
   if (op.configFromContextId !== undefined) {
     const source = findLiveContext(next, op.configFromContextId);
@@ -2459,7 +2600,7 @@ function applyAddContext(
     // matching the saved-tier add (`definition-edits.ts`) and the shape a
     // live-added context had before placement was authored; the frontier
     // validates the result either way.
-    placement: op.placement ?? { lane: op.id, mode: "full" },
+    placement,
     implementer:
       op.implementer === undefined
         ? base.implementer

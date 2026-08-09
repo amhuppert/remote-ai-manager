@@ -490,6 +490,7 @@ The flag is default-off, cascades like its `allowAgentTaskAdd` sibling, and is e
       "handle": "candidate-a",
       "title": "Candidate: approach A",
       "acceptanceCriteria": "…",
+      "placement": { "lane": "candidate-a", "mode": "owned", "ownedPaths": ["src/candidate-a"] },
       "outputSchema": { "type": "object", "properties": { "score": { "type": "number" } }, "required": ["score"], "additionalProperties": false }
     }
   ],
@@ -504,6 +505,11 @@ The flag is default-off, cascades like its `allowAgentTaskAdd` sibling, and is e
 ```
 
 submitted with `cctl workflow graph expand --file .cc/temp/expansion.json`. `handle` is the lane's local name; the server mints the real ids and returns them. The vocabulary is append-only — there is no remove, update, move, or reorder — and one envelope violation refuses the whole batch.
+
+`placement` is required on every generated context and is never inherited from the invoker (`expansion-placement-missing`): sharing a lane is a claim about concurrency and ownership between two specific contexts, and a lane the generator did not choose is exactly the claim it cannot have meant to make. Write the generator's instructions to name a **new** lane per candidate — that is also what tournament fan-outs need, since candidates write the same paths by construction. Two spellings fail:
+
+- Placing a generated context on a lane whose join has already been planned is refused `lane_closed`. Lane membership freezes at join intent and there is no reopen verb, so dynamic work that arrives late targets a new lane.
+- Placing it on an existing open lane alongside a member nothing sequences it against requires disjoint `ownedPaths` (`placement-owned-paths-overlap`), exactly as an authored plan does.
 
 #### Plan it half-static
 

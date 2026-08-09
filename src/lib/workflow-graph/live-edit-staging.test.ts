@@ -11,6 +11,7 @@ import {
   type LiveEditDeps,
   type PreparedLiveEdits,
 } from "./runtime-edits";
+import { appendPendingJoin } from "./lane-join";
 import { nextStructuralRevision } from "./structural-revision";
 import { createWorkflowExecution } from "./test-fixtures";
 
@@ -691,6 +692,88 @@ describe("finalizePreparedEdits — reprepare signals", () => {
       kind: "task_lock_changed",
       taskId: "task-implement-1",
     });
+  });
+});
+
+/**
+ * Lane membership freezes at join intent (lwp R10.1, decision D11), and the
+ * freeze can fire while a batch is staged: closure is validated outside the
+ * write queue, and the scheduler plans joins from inside it.
+ */
+describe("finalizePreparedEdits — lane closure between prepare and finalize", () => {
+  const ARRIVAL_LANE = "docs";
+
+  /** Plan the join that promises `laneId`'s content to the `landing` lane. */
+  function planJoinClaiming(laneId: string) {
+    return (draft: GraphWorkflowExecution): GraphWorkflowExecution =>
+      appendPendingJoin(draft, {
+        joinId: "join-1",
+        kind: "context_merge",
+        contextId: "context-implement",
+        targetLaneId: "landing",
+        sourceLaneIds: [laneId, "landing"],
+        mergedSourceLaneIds: [],
+        validationDebtSourceLaneIds: [],
+        status: "pending",
+        errorMessage: null,
+        conflicts: null,
+        conflictGuidance: null,
+        createdAt: "2026-08-08T00:00:00.000Z",
+        updatedAt: "2026-08-08T00:00:00.000Z",
+        completedAt: null,
+      });
+  }
+
+  const MOVE_VERIFY_TO_ARRIVAL_LANE: WorkflowLiveEditOperation[] = [
+    {
+      type: "update-context",
+      contextId: "context-verify",
+      placement: { lane: ARRIVAL_LANE, mode: "full" },
+    },
+  ];
+
+  it("signals reprepare when a join claimed the arrival lane in between", () => {
+    const execution = pausedExecution();
+    const prepared = prepare(execution, MOVE_VERIFY_TO_ARRIVAL_LANE);
+
+    const current = commit(execution, planJoinClaiming(ARRIVAL_LANE));
+
+    // Why the witness has to carry closure at all: planning a join is not a
+    // live edit and never rewrites the working definition, so neither counter
+    // the seam already fences moves. Every other precondition still holds.
+    expect(current.structuralRevision).toBe(execution.structuralRevision);
+    expect(current.liveRevision).toBe(execution.liveRevision);
+
+    const result = finalizePreparedEdits(current, prepared);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.outcome).toBe("reprepare");
+    if (result.outcome !== "reprepare") return;
+    expect(result.reason).toEqual({
+      kind: "lane_closed",
+      laneId: ARRIVAL_LANE,
+      contextId: "context-verify",
+    });
+  });
+
+  it("installs an edit to a lane's own member when that lane closes in between", () => {
+    // Closure gates ARRIVALS, not residents. `context-verify` is already on the
+    // lane the join claimed, so its content was promised to that merge with the
+    // member included — adding the task reshapes nothing the join did not
+    // already own, and refusing here would make every staged edit racy against
+    // the scheduler's normal join planning.
+    const execution = pausedExecution();
+    const prepared = prepare(execution, ADD_VERIFY_TASK);
+
+    const current = commit(execution, planJoinClaiming("verify"));
+    const result = finalizePreparedEdits(current, prepared);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(verifyTaskTitles(result.execution)).toContain(
+      "Cover the regression",
+    );
   });
 });
 
