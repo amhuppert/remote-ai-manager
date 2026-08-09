@@ -1,4 +1,7 @@
-import type { ValidationCandidateTreeResolution } from "@/lib/workflow-graph/validation-round";
+import type {
+  ValidationCandidateTree,
+  ValidationCandidateTreeResolution,
+} from "@/lib/workflow-graph/validation-round";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
 import type {
   GraphWorkflowVisualLayout,
@@ -133,7 +136,11 @@ export function makeSeededValidatorAssignment(
  * tree is — this is the "nothing interesting here" answer.
  */
 export function stubValidationRoundService(
-  tree: { headSha?: string; candidateTreeHash?: string } = {},
+  tree: {
+    headSha?: string;
+    candidateTreeHash?: string;
+    identityScope?: ValidationCandidateTree["identityScope"];
+  } = {},
 ): {
   resolveCandidateTree(): Promise<ValidationCandidateTreeResolution>;
 } {
@@ -141,6 +148,7 @@ export function stubValidationRoundService(
     async resolveCandidateTree() {
       return {
         kind: "resolved",
+        identityScope: tree.identityScope ?? "wholeTree",
         headSha: tree.headSha ?? "stub-head",
         candidateTreeHash: tree.candidateTreeHash ?? "stub-tree",
       };

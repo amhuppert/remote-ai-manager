@@ -383,6 +383,7 @@ export const AwaitingApproval: Story = {
           conversationId: "conv-1",
           requestedAt: "2026-06-10T09:00:00.000Z",
           decision: null,
+          approvalScope: { kind: "whole_tree" },
         },
         pendingUserInputs: {},
         contextId: "ctx-1",

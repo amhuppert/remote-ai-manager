@@ -80,6 +80,10 @@ const activeConversationSharedFields = {
       // True while the owning execution is paused or halted — the gate
       // survives suspension and the decision applies on resume.
       executionSuspended: z.boolean().default(false),
+      // True when this gate was frozen under a file-ownership envelope, so the
+      // sidebar peek knows to fetch and render the frozen owned-path artifact
+      // rather than offering a decision with nothing behind it (R15.2).
+      enveloped: z.boolean().default(false),
       // Task progress of the gated context, surfaced on the sidebar row's
       // status line ("approval required · 6/6 tasks · validators ✓").
       tasksCompleted: z.number().int().min(0).nullable().default(null),

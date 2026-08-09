@@ -14,10 +14,13 @@ import {
   buildLaneIterationToolServer,
   createGraphWorkflowExecutionRouteHandlers,
   createGraphWorkflowRouteScriptValidatorService,
+  createGraphWorkflowRouteValidationRoundService,
   launchGraphWorkflowExecution,
   resolveGraphValidatorTimeoutMs,
   type GraphWorkflowExecutionRouteDeps,
+  type GraphWorkflowRouteValidationRoundServiceDeps,
 } from "./execution-route-handlers";
+import type { CandidateScope } from "@/lib/git/diff";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type {
   DefinitionApprovalGateDecision,
@@ -2611,6 +2614,7 @@ describe("graph workflow resolve-approval route handler", () => {
       conversationId: CONVERSATION_ID,
       requestedAt: "2026-06-10T09:00:00.000Z",
       decision: null,
+      approvalScope: { kind: "whole_tree" },
     };
     return execution;
   }
@@ -2835,6 +2839,278 @@ describe("graph workflow resolve-approval route handler", () => {
       type: "approved",
       decidedAt: NOW,
     });
+  });
+});
+
+describe("graph workflow approval-snapshot route handler", () => {
+  const PROJECT_PATH = "/repo";
+  const SESSION_NAME = "session-1";
+  const GATED_CONTEXT_ID = "context-implement";
+  const SNAPSHOT_URL =
+    "/api/projects/repo/sessions/session-1/graph-workflow/approval-snapshot";
+
+  const SCOPED_PAYLOAD = {
+    kind: "scoped" as const,
+    snapshot: {
+      contextId: GATED_CONTEXT_ID,
+      ownedPaths: ["src/api"],
+      treeHash: "owned-digest",
+      diff: {
+        files: [
+          {
+            filePath: "src/api/handler.ts",
+            additions: 1,
+            deletions: 0,
+            hunks: [],
+          },
+        ],
+        totalAdditions: 1,
+        totalDeletions: 0,
+      },
+    },
+  };
+
+  function unusedDep(name: string) {
+    return async (): Promise<never> => {
+      throw new Error(`${name} should not be called by APPROVAL_SNAPSHOT`);
+    };
+  }
+
+  function buildHandlers(overrides: {
+    activeExecution?: GraphWorkflowExecution | null;
+    resolveApprovalSnapshot?: GraphWorkflowExecutionRouteDeps["resolveApprovalSnapshot"];
+  }) {
+    return createGraphWorkflowExecutionRouteHandlers({
+      resolveProjectPath: async (name) =>
+        name === "repo" ? PROJECT_PATH : null,
+      getSession: async () =>
+        makeSession({ worktreePath: "/repo/.worktrees/session-1" }),
+      getActiveExecution: async () => overrides.activeExecution ?? null,
+      ...(overrides.resolveApprovalSnapshot
+        ? { resolveApprovalSnapshot: overrides.resolveApprovalSnapshot }
+        : {}),
+      recordApprovalDecision: unusedDep("recordApprovalDecision"),
+      normalizeExecutionAfterRestart: unusedDep(
+        "normalizeExecutionAfterRestart",
+      ),
+      startExecution: unusedDep("startExecution"),
+      pauseExecution: unusedDep("pauseExecution"),
+      resumeExecution: unusedDep("resumeExecution"),
+      abortExecution: unusedDep("abortExecution"),
+      resetExecutionContext: unusedDep("resetExecutionContext"),
+      resetExecutionContextAssignment: unusedDep(
+        "resetExecutionContextAssignment",
+      ),
+      archiveExecution: unusedDep("archiveExecution"),
+      kickOffExecutionLoop: unusedDep("kickOffExecutionLoop"),
+      recordPendingHaltReason: unusedDep("recordPendingHaltReason"),
+      drainAndHalt: unusedDep("drainAndHalt"),
+    });
+  }
+
+  function getSnapshot(
+    handlers: ReturnType<typeof buildHandlers>,
+    query = `?contextId=${GATED_CONTEXT_ID}`,
+  ) {
+    return handlers.APPROVAL_SNAPSHOT(
+      makeRequest(`${SNAPSHOT_URL}${query}`, "GET"),
+      makeContext({ name: "repo", session: SESSION_NAME }),
+    );
+  }
+
+  it("serves the owned-path-scoped change set as the approval payload", async () => {
+    const resolveApprovalSnapshot = vi.fn(async () => SCOPED_PAYLOAD);
+    const handlers = buildHandlers({
+      activeExecution: createWorkflowExecution({ status: "running" }),
+      resolveApprovalSnapshot,
+    });
+
+    const response = await getSnapshot(handlers);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(SCOPED_PAYLOAD);
+    // Read from the CONTEXT's substrate, with the session worktree only as the
+    // fallback the resolver applies when the context has no lane of its own.
+    expect(resolveApprovalSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextId: GATED_CONTEXT_ID,
+        sessionWorktreePath: "/repo/.worktrees/session-1",
+      }),
+    );
+  });
+
+  it("passes a drifted verdict through instead of substituting a fresh read", async () => {
+    const drifted = {
+      kind: "drifted" as const,
+      contextId: GATED_CONTEXT_ID,
+      frozenTreeHash: "owned-digest",
+      observedTreeHash: "owned-digest-moved",
+    };
+    const handlers = buildHandlers({
+      activeExecution: createWorkflowExecution({ status: "running" }),
+      resolveApprovalSnapshot: vi.fn(async () => drifted),
+    });
+
+    const response = await getSnapshot(handlers);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(drifted);
+  });
+
+  it("forwards the gate identity the caller is rendering", async () => {
+    const resolveApprovalSnapshot = vi.fn(async () => SCOPED_PAYLOAD);
+    const handlers = buildHandlers({
+      activeExecution: createWorkflowExecution({ status: "running" }),
+      resolveApprovalSnapshot,
+    });
+
+    await getSnapshot(
+      handlers,
+      `?contextId=${GATED_CONTEXT_ID}&requestedAt=${encodeURIComponent("2026-06-10T09:00:00.000Z")}`,
+    );
+
+    expect(resolveApprovalSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedAt: "2026-06-10T09:00:00.000Z" }),
+    );
+  });
+
+  it("404s for a superseded gate rather than answering with another gate's bytes", async () => {
+    const handlers = buildHandlers({
+      activeExecution: createWorkflowExecution({ status: "running" }),
+      resolveApprovalSnapshot: vi.fn(async () => ({
+        kind: "gate_superseded" as const,
+      })),
+    });
+
+    expect((await getSnapshot(handlers)).status).toBe(404);
+  });
+
+  it("rejects a request with no contextId", async () => {
+    const handlers = buildHandlers({
+      activeExecution: createWorkflowExecution({ status: "running" }),
+      resolveApprovalSnapshot: unusedDep("resolveApprovalSnapshot"),
+    });
+
+    expect((await getSnapshot(handlers, "")).status).toBe(400);
+  });
+
+  it("404s when the session has no active execution", async () => {
+    const handlers = buildHandlers({
+      activeExecution: null,
+      resolveApprovalSnapshot: unusedDep("resolveApprovalSnapshot"),
+    });
+
+    expect((await getSnapshot(handlers)).status).toBe(404);
+  });
+
+  it.each([
+    { kind: "unknown_context" } as const,
+    { kind: "not_awaiting_approval" } as const,
+  ])(
+    "404s on $kind rather than answering with a change set",
+    async (resolution) => {
+      const handlers = buildHandlers({
+        activeExecution: createWorkflowExecution({ status: "running" }),
+        resolveApprovalSnapshot: vi.fn(async () => resolution),
+      });
+
+      expect((await getSnapshot(handlers)).status).toBe(404);
+    },
+  );
+});
+
+describe("graph workflow route validation round service", () => {
+  const wholeTree: CandidateScope = { mode: "wholeTree" };
+  const ownedByA: CandidateScope = { mode: "owned", ownedPaths: ["src/a"] };
+
+  function makeService(
+    overrides: Partial<GraphWorkflowRouteValidationRoundServiceDeps> = {},
+  ) {
+    return createGraphWorkflowRouteValidationRoundService({
+      getSession: async () => makeSession(),
+      readHeadSha: async () => "head-sha-1",
+      computeCandidateIdentity: async () => "identity-1",
+      ...overrides,
+    });
+  }
+
+  it("reads the identity under the scope the caller asked for, in the context's own worktree", async () => {
+    const computeCandidateIdentity = vi.fn(async () => "owned-digest-1");
+    const readHeadSha = vi.fn(async () => "head-sha-1");
+    const service = makeService({ computeCandidateIdentity, readHeadSha });
+
+    const resolution = await service.resolveCandidateTree({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-a",
+      candidateScope: ownedByA,
+      executionTarget: {
+        isolation: "worktree",
+        worktreePath: "/repo/.worktrees/lane-impl",
+        branchName: "csm/session-1-lane-impl",
+        laneId: "impl",
+      },
+    });
+
+    expect(resolution).toEqual({
+      kind: "resolved",
+      identityScope: "owned",
+      headSha: "head-sha-1",
+      candidateTreeHash: "owned-digest-1",
+    });
+    expect(computeCandidateIdentity).toHaveBeenCalledWith(
+      "/repo/.worktrees/lane-impl",
+      ownedByA,
+    );
+    expect(readHeadSha).toHaveBeenCalledWith("/repo/.worktrees/lane-impl");
+  });
+
+  it("marks a whole-tree read as such so the two identity forms never compare", async () => {
+    const resolution = await makeService().resolveCandidateTree({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-a",
+      candidateScope: wholeTree,
+    });
+
+    expect(resolution).toEqual({
+      kind: "resolved",
+      identityScope: "wholeTree",
+      headSha: "head-sha-1",
+      candidateTreeHash: "identity-1",
+    });
+  });
+
+  it("reports unavailability rather than a partial identity", async () => {
+    const noIdentity = await makeService({
+      computeCandidateIdentity: async () => null,
+    }).resolveCandidateTree({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-a",
+      candidateScope: ownedByA,
+    });
+    expect(noIdentity.kind).toBe("unavailable");
+
+    const noHead = await makeService({
+      readHeadSha: async () => null,
+    }).resolveCandidateTree({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-a",
+      candidateScope: wholeTree,
+    });
+    expect(noHead.kind).toBe("unavailable");
+
+    const noSession = await makeService({
+      getSession: async () => null,
+    }).resolveCandidateTree({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      contextId: "context-a",
+      candidateScope: wholeTree,
+    });
+    expect(noSession.kind).toBe("unavailable");
   });
 });
 

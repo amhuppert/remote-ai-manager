@@ -364,6 +364,7 @@ describe("deriveContextWaitState", () => {
             conversationId: "conv-1",
             requestedAt: "2026-06-10T09:00:00.000Z",
             decision: null,
+            approvalScope: { kind: "whole_tree" },
           },
         }),
       },

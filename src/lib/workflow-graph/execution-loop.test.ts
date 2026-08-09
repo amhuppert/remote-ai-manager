@@ -4529,6 +4529,7 @@ describe("execution loop", () => {
       pendingApproval: {
         conversationId: "conv-source-b",
         requestedAt: "2026-03-27T11:55:00.000Z",
+        approvalScope: { kind: "whole_tree" as const },
         decision: approvedDecision,
       },
     };
@@ -4544,6 +4545,7 @@ describe("execution loop", () => {
       pendingApproval: {
         conversationId: "conv-unrelated",
         requestedAt: "2026-03-27T11:55:00.000Z",
+        approvalScope: { kind: "whole_tree" as const },
         decision: null,
       },
     };
@@ -5413,6 +5415,7 @@ describe("execution loop", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-1",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 
@@ -6054,6 +6057,7 @@ describe("execution loop", () => {
             cs.pendingApproval = {
               conversationId: "conv-1",
               requestedAt: `2026-03-27T12:0${iterationCallCount}:00.000Z`,
+              approvalScope: { kind: "whole_tree" as const },
               decision: null,
             };
             for (const taskState of Object.values(next.taskStates)) {
@@ -6097,6 +6101,7 @@ describe("execution loop", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-1",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 
@@ -6390,6 +6395,7 @@ describe("execution loop", () => {
             cs.pendingApproval = {
               conversationId: "conv-2",
               requestedAt: "2026-03-27T12:05:00.000Z",
+              approvalScope: { kind: "whole_tree" as const },
               decision: null,
             };
             next.contextOutputs = {

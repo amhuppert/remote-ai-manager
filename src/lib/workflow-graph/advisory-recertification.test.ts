@@ -40,6 +40,7 @@ const MIXED_COHORT = [
 /** The candidate after the implementer touched files in its response turn. */
 const TREE_B: ValidationCandidateTreeResolution = {
   kind: "resolved",
+  identityScope: "wholeTree",
   headSha: "head-1",
   candidateTreeHash: "tree-b",
 };

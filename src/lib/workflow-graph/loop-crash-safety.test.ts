@@ -783,6 +783,7 @@ describe("loop crash and restart safety (R9.4)", () => {
       approvals.enterAwaitingApproval(execution, {
         contextId: P1_JUDGE,
         conversationId: "conversation-1",
+        approvalScope: { kind: "whole_tree" },
       });
       execution = await restart(execution);
 

@@ -6405,6 +6405,9 @@ describe("human approval gate at finalization", () => {
       conversationId: "conversation-gate",
       requestedAt: NOW,
       decision: null,
+      // Full-access member: no ownership to scope to, so it parks on the
+      // whole-tree approval view (R15.2).
+      approvalScope: { kind: "whole_tree" },
     });
     expect(persisted.activeContextIds).not.toContain("context-plan");
 
@@ -6427,6 +6430,7 @@ describe("human approval gate at finalization", () => {
       conversationId: "conversation-gate",
       requestedAt: NOW,
       decision: null,
+      approvalScope: { kind: "whole_tree" },
     });
     expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
       kind: "approval-pending",
@@ -6450,6 +6454,127 @@ describe("human approval gate at finalization", () => {
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(true);
+  });
+
+  it("parks an enveloped member on the owned-subset candidate it froze", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    enableGateOnPlanContext(execution);
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === "context-plan",
+    );
+    if (!planContext) throw new Error("fixture missing context-plan");
+    planContext.placement = {
+      lane: "impl",
+      mode: "owned",
+      ownedPaths: ["src/api", "docs/api.md"],
+    };
+    const repository = createRepository(execution);
+
+    // The SAME resolver a validation round freezes through, so the approval
+    // surface and the validators cannot disagree about what this context owns.
+    const resolvedScopes: unknown[] = [];
+    const validationRoundService = {
+      resolveCandidateTree: vi.fn(
+        async (input: { candidateScope: unknown }) => {
+          resolvedScopes.push(input.candidateScope);
+          return {
+            kind: "resolved" as const,
+            identityScope: "owned" as const,
+            headSha: "base-sha",
+            candidateTreeHash: "owned-digest",
+          };
+        },
+      ),
+    };
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: passingValidationService(),
+      validationRoundService,
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const contextState = repository.read().contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_approval");
+    expect(contextState?.pendingApproval?.approvalScope).toEqual({
+      kind: "scoped",
+      ownedPaths: ["src/api", "docs/api.md"],
+      treeHash: "owned-digest",
+      headSha: "base-sha",
+    });
+    expect(resolvedScopes).toContainEqual({
+      mode: "owned",
+      ownedPaths: ["src/api", "docs/api.md"],
+    });
+  });
+
+  it("parks an enveloped member with no frozen snapshot when the candidate cannot be read", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    enableGateOnPlanContext(execution);
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === "context-plan",
+    );
+    if (!planContext) throw new Error("fixture missing context-plan");
+    planContext.placement = {
+      lane: "impl",
+      mode: "owned",
+      ownedPaths: ["src/api"],
+    };
+    const repository = createRepository(execution);
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: passingValidationService(),
+      validationRoundService: {
+        resolveCandidateTree: vi.fn(async () => ({
+          kind: "unavailable" as const,
+          reason: "git could not resolve HEAD",
+        })),
+      },
+      now: () => NOW,
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The gate still stands — an unreadable candidate must not strand the
+    // human decision. The approval surface reports the missing artifact
+    // rather than falling back to the shared lane's whole-tree delta.
+    const contextState = repository.read().contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_approval");
+    // Fails CLOSED: an enveloped member whose candidate could not be read
+    // parks on an explicitly unreadable scope, never the whole-tree view.
+    expect(contextState?.pendingApproval?.approvalScope).toEqual({
+      kind: "unreadable",
+      reason: "git could not resolve HEAD",
+    });
   });
 
   it("completes a gate-disabled context unchanged with no approval event", async () => {

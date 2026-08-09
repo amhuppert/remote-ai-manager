@@ -716,6 +716,7 @@ describe("Topbar", () => {
           requestedAt: "2026-06-10T09:00:00.000Z",
           workflowName: null,
           executionSuspended: false,
+          enveloped: false,
           tasksCompleted: 6,
           tasksTotal: 6,
         },

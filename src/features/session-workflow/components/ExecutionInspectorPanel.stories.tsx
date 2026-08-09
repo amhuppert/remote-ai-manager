@@ -702,6 +702,7 @@ function makeCohortRound(): GraphWorkflowValidationRound {
   return {
     seq: 3,
     candidate: {
+      identityScope: "wholeTree",
       headSha: "9f1c2ab7",
       candidateTreeHash: "4c7d91ea0b3f",
       taskStateHash: "tasks-7",

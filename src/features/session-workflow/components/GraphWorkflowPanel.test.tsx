@@ -718,6 +718,7 @@ describe("GraphWorkflowPanel — advisory index origin link (R9.4)", () => {
           validationRound: {
             seq: 3,
             candidate: {
+              identityScope: "wholeTree",
               headSha: "head-3",
               candidateTreeHash: "tree-hash-3",
               taskStateHash: "tasks-3",

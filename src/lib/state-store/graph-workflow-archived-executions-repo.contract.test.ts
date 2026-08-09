@@ -888,6 +888,14 @@ function buildMaximalExecution(): unknown {
             message: "needs more tests before merge",
             decidedAt: "2026-01-01T00:00:45.000Z",
           },
+          // The scope this gate froze under; the approval surface reads its
+          // bytes back through this identity rather than the live placement.
+          approvalScope: {
+            kind: "scoped",
+            ownedPaths: ["src/api", "docs/api.md"],
+            treeHash: "owned-subset-digest-1",
+            headSha: "abc1234",
+          },
         },
         pendingUserInputs: {
           // Keyed by lane key: a cohort's validators park independently, so the
@@ -940,6 +948,9 @@ function buildMaximalExecution(): unknown {
         validationRound: {
           seq: 4,
           candidate: {
+            // The non-default scope, so a round-trip that dropped the field
+            // would read back as the whole-tree candidate this is not.
+            identityScope: "owned",
             headSha: "a".repeat(40),
             candidateTreeHash: "b".repeat(40),
             taskStateHash: "c".repeat(64),

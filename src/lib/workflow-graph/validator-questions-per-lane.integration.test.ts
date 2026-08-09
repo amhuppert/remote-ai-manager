@@ -602,6 +602,7 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
   it("discards a verdict completed before a candidate change once the candidate moves", async () => {
     let tree: ValidationCandidateTreeResolution = {
       kind: "resolved",
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-a",
     };
@@ -622,7 +623,12 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
     asking = false;
     const consumed = await consume(gate);
     // The implementer moved the tree while the human was answering.
-    tree = { kind: "resolved", headSha: "head-2", candidateTreeHash: "tree-b" };
+    tree = {
+      kind: "resolved",
+      identityScope: "wholeTree",
+      headSha: "head-2",
+      candidateTreeHash: "tree-b",
+    };
     calls.length = 0;
 
     await harness.run({ resumeUserInputs: consumed });
@@ -646,6 +652,7 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
   it("withdraws a question whose candidate moved out from under it and runs the new round clean", async () => {
     let tree: ValidationCandidateTreeResolution = {
       kind: "resolved",
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-a",
     };
@@ -661,7 +668,12 @@ describe("R9.1 — per-lane parked questions across a cohort", () => {
     // tree it was asked about moves.
     await answer(gate, SECURITY);
     const consumed = await consume(gate);
-    tree = { kind: "resolved", headSha: "head-2", candidateTreeHash: "tree-b" };
+    tree = {
+      kind: "resolved",
+      identityScope: "wholeTree",
+      headSha: "head-2",
+      candidateTreeHash: "tree-b",
+    };
     asking = false;
     calls.length = 0;
 

@@ -11,7 +11,10 @@ import {
   reconcileValidationRoster,
 } from "./validation-round";
 import { makeSeededValidatorAssignment } from "./test-fixtures";
-import type { GraphWorkflowTaskState } from "./schemas";
+import type {
+  GraphWorkflowTaskState,
+  GraphWorkflowValidationCandidate,
+} from "./schemas";
 
 function taskState(
   overrides: Partial<GraphWorkflowTaskState> & { taskId: string },
@@ -107,7 +110,11 @@ describe("computeTaskStateHash", () => {
 
 describe("openValidationRound", () => {
   const candidate = freezeValidationCandidate({
-    tree: { headSha: "head-1", candidateTreeHash: "tree-1" },
+    tree: {
+      identityScope: "wholeTree",
+      headSha: "head-1",
+      candidateTreeHash: "tree-1",
+    },
     taskStates: taskStates(taskState({ taskId: "t-1" })),
     contextId: "ctx-1",
   });
@@ -304,7 +311,8 @@ describe("reconcileValidationRoster", () => {
 });
 
 describe("candidateIdentityMatches", () => {
-  const frozen = {
+  const frozen: GraphWorkflowValidationCandidate = {
+    identityScope: "wholeTree",
     headSha: "head-1",
     candidateTreeHash: "tree-1",
     taskStateHash: "tasks-1",
@@ -332,11 +340,101 @@ describe("candidateIdentityMatches", () => {
   it("names the components that moved", () => {
     expect(
       describeCandidateDrift(frozen, {
+        identityScope: "wholeTree",
         headSha: "head-2",
         candidateTreeHash: "tree-1",
         taskStateHash: "tasks-2",
       }),
     ).toBe("headSha, taskStateHash");
+  });
+});
+
+describe("candidateIdentityMatches for an owned-subset candidate", () => {
+  const frozen: GraphWorkflowValidationCandidate = {
+    identityScope: "owned",
+    headSha: "head-1",
+    candidateTreeHash: "owned-digest-1",
+    taskStateHash: "tasks-1",
+  };
+
+  it("accepts an identical identity", () => {
+    expect(candidateIdentityMatches(frozen, { ...frozen })).toBe(true);
+  });
+
+  it("holds through HEAD movement, because a sibling landing is not this context's change", () => {
+    // A concurrent same-lane sibling commits its own owned paths mid-round. HEAD
+    // moves; nothing this context owns did. Charging that as drift would make an
+    // enveloped context's round un-completable whenever a sibling lands.
+    expect(
+      candidateIdentityMatches(frozen, { ...frozen, headSha: "head-2" }),
+    ).toBe(true);
+  });
+
+  it("rejects a move in the owned subset or in the task state", () => {
+    expect(
+      candidateIdentityMatches(frozen, {
+        ...frozen,
+        candidateTreeHash: "owned-digest-2",
+      }),
+    ).toBe(false);
+    expect(
+      candidateIdentityMatches(frozen, { ...frozen, taskStateHash: "tasks-2" }),
+    ).toBe(false);
+  });
+
+  it("rejects an observation re-read under a different scope", () => {
+    // An owned-subset digest and a whole-tree object id are not comparable, so a
+    // scope that changed under the round is drift rather than a value to compare.
+    expect(
+      candidateIdentityMatches(frozen, {
+        ...frozen,
+        identityScope: "wholeTree",
+      }),
+    ).toBe(false);
+    expect(
+      describeCandidateDrift(frozen, {
+        ...frozen,
+        identityScope: "wholeTree",
+      }),
+    ).toBe("identityScope");
+  });
+
+  it("never names headSha as drift", () => {
+    expect(
+      describeCandidateDrift(frozen, {
+        ...frozen,
+        headSha: "head-2",
+        candidateTreeHash: "owned-digest-2",
+      }),
+    ).toBe("candidateTreeHash");
+  });
+});
+
+describe("freezeValidationCandidate", () => {
+  it("records the scope the identity was read under", () => {
+    expect(
+      freezeValidationCandidate({
+        tree: {
+          identityScope: "owned",
+          headSha: "head-1",
+          candidateTreeHash: "owned-digest-1",
+        },
+        taskStates: taskStates(taskState({ taskId: "t-1" })),
+        contextId: "ctx-1",
+      }).identityScope,
+    ).toBe("owned");
+
+    expect(
+      freezeValidationCandidate({
+        tree: {
+          identityScope: "wholeTree",
+          headSha: "head-1",
+          candidateTreeHash: "tree-1",
+        },
+        taskStates: taskStates(taskState({ taskId: "t-1" })),
+        contextId: "ctx-1",
+      }).identityScope,
+    ).toBe("wholeTree");
   });
 });
 

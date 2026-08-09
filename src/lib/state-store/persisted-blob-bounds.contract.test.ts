@@ -194,6 +194,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: written ONCE at lane provisioning and never appended to, one entry per ignored path as the repo's ignore rules name it (a whole-directory pattern like `node_modules/` collapses to one entry, whose per-file contents are carried as a fixed-width digest rather than a path list). The per-file comparison manifest lives in the lane's private git metadata rather than this database blob. In graph_workflow_executions.runtime_json.",
       "contextStates.*.reservedOwnership.canonicalPrefixes":
         "bounded: one canonical path per prefix the context's authored placement declares, so it is sized by the definition rather than by the run. In graph_workflow_executions.runtime_json.",
+      "contextStates.*.pendingApproval.approvalScope.ownedPaths":
+        "bounded: the owned paths of the context's authored placement, snapshotted once when it enters the approval gate and cleared with the pending record when the decision applies — sized by the definition, not by the run. In graph_workflow_executions.runtime_json.",
       laneReservations:
         "pruned: a lane claim exists only between a scheduling batch's reserve and its finalize (or its compensating release), which both delete every reservation the batch owns. In graph_workflow_executions.runtime_json.",
       "laneReservations.*.members":

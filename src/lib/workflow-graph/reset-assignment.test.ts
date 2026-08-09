@@ -94,6 +94,7 @@ function makeExecution(
   contextState.validationRound = {
     seq: 3,
     candidate: {
+      identityScope: "wholeTree",
       headSha: "head-1",
       candidateTreeHash: "tree-1",
       taskStateHash: "tasks-1",

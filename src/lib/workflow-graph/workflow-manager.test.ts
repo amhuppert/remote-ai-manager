@@ -2442,6 +2442,7 @@ describe("graph workflow manager", () => {
       pendingApproval: {
         conversationId: "conversation-1",
         requestedAt: "2026-03-27T15:01:00.000Z",
+        approvalScope: { kind: "whole_tree" as const },
         decision: {
           type: "rejected" as const,
           message: "needs more tests",
@@ -3328,6 +3329,7 @@ describe("graph workflow manager", () => {
     return {
       seq: 2,
       candidate: {
+        identityScope: "wholeTree",
         headSha: "head-1",
         candidateTreeHash: "tree-a",
         taskStateHash: "hash-1",

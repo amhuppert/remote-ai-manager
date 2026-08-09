@@ -16,9 +16,11 @@ import {
   computeDiff,
   computeCandidateSnapshot,
   computeCandidateTreeHash,
+  hasCandidateScopeChanges,
   _resetDiffCacheForTesting,
 } from "./diff";
-import type { ComputeDiffDeps } from "./diff";
+import type { CandidateScope, ComputeDiffDeps } from "./diff";
+import { defaultGitClient } from "./client";
 import { buildChildEnv } from "../shared/child-env";
 
 const execFileAsync = promisify(execFile);
@@ -772,5 +774,322 @@ describe("computeCandidateSnapshot (real repo)", () => {
     } finally {
       await rm(plainDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("owned-subset candidate scope (real repo)", () => {
+  let repoDir: string;
+
+  /** Context A owns `a/`; sibling context B owns `b/` on the same lane. */
+  const scopeA: CandidateScope = { mode: "owned", ownedPaths: ["a"] };
+  const readOnlyScope: CandidateScope = { mode: "owned", ownedPaths: [] };
+
+  async function git(...args: string[]): Promise<string> {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd: repoDir,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    _resetDiffCacheForTesting();
+    repoDir = await mkdtemp(join(tmpdir(), "cc-owned-scope-"));
+    await git("init");
+    await git("config", "user.email", "test@example.com");
+    await git("config", "user.name", "Test");
+    await git("config", "core.fileMode", "true");
+    await mkdir(join(repoDir, "a"), { recursive: true });
+    await mkdir(join(repoDir, "b"), { recursive: true });
+    await writeFile(join(repoDir, ".gitignore"), "dist/\n");
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-base\n");
+    await writeFile(join(repoDir, "a", "doomed.txt"), "a-doomed\n");
+    await writeFile(join(repoDir, "b", "sibling.txt"), "b-base\n");
+    await writeFile(join(repoDir, "root.txt"), "root-base\n");
+    await git("add", "-A");
+    await git("commit", "-m", "baseline");
+  });
+
+  afterEach(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  it("carries exactly the owned subset's patch while a sibling writes its own paths", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+    await writeFile(join(repoDir, "a", "added.txt"), "a-new\n");
+    await rm(join(repoDir, "a", "doomed.txt"));
+    // Sibling B's concurrent, uncommitted writes — outside A's ownership.
+    await writeFile(join(repoDir, "b", "sibling.txt"), "b-edited\n");
+    await writeFile(join(repoDir, "root.txt"), "root-edited\n");
+
+    const snapshot = await computeCandidateSnapshot(repoDir, scopeA);
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.diff.files.map((file) => file.filePath).sort()).toEqual([
+      "a/added.txt",
+      "a/doomed.txt",
+      "a/owned.txt",
+    ]);
+  });
+
+  it("holds its identity across a sibling's dirty writes and landed commits", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+    const frozen = await computeCandidateTreeHash(repoDir, scopeA);
+    expect(frozen).not.toBeNull();
+
+    // B keeps writing its own paths mid-round.
+    await writeFile(join(repoDir, "b", "sibling.txt"), "b-edited\n");
+    expect(await computeCandidateTreeHash(repoDir, scopeA)).toBe(frozen);
+
+    // …and then B lands: HEAD moves under A's open round.
+    await git("add", "b/sibling.txt");
+    await git("commit", "-m", "sibling lands");
+    expect(await computeCandidateTreeHash(repoDir, scopeA)).toBe(frozen);
+
+    // The patch A's validators read is unmoved too.
+    const snapshot = await computeCandidateSnapshot(repoDir, scopeA);
+    expect(snapshot!.treeHash).toBe(frozen);
+    expect(snapshot!.diff.files.map((file) => file.filePath)).toEqual([
+      "a/owned.txt",
+    ]);
+  });
+
+  it("moves its identity for an owned content, mode, or deletion change", async () => {
+    const baseline = await computeCandidateTreeHash(repoDir, scopeA);
+
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+    const afterContent = await computeCandidateTreeHash(repoDir, scopeA);
+    expect(afterContent).not.toBe(baseline);
+
+    await chmod(join(repoDir, "a", "owned.txt"), 0o755);
+    const afterMode = await computeCandidateTreeHash(repoDir, scopeA);
+    expect(afterMode).not.toBe(afterContent);
+
+    await rm(join(repoDir, "a", "doomed.txt"));
+    expect(await computeCandidateTreeHash(repoDir, scopeA)).not.toBe(afterMode);
+  });
+
+  it("reads an owned path literally, so a metacharacter never widens the subset", async () => {
+    await writeFile(join(repoDir, "a", "st*ar.txt"), "star\n");
+    await writeFile(join(repoDir, "a", "steer.txt"), "steer\n");
+    await git("add", "-A");
+    await git("commit", "-m", "glob-shaped names");
+
+    await writeFile(join(repoDir, "a", "st*ar.txt"), "star-edited\n");
+    await writeFile(join(repoDir, "a", "steer.txt"), "steer-edited\n");
+
+    const snapshot = await computeCandidateSnapshot(repoDir, {
+      mode: "owned",
+      ownedPaths: ["a/st*ar.txt"],
+    });
+
+    // A pathspec passed unescaped would glob `a/steer.txt` into the subset.
+    expect(snapshot!.diff.files.map((file) => file.filePath)).toEqual([
+      "a/st*ar.txt",
+    ]);
+  });
+
+  it("tolerates an owned path that exists in neither HEAD nor the worktree", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+
+    const snapshot = await computeCandidateSnapshot(repoDir, {
+      mode: "owned",
+      ownedPaths: ["a", "src/not-created-yet"],
+    });
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.diff.files.map((file) => file.filePath)).toEqual([
+      "a/owned.txt",
+    ]);
+    // The status probe has to tolerate it too, or a context that has not created
+    // an owned path yet would read as an unavailable candidate.
+    expect(
+      await hasCandidateScopeChanges(repoDir, {
+        mode: "owned",
+        ownedPaths: ["a", "src/not-created-yet"],
+      }),
+    ).toBe(true);
+  });
+
+  it("gives a read-only context an empty patch and a stable identity in a dirty worktree", async () => {
+    await writeFile(join(repoDir, "b", "sibling.txt"), "b-edited\n");
+    const frozen = await computeCandidateTreeHash(repoDir, readOnlyScope);
+    expect(frozen).not.toBeNull();
+
+    await writeFile(join(repoDir, "root.txt"), "root-edited\n");
+    const snapshot = await computeCandidateSnapshot(repoDir, readOnlyScope);
+
+    expect(snapshot!.treeHash).toBe(frozen);
+    expect(snapshot!.diff.files).toEqual([]);
+  });
+
+  /**
+   * A sibling path git refuses to index — here an untracked nested repository
+   * with no commit, which is deterministic and needs no special permissions.
+   * It stands in for the whole family the shared worktree exposes A to: a file
+   * replaced, truncated, removed, or created unreadable while a command is
+   * scanning the sibling's paths.
+   */
+  async function makeSiblingUnindexable(): Promise<void> {
+    const nested = join(repoDir, "b", "nested");
+    await mkdir(nested, { recursive: true });
+    await execFileAsync("git", ["init", "-q"], {
+      cwd: nested,
+      env: buildChildEnv(),
+    });
+    await writeFile(join(nested, "x.txt"), "nested\n");
+  }
+
+  it("builds the owned candidate without indexing sibling paths, so a sibling git cannot index does not fail A", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+    await makeSiblingUnindexable();
+
+    // Staging the whole shared worktree is the reading that cannot survive it:
+    // git aborts the add, and A's freeze would collapse into an unresolvable
+    // candidate over work A does not own.
+    expect(await computeCandidateSnapshot(repoDir)).toBeNull();
+
+    const snapshot = await computeCandidateSnapshot(repoDir, scopeA);
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.diff.files.map((file) => file.filePath)).toEqual([
+      "a/owned.txt",
+    ]);
+    expect(snapshot!.treeHash).toBe(
+      await computeCandidateTreeHash(repoDir, scopeA),
+    );
+  });
+
+  it("gives a read-only context a candidate however unindexable the shared worktree is", async () => {
+    await makeSiblingUnindexable();
+
+    const snapshot = await computeCandidateSnapshot(repoDir, readOnlyScope);
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.diff.files).toEqual([]);
+    expect(snapshot!.treeHash).toBe(
+      await computeCandidateTreeHash(repoDir, readOnlyScope),
+    );
+  });
+
+  it("stages only the owned pathspecs, never the whole shared worktree", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+    const commands: string[][] = [];
+    const recording: ComputeDiffDeps = {
+      gitClient: {
+        git: (args, cwd, options) => {
+          commands.push(args);
+          return defaultGitClient.git(args, cwd, options);
+        },
+      },
+      unlink: fsUnlink,
+    };
+
+    const snapshot = await computeCandidateSnapshot(repoDir, scopeA, recording);
+
+    expect(snapshot!.diff.files.map((file) => file.filePath)).toEqual([
+      "a/owned.txt",
+    ]);
+    // The mechanical guarantee behind the test above: no command in the sequence
+    // reads a path outside the subset, so no sibling state can decide whether
+    // A's candidate resolves.
+    expect(commands.filter((args) => args[0] === "add")).toEqual([
+      ["add", "-A", "--", ":(literal)a"],
+    ]);
+  });
+
+  it("holds A's identity while a sibling churns its own paths throughout snapshot construction", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+    const frozen = await computeCandidateTreeHash(repoDir, scopeA);
+    expect(frozen).not.toBeNull();
+
+    // B's writes OVERLAP A's reads rather than merely preceding them: files in
+    // B's ownership appear, change, and vanish while A's snapshot is built.
+    let churning = true;
+    const churn = (async () => {
+      for (let round = 0; churning; round++) {
+        const transient = join(repoDir, "b", `churn-${round % 8}.txt`);
+        await writeFile(transient, `b-${round}\n`);
+        await writeFile(join(repoDir, "b", "sibling.txt"), `b-${round}\n`);
+        await rm(transient, { force: true });
+      }
+    })();
+
+    try {
+      for (let read = 0; read < 12; read++) {
+        const snapshot = await computeCandidateSnapshot(repoDir, scopeA);
+        expect(snapshot).not.toBeNull();
+        expect(snapshot!.treeHash).toBe(frozen);
+        expect(snapshot!.diff.files.map((file) => file.filePath)).toEqual([
+          "a/owned.txt",
+        ]);
+      }
+    } finally {
+      churning = false;
+      await churn;
+    }
+  });
+
+  it("never collides with the whole-tree identity of the same worktree", async () => {
+    await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+
+    const scoped = await computeCandidateTreeHash(repoDir, scopeA);
+    const wholeTree = await computeCandidateTreeHash(repoDir);
+
+    expect(scoped).not.toBe(wholeTree);
+    // The whole-tree form is still a git tree object; the scoped one is not, so
+    // the two can never be compared into a false match.
+    await git("add", "-A");
+    expect(wholeTree).toBe((await git("write-tree")).trim());
+    expect(scoped).not.toBe((await git("write-tree")).trim());
+  });
+
+  it("returns null for a scoped read of a directory that is not a git repository", async () => {
+    const plainDir = await mkdtemp(join(tmpdir(), "cc-owned-scope-plain-"));
+    try {
+      expect(await computeCandidateTreeHash(plainDir, scopeA)).toBeNull();
+      expect(await computeCandidateSnapshot(plainDir, scopeA)).toBeNull();
+    } finally {
+      await rm(plainDir, { recursive: true, force: true });
+    }
+  });
+
+  describe("hasCandidateScopeChanges", () => {
+    it("ignores dirt outside the owned subset", async () => {
+      await writeFile(join(repoDir, "b", "sibling.txt"), "b-edited\n");
+      await writeFile(join(repoDir, "root.txt"), "root-edited\n");
+
+      expect(await hasCandidateScopeChanges(repoDir, scopeA)).toBe(false);
+      expect(await hasCandidateScopeChanges(repoDir)).toBe(true);
+    });
+
+    it("reports an owned modification, addition, or deletion", async () => {
+      await writeFile(join(repoDir, "a", "owned.txt"), "a-edited\n");
+      expect(await hasCandidateScopeChanges(repoDir, scopeA)).toBe(true);
+
+      await git("stash", "--include-untracked");
+      expect(await hasCandidateScopeChanges(repoDir, scopeA)).toBe(false);
+
+      await writeFile(join(repoDir, "a", "added.txt"), "a-new\n");
+      expect(await hasCandidateScopeChanges(repoDir, scopeA)).toBe(true);
+    });
+
+    it("reports a read-only context as clean however dirty the worktree is", async () => {
+      await writeFile(join(repoDir, "b", "sibling.txt"), "b-edited\n");
+
+      expect(await hasCandidateScopeChanges(repoDir, readOnlyScope)).toBe(
+        false,
+      );
+    });
+
+    it("throws when git itself cannot answer", async () => {
+      const plainDir = await mkdtemp(join(tmpdir(), "cc-owned-scope-status-"));
+      try {
+        await expect(
+          hasCandidateScopeChanges(plainDir, scopeA),
+        ).rejects.toThrow();
+      } finally {
+        await rm(plainDir, { recursive: true, force: true });
+      }
+    });
   });
 });

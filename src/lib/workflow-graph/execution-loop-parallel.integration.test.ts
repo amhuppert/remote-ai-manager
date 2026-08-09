@@ -2305,6 +2305,7 @@ describe("execution loop — parallel integration", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-ctx-a",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 
@@ -2476,6 +2477,7 @@ describe("execution loop — parallel integration", () => {
               cs.pendingApproval = {
                 conversationId: "conv-ctx-a",
                 requestedAt: "2026-03-27T12:01:00.000Z",
+                approvalScope: { kind: "whole_tree" as const },
                 decision: null,
               };
             } else {
@@ -2630,6 +2632,7 @@ describe("execution loop — parallel integration", () => {
     parked.pendingApproval = {
       conversationId: "conv-ctx-a",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: {
         type: "approved",
         decidedAt: "2026-03-27T12:02:00.000Z",
@@ -2790,6 +2793,7 @@ describe("execution loop — parallel integration", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-ctx-a",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 
@@ -3018,6 +3022,7 @@ describe("execution loop — parallel integration", () => {
     const pendingApprovalRecord = {
       conversationId: "conv-ctx-a",
       requestedAt: "2026-03-27T12:01:00.000Z",
+      approvalScope: { kind: "whole_tree" as const },
       decision: null,
     };
 

@@ -1,3 +1,7 @@
+import {
+  WHOLE_TREE_CANDIDATE_SCOPE,
+  type CandidateScope,
+} from "@/lib/git/diff";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -3155,6 +3159,7 @@ describe("buildContextValidationPrompt diff scope", () => {
 describe("createValidatorRunner diff scope", () => {
   const availableScope: ValidationDiffScope = {
     kind: "available",
+    candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
     treeHash: "tree-1",
     diff: {
       files: [
@@ -3193,7 +3198,7 @@ describe("createValidatorRunner diff scope", () => {
         textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
-      async (_wt: string) => availableScope,
+      async (_wt: string, _scope: CandidateScope) => availableScope,
     );
     const resolveWorktreePath = vi.fn(async () => sessionWorktreeDir);
     const runner = createValidatorRunner({
@@ -3215,7 +3220,10 @@ describe("createValidatorRunner diff scope", () => {
       validator: soleAssignment(contextDef),
     });
 
-    expect(computeValidationDiffScope).toHaveBeenCalledWith(sessionWorktreeDir);
+    expect(computeValidationDiffScope).toHaveBeenCalledWith(
+      sessionWorktreeDir,
+      WHOLE_TREE_CANDIDATE_SCOPE,
+    );
     const [input] = executeWorkflowTaskRun.mock.calls[0]!;
     expect(input.prompt).toContain("## Changes Under Review");
     expect(input.prompt).toContain("src/widget.ts");
@@ -3228,7 +3236,7 @@ describe("createValidatorRunner diff scope", () => {
         textTaskRun(verdictJson("ok")),
     );
     const computeValidationDiffScope = vi.fn(
-      async (_wt: string) => availableScope,
+      async (_wt: string, _scope: CandidateScope) => availableScope,
     );
     const runner = createValidatorRunner({
       resolveWorktreePath: stubWorktreePath,
@@ -3255,7 +3263,10 @@ describe("createValidatorRunner diff scope", () => {
       },
     });
 
-    expect(computeValidationDiffScope).toHaveBeenCalledWith(laneWorktreeDir);
+    expect(computeValidationDiffScope).toHaveBeenCalledWith(
+      laneWorktreeDir,
+      WHOLE_TREE_CANDIDATE_SCOPE,
+    );
   });
 
   it("still dispatches the validator turn when diff scope is unavailable", async () => {
@@ -3266,6 +3277,7 @@ describe("createValidatorRunner diff scope", () => {
     const computeValidationDiffScope = vi.fn(
       async (): Promise<ValidationDiffScope> => ({
         kind: "unavailable",
+        candidateScope: WHOLE_TREE_CANDIDATE_SCOPE,
         reason: "git boom",
       }),
     );
