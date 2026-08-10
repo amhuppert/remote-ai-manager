@@ -66,6 +66,14 @@ export const workflowLockedRegionSchema = z.object({
   paths: z.array(z.string().min(1)).min(1),
   sourceUri: z.string().min(1),
   reason: z.string().min(1),
+  /**
+   * The exact act that gets the edit made anyway. A lock whose refusal cannot
+   * name its escape is a dead end (`refusals-name-remedy`), and the escape is
+   * owned by whoever declared the region — a delivery plan's is reopen before
+   * launch and replan/amend after it, which the generic fallback below cannot
+   * know. Absent means the fallback ("amend at source and recompile") stands.
+   */
+  instruction: z.string().min(1).optional(),
 });
 export type WorkflowLockedRegion = z.infer<typeof workflowLockedRegionSchema>;
 
@@ -129,6 +137,11 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   askUserQuestions: graphWorkflowAskUserQuestionsConfigSchema.optional(),
   agentValidation: graphWorkflowAgentValidationOverrideSchema.optional(),
   origin: workflowOriginSchema.optional(),
+  // Machine-readable provenance from whatever compiled this context, in the
+  // same shape a task already carries. It never reaches an agent prompt: prose
+  // an implementer must read belongs in `description`, and the contract a
+  // validator is held to belongs in `acceptanceCriteria`.
+  metadata: z.record(z.string(), z.string()).optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema

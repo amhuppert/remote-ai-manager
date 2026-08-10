@@ -2,6 +2,7 @@ import type {
   ApprovalApplicability,
   ApprovalRecord,
 } from "./approval-applicability";
+import { draftHealth } from "./draft-health";
 import {
   lint,
   type LintFinding,
@@ -202,6 +203,11 @@ export const authoringStages: readonly SpecAuthoringStage[] = [
   "plan",
 ];
 
+export const activeAuthoringStages: readonly SpecAuthoringStage[] = [
+  "requirements",
+  "design",
+];
+
 export function authoringStageIndex(stage: SpecAuthoringStage): number {
   return authoringStages.indexOf(stage);
 }
@@ -250,6 +256,15 @@ export function admitDraftWrite(
   }
 
   const label = elementLabel(elementKind, sectionRole);
+  if (elementStage === "plan") {
+    return refused(
+      "stage_blocked",
+      [
+        `A ${label} is authored in a delivery plan attempt, not an evergreen revision.`,
+      ],
+      "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl spec plan edit <slug> --file <plan.json>`.",
+    );
+  }
   const dial = resolvedDials[stage];
   const instruction =
     dial === "notify" || dial === "off"
@@ -274,20 +289,24 @@ export function openDraftAuthoringStage(
   context: OpenDraftAuthoringStageContext,
 ): SpecAuthoringStage {
   const base = context.baseRevision;
-  if (base?.state === "withdrawn") return base.authoringStage;
+  if (base?.state === "withdrawn") {
+    return base.authoringStage === "plan" ? "design" : base.authoringStage;
+  }
   if (base?.state === "approved") {
-    return nextAuthoringStage(base.authoringStage) ?? "plan";
+    return nextAuthoringStage(base.authoringStage) ?? "design";
   }
 
   return authoringApprovalsCollapseIntoSignOff(context.policy)
-    ? "plan"
+    ? "design"
     : "requirements";
 }
 
 export function nextAuthoringStage(
   stage: SpecAuthoringStage,
 ): SpecAuthoringStage | null {
-  return authoringStages[authoringStageIndex(stage) + 1] ?? null;
+  const index = activeAuthoringStages.indexOf(stage);
+  if (index === -1) return null;
+  return activeAuthoringStages[index + 1] ?? null;
 }
 
 export function advanceAuthoringStage(
@@ -297,8 +316,8 @@ export function advanceAuthoringStage(
   if (nextAuthoringStage(stage) === null) {
     return refused(
       "gate_blocked",
-      ["Plan is the final authoring stage."],
-      "Propose the plan stage when it is ready for review.",
+      ["Design is the final evergreen authoring stage."],
+      "Propose the design stage when it is ready for review, then run `cctl spec plan open <slug>` after sign-off.",
     );
   }
   const dial = resolveDial(policy, stage);
@@ -405,7 +424,7 @@ export function approvalUnmetConditions(
   const designDial = resolveDial(policy, "design");
   const planDial = resolveDial(policy, "plan");
 
-  if (authoringApprovalsCollapseIntoSignOff(policy)) {
+  if (authoringApprovalsCollapseIntoSignOff(policy, authoringStage)) {
     // The combined dial collapses per-element approvals into one human act:
     // the sign-off itself (R11.5). signOffRevision refuses non-human actors
     // before reaching these preconditions, and propose absorbs sign-off only
@@ -543,16 +562,16 @@ export function propose(context: ProposeContext): TransitionDecision {
     );
   }
 
-  const panelFindings = lint(context.draft, context.records);
-  const blocking = panelFindings.filter(
-    (finding) => finding.severity === "blocks_propose",
-  );
-  if (blocking.length > 0) {
+  // What blocks propose is read from the shared projection rather than
+  // re-filtered here, so the refusal, `cctl spec lint`, the status tier, and
+  // Studio's lint tab cannot disagree about which findings are blocking.
+  const health = draftHealth(lint(context.draft, context.records));
+  if (health.blocking > 0) {
     return refused(
       "lint_blocked",
-      blocking.map((finding) => finding.message),
-      "Resolve the blocking lint findings and propose again.",
-      panelFindings,
+      health.blockingFindings.map((finding) => finding.message),
+      `Nothing was proposed for revision ${context.review.revisionId}. Run \`cctl spec lint ${context.draft.specHandle}\`, resolve every blocking finding it reports, then re-run \`cctl spec propose ${context.draft.specHandle} --notes <notes.md>\`.`,
+      [...health.ordered],
     );
   }
 
@@ -635,6 +654,11 @@ export function signOffRevision(context: SignOffContext): TransitionDecision {
   );
 }
 
+/**
+ * Classifies the archived evergreen Plan-stage start contract. Production
+ * starts resolve and launch an approved DeliveryPlanAttempt through
+ * ExecutionService; this remains for legacy revision compatibility tests.
+ */
 export function startExecution(
   context: StartExecutionContext,
 ): TransitionDecision {
@@ -824,9 +848,13 @@ export function undecidedAuthoringStages(
   policy: SpecGatePolicy,
   pinnedStage: SpecAuthoringStage,
 ): SpecAuthoringStage[] {
-  return authoringStages
-    .slice(authoringStageIndex(pinnedStage))
-    .filter((stage) => !stagingDecided(resolveDial(policy, stage)));
+  const remainingStages =
+    pinnedStage === "plan"
+      ? (["plan"] as const)
+      : activeAuthoringStages.slice(authoringStageIndex(pinnedStage));
+  return remainingStages.filter(
+    (stage) => !stagingDecided(resolveDial(policy, stage)),
+  );
 }
 
 function stagingDecided(dial: ResolvedGateDial): boolean {

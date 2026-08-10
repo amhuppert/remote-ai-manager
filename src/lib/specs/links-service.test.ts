@@ -267,6 +267,9 @@ async function createApprovedTaskSpec() {
     gatePolicy: { preset: "exploratory" },
     updatedAt: "2026-07-18T17:00:00.500Z",
   });
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(created.draft.id);
   for (const element of [
     {
       elementId: "criterion-1",
@@ -632,6 +635,10 @@ describe("LinksService entry paths and read-through", () => {
       session_name: "native-sdd-execution",
       delivered_at: null,
       abandoned_reason: null,
+      cleanup_phase: null,
+      linked_workflow_execution_id: null,
+      cleanup_last_error: null,
+      cleanup_last_error_at: null,
       created_at: "2026-07-18T17:31:00.000Z",
       updated_at: "2026-07-18T17:31:00.000Z",
     });
@@ -673,9 +680,12 @@ describe("LinksService entry paths and read-through", () => {
     expect(ticket).toBeDefined();
     if (ticket === undefined) throw new Error("expected a materialized ticket");
     const before = structuredClone(ticket);
-    const { revision: amendment } = await authoring.openAmendment({
+    const amendment = await specs.createDraftFromBase({
+      id: "revision-legacy-plan-replacement",
       specId: created.spec.id,
-      actor: AGENT,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T17:45:00.000Z",
     });
     await authoring.removeDraftElement({
       specId: created.spec.id,
@@ -739,9 +749,12 @@ describe("LinksService entry paths and read-through", () => {
     // A later approved revision replaces the task: the linked task element is
     // in neither the current nor the approved snapshot, only its immutable
     // element row remains.
-    const { revision: amendment } = await authoring.openAmendment({
+    const amendment = await specs.createDraftFromBase({
+      id: "revision-legacy-plan-handle",
       specId: created.spec.id,
-      actor: AGENT,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T17:45:00.000Z",
     });
     await authoring.upsertDraftElement({
       specId: created.spec.id,

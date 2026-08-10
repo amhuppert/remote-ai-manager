@@ -299,7 +299,7 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl workflow templates` — list saved workflow templates across both tiers
   - `cctl workflow templates [--tier global|project] [--json]`
 - `cctl workflow live` — act on this session's ACTIVE launched execution
-  - `cctl workflow live <get|ledger|edit|pause|resume>`
+  - `cctl workflow live <get|ledger|edit|amend|pause|resume|abort|release>`
 - `cctl workflow task` — advance a running lane — complete or add tasks
   - `cctl workflow task <complete|add>`
 - `cctl workflow graph` — grow the running graph from inside a lane
@@ -314,10 +314,16 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl workflow live ledger [--cursor <seq>] [--max-pages <n>] [--json]`
 - `cctl workflow live edit` — apply live edits to the running execution's working copy
   - `cctl workflow live edit --file .cc/temp/live-ops.json [--dry-run] [--json]`
+- `cctl workflow live amend` — add contexts, tasks, or edges to a running delivery-plan run
+  - `cctl workflow live amend --reason <rationale> --file <live-ops.json> [--json]`
 - `cctl workflow live pause` — pause the active execution to unlock started contexts
   - `cctl workflow live pause [--json]`
 - `cctl workflow live resume` — resume a paused or resumably-halted execution
   - `cctl workflow live resume [--json]`
+- `cctl workflow live abort` — abort the active execution
+  - `cctl workflow live abort --reason <reason> [--json]`
+- `cctl workflow live release` — release the session's execution slot (explicit audited archive)
+  - `cctl workflow live release --reason <reason> [--execution <id>] [--json]`
 - `cctl workflow task complete` — mark the current lane task done (advances the workflow)
   - `cctl workflow task complete <taskId> --summary "<what changed, how verified>"`
 - `cctl workflow task add` — append a newly-discovered task to this lane
@@ -418,23 +424,35 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec measures`
   - `cctl spec show <slug>`
   - `cctl spec status <slug>`
+  - `cctl spec lint <slug>`
   - `cctl spec get <slug>/<handle>`
   - `cctl spec search <slug> <query>`
   - `cctl spec search --all <query>`
+  - `cctl spec diff <slug> [--from <revisionId>] [--to <revisionId>] [--baseline governance]`
   - `cctl spec schema [<document>]`
-  - `cctl spec export <slug> [--out <bundle.json>]`
+  - `cctl spec delta <slug> [--since <executionId>] [--out <delta.json>]`
+  - `cctl spec export <slug> [--out <bundle.json>] [--stdout]`
   - `cctl spec verify <slug> [--against <bundle.json>]`
   - `cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>`
   - `cctl spec amend <slug>`
   - `cctl spec draft <slug> --file <element.json>`
+  - `cctl spec remove <slug> <handle...>`
   - `cctl spec propose <slug>`
-  - `cctl spec advance <slug> --from <requirements|design>`
+  - `cctl spec advance <slug> --from <requirements>`
   - `cctl spec question <slug> --text <text> [--element <handle>]`
   - `cctl spec answer <slug>/Q2 --answer <text>`
   - `cctl spec assume <slug> --text <text> [--element <handle>]`
   - `cctl spec task complete <slug>/T7 --execution <id> --evidence <id>`
-  - `cctl spec start <slug> --file <scope.json>`
-  - `cctl spec capture <slug> --execution <id> --file <task.json>`
+  - `cctl spec plan open <slug> [--seed-from last]`
+  - `cctl spec plan edit <slug> --file <plan.json>`
+  - `cctl spec plan propose <slug>`
+  - `cctl spec plan reopen <slug> --reason <why>`
+  - `cctl spec plan get <slug>`
+  - `cctl spec plan status <slug>`
+  - `cctl spec plan preview <slug> --stage draft|proposed`
+  - `cctl spec plan sign-off <slug>`
+  - `cctl spec start <slug> [--park]`
+  - `cctl spec capture <slug> --file <task.json>`
 - `cctl spec list` — list native specs in the current project
   - `cctl spec list`
 - `cctl spec measures` — compute native SDD pilot measures
@@ -443,18 +461,28 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
   - `cctl spec show <slug> [--summary]`
 - `cctl spec status` — inspect a spec's phase and gate readiness
   - `cctl spec status <slug>`
+- `cctl spec lint` — read every deterministic lint finding on the open draft
+  - `cctl spec lint <slug>`
 - `cctl spec get` — read one spec element with approval and evidence state
   - `cctl spec get <slug>/<handle>`
   - `cctl spec get <slug> <handle>`
 - `cctl spec search` — search requirement and decision text in one spec or across all
   - `cctl spec search <slug> <query>`
   - `cctl spec search --all <query>`
+- `cctl spec diff` — read the semantic changelog between two revisions
+  - `cctl spec diff <slug>`
+  - `cctl spec diff <slug> --baseline governance`
+  - `cctl spec diff <slug> --from <revisionId> --to <revisionId>`
 - `cctl spec schema` — print the schema of every input document this family accepts
   - `cctl spec schema`
   - `cctl spec schema <document>`
-- `cctl spec export` — produce a canonical portable spec bundle
-  - `cctl spec export <slug> [--out <bundle.json>]`
-- `cctl spec verify` — recompute spec integrity
+- `cctl spec delta` — compare the approved spec against a delivered execution
+  - `cctl spec delta <slug> [--since <executionId>] [--out <delta.json>]`
+- `cctl spec export` — write a canonical portable spec bundle
+  - `cctl spec export <slug>`
+  - `cctl spec export <slug> --out <bundle.json>`
+  - `cctl spec export <slug> --stdout`
+- `cctl spec verify` — recompute spec integrity and report consistency findings
   - `cctl spec verify <slug> [--against <bundle.json>]`
 - `cctl spec create` — create a durable spec from its first draft save
   - `cctl spec create --slug <slug> --name <name> --preset <contract-bearing|exploratory|fast-path> --file <element.json>`
@@ -463,33 +491,63 @@ _Generated from the `cctl` help registry — do not edit by hand; run `bun scrip
 - `cctl spec draft` — save a draft element at the version it replaces
   - `cctl spec draft <slug> --file <element.json>`
   - `cctl spec draft <slug> --file <elements.json>`
+  - `cctl spec draft <slug> --file <batch.json>`
+- `cctl spec remove` — take evergreen draft elements out in one transaction
+  - `cctl spec remove <slug> <handle...>`
 - `cctl spec propose` — propose the current authoring stage for review
   - `cctl spec propose <slug>`
+  - `cctl spec propose <slug> --notes <notes.md>`
 - `cctl spec withdraw-proposal` — take back your own proposal and reopen it as a draft
   - `cctl spec withdraw-proposal <slug> --revision <revision-id>`
+- `cctl spec dismiss-superseded` — the human act that ends a proposal an approval forked past
+  - `cctl spec dismiss-superseded <slug> --revision <revision-id> --reason <text>`
 - `cctl spec advance` — conclude a Notify/Off authoring stage explicitly
-  - `cctl spec advance <slug> --from <requirements|design>`
+  - `cctl spec advance <slug> --from <requirements>`
 - `cctl spec question` — open a visible spec question for human answer
   - `cctl spec question <slug> --text <text> [--element <handle>]`
 - `cctl spec answer` — answer an open spec question
   - `cctl spec answer <slug>/Q2 --answer <text>`
 - `cctl spec assume` — propose a visible authoring assumption
   - `cctl spec assume <slug> --text <text> [--element <handle>]`
-- `cctl spec task` — act on an approved spec task
+- `cctl spec plan` — author the delivery plan attempt that becomes the executed graph
+  - `cctl spec plan open <slug> [--seed-from last]`
+  - `cctl spec plan edit <slug> --file <plan.json>`
+  - `cctl spec plan propose <slug>`
+  - `cctl spec plan reopen <slug> --reason <why>`
+  - `cctl spec plan get <slug>`
+  - `cctl spec plan status <slug>`
+  - `cctl spec plan preview <slug> --stage draft|proposed`
+- `cctl spec task` — act on a task from a legacy approved spec plan
   - `cctl spec task complete <slug>/T7 --execution <id> --evidence <id>`
 - `cctl spec request-approval` — route a spec gate to the user
   - `cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]`
-- `cctl spec start` — compile an approved revision and scope into an execution workflow
-  - `cctl spec start <slug> --file <scope.json>`
-- `cctl spec capture` — record work discovered during a running execution as a scope amendment
-  - `cctl spec capture <slug> --execution <id> --file <task.json> [--blocking-reason <reason>]`
+- `cctl spec start` — launch the approved delivery-plan candidate, exactly as approved
+  - `cctl spec start <slug> [--park]`
+- `cctl spec capture` — record work discovered during a running execution as a durable discovery
+  - `cctl spec capture <slug> --file <task.json> [--execution <id>] [--blocking-reason <reason>]`
 - `cctl spec rename` — rename a spec's slug, keeping the old slug as an alias
   - `cctl spec rename <slug> --to <new-slug> [--name <name>]`
 - `cctl spec abandon` — abandon one execution, or retire the whole spec as a human
   - `cctl spec abandon <slug> --reason <reason>`
   - `cctl spec abandon <slug> --execution <id> --reason <reason>`
+- `cctl spec plan open` — open a delivery plan attempt against the approved revision
+  - `cctl spec plan open <slug> [--seed-from last]`
+- `cctl spec plan edit` — write the whole plan document at the draft revision you read
+  - `cctl spec plan edit <slug> --file <plan.json>`
+- `cctl spec plan propose` — freeze the plan as an immutable snapshot with a plan hash
+  - `cctl spec plan propose <slug>`
+- `cctl spec plan sign-off` — approve the stored candidate and admit the execution_start gate
+  - `cctl spec plan sign-off <slug> [--candidate <id> --plan-hash <hash> --compiled-hash <hash>]`
+- `cctl spec plan reopen` — return an unlaunched attempt to draft, invalidating its approval
+  - `cctl spec plan reopen <slug> --reason <why>`
+- `cctl spec plan get` — read the plan document the attempt carries
+  - `cctl spec plan get <slug>`
+- `cctl spec plan status` — read the attempt's state, findings, and the act it owes next
+  - `cctl spec plan status <slug>`
 - `cctl spec task complete` — claim task completion with evidence
   - `cctl spec task complete <slug>/T7 --execution <id> --evidence <evidence-id> [--evidence <evidence-id> ...]`
+- `cctl spec plan preview` — render a delivery-plan attempt's materialized graph
+  - `cctl spec plan preview <slug> --stage draft|proposed [--expected-draft-revision <n>]`
 
 - `cctl doctor` — check connectivity, auth, and build parity with the CC server
   - `cctl doctor`

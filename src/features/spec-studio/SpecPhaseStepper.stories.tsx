@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 
 import { specDetailViewSchema, type SpecDetailView } from "@/lib/specs/queries";
+import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import type {
   SpecAuthoringStage,
   SpecRevision,
@@ -12,8 +13,9 @@ import {
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
 import SpecPhaseStepper from "./SpecPhaseStepper";
+import { reviewView } from "./delivery-plan-review.fixtures";
 
-const AUTHORING_STAGES = ["requirements", "design", "plan"] as const;
+const AUTHORING_STAGES = ["requirements", "design"] as const;
 
 function parsedDetail(detail: SpecDetailView): SpecDetailView {
   return specDetailViewSchema.parse(detail);
@@ -38,7 +40,7 @@ function revisionFor(
 }
 
 function authoringDetail(
-  stage: SpecAuthoringStage,
+  stage: (typeof AUTHORING_STAGES)[number],
   state: "draft" | "proposed",
 ): SpecDetailView {
   const base = specControlsDetailFixture();
@@ -80,6 +82,39 @@ function authoringDetail(
         primary: state === "draft" ? "draft" : "in_review",
         authoringStage: stage,
       },
+    },
+  });
+}
+
+function approvedDesignDetail(): SpecDetailView {
+  const base = specControlsDetailFixture();
+  const template = base.revisions[0];
+  const elements = base.currentRevision?.elements;
+  if (template === undefined || elements === undefined) {
+    throw new Error("Phase stepper story fixture is missing its snapshot");
+  }
+  const approved = revisionFor(template, 1, "design", "approved");
+  return parsedDetail({
+    ...base,
+    revisions: [approved],
+    baseRevision: null,
+    currentRevision: { revision: approved, elements },
+    currentApprovedRevision: { revision: approved, elements },
+    executionRevisionSnapshots: [],
+    status: { ...base.status, phase: { primary: "approved" } },
+  });
+}
+
+function approvedPlanReview(): DeliveryPlanReviewView {
+  return reviewView({
+    attempt: { status: "approved" },
+    approval: {
+      snapshotId: "snapshot-2",
+      candidateId: "candidate-2",
+      planHash: "sha256:plan-2",
+      compiledDefinitionHash: "sha256:compiled-2",
+      approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
+      approvedBy: { kind: "human" },
     },
   });
 }
@@ -226,20 +261,42 @@ function concurrentAuthoringDetail(): SpecDetailView {
 }
 
 const lifecycleVariants = [
-  { name: "Initialized", detail: initializedDetail() },
+  { name: "Initialized", detail: initializedDetail(), deliveryPlan: null },
   {
     name: "Requirements draft",
     detail: authoringDetail("requirements", "draft"),
+    deliveryPlan: null,
   },
   {
     name: "Requirements review",
     detail: authoringDetail("requirements", "proposed"),
+    deliveryPlan: null,
   },
-  { name: "Design draft", detail: authoringDetail("design", "draft") },
-  { name: "Design review", detail: authoringDetail("design", "proposed") },
-  { name: "Plan draft", detail: authoringDetail("plan", "draft") },
-  { name: "Plan review", detail: authoringDetail("plan", "proposed") },
-  { name: "Ready", detail: parsedDetail(specControlsDetailFixture()) },
+  {
+    name: "Design draft",
+    detail: authoringDetail("design", "draft"),
+    deliveryPlan: null,
+  },
+  {
+    name: "Design review",
+    detail: authoringDetail("design", "proposed"),
+    deliveryPlan: null,
+  },
+  {
+    name: "Delivery plan draft",
+    detail: approvedDesignDetail(),
+    deliveryPlan: reviewView({ attempt: { status: "draft" } }),
+  },
+  {
+    name: "Delivery plan review",
+    detail: approvedDesignDetail(),
+    deliveryPlan: reviewView({ attempt: { status: "proposed" } }),
+  },
+  {
+    name: "Ready",
+    detail: approvedDesignDetail(),
+    deliveryPlan: approvedPlanReview(),
+  },
   {
     name: "Definition review",
     detail: parsedDetail(specControlsDetailFixture("definition_review")),
@@ -249,13 +306,20 @@ const lifecycleVariants = [
   { name: "Concurrent design review", detail: concurrentAuthoringDetail() },
   { name: "Delivered", detail: deliveredDetail() },
   { name: "Abandoned", detail: abandonedDetail() },
-] satisfies ReadonlyArray<{ name: string; detail: SpecDetailView }>;
+] satisfies ReadonlyArray<{
+  name: string;
+  detail: SpecDetailView;
+  deliveryPlan?: DeliveryPlanReviewView | null;
+}>;
 
 const meta = {
   title: "Specs/Studio/Phase Stepper",
   component: SpecPhaseStepper,
   parameters: { a11y: { test: "error" }, layout: "fullscreen" },
-  args: { detail: parsedDetail(specControlsDetailFixture()) },
+  args: {
+    detail: approvedDesignDetail(),
+    deliveryPlan: approvedPlanReview(),
+  },
 } satisfies Meta<typeof SpecPhaseStepper>;
 
 export default meta;
@@ -270,7 +334,10 @@ export const LifecycleVariants: Story = {
             <h2 className="mx-xl mt-0 mb-sm font-mono text-xs font-bold tracking-[0.08em] text-text-secondary uppercase max-768:mx-md">
               {variant.name}
             </h2>
-            <SpecPhaseStepper detail={variant.detail} />
+            <SpecPhaseStepper
+              detail={variant.detail}
+              deliveryPlan={variant.deliveryPlan}
+            />
           </section>
         ))}
       </div>

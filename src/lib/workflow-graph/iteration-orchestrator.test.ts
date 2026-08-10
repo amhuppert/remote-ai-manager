@@ -5116,7 +5116,9 @@ describe("script validator integration", () => {
         async create() {
           throw new Error("not used by this test");
         },
-        async archiveActive() {},
+        async archiveActive() {
+          return { archived: false as const, reason: "no_active" as const };
+        },
         async markContextEventsPreReset() {
           return 0;
         },

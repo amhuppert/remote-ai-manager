@@ -1607,6 +1607,65 @@ const graphWorkflowLanePlanSchema = z.object({
     .default({}),
 });
 
+/**
+ * Vocabulary of the lifecycle contract (design §10). The decision table itself
+ * lives in `lifecycle-classifier.ts` — the single module allowed to decide any
+ * of these — but the verdict enums are schemas so every consumer derives its
+ * types instead of restating the unions.
+ */
+export const graphWorkflowSlotOwnershipSchema = z.enum([
+  // The status ends the run's claim on the session's execution slot: the slot
+  // is archived and released without any further human or agent act.
+  "auto-release",
+  // The run may still resume, so it keeps the slot AND validation ownership
+  // until it is resumed, abandoned, or explicitly archived. Treating one of
+  // these as terminal would admit unrelated validation and race the resume.
+  "retained",
+]);
+export type GraphWorkflowSlotOwnership = z.infer<
+  typeof graphWorkflowSlotOwnershipSchema
+>;
+
+export const graphWorkflowArchiveEligibilitySchema = z.enum([
+  // An explicit, audited archive act may release this run.
+  "eligible",
+  // The run already auto-released; the explicit act succeeds as a no-op rather
+  // than reporting a false conflict.
+  "idempotent",
+  // The run is live; archiving it would strand a running loop.
+  "refused",
+]);
+export type GraphWorkflowArchiveEligibility = z.infer<
+  typeof graphWorkflowArchiveEligibilitySchema
+>;
+
+export const graphWorkflowReplacementPolicySchema = z.enum([
+  // A new execution may take the slot, but only by archiving the incumbent
+  // through the audited path first. There is deliberately no "silent" verdict.
+  "audited-archive",
+  // The incumbent is live: the start is rejected instead.
+  "refused",
+]);
+export type GraphWorkflowReplacementPolicy = z.infer<
+  typeof graphWorkflowReplacementPolicySchema
+>;
+
+export const graphWorkflowLifecycleDecisionSchema = z.object({
+  status: graphWorkflowStatusSchema,
+  /**
+   * Whether the run has ended. Terminality is NOT slot release: `halted` is
+   * terminal (no further progress happens on its own) yet retains ownership,
+   * because it is resumable.
+   */
+  terminal: z.boolean(),
+  slotOwnership: graphWorkflowSlotOwnershipSchema,
+  explicitArchive: graphWorkflowArchiveEligibilitySchema,
+  replacement: graphWorkflowReplacementPolicySchema,
+});
+export type GraphWorkflowLifecycleDecision = z.infer<
+  typeof graphWorkflowLifecycleDecisionSchema
+>;
+
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
@@ -1671,6 +1730,13 @@ export const graphWorkflowExecutionSchema = z.object({
   // from. `.default("project")` lets legacy execution rows that predate the
   // global tier parse back as project-tier launches (R3.3, R9.3).
   launchedTier: z.enum(["project", "global"]).default("project"),
+  // The conversation that launched this run, captured SERVER-SIDE at the start
+  // seam (a request-body claim is never a source) and fixed at seed. It is the
+  // only identity that can act on an execution with no lanes yet — the
+  // validation resolver admits exactly this conversation and refuses every
+  // other. `.default(null)` floors rows written before the field existed to an
+  // unowned run, which the resolver treats as fail-closed rather than open.
+  ownerConversationId: z.string().trim().min(1).nullable().default(null),
   definitionApproval: graphWorkflowDefinitionApprovalSchema
     .nullable()
     .default(null),

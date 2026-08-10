@@ -17,6 +17,7 @@ import {
 } from "@/lib/workflow-graph/execution-lifecycle-port";
 import { _resetDeliveryGateEvaluatorForTesting } from "@/lib/workflows/merge/delivery-gate-port";
 
+import { deliveryPlanCompiledHash } from "./delivery-plan-materializer";
 import type { SpecEvidenceRow, SpecProofVerdictRow } from "./schemas";
 import {
   approveAndSignOffSpine,
@@ -25,8 +26,8 @@ import {
   postJson,
   proposeSpineRevision,
   runSpineWorkflowToEvidence,
+  startLegacySpineExecution,
   startSpineExecution,
-  SPINE_BEARER_TOKEN,
   SPINE_WORKFLOW_EXECUTION_ID,
   type MergeScenario,
   type SpecSpineWorld,
@@ -127,13 +128,21 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       ),
     ).toBe(true);
 
-    // --- Execution start: compiled definition under the execution-start dial.
+    // --- Execution start: the approved delivery-plan candidate launches in
+    // the same act, with no second definition-approval gate.
     const started = await startSpineExecution(world, SLUG, authored);
     const executionRow = world.repos.delivery.findExecutionById(
       started.specExecutionId,
     );
-    expect(executionRow?.state).toBe("definition_review");
-    expect(started.definition.definition.approvalRequired).toBe(true);
+    expect(executionRow).toMatchObject({
+      state: "running",
+      workflow_execution_id: SPINE_WORKFLOW_EXECUTION_ID,
+    });
+    expect(started.definition.definition.approvalRequired).toBe(false);
+    expect(started.deliveryPlan).toBeDefined();
+    expect(deliveryPlanCompiledHash(started.definition.definition)).toBe(
+      started.deliveryPlan?.compiledDefinitionHash,
+    );
     const lockedRegions = started.definition.definition.lockedRegions ?? [];
     expect(lockedRegions.length).toBeGreaterThan(0);
     expect(lockedRegions.every((region) => region.sourceUri.length > 0)).toBe(
@@ -147,110 +156,42 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       authored.criterionTwoId,
     ]);
 
-    // --- The execution-start gate is contract-bearing. The first Studio
-    // approval launches the prepared definition, records the one human grant,
-    // and admits the parked workflow without a separate session-page start.
+    // The human delivery-plan sign-off admitted execution_start for these
+    // exact bytes, so launch opens no duplicate Needs You request.
     expect(
       world.reviewNotifications.requested.some(
         (notice) => notice.gate === "execution_start",
       ),
     ).toBe(false);
-    world.registerMergeComposition();
-    const studioApproval = await world.postAction(
-      SLUG,
-      "approve-execution-start",
-      { executionId: started.specExecutionId },
-      "human",
-    );
-    expect(studioApproval.status).toBe(200);
-    expect(
-      world.repos.delivery.findExecutionById(started.specExecutionId),
-    ).toMatchObject({
-      state: "running",
-      workflow_execution_id: SPINE_WORKFLOW_EXECUTION_ID,
-    });
     expect(
       world.repos.review
         .findGateAdmissionsByRevision(authored.draftRevisionId)
         .filter((admission) => admission.gate === "execution_start"),
     ).toHaveLength(1);
-    // Neither the spec-side action nor the workflow approve-definition route
-    // admits agent transport.
-    const agentStartApproval = await world.postAction(
-      SLUG,
-      "approve-execution-start",
-      { executionId: started.specExecutionId },
-      "agent",
-    );
-    expect(agentStartApproval.status).toBe(403);
-    await expect(agentStartApproval.json()).resolves.toMatchObject({
-      code: "human_act_required",
-    });
-    const agentDefinitionApproval = await world.postWorkflowRoute(
-      "APPROVE_DEFINITION",
-      {},
-      { authorization: `Bearer ${SPINE_BEARER_TOKEN}` },
-    );
-    expect(agentDefinitionApproval.status).toBe(403);
-    await expect(agentDefinitionApproval.json()).resolves.toMatchObject({
-      code: "human_act_required",
-    });
 
     // --- Running with evidence flow-back through idempotent ingestion.
     const { commitShas } = await runSpineWorkflowToEvidence(world, started);
     expect(
       world.repos.delivery.findExecutionById(started.specExecutionId)?.state,
     ).toBe("running");
-    // Launching the prepared workflow opened and satisfied exactly the
-    // execution-start attention needed by the approval act.
     expect(
       world.reviewNotifications.requested.some(
         (notice) => notice.gate === "execution_start",
       ),
-    ).toBe(true);
+    ).toBe(false);
 
-    // The human execution-start approval left durable provenance: the
-    // approval row, the execution-scoped execution_start admission, and the
-    // durable event with the human actor (R10.2, R11.2).
+    // The sign-off admission is rebound to the execution the approved
+    // candidate launched; no later approval row substitutes for it.
     const startAdmissions = world.repos.review
       .findGateAdmissionsByRevision(authored.draftRevisionId)
       .filter((admission) => admission.gate === "execution_start");
     expect(startAdmissions).toHaveLength(1);
     expect(startAdmissions[0]).toMatchObject({
       basis: "human_approval",
-      execution_id: started.specExecutionId,
+      execution_id: null,
     });
-    expect(
-      world.repos.review.hasValidHumanGateApproval({
-        specId: authored.specId,
-        revisionId: authored.draftRevisionId,
-        executionId: started.specExecutionId,
-        gate: "execution_start",
-      }),
-    ).toBe(true);
-    const startApprovalEvents = world.repos.events
-      .findBySpecId(authored.specId)
-      .filter((event) =>
-        event.payload_json.includes(
-          '"kind":"execution-start-approval-granted"',
-        ),
-      );
-    expect(startApprovalEvents).toHaveLength(1);
-    expect(JSON.parse(startApprovalEvents[0]?.actor_json ?? "{}")).toEqual({
-      kind: "human",
-    });
-    // The grant cleared the waiting execution-start request through the
-    // notifier port (R10.9).
-    const startRequestIds = world.reviewNotifications.requested
-      .filter((notice) => notice.gate === "execution_start")
-      .map((notice) => notice.gateRequestId);
-    expect(startRequestIds.length).toBeGreaterThan(0);
-    expect(
-      world.reviewNotifications.granted.some((notice) =>
-        notice.satisfiedAttentionIds.some((id) => startRequestIds.includes(id)),
-      ),
-    ).toBe(true);
-    // Status projection: the execution-start gate reads admitted, not pending.
+    // The launched candidate carries approvalRequired:false because sign-off
+    // is the deciding gate act, so the post-launch projection owes no act.
     const statusAfterStartApproval = await postJson<{
       gates: Array<{ gate: string; state: string }>;
     }>(world.getRoute("getSpecStatusGET", { slug: SLUG }));
@@ -258,7 +199,7 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       statusAfterStartApproval.gates.find(
         (gate) => gate.gate === "execution_start",
       ),
-    ).toMatchObject({ state: "admitted" });
+    ).toMatchObject({ state: "not_required" });
 
     const firstIngest = await world.ingest.ingestAuthoritatively(
       started.specExecutionId,
@@ -445,7 +386,7 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     expect(durableTypes.has("spec-evidence-changed")).toBe(true);
   });
 
-  it("refuses execution pinned to an approved non-plan-stage revision before preparing a definition", async () => {
+  it("rejects a retired scope document and names the delivery-plan importer", async () => {
     const slug = "non-plan-execution";
     const authored = await authorSpineDraft(world, slug);
 
@@ -464,19 +405,18 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       "agent",
     );
 
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      code: "gate_blocked",
-      unmetConditions: [
-        "The pinned revision has not completed plan-stage authoring.",
-      ],
-      instruction:
-        "Complete plan-stage authoring and sign off that revision before starting execution.",
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "validation",
+      unmetConditions: [expect.stringContaining("scope documents are retired")],
+      instruction: expect.stringContaining(
+        `cctl spec plan open ${slug} --seed-from last`,
+      ),
     });
     expect(world.definitions.records).toHaveLength(0);
   });
 
-  it("preserves fast-path single-pass plan authoring through sign-off and execution start", async () => {
+  it("keeps fast-path evergreen authoring single-pass at design, then opens delivery planning", async () => {
     const slug = "fast-path-single-pass";
     const created = await postJson<{
       spec: { id: string };
@@ -505,7 +445,7 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
         "agent",
       ),
     );
-    expect(created.draft.authoringStage).toBe("plan");
+    expect(created.draft.authoringStage).toBe("design");
 
     await postJson(
       world.postAction(
@@ -527,30 +467,33 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
         "agent",
       ),
     );
-    await postJson(
-      world.postAction(
-        slug,
-        "draft-upsert",
-        {
-          revisionId: created.draft.id,
-          elementId: "fast-task",
+    const retiredTaskWrite = await world.postAction(
+      slug,
+      "draft-upsert",
+      {
+        revisionId: created.draft.id,
+        elementId: "fast-task",
+        kind: "task",
+        parentElementId: null,
+        position: 2,
+        payload: {
           kind: "task",
-          parentElementId: null,
-          position: 2,
-          payload: {
-            kind: "task",
-            title: "Ship the single-pass plan",
-            instructions: "Implement and validate the fast-path contract.",
-            tracedRequirementElementIds: ["fast-requirement"],
-            tracedDecisionElementIds: [],
-            coveredCriterionElementIds: ["fast-criterion"],
-            dependsOnTaskElementIds: [],
-          },
-          baseElementVersion: null,
+          title: "Ship the single-pass plan",
+          instructions: "Implement and validate the fast-path contract.",
+          tracedRequirementElementIds: ["fast-requirement"],
+          tracedDecisionElementIds: [],
+          coveredCriterionElementIds: ["fast-criterion"],
+          dependsOnTaskElementIds: [],
         },
-        "agent",
-      ),
+        baseElementVersion: null,
+      },
+      "agent",
     );
+    expect(retiredTaskWrite.status).toBe(409);
+    await expect(retiredTaskWrite.json()).resolves.toMatchObject({
+      code: "stage_blocked",
+      instruction: expect.stringContaining("cctl spec plan open"),
+    });
     await postJson(
       world.postAction(
         slug,
@@ -571,34 +514,16 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     );
     expect(signedOff.revision).toMatchObject({
       state: "approved",
-      authoringStage: "plan",
+      authoringStage: "design",
     });
 
-    const started = await postJson<{
-      execution: { revision_id: string; state: string };
-      definition: { definition: { approvalRequired: boolean } };
-    }>(
-      world.postAction(
-        slug,
-        "start-execution",
-        {
-          revisionId: created.draft.id,
-          scope: {
-            selectedTaskIds: ["fast-task"],
-            selectedCriterionIds: ["fast-criterion"],
-            exclusionDispositions: [],
-          },
-          sessionName: "fast-path-session",
-        },
-        "agent",
-      ),
-    );
-    // The start receipt is the domain view, not the persistence row.
-    expect(started.execution).toMatchObject({
-      revisionId: created.draft.id,
-      state: "definition_review",
+    const opened = await postJson<{
+      attempt: { pinnedRevisionId: string; status: string };
+    }>(world.postAction(slug, "plan-open", { seedFromLast: false }, "agent"));
+    expect(opened.attempt).toMatchObject({
+      pinnedRevisionId: created.draft.id,
+      status: "draft",
     });
-    expect(started.definition.definition.approvalRequired).toBe(false);
   });
 
   it.each([
@@ -624,7 +549,7 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       expectedHumanActs: 0,
     },
   ] as const)(
-    "starts a fresh $dial execution with exactly $expectedHumanActs execution-start human acts",
+    "continues a historical $dial definition with exactly $expectedHumanActs execution-start human acts",
     async ({
       dial,
       approvalRequired,
@@ -636,7 +561,7 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       const authored = await authorSpineDraft(world, slug, dial);
       await proposeSpineRevision(world, slug, authored);
       await approveAndSignOffSpine(world, slug, authored);
-      const started = await startSpineExecution(world, slug, authored);
+      const started = await startLegacySpineExecution(world, slug, authored);
       expect(started.definition.definition.approvalRequired).toBe(
         approvalRequired,
       );
@@ -693,12 +618,12 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     },
   );
 
-  it("keeps a Gate-compiled definition recoverable after the live dial changes to Notify", async () => {
+  it("keeps a historical Gate-compiled definition recoverable after the live dial changes to Notify", async () => {
     const slug = "execution-start-policy-drift";
     const authored = await authorSpineDraft(world, slug, "gate");
     await proposeSpineRevision(world, slug, authored);
     await approveAndSignOffSpine(world, slug, authored);
-    const started = await startSpineExecution(world, slug, authored);
+    const started = await startLegacySpineExecution(world, slug, authored);
     expect(started.definition.definition.approvalRequired).toBe(true);
 
     const policyChange = await world.postAction(
@@ -787,13 +712,13 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
       expectedNoticeCount: 0,
     },
   ] as const)(
-    "keeps the frozen $compiledDial admission basis after the live dial changes to Gate",
+    "keeps a historical definition's frozen $compiledDial admission basis after the live dial changes to Gate",
     async ({ compiledDial, expectedBasis, expectedNoticeCount }) => {
       const slug = `execution-start-reverse-drift-${compiledDial}`;
       const authored = await authorSpineDraft(world, slug, compiledDial);
       await proposeSpineRevision(world, slug, authored);
       await approveAndSignOffSpine(world, slug, authored);
-      const started = await startSpineExecution(world, slug, authored);
+      const started = await startLegacySpineExecution(world, slug, authored);
       expect(started.definition.definition.approvalRequired).toBe(false);
 
       const policyChange = await world.postAction(
@@ -854,11 +779,11 @@ describe("golden-path spine (kiro 19.1/20.8): staged authoring -> review -> exec
     },
   );
 
-  it("records the execution-scoped spec admission when a human approves the definition from the workflow route", async () => {
+  it("records the historical execution's spec admission when a human approves it from the workflow route", async () => {
     const authored = await authorSpineDraft(world, SLUG);
     await proposeSpineRevision(world, SLUG, authored);
     await approveAndSignOffSpine(world, SLUG, authored);
-    const started = await startSpineExecution(world, SLUG, authored);
+    const started = await startLegacySpineExecution(world, SLUG, authored);
     world.registerMergeComposition();
 
     // The workflow START parks awaiting definition approval and opens the

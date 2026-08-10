@@ -416,6 +416,10 @@ function seedParents(db: Db): void {
     session_name: SESSION_NAME,
     delivered_at: AT,
     abandoned_reason: null,
+    cleanup_phase: null,
+    linked_workflow_execution_id: null,
+    cleanup_last_error: null,
+    cleanup_last_error_at: null,
     created_at: AT,
     updated_at: AT,
   });

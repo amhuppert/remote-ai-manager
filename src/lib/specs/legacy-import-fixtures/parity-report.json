@@ -1,0 +1,1920 @@
+{
+  "approvedDeltas": {
+    "prerequisite-apology-removal": "The compiler apologized in prose where it could not map a criterion to a task or state a context's contract directly; the authored plan says the same thing structurally with a typed context and an authored contract, so those lines are gone.",
+    "context-identity-scheme": "Compiled graph nodes are identified from the approved handles the plan is authored in (`t7`, `lane-persistence`) rather than from spec element ids (`context-task-output-lookup`, `spec-task-task-output-lookup`), and the origin URIs that embed an identity move with it.",
+    "locked-region-declarations": "Locked regions are declared by the plan over the plan's own nodes, not by the compiler over the revision's tasks.",
+    "charter-rendering": "Governance is authored once on the plan and copied, instead of being synthesized at compile time from the revision's intent sections; the validation selection the plan pins travels with it."
+  },
+  "cases": [
+    {
+      "case": "dynamic-graph-primitives",
+      "launchedFrom": {
+        "archivedExecutionId": "0610d70e-7823-49a6-8b9d-09448ae21afe",
+        "sessionName": "D4 – Dynamic Graph Primitives",
+        "archivedStatus": "aborted",
+        "archivedAt": "2026-08-06T14:04:41.676Z",
+        "seedDefinitionId": "7b5072a2-06a4-4428-bf9d-727ea00d040d",
+        "seedDefinitionRevision": 2,
+        "liveRevisionAtArchive": 3,
+        "definitionRecordUpdatedAt": "2026-08-04T04:31:48.435Z",
+        "capturedAt": "2026-08-08"
+      },
+      "counts": {
+        "launchedContexts": 23,
+        "materializedContexts": 23,
+        "launchedTasks": 23,
+        "materializedTasks": 23,
+        "launchedEdges": 41,
+        "materializedEdges": 41,
+        "comparedCriteria": 49
+      },
+      "differences": [
+        {
+          "dimension": "context-membership",
+          "subject": "task-output-lookup",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-output-lookup",
+          "materialized": "t1"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-output-lookup",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t1"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-output-lookup",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-expansion-idempotency",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-expansion-idempotency",
+          "materialized": "t10"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-expansion-idempotency",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t10"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-expansion-idempotency",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-schemas",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-loop-schemas",
+          "materialized": "t11"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-schemas",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t11"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-loop-schemas",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-settlement-core",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-settlement-core",
+          "materialized": "t12"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-settlement-core",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t12"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-settlement-core",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-crash-safety",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-loop-crash-safety",
+          "materialized": "t13"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-crash-safety",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t13"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-loop-crash-safety",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-budgets",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-loop-budgets",
+          "materialized": "t14"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-budgets",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t14"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-loop-budgets",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-repair",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-loop-repair",
+          "materialized": "t15"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-loop-repair",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t15"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-loop-repair",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-pass-ledger",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-pass-ledger",
+          "materialized": "t16"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-pass-ledger",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t16"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-pass-ledger",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-persistence-sweep",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-persistence-sweep",
+          "materialized": "t17"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-persistence-sweep",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t17"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-persistence-sweep",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-compat-harness",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-compat-harness",
+          "materialized": "t18"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-compat-harness",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t18"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-compat-harness",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-proof-classify",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-proof-classify",
+          "materialized": "t19"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-proof-classify",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t19"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-proof-classify",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-guard-schema",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-guard-schema",
+          "materialized": "t2"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-guard-schema",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t2"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-guard-schema",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-proof-generate-filter",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-proof-generate-filter",
+          "materialized": "t20"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-proof-generate-filter",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t20"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-proof-generate-filter",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-proof-loop",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-proof-loop",
+          "materialized": "t21"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-proof-loop",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t21"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-proof-loop",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-read-surfaces",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-read-surfaces",
+          "materialized": "t22"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-read-surfaces",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t22"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-read-surfaces",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-docs",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-docs",
+          "materialized": "t23"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-docs",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t23"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-docs",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-route-projection",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-route-projection",
+          "materialized": "t3"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-route-projection",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t3"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-route-projection",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-skipped-status",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-skipped-status",
+          "materialized": "t4"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-skipped-status",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t4"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-skipped-status",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-scheduler-integration",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-scheduler-integration",
+          "materialized": "t5"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-scheduler-integration",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t5"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-scheduler-integration",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-lints-mustrun",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-lints-mustrun",
+          "materialized": "t6"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-lints-mustrun",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t6"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-lints-mustrun",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-staging-seam",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-staging-seam",
+          "materialized": "t7"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-staging-seam",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t7"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-staging-seam",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-expansion-service",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-expansion-service",
+          "materialized": "t8"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-expansion-service",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t8"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-expansion-service",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-child-config",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-task-child-config",
+          "materialized": "t9"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "task-child-config",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://dynamic-graph-primitives/revisions/e8522318-3aa6-412b-9205-2d7da99615c2?scope=aadba8256b511cc6bda7dde10c195b122e2eef69a1dcae34733d09929612c145",
+          "materialized": "spec-plan://fc0e889d-189e-4dca-b171-e3c7dd81293b/attempts/delivery-plan-1?plan=sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a#t9"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "task-child-config",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-output-lookup",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-output-lookup",
+          "materialized": "t1"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-expansion-idempotency",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-expansion-idempotency",
+          "materialized": "t10"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-loop-schemas",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-loop-schemas",
+          "materialized": "t11"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-settlement-core",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-settlement-core",
+          "materialized": "t12"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-loop-crash-safety",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-loop-crash-safety",
+          "materialized": "t13"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-loop-budgets",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-loop-budgets",
+          "materialized": "t14"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-loop-repair",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-loop-repair",
+          "materialized": "t15"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-pass-ledger",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-pass-ledger",
+          "materialized": "t16"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-persistence-sweep",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-persistence-sweep",
+          "materialized": "t17"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-compat-harness",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-compat-harness",
+          "materialized": "t18"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-proof-classify",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-proof-classify",
+          "materialized": "t19"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-guard-schema",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-guard-schema",
+          "materialized": "t2"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-proof-generate-filter",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-proof-generate-filter",
+          "materialized": "t20"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-proof-loop",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-proof-loop",
+          "materialized": "t21"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-read-surfaces",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-read-surfaces",
+          "materialized": "t22"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-docs",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-docs",
+          "materialized": "t23"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-route-projection",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-route-projection",
+          "materialized": "t3"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-skipped-status",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-skipped-status",
+          "materialized": "t4"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-scheduler-integration",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-scheduler-integration",
+          "materialized": "t5"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-lints-mustrun",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-lints-mustrun",
+          "materialized": "t6"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-staging-seam",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-staging-seam",
+          "materialized": "t7"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-expansion-service",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-expansion-service",
+          "materialized": "t8"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "task-child-config",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-task-child-config",
+          "materialized": "t9"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/charter",
+          "finding": "The charter is authored on the plan instead of synthesized from the revision's intent sections at compile time.",
+          "approvedDelta": "charter-rendering"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/workflowConfig",
+          "finding": "The plan pins its own validation selection into the compiled definition; the compiler left it to the workflow defaults.",
+          "approvedDelta": "charter-rendering"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/lockedRegions",
+          "finding": "Locked regions are declared by the plan over its own nodes rather than by the compiler over the revision's tasks.",
+          "approvedDelta": "locked-region-declarations"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/origin",
+          "finding": "The definition origin names the plan attempt rather than the revision and scope hash.",
+          "approvedDelta": "context-identity-scheme"
+        }
+      ],
+      "unenumerated": [],
+      "launchedOnlyFields": [],
+      "materializedOnlyFields": [
+        {
+          "node": "context task-output-lookup",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t1\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t1\\\",\\\"criterionElementIds\\\":[\\\"crit-live-closeout\\\",\\\"crit-decision-replay\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t1\\\",\\\"fromContextId\\\":\\\"t17\\\"},{\\\"edgeId\\\":\\\"t19-to-t1\\\",\\\"fromContextId\\\":\\\"t19\\\"},{\\\"edgeId\\\":\\\"t20-to-t1\\\",\\\"fromContextId\\\":\\\"t20\\\"},{\\\"edgeId\\\":\\\"t21-to-t1\\\",\\\"fromContextId\\\":\\\"t21\\\"},{\\\"edgeId\\\":\\\"t22-to-t1\\\",\\\"fromContextId\\\":\\\"t22\\\"},{\\\"edgeId\\\":\\\"t23-to-t1\\\",\\\"fromContextId\\\":\\\"t23\\\"}],\\\"taskIds\\\":[\\\"t1\\\"]}\"}"
+        },
+        {
+          "node": "context task-expansion-idempotency",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t10\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t10\\\",\\\"criterionElementIds\\\":[\\\"crit-expand-idempotency\\\",\\\"crit-expand-multi-rejoin\\\",\\\"crit-caps-enforced\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t10\\\",\\\"fromContextId\\\":\\\"t8\\\"},{\\\"edgeId\\\":\\\"t9-to-t10\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t10\\\"]}\"}"
+        },
+        {
+          "node": "context task-loop-schemas",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t11\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t11\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-terminal-contract\\\",\\\"crit-loop-validation-refusals\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t11\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t11\\\"]}\"}"
+        },
+        {
+          "node": "context task-settlement-core",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t12\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":4,\\\"omitted\\\":0,\\\"total\\\":4}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t12\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-worker-judge\\\",\\\"crit-loop-pass-immutability\\\",\\\"crit-loop-final-pass-true\\\",\\\"crit-loop-runtime-terminals\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t11-to-t12\\\",\\\"fromContextId\\\":\\\"t11\\\"},{\\\"edgeId\\\":\\\"t5-to-t12\\\",\\\"fromContextId\\\":\\\"t5\\\"},{\\\"edgeId\\\":\\\"t6-to-t12\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t12\\\"]}\"}"
+        },
+        {
+          "node": "context task-loop-crash-safety",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t13\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t13\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-decision-atomic\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t12-to-t13\\\",\\\"fromContextId\\\":\\\"t12\\\"}],\\\"taskIds\\\":[\\\"t13\\\"]}\"}"
+        },
+        {
+          "node": "context task-loop-budgets",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t14\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t14\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-exhaustion-halt\\\",\\\"crit-loop-budgets\\\",\\\"crit-loop-backstop-gates\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t13-to-t14\\\",\\\"fromContextId\\\":\\\"t13\\\"}],\\\"taskIds\\\":[\\\"t14\\\"]}\"}"
+        },
+        {
+          "node": "context task-loop-repair",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t15\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t15\\\",\\\"criterionElementIds\\\":[\\\"crit-loop-freeze\\\",\\\"crit-repair-cap-ops\\\",\\\"crit-repair-predicate-audit\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t14-to-t15\\\",\\\"fromContextId\\\":\\\"t14\\\"}],\\\"taskIds\\\":[\\\"t15\\\"]}\"}"
+        },
+        {
+          "node": "context task-pass-ledger",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t16\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t16\\\",\\\"criterionElementIds\\\":[\\\"crit-ledger-injection\\\",\\\"crit-ledger-surfaces\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t15-to-t16\\\",\\\"fromContextId\\\":\\\"t15\\\"}],\\\"taskIds\\\":[\\\"t16\\\"]}\"}"
+        },
+        {
+          "node": "context task-persistence-sweep",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t17\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t17\\\",\\\"criterionElementIds\\\":[\\\"crit-roundtrip-contracts\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t17\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t12-to-t17\\\",\\\"fromContextId\\\":\\\"t12\\\"},{\\\"edgeId\\\":\\\"t5-to-t17\\\",\\\"fromContextId\\\":\\\"t5\\\"}],\\\"taskIds\\\":[\\\"t17\\\"]}\"}"
+        },
+        {
+          "node": "context task-compat-harness",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t18\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t18\\\",\\\"criterionElementIds\\\":[\\\"crit-compat-floor\\\"],\\\"incomingEdges\\\":[],\\\"taskIds\\\":[\\\"t18\\\"]}\"}"
+        },
+        {
+          "node": "context task-proof-classify",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t19\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t19\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-classify\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t19\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t19\\\"]}\"}"
+        },
+        {
+          "node": "context task-guard-schema",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t2\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t2\\\",\\\"criterionElementIds\\\":[\\\"crit-guard-authoring-refusal\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t2\\\",\\\"fromContextId\\\":\\\"t18\\\"}],\\\"taskIds\\\":[\\\"t2\\\"]}\"}"
+        },
+        {
+          "node": "context task-proof-generate-filter",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t20\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t20\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-generate-filter\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t20\\\",\\\"fromContextId\\\":\\\"t10\\\"}],\\\"taskIds\\\":[\\\"t20\\\"]}\"}"
+        },
+        {
+          "node": "context task-proof-loop",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t21\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t21\\\",\\\"criterionElementIds\\\":[\\\"crit-proof-loop-until-done\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t21\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t21\\\"]}\"}"
+        },
+        {
+          "node": "context task-read-surfaces",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t22\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t22\\\",\\\"criterionElementIds\\\":[\\\"crit-ui-render-states\\\",\\\"crit-cli-outline\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t22\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t16-to-t22\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t22\\\"]}\"}"
+        },
+        {
+          "node": "context task-docs",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t23\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t23\\\",\\\"criterionElementIds\\\":[\\\"crit-planner-docs\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t23\\\",\\\"fromContextId\\\":\\\"t10\\\"},{\\\"edgeId\\\":\\\"t15-to-t23\\\",\\\"fromContextId\\\":\\\"t15\\\"},{\\\"edgeId\\\":\\\"t16-to-t23\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t23\\\"]}\"}"
+        },
+        {
+          "node": "context task-route-projection",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t3\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":4,\\\"omitted\\\":0,\\\"total\\\":4}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t3\\\",\\\"criterionElementIds\\\":[\\\"crit-guard-subset-evaluator\\\",\\\"crit-guard-else-runtime\\\",\\\"crit-route-mixed-inputs\\\",\\\"crit-route-recursive-skip\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t3\\\",\\\"fromContextId\\\":\\\"t18\\\"},{\\\"edgeId\\\":\\\"t2-to-t3\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t3\\\"]}\"}"
+        },
+        {
+          "node": "context task-skipped-status",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t4\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t4\\\",\\\"criterionElementIds\\\":[\\\"crit-skip-irreversible\\\",\\\"crit-skip-observability\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t3-to-t4\\\",\\\"fromContextId\\\":\\\"t3\\\"}],\\\"taskIds\\\":[\\\"t4\\\"]}\"}"
+        },
+        {
+          "node": "context task-scheduler-integration",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t5\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":5,\\\"omitted\\\":0,\\\"total\\\":5}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t5\\\",\\\"criterionElementIds\\\":[\\\"crit-route-completion-gated\\\",\\\"crit-route-impossible-output-halt\\\",\\\"crit-route-land-gate\\\",\\\"crit-cardinality-halt\\\",\\\"crit-skip-completion\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t5\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t3-to-t5\\\",\\\"fromContextId\\\":\\\"t3\\\"},{\\\"edgeId\\\":\\\"t4-to-t5\\\",\\\"fromContextId\\\":\\\"t4\\\"}],\\\"taskIds\\\":[\\\"t5\\\"]}\"}"
+        },
+        {
+          "node": "context task-lints-mustrun",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t6\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t6\\\",\\\"criterionElementIds\\\":[\\\"crit-enum-coverage-warning\\\",\\\"crit-compile-skip-refusal\\\",\\\"crit-mutation-skip-lock\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t5-to-t6\\\",\\\"fromContextId\\\":\\\"t5\\\"},{\\\"edgeId\\\":\\\"t7-to-t6\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t6\\\"]}\"}"
+        },
+        {
+          "node": "context task-staging-seam",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t7\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t7\\\",\\\"criterionElementIds\\\":[\\\"crit-staging-fence\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t18-to-t7\\\",\\\"fromContextId\\\":\\\"t18\\\"},{\\\"edgeId\\\":\\\"t2-to-t7\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t7\\\"]}\"}"
+        },
+        {
+          "node": "context task-expansion-service",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t8\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t8\\\",\\\"criterionElementIds\\\":[\\\"crit-expand-happy-path\\\",\\\"crit-expand-envelope-refusals\\\",\\\"crit-quiescence-preserved\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t8\\\",\\\"fromContextId\\\":\\\"t6\\\"},{\\\"edgeId\\\":\\\"t7-to-t8\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t8\\\"]}\"}"
+        },
+        {
+          "node": "context task-child-config",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-1\",\"specPlanContextId\":\"t9\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:4c481109154b72427e06fc17219c09cd15f03f051ebd686f22c15c186d37b35a\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"e8522318-3aa6-412b-9205-2d7da99615c2\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t9\\\",\\\"criterionElementIds\\\":[\\\"crit-child-authority-disabled\\\",\\\"crit-child-config-overrides\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t9\\\",\\\"fromContextId\\\":\\\"t8\\\"}],\\\"taskIds\\\":[\\\"t9\\\"]}\"}"
+        }
+      ],
+      "postLaunchAmendments": [
+        {
+          "contextId": "context-task-output-lookup",
+          "field": "description",
+          "seedLength": 82,
+          "archivedLength": 604,
+          "seedSha256": "sha256:48c1c956b16bacbeec7c4dc4a8ef177930334063ef26c462d23c28b5629401f0",
+          "archivedSha256": "sha256:7f14ed0cc1ed975a19576395739c1ceab992ba61b03ef87b804e22620e862315",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-expansion-idempotency",
+          "field": "description",
+          "seedLength": 70,
+          "archivedLength": 950,
+          "seedSha256": "sha256:b2931e89a963b43feaffd5bbf1113a81de7f48d90d2c4508b1c3f6f058c03118",
+          "archivedSha256": "sha256:04b1eccbd671b0239bd2af5082a2e2628a06e926c76c9c250133f7dd41a03ac0",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-loop-crash-safety",
+          "field": "description",
+          "seedLength": 49,
+          "archivedLength": 929,
+          "seedSha256": "sha256:4638e2ca68d58d0b175c3bdbefa73dc475837a20acde0e8560c010548ac2861b",
+          "archivedSha256": "sha256:fa68fe68044c7c878b280a6e6f06c82348ef2a1329f1644bb67e52d61efe4713",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-loop-budgets",
+          "field": "description",
+          "seedLength": 71,
+          "archivedLength": 951,
+          "seedSha256": "sha256:45ce3edb836fbd889296460990045909a1f7ea772da803930e273d8cd0ae7826",
+          "archivedSha256": "sha256:9dea0257516fdadffe53ea48f7e7f57105e94fb354d25fc43a563fcdea150591",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-loop-repair",
+          "field": "description",
+          "seedLength": 72,
+          "archivedLength": 976,
+          "seedSha256": "sha256:3c1bab07524585e8577a7edcac3b3241b03d8bda587b095e23e85cdef8bff84c",
+          "archivedSha256": "sha256:bf176b07c1fbdd5552249312becdda2e8719fc968cb9ddbd09566608695fdebd",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-pass-ledger",
+          "field": "description",
+          "seedLength": 68,
+          "archivedLength": 972,
+          "seedSha256": "sha256:6251d4671d3cbf2c5e57c9fe11c55580f79ab59a3e848e0fb65992a068f6ff24",
+          "archivedSha256": "sha256:622d418f0bdc823647e96a7455a641b9a5b6322c80a63441db617e5e38542e18",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-persistence-sweep",
+          "field": "description",
+          "seedLength": 95,
+          "archivedLength": 999,
+          "seedSha256": "sha256:8948b20bb4ce454debc77b3e18117ac07b8a9bc3a0122881fd4d6ecae6ce9dd0",
+          "archivedSha256": "sha256:e2c675ffadd45f5cbe1774eaf723f7cedd02d25256efe8f8a2417b170b4c0d12",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-proof-generate-filter",
+          "field": "description",
+          "seedLength": 45,
+          "archivedLength": 925,
+          "seedSha256": "sha256:636e571720f4422ab82ba50b65f99da64939122ccec000b2e80c785af721b8d6",
+          "archivedSha256": "sha256:bb4563fc93d39328abda83560e00c630c6babf2afb3edf3eb9542aedd688bc90",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-proof-loop",
+          "field": "description",
+          "seedLength": 54,
+          "archivedLength": 958,
+          "seedSha256": "sha256:f239de8b9023c65a4b129300c6ba7ebcbd85dfbe751d00e9bbce085369b8859f",
+          "archivedSha256": "sha256:4909efd9fc56bb58d850cb2a059df14e661531949fc6a41c90ba0dcb06e3feae",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-read-surfaces",
+          "field": "description",
+          "seedLength": 64,
+          "archivedLength": 968,
+          "seedSha256": "sha256:cf41d643fbf068830e70efb3dd42783110322194e25f31b137a7820ec4faf5c2",
+          "archivedSha256": "sha256:0acb02e78d49ef2837eb504e85aa48d1b0f7bc740462e83a32754bf615b8c71c",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-task-docs",
+          "field": "description",
+          "seedLength": 68,
+          "archivedLength": 972,
+          "seedSha256": "sha256:a0594db2525587900fd9830eff8f336d4fa5b15d87db15c0845e47a88d2bd6d5",
+          "archivedSha256": "sha256:8d98ba2ed6e95348119308f4e2e086c4e88d1d56b6c7a34aff96133d3f21bd83",
+          "archivedExtendsSeed": true
+        }
+      ],
+      "notCompared": [
+        {
+          "path": "/executionContexts/*/description",
+          "reason": "The context pack is the bounded implementer aid the plan materializer assembles from the criteria a context owns, and whose omissions its own pack manifest reports; the compiler's one-line context summary has no counterpart in it, so a byte comparison would report a deliberate replacement rather than a compilation difference. KNOWN GAP, not a claim of irrelevance: this field IS execution-affecting — iteration-prompt.ts and validator-runner.ts both inject it as the agent's `Goal:` line — so prompt content can drift here without failing this harness. Closing it needs a fifth approved delta, which acceptance criterion 3's enumerated four do not admit; that is a human decision, and this entry is where it is recorded until it is made."
+        },
+        {
+          "path": "/executionContexts/*/metadata and /tasks/*/metadata",
+          "reason": "Both sides encode their provenance here in their own vocabulary — the compiler's spec origin map, the plan's source map — so a byte comparison would compare two vocabularies rather than two plans. What the blocks MEAN is compared: task-element identity and criterion ownership are read out of these blocks on both sides and are exactly what the context-membership and criterion-coverage dimensions check."
+        }
+      ]
+    },
+    {
+      "case": "workflow-validator-cohorts",
+      "launchedFrom": {
+        "archivedExecutionId": "6462969a-9395-41ca-8a7d-8f8a24163116",
+        "sessionName": "Ticket: Workflow-vision roadmap: D0-D2 delivered; pick up at D3/D4",
+        "archivedStatus": "completed",
+        "archivedAt": "2026-08-06T14:04:41.676Z",
+        "seedDefinitionId": "93844baf-e622-4172-8adf-3a86f40ab829",
+        "seedDefinitionRevision": 2,
+        "liveRevisionAtArchive": 4,
+        "definitionRecordUpdatedAt": "2026-08-03T23:25:30.511Z",
+        "capturedAt": "2026-08-08"
+      },
+      "counts": {
+        "launchedContexts": 21,
+        "materializedContexts": 21,
+        "launchedTasks": 21,
+        "materializedTasks": 21,
+        "launchedEdges": 28,
+        "materializedEdges": 28,
+        "comparedCriteria": 30
+      },
+      "differences": [
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-assignment-schemas",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-assignment-schemas",
+          "materialized": "t1"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-assignment-schemas",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t1"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-assignment-schemas",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-live-edit-reset",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-live-edit-reset",
+          "materialized": "t10"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-live-edit-reset",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t10"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-live-edit-reset",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-ui-surfaces",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-ui-surfaces",
+          "materialized": "t11"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-ui-surfaces",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t11"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-ui-surfaces",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-delete-preview",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-delete-preview",
+          "materialized": "t12"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-delete-preview",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t12"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-delete-preview",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-cli-provenance-skill",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-cli-provenance-skill",
+          "materialized": "t13"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-cli-provenance-skill",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t13"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-cli-provenance-skill",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-adversarial-live-proofs",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-adversarial-live-proofs",
+          "materialized": "t14"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-adversarial-live-proofs",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t14"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-adversarial-live-proofs",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-preflight-spec-a",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-preflight-spec-a",
+          "materialized": "t15"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-preflight-spec-a",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t15"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-preflight-spec-a",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-cohort-conclusion",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-cohort-conclusion",
+          "materialized": "t16"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-cohort-conclusion",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t16"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-cohort-conclusion",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-envelope-enforcement",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-envelope-enforcement",
+          "materialized": "t17"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-envelope-enforcement",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t17"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-envelope-enforcement",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-ui-inspector",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-ui-inspector",
+          "materialized": "t18"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-ui-inspector",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t18"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-ui-inspector",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-live-proofs",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-live-proofs",
+          "materialized": "t19"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-live-proofs",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t19"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-live-proofs",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-composer-seeding",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-composer-seeding",
+          "materialized": "t2"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-composer-seeding",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t2"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-composer-seeding",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-migrated-accounting-proof",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-migrated-accounting-proof",
+          "materialized": "t20"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-migrated-accounting-proof",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t20"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-migrated-accounting-proof",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-final-audit",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-final-audit",
+          "materialized": "t21"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-final-audit",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t21"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-final-audit",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-lane-identity",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-lane-identity",
+          "materialized": "t3"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-lane-identity",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t3"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-lane-identity",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-transport-handoff",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-transport-handoff",
+          "materialized": "t4"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-transport-handoff",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t4"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-transport-handoff",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-round-engine",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-round-engine",
+          "materialized": "t5"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-round-engine",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t5"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-round-engine",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-events-evidence",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-events-evidence",
+          "materialized": "t6"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-events-evidence",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t6"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-events-evidence",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-readonly-envelope",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-readonly-envelope",
+          "materialized": "t7"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-readonly-envelope",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t7"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-readonly-envelope",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-questions-per-lane",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-questions-per-lane",
+          "materialized": "t8"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-questions-per-lane",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t8"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-questions-per-lane",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-migration-cutover",
+          "finding": "The two paths give this context different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "context-workflow-validator-cohorts-task-migration-cutover",
+          "materialized": "t9"
+        },
+        {
+          "dimension": "context-membership",
+          "subject": "workflow-validator-cohorts-task-migration-cutover",
+          "finding": "The context origin URI names a different source identity.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec://workflow-validator-cohorts/revisions/84bab9bb-81ce-4121-a93c-82a3b2999999?scope=4dedd1c9c409d274b777e7a457fa549cce0c769d9b7f5f447a8978d59e26da2f",
+          "materialized": "spec-plan://8a301f24-3083-4326-8c56-77d01808eb99/attempts/delivery-plan-2?plan=sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db#t9"
+        },
+        {
+          "dimension": "criterion-coverage",
+          "subject": "workflow-validator-cohorts-task-migration-cutover",
+          "finding": "The acceptance contract is the launched one without the compiler's regrouping preamble.",
+          "approvedDelta": "prerequisite-apology-removal"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-assignment-schemas",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-assignment-schemas",
+          "materialized": "t1"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-live-edit-reset",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-live-edit-reset",
+          "materialized": "t10"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-ui-surfaces",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-ui-surfaces",
+          "materialized": "t11"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-delete-preview",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-delete-preview",
+          "materialized": "t12"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-cli-provenance-skill",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-cli-provenance-skill",
+          "materialized": "t13"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-adversarial-live-proofs",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-adversarial-live-proofs",
+          "materialized": "t14"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-preflight-spec-a",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-preflight-spec-a",
+          "materialized": "t15"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-cohort-conclusion",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-cohort-conclusion",
+          "materialized": "t16"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-envelope-enforcement",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-envelope-enforcement",
+          "materialized": "t17"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-ui-inspector",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-ui-inspector",
+          "materialized": "t18"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-live-proofs",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-live-proofs",
+          "materialized": "t19"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-composer-seeding",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-composer-seeding",
+          "materialized": "t2"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-migrated-accounting-proof",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-migrated-accounting-proof",
+          "materialized": "t20"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-final-audit",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-final-audit",
+          "materialized": "t21"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-lane-identity",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-lane-identity",
+          "materialized": "t3"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-transport-handoff",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-transport-handoff",
+          "materialized": "t4"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-round-engine",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-round-engine",
+          "materialized": "t5"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-events-evidence",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-events-evidence",
+          "materialized": "t6"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-readonly-envelope",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-readonly-envelope",
+          "materialized": "t7"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-questions-per-lane",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-questions-per-lane",
+          "materialized": "t8"
+        },
+        {
+          "dimension": "instruction-content",
+          "subject": "workflow-validator-cohorts-task-migration-cutover",
+          "finding": "The two paths give this task different ids.",
+          "approvedDelta": "context-identity-scheme",
+          "launched": "spec-task-workflow-validator-cohorts-task-migration-cutover",
+          "materialized": "t9"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/charter",
+          "finding": "The charter is authored on the plan instead of synthesized from the revision's intent sections at compile time.",
+          "approvedDelta": "charter-rendering"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/workflowConfig",
+          "finding": "The plan pins its own validation selection into the compiled definition; the compiler left it to the workflow defaults.",
+          "approvedDelta": "charter-rendering"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/lockedRegions",
+          "finding": "Locked regions are declared by the plan over its own nodes rather than by the compiler over the revision's tasks.",
+          "approvedDelta": "locked-region-declarations"
+        },
+        {
+          "dimension": "governance-envelope",
+          "subject": "/origin",
+          "finding": "The definition origin names the plan attempt rather than the revision and scope hash.",
+          "approvedDelta": "context-identity-scheme"
+        }
+      ],
+      "unenumerated": [],
+      "launchedOnlyFields": [
+        {
+          "node": "context workflow-validator-cohorts-task-preflight-spec-a",
+          "field": "iterationPolicy",
+          "value": "{\"continuity\":{\"contextLimitTokens\":200000,\"enabled\":true},\"maxIterations\":20}"
+        }
+      ],
+      "materializedOnlyFields": [
+        {
+          "node": "context workflow-validator-cohorts-task-assignment-schemas",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t1\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t1\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-whole-unit-cascade\\\",\\\"workflow-validator-cohorts-crit-whole-set-semantics\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t15-to-t1\\\",\\\"fromContextId\\\":\\\"t15\\\"}],\\\"taskIds\\\":[\\\"t1\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-live-edit-reset",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t10\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t10\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-edit-staging\\\",\\\"workflow-validator-cohorts-crit-per-assignment-reset\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t8-to-t10\\\",\\\"fromContextId\\\":\\\"t8\\\"}],\\\"taskIds\\\":[\\\"t10\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-ui-surfaces",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t11\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t11\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-builder-inspector\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t10-to-t11\\\",\\\"fromContextId\\\":\\\"t10\\\"}],\\\"taskIds\\\":[\\\"t11\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-delete-preview",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t12\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t12\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-delete-enumeration\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t12\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t9-to-t12\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t12\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-cli-provenance-skill",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t13\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t13\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-validate-errors\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t13\\\",\\\"fromContextId\\\":\\\"t2\\\"}],\\\"taskIds\\\":[\\\"t13\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-adversarial-live-proofs",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t14\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t14\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-adversarial-profiles\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t14\\\",\\\"fromContextId\\\":\\\"t17\\\"}],\\\"taskIds\\\":[\\\"t14\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-preflight-spec-a",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t15\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t15\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-spec-a-preflight\\\"],\\\"incomingEdges\\\":[],\\\"taskIds\\\":[\\\"t15\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-cohort-conclusion",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t16\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t16\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-round-conclusion\\\",\\\"workflow-validator-cohorts-crit-single-iteration-charge\\\",\\\"workflow-validator-cohorts-crit-cohort-parallel-launch\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t5-to-t16\\\",\\\"fromContextId\\\":\\\"t5\\\"}],\\\"taskIds\\\":[\\\"t16\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-envelope-enforcement",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t17\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t17\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-mutation-detected\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t7-to-t17\\\",\\\"fromContextId\\\":\\\"t7\\\"}],\\\"taskIds\\\":[\\\"t17\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-ui-inspector",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t18\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t18\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-inspector-display\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t11-to-t18\\\",\\\"fromContextId\\\":\\\"t11\\\"}],\\\"taskIds\\\":[\\\"t18\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-live-proofs",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t19\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t19\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-two-specialists\\\",\\\"workflow-validator-cohorts-crit-live-implementer-persona\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t17-to-t19\\\",\\\"fromContextId\\\":\\\"t17\\\"},{\\\"edgeId\\\":\\\"t18-to-t19\\\",\\\"fromContextId\\\":\\\"t18\\\"}],\\\"taskIds\\\":[\\\"t19\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-composer-seeding",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t2\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t2\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-global-project-scope-rule\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t1-to-t2\\\",\\\"fromContextId\\\":\\\"t1\\\"}],\\\"taskIds\\\":[\\\"t2\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-migrated-accounting-proof",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t20\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t20\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-live-migrated-accounting\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t20\\\",\\\"fromContextId\\\":\\\"t6\\\"},{\\\"edgeId\\\":\\\"t9-to-t20\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t20\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-final-audit",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t21\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t21\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-persistence-contract\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t12-to-t21\\\",\\\"fromContextId\\\":\\\"t12\\\"},{\\\"edgeId\\\":\\\"t13-to-t21\\\",\\\"fromContextId\\\":\\\"t13\\\"},{\\\"edgeId\\\":\\\"t14-to-t21\\\",\\\"fromContextId\\\":\\\"t14\\\"},{\\\"edgeId\\\":\\\"t19-to-t21\\\",\\\"fromContextId\\\":\\\"t19\\\"},{\\\"edgeId\\\":\\\"t20-to-t21\\\",\\\"fromContextId\\\":\\\"t20\\\"}],\\\"taskIds\\\":[\\\"t21\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-lane-identity",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t3\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t3\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-per-assignment-lanes\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t2-to-t3\\\",\\\"fromContextId\\\":\\\"t2\\\"},{\\\"edgeId\\\":\\\"t9-to-t3\\\",\\\"fromContextId\\\":\\\"t9\\\"}],\\\"taskIds\\\":[\\\"t3\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-transport-handoff",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t4\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t4\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-seed-snapshot-immunity\\\",\\\"workflow-validator-cohorts-crit-transport-composition\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t3-to-t4\\\",\\\"fromContextId\\\":\\\"t3\\\"}],\\\"taskIds\\\":[\\\"t4\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-round-engine",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t5\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t5\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-round-determinism\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t4-to-t5\\\",\\\"fromContextId\\\":\\\"t4\\\"}],\\\"taskIds\\\":[\\\"t5\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-events-evidence",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t6\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":3,\\\"omitted\\\":0,\\\"total\\\":3}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t6\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-event-dimension\\\",\\\"workflow-validator-cohorts-crit-infra-retry-isolation\\\",\\\"workflow-validator-cohorts-crit-repair-evidence\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t6\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t6\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-readonly-envelope",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t7\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t7\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-readonly-capability\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t16-to-t7\\\",\\\"fromContextId\\\":\\\"t16\\\"}],\\\"taskIds\\\":[\\\"t7\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-questions-per-lane",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t8\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":1,\\\"omitted\\\":0,\\\"total\\\":1}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t8\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-question-mutex\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t6-to-t8\\\",\\\"fromContextId\\\":\\\"t6\\\"}],\\\"taskIds\\\":[\\\"t8\\\"]}\"}"
+        },
+        {
+          "node": "context workflow-validator-cohorts-task-migration-cutover",
+          "field": "metadata",
+          "value": "{\"specPlanAttemptId\":\"delivery-plan-2\",\"specPlanContextId\":\"t9\",\"specPlanContextType\":\"delivery\",\"specPlanHash\":\"sha256:36e4a9778567dcf7bdc76592426e7fd09f64daa9f36e135765da3cd2e490a1db\",\"specPlanPackManifest\":\"{\\\"included\\\":2,\\\"omitted\\\":0,\\\"total\\\":2}\",\"specPlanPinnedRevisionId\":\"84bab9bb-81ce-4121-a93c-82a3b2999999\",\"specPlanSourceMap\":\"{\\\"contextId\\\":\\\"t9\\\",\\\"criterionElementIds\\\":[\\\"workflow-validator-cohorts-crit-migration-roundtrip\\\",\\\"workflow-validator-cohorts-crit-legacy-refused\\\"],\\\"incomingEdges\\\":[{\\\"edgeId\\\":\\\"t1-to-t9\\\",\\\"fromContextId\\\":\\\"t1\\\"}],\\\"taskIds\\\":[\\\"t9\\\"]}\"}"
+        }
+      ],
+      "postLaunchAmendments": [
+        {
+          "contextId": "context-workflow-validator-cohorts-task-live-edit-reset",
+          "field": "acceptanceCriteria",
+          "seedLength": 1408,
+          "archivedLength": 3030,
+          "seedSha256": "sha256:a257367c05c1e1e4527213fbc15976246757614e49d2a546e573c4f0d6fa79e7",
+          "archivedSha256": "sha256:becabccef9abe313708feb434d20e6558ee852777775125f2e863d495e6fd1cc",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-ui-surfaces",
+          "field": "acceptanceCriteria",
+          "seedLength": 685,
+          "archivedLength": 2307,
+          "seedSha256": "sha256:1eac170b2979db6d4189b2786041167818ab5740c32bfb637164497e810a920f",
+          "archivedSha256": "sha256:1d3a000b93a422f8ec75462038191e7dbcf29649d94a3cf5e58ff1a26fb314fe",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-delete-preview",
+          "field": "acceptanceCriteria",
+          "seedLength": 1094,
+          "archivedLength": 2716,
+          "seedSha256": "sha256:730064673add4ed68a8485cd4f0ccf713b109c5f39ce163b8058de1baa77e743",
+          "archivedSha256": "sha256:03c4602503bee9f6c157e312c675951f81f33fb1add2b38c164dd522de3ce549",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-adversarial-live-proofs",
+          "field": "acceptanceCriteria",
+          "seedLength": 740,
+          "archivedLength": 2362,
+          "seedSha256": "sha256:78e1a2a1a75ad0664259b40a326f2a4799ee549ca7214a0437e31ed36df0afd8",
+          "archivedSha256": "sha256:73b3d6bd84cab025b5ad988ccbe6e5e58e900b9a9b33478e865b3cf0459576fe",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-cohort-conclusion",
+          "field": "acceptanceCriteria",
+          "seedLength": 1968,
+          "archivedLength": 3590,
+          "seedSha256": "sha256:0382547be2d4593090b0b4806dbae8fad228418a0424280214d5c891edfedf14",
+          "archivedSha256": "sha256:667a689c067bc9a9a4f4061d38e23f4c65ec0934c6b4f8b5b9d15dcd78d6284f",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-envelope-enforcement",
+          "field": "acceptanceCriteria",
+          "seedLength": 882,
+          "archivedLength": 2504,
+          "seedSha256": "sha256:5d6bbdd9e3700f381c5e7ce7f474da44955288679f9635edf56f05741c96b701",
+          "archivedSha256": "sha256:86749b292535fb16a6d7878fc604c0a22832a0e216298b82d6fc1c7fa91df29a",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-ui-inspector",
+          "field": "acceptanceCriteria",
+          "seedLength": 781,
+          "archivedLength": 2403,
+          "seedSha256": "sha256:7b8197900c0526ca46382905a4f85b22449b2a76bd62076a5d2053b6718a69ab",
+          "archivedSha256": "sha256:da7ca6e1eb5418daffb8cf31e385ae1d0d15dc6c8557440d3673275cccc5fdf4",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-live-proofs",
+          "field": "acceptanceCriteria",
+          "seedLength": 1316,
+          "archivedLength": 2938,
+          "seedSha256": "sha256:ab40184583b485c8c683715530ee1b0e00964034715d1b6e4408eee0f223d82a",
+          "archivedSha256": "sha256:30fe557fd3e4c889ff6576f97c8bfa3060691fb5000394a0770b6f2f9b0512ed",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-migrated-accounting-proof",
+          "field": "acceptanceCriteria",
+          "seedLength": 798,
+          "archivedLength": 2420,
+          "seedSha256": "sha256:2e4101a44a3e62ae8bd7bfa844095fc90712e23e63efa5948bd3b4233ee4c711",
+          "archivedSha256": "sha256:b93f639f7695fcd5d398216754160ef097857a06a1b25255333acea6ea6da320",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-final-audit",
+          "field": "acceptanceCriteria",
+          "seedLength": 570,
+          "archivedLength": 1313,
+          "seedSha256": "sha256:a67138799a0f52065cebc6b1dca4fa2d123f393f4d6b01cc6011177c559485f7",
+          "archivedSha256": "sha256:6d0b59bbacec72adac323ce70c0e82808edc7f52a0d2757b655937a05fbb4958",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-transport-handoff",
+          "field": "acceptanceCriteria",
+          "seedLength": 1636,
+          "archivedLength": 3258,
+          "seedSha256": "sha256:c174f5d04733e81081d911deb4701dacd3f2639dd75627bdea7b2670a82b097a",
+          "archivedSha256": "sha256:cd1846f31049217fe36fc1a78ad4fb44de8f2104f6b9b3d48a28825c23487cb3",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-round-engine",
+          "field": "acceptanceCriteria",
+          "seedLength": 1060,
+          "archivedLength": 2682,
+          "seedSha256": "sha256:390ebb3098be2a55fa8459af83dde515a37017ef2c86b819cc520d947f12887a",
+          "archivedSha256": "sha256:3ea579ef0ab71d0d7d36fd50555d758645259aaa7e050a85921478f682444ff0",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-events-evidence",
+          "field": "acceptanceCriteria",
+          "seedLength": 2133,
+          "archivedLength": 3755,
+          "seedSha256": "sha256:83c9d56aac0ea48155771c6034f255732d9dcad6b59bf08c308eb28c9b21a748",
+          "archivedSha256": "sha256:fc48debfe451aee6438b7401c9461b46fcf52bfbcb622e1a4be6be314aafe9f4",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-readonly-envelope",
+          "field": "acceptanceCriteria",
+          "seedLength": 732,
+          "archivedLength": 2354,
+          "seedSha256": "sha256:d2baad2a89516c7c27cdad292d4d3130fb01a01eb2eda2ac4c6960d5cb45e485",
+          "archivedSha256": "sha256:dd500b3eae5ad6e24e9492f100d18e1e3325100bdf9f8de96f84df5b6fb2d2fa",
+          "archivedExtendsSeed": true
+        },
+        {
+          "contextId": "context-workflow-validator-cohorts-task-questions-per-lane",
+          "field": "acceptanceCriteria",
+          "seedLength": 1099,
+          "archivedLength": 2721,
+          "seedSha256": "sha256:8ff67bf0ee63cedb202708a5bce15984466954f6462261d2b712c2a93ead3412",
+          "archivedSha256": "sha256:62ce7f045247b94379e8f5f25f599eca5b4df8993167399ea7a0eb4107e4e7b6",
+          "archivedExtendsSeed": true
+        }
+      ],
+      "notCompared": [
+        {
+          "path": "/executionContexts/*/description",
+          "reason": "The context pack is the bounded implementer aid the plan materializer assembles from the criteria a context owns, and whose omissions its own pack manifest reports; the compiler's one-line context summary has no counterpart in it, so a byte comparison would report a deliberate replacement rather than a compilation difference. KNOWN GAP, not a claim of irrelevance: this field IS execution-affecting — iteration-prompt.ts and validator-runner.ts both inject it as the agent's `Goal:` line — so prompt content can drift here without failing this harness. Closing it needs a fifth approved delta, which acceptance criterion 3's enumerated four do not admit; that is a human decision, and this entry is where it is recorded until it is made."
+        },
+        {
+          "path": "/executionContexts/*/metadata and /tasks/*/metadata",
+          "reason": "Both sides encode their provenance here in their own vocabulary — the compiler's spec origin map, the plan's source map — so a byte comparison would compare two vocabularies rather than two plans. What the blocks MEAN is compared: task-element identity and criterion ownership are read out of these blocks on both sides and are exactly what the context-membership and criterion-coverage dimensions check."
+        }
+      ]
+    }
+  ]
+}

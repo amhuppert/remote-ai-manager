@@ -116,6 +116,8 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         paths: ["/tasks/task-1/instructions"],
         sourceUri: "workflow-source:maximal/revision/2",
         reason: "Task instructions come from the source workflow",
+        instruction:
+          "Amend workflow-source:maximal/revision/2 and recompile the definition.",
       },
     ],
     workflowConfig: {
@@ -227,6 +229,13 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
         origin: {
           sourceUri: "workflow-source:maximal/context/ctx-1",
           label: "Maximal context source",
+        },
+        // Compiler provenance, opaque to storage but persisted with the
+        // definition: an exactly-materialized plan reads its source map back
+        // out of here, so a dropped column would strand a run's criteria.
+        metadata: {
+          specPlanContextId: "ctx-authored",
+          specPlanSourceMap: "{}",
         },
         implementer: {
           id: "context-implementer",

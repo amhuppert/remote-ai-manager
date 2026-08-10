@@ -193,6 +193,7 @@ describe("SpecDetailViews", () => {
       "Overview",
       "Review",
       "Questions & assumptions",
+      "Delivery plan",
       "Execution",
       "Gate policy",
       "History",

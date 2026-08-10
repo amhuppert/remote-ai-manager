@@ -15,6 +15,7 @@ import { createNotificationsRepo } from "@/lib/notifications/repo";
 import { createNotificationsService } from "@/lib/notifications/service";
 import { createSpecApprovalNotifier } from "@/lib/notifications/spec-approvals";
 import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
+import { createSpecDeliveryPlanRepo } from "@/lib/state-store/spec-delivery-plan-repo";
 import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
@@ -28,7 +29,18 @@ import type {
 } from "@/lib/workflow-graph/storage";
 import type { WorkflowDefinitionRecord } from "@/lib/workflow-graph/definition-schemas";
 import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
-import { readCompiledOriginMap } from "./compiler";
+import {
+  deliveryPlanDocumentSchema,
+  type DeliveryPlanDocument,
+} from "./delivery-plan";
+import {
+  deliveryPlanCompiledHash,
+  materializeDeliveryPlan,
+  readDeliveryPlanSourceMap,
+} from "./delivery-plan-materializer";
+import type { DeliveryPlanLaunchCandidate } from "./delivery-plan-service";
+import type { CompiledOriginMapEntry } from "./compiler";
+import type { SpecExecutionRow } from "./schemas";
 import { createEvidenceIngestService } from "./evidence-ingest";
 import {
   createEvidenceService,
@@ -42,9 +54,21 @@ import {
   type ExecutionService,
   type ExecutionServiceDeps,
   type ExecutionWorkflowDefinitions,
+  type SpecDeliveryPlanLaunchPort,
+  type SpecWorkflowCleanupObservation,
 } from "./execution-service";
 
 type Db = InstanceType<typeof Database>;
+
+/**
+ * Where the abandon coordinator's cleanup port reports the linked run. Reset
+ * per test to the post-abort resting state; a test that needs a live,
+ * slot-owning run reassigns it.
+ */
+let workflowPlacement: SpecWorkflowCleanupObservation = {
+  kind: "archived",
+  status: "aborted",
+};
 
 const projectPath = "/repos/execution-service";
 const specId = "spec-execution-service";
@@ -61,13 +85,16 @@ describe("ExecutionService start", () => {
   let deps: ExecutionServiceDeps;
   let service: ExecutionService;
   let definitions: InMemoryWorkflowDefinitions;
+  let approvedLaunch: DeliveryPlanLaunchCandidate;
   let nextId: number;
 
   beforeEach(() => {
+    workflowPlacement = { kind: "archived", status: "aborted" };
     db = _createTestDb();
     seedSpec(db);
     const writeQueue = createWriteQueue();
     definitions = new InMemoryWorkflowDefinitions();
+    approvedLaunch = approvedDeliveryPlanLaunch();
     nextId = 0;
     const eventsRepo = createSpecEventsRepo(db);
     deps = {
@@ -76,6 +103,9 @@ describe("ExecutionService start", () => {
       linksRepo: createSpecLinksRepo(db),
       eventsRepo,
       reviewRepo: createSpecReviewRepo(db),
+      plansRepo: createSpecDeliveryPlanRepo(db, {
+        appendEvent: (event) => eventsRepo.appendInTransaction(event),
+      }),
       events: createSpecEventsPublisher({
         appendInTransaction: eventsRepo.appendInTransaction,
         publish: () => ({ delivered: true }),
@@ -86,11 +116,28 @@ describe("ExecutionService start", () => {
       sessionExists: async (sessionName) => sessionName === "session-execution",
       getWorkflowExecutionStatus: vi.fn(async () => null),
       getPublishedMerge: vi.fn(async () => null),
+      // The abandon coordinator's forward seam. The default models a run that
+      // already aborted and auto-released its slot — the state the reverse
+      // abort hook reports into — so cleanup skips forward to finalize. Tests
+      // that need a live, slot-owning run set `workflowPlacement` themselves.
+      workflowCleanup: {
+        observe: async () => workflowPlacement,
+        abort: async () => {
+          workflowPlacement = { kind: "archived", status: "aborted" };
+          return { ok: true };
+        },
+        release: async () => {
+          workflowPlacement = { kind: "archived", status: "aborted" };
+          return { ok: true };
+        },
+      },
       nextId: (kind) => `${kind}-${++nextId}`,
       now: () => now,
       runInImmediateTransaction<T>(fn: () => T): T {
         return db.transaction(fn).immediate();
       },
+      deliveryPlanLaunch: approvedDeliveryPlanPort(() => approvedLaunch),
+      executionStartGate: deliveryPlanExecutionGate(),
     };
     service = createExecutionService(deps);
   });
@@ -99,7 +146,6 @@ describe("ExecutionService start", () => {
     const result = await service.start({
       specId,
       revisionId,
-      scope: fullScope(),
       actor: { kind: "agent", conversationId: "conversation-start" },
       sessionName: "no-such-session",
     });
@@ -119,20 +165,20 @@ describe("ExecutionService start", () => {
     ).toEqual({ count: 0 });
   });
 
-  it("16.3 refuses a revision that is not Approved before preparing a definition", async () => {
+  it("launches the approved attempt pin while a later revision is proposed", async () => {
     const result = await service.start({
       specId,
       revisionId: proposedRevisionId,
-      scope: fullScope(),
       actor: { kind: "human" },
       sessionName: "session-execution",
     });
 
     expect(result).toMatchObject({
-      ok: false,
-      refusal: { code: "revision_not_approved" },
+      ok: true,
+      execution: { revision_id: revisionId },
+      deliveryPlan: { attemptId: approvedLaunch.attemptId },
     });
-    expect(definitions.records).toHaveLength(0);
+    expect(definitions.records).toHaveLength(1);
   });
 
   it("3.10 refuses execution start for an abandoned spec before preparing a definition", async () => {
@@ -154,74 +200,38 @@ describe("ExecutionService start", () => {
     ).toHaveLength(0);
   });
 
-  it.each([
-    {
-      label: "missing dependency",
-      scope: {
-        selectedTaskIds: ["task-2"],
-        selectedCriterionIds: ["criterion-2"],
-        exclusionDispositions: [
-          { criterionId: "criterion-1", disposition: "deferred" as const },
-          { criterionId: "criterion-3", disposition: "deferred" as const },
-        ],
-      },
-      message: "native-sdd/T2 requires selected dependency native-sdd/T1.",
-    },
-    {
-      label: "uncovered selected criterion",
-      scope: {
-        selectedTaskIds: ["task-1"],
-        selectedCriterionIds: ["criterion-2"],
-        exclusionDispositions: [
-          { criterionId: "criterion-1", disposition: "deferred" as const },
-          { criterionId: "criterion-3", disposition: "deferred" as const },
-        ],
-      },
-      message:
-        "Selected criterion native-sdd/R1.2 has no selected covering task.",
-    },
-    {
-      label: "missing exclusion disposition",
-      scope: {
-        selectedTaskIds: ["task-1"],
-        selectedCriterionIds: ["criterion-1"],
-        exclusionDispositions: [
-          { criterionId: "criterion-3", disposition: "deferred" as const },
-        ],
-      },
-      message:
-        "Excluded criterion native-sdd/R1.2 needs a deferred, delivered_elsewhere, or waived disposition.",
-    },
-    {
-      label: "undefined smaller unit",
-      scope: {
-        selectedTaskIds: ["task-unknown"],
-        selectedCriterionIds: [],
-        exclusionDispositions: [
-          { criterionId: "criterion-1", disposition: "deferred" as const },
-          { criterionId: "criterion-2", disposition: "deferred" as const },
-          { criterionId: "criterion-3", disposition: "deferred" as const },
-        ],
-      },
-      message: "Selected task task-unknown is not in the approved plan.",
-    },
-  ])("16.4-16.7 refuses $label", async ({ scope, message }) => {
-    const result = await service.start({
-      specId,
-      revisionId,
-      scope,
-      actor: { kind: "human" },
-      sessionName: "session-execution",
-    });
+  it("refuses a spec with no delivery-plan attempt and names the importer remedy", async () => {
+    deps.deliveryPlanLaunch = {
+      resolveLaunch: async () => ({
+        kind: "refused",
+        refusal: {
+          code: "not_found",
+          unmetConditions: ["Spec native-sdd has no delivery plan attempt."],
+          instruction:
+            "Open one with `cctl spec plan open native-sdd --seed-from last`.",
+        },
+      }),
+      park: async () => ({ ok: true, value: parkedPlanNextAct() }),
+      recordLaunch: async () => ({ ok: true, value: null }),
+    };
+    service = createExecutionService(deps);
+
+    const result = await service.start(startInput());
 
     expect(result).toMatchObject({
       ok: false,
       refusal: {
-        code: "invalid_scope",
-        unmetConditions: expect.arrayContaining([message]),
+        code: "not_found",
       },
     });
+    if (result.ok) throw new Error("start should require a delivery plan");
+    expect(result.refusal.instruction).toContain(
+      "cctl spec plan open native-sdd --seed-from last",
+    );
     expect(definitions.records).toHaveLength(0);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM spec_executions").get(),
+    ).toEqual({ count: 0 });
   });
 
   it("16.2 enforces one active execution inside the step-2 transaction", async () => {
@@ -247,9 +257,9 @@ describe("ExecutionService start", () => {
     const result = await service.start(startInput());
     if (!result.ok) throw new Error("start was refused");
 
-    expect(result.definition.definition.approvalRequired).toBe(true);
-    expect(result.definition.definition.origin?.sourceUri).toMatch(
-      /^spec-execution:\/\/spec-execution-service\/revisions\/revision-approved\?scope=[a-f0-9]{64}$/,
+    expect(result.definition.definition.approvalRequired).toBe(false);
+    expect(result.definition.definition.origin?.sourceUri).toBe(
+      approvedLaunch.definition.origin?.sourceUri,
     );
     expect(result.execution).toMatchObject({
       spec_id: specId,
@@ -276,7 +286,7 @@ describe("ExecutionService start", () => {
     expect(deps.eventsRepo.findBySpecId(specId)).toHaveLength(1);
   });
 
-  it("17.3 leaves definition approval off when the execution-start dial is Notify", async () => {
+  it("launches the stored candidate unchanged when the current gate policy differs", async () => {
     db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
       '{"preset":"fast-path"}',
       specId,
@@ -288,26 +298,15 @@ describe("ExecutionService start", () => {
       ok: true,
       definition: { definition: { approvalRequired: false } },
     });
+    if (!result.ok) throw new Error("start was refused");
+    expect(deliveryPlanCompiledHash(result.definition.definition)).toBe(
+      approvedLaunch.candidate.compiledDefinitionHash,
+    );
   });
 
-  it("reuses the inert orphan definition after a crash between steps", async () => {
-    let crash = true;
-    deps.afterDefinitionPrepared = async () => {
-      if (!crash) return;
-      crash = false;
-      throw new Error("simulated crash after definition write");
-    };
-    service = createExecutionService(deps);
-
-    await expect(service.start(startInput())).rejects.toThrow(
-      "simulated crash after definition write",
-    );
+  it("reuses an inert definition carrying the exact approved candidate", async () => {
+    await definitions.create(definitionDraft(approvedLaunch.definition));
     expect(definitions.records).toHaveLength(1);
-    expect(
-      db
-        .prepare("SELECT id FROM spec_executions WHERE spec_id = ?")
-        .all(specId),
-    ).toHaveLength(0);
 
     const retry = await service.start(startInput());
     expect(retry).toMatchObject({ ok: true });
@@ -316,17 +315,8 @@ describe("ExecutionService start", () => {
     expect(definitions.updateCount).toBe(0);
   });
 
-  it("replaces a changed inert orphan by the same origin key before retry commit", async () => {
-    let crash = true;
-    deps.afterDefinitionPrepared = async () => {
-      if (!crash) return;
-      crash = false;
-      throw new Error("simulated crash after definition write");
-    };
-    service = createExecutionService(deps);
-    await expect(service.start(startInput())).rejects.toThrow(
-      "simulated crash after definition write",
-    );
+  it("replaces a changed inert definition with the approved candidate bytes", async () => {
+    await definitions.create(definitionDraft(approvedLaunch.definition));
     definitions.records[0]!.definition.executionContexts[0]!.title =
       "Changed orphan title";
 
@@ -365,13 +355,90 @@ describe("ExecutionService start", () => {
     expect(db.prepare("SELECT * FROM spec_events").all()).toEqual([]);
   });
 
+  it("pins the plan's own revision, not the newer one the request named", async () => {
+    // A revision approved after the attempt opened is what the CLI resolves
+    // and sends. The launch persists the plan's pin, so reading the request's
+    // revision for the number would pair an old id with a newer number.
+    insertRevision(db, "revision-newer", 3, "approved");
+
+    await service.start({
+      specId,
+      revisionId: "revision-newer",
+      actor: { kind: "agent" as const, conversationId: "conversation-start" },
+      sessionName: "session-execution",
+      projectName: "execution-service",
+    });
+
+    // The definition carries the pinned revision's number, and the execution
+    // row carries the pinned revision's id — the two now agree.
+    expect(definitions.records[0]?.name).toContain("revision 1");
+    const row = db
+      .prepare("SELECT revision_id FROM spec_executions WHERE spec_id = ?")
+      .get(specId) as { revision_id: string };
+    expect(row.revision_id).toBe(revisionId);
+  });
+
+  it("retires the execution it created when the plan rejects the candidate at launch", async () => {
+    // Plan mutations do not share the start path's write queue, so a reopen
+    // landing while the definition is being persisted rejects the candidate
+    // after the execution row already exists. Leaving that row ACTIVE would
+    // block every retry, so it must be retired audibly.
+    deps.deliveryPlanLaunch = {
+      resolveLaunch: async () => ({
+        kind: "ready",
+        value: approvedLaunch,
+      }),
+      park: async () => ({ ok: true, value: parkedPlanNextAct() }),
+      recordLaunch: async () => ({
+        ok: false,
+        refusal: {
+          code: "integrity_mismatch",
+          unmetConditions: ["The attempt no longer carries that candidate."],
+          instruction: "Re-propose and sign the fresh candidate off.",
+        },
+      }),
+    };
+    service = createExecutionService(deps);
+
+    const result = await service.start({
+      specId,
+      revisionId,
+      actor: { kind: "agent" as const, conversationId: "conversation-start" },
+      sessionName: "session-execution",
+      projectName: "execution-service",
+    });
+
+    expect(result.ok).toBe(false);
+    // No active execution survives to block the retry.
+    const rows = db
+      .prepare(
+        "SELECT state, abandoned_reason FROM spec_executions WHERE spec_id = ?",
+      )
+      .all(specId) as Array<{ state: string; abandoned_reason: string | null }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.state).toBe("abandoned");
+    expect(rows[0]?.abandoned_reason).toContain(
+      "The attempt no longer carries that candidate.",
+    );
+    // The retirement is audited rather than silent.
+    const kinds = (
+      db
+        .prepare(
+          "SELECT payload_json FROM spec_events WHERE event_type = 'spec-execution-changed'",
+        )
+        .all() as Array<{ payload_json: string }>
+    ).map((row) => (JSON.parse(row.payload_json) as { kind: string }).kind);
+    expect(kinds).toContain("execution_abandoned");
+    if (result.ok) throw new Error("the launch should have been refused");
+    expect(result.refusal.instruction).toContain("Nothing is running");
+  });
+
   it("16.8 exposes no pin mutation path and caller mutations cannot change the stored pin", async () => {
-    const input = startInput();
-    const result = await service.start(input);
+    const result = await service.start(startInput());
     if (!result.ok) throw new Error("start was refused");
 
-    input.scope.selectedTaskIds.splice(0);
-    input.scope.selectedCriterionIds.splice(0);
+    approvedLaunch.scope.selectedTaskIds.splice(0);
+    approvedLaunch.scope.selectedCriterionIds.splice(0);
     expect(
       JSON.parse(
         deps.deliveryRepo.findExecutionById(result.execution.id)?.scope_json ??
@@ -774,6 +841,44 @@ describe("ExecutionService start", () => {
     ).resolves.toEqual({ ok: true });
   });
 
+  it.each(["abandoned", "delivered"] as const)(
+    "redirects a terminal %s execution to the seeded delivery-plan path",
+    async (state) => {
+      const started = await service.start(startInput());
+      if (!started.ok) throw new Error("start was refused");
+      const linked = await service.linkWorkflowExecution(
+        started.execution.id,
+        `workflow-terminal-${state}`,
+      );
+      if (!linked.ok) throw new Error("could not link terminal fixture");
+      db.prepare("UPDATE spec_executions SET state = ? WHERE id = ?").run(
+        state,
+        started.execution.id,
+      );
+      const workflowExecutionId = deps.deliveryRepo.findExecutionById(
+        started.execution.id,
+      )?.workflow_execution_id;
+      if (workflowExecutionId === null || workflowExecutionId === undefined) {
+        throw new Error("started execution was not linked to its workflow");
+      }
+      const callbacks = createExecutionLifecycleCallbacks(deps);
+
+      const admitted = await callbacks.admitDefinitionApproval(
+        lifecycleContext,
+        workflowExecutionId,
+        started.definition.id,
+        started.definition.revision,
+      );
+
+      expect(admitted).toMatchObject({ ok: false, code: "gate_blocked" });
+      if (admitted.ok) throw new Error("expected a terminal refusal");
+      expect(admitted.instruction).toContain(
+        "cctl spec plan open native-sdd --seed-from last",
+      );
+      expect(admitted.instruction).toContain("cctl spec start native-sdd");
+    },
+  );
+
   it("records a notify-policy execution_start admission when a Notify-dial run reaches running", async () => {
     db.prepare("UPDATE specs SET gate_policy_json = ? WHERE id = ?").run(
       '{"preset":"fast-path"}',
@@ -944,11 +1049,27 @@ describe("ExecutionService start", () => {
     const workflowEvents = createGraphWorkflowEventsRepo(db);
     const definitionRecord = definitions.records[0];
     if (definitionRecord === undefined) throw new Error("definition missing");
-    const originMap = readCompiledOriginMap(definitionRecord.definition);
-    const contextId = originMap.find((entry) =>
+    const sourceMap = readDeliveryPlanSourceMap(definitionRecord.definition);
+    const contextId = sourceMap.contexts.find((entry) =>
       entry.criterionElementIds.includes("criterion-1"),
     )?.contextId;
     if (contextId === undefined) throw new Error("origin context missing");
+    const originMap: CompiledOriginMapEntry[] = [
+      {
+        contextId,
+        taskElementId: "task-1",
+        taskHandle: "native-sdd/T1",
+        touchedPaths: [],
+        criterionElementIds: ["criterion-1"],
+        criterionHandles: ["native-sdd/R1.1"],
+        validationStrategies: {
+          "criterion-1": { kinds: ["validator_verdict"] },
+        },
+        criterionBriefs: {
+          "criterion-1": "The execution pin is immutable.",
+        },
+      },
+    ];
     // A validator passed the context, but its lane commit never arrived (e.g.
     // nothing to commit) — the sealing outcome stays undecidable while the
     // run lives.
@@ -1153,6 +1274,75 @@ describe("ExecutionService start", () => {
     });
   });
 
+  it("completes an abandonment whose cleanup ports re-enter the shared write queue", async () => {
+    // Regression guard for a real deadlock. The production cleanup ports drive
+    // the graph-workflow setters, which acquire the SAME shared write queue,
+    // and that queue is a single non-reentrant FIFO. A coordinator that held
+    // the queue across these awaits hung on the first live abandonment; this
+    // port reproduces that shape exactly, so a regression times out here.
+    const running = await startRunning();
+    const queueAcquisitionsInsidePorts: string[] = [];
+    deps.workflowCleanup = {
+      observe: async () => workflowPlacement,
+      async abort() {
+        await deps.writeQueue.withWriteQueueSync("workflow-abort-write", () => {
+          queueAcquisitionsInsidePorts.push("abort");
+        });
+        workflowPlacement = { kind: "active", status: "aborted" };
+        return { ok: true };
+      },
+      async release() {
+        await deps.writeQueue.withWriteQueueSync(
+          "workflow-archive-write",
+          () => {
+            queueAcquisitionsInsidePorts.push("release");
+          },
+        );
+        workflowPlacement = { kind: "archived", status: "aborted" };
+        return { ok: true };
+      },
+    };
+    workflowPlacement = { kind: "active", status: "running" };
+    service = createExecutionService(deps);
+
+    const abandoned = await service.abandonExecution({
+      executionId: running.id,
+      reason: "superseded by a replanned run",
+      actor: { kind: "human" },
+    });
+
+    expect(abandoned.ok).toBe(true);
+    expect(queueAcquisitionsInsidePorts).toEqual(["abort", "release"]);
+    expect(deps.deliveryRepo.findExecutionById(running.id)).toMatchObject({
+      state: "abandoned",
+      cleanup_phase: null,
+    });
+  });
+
+  it("parks instead of recording a phase its cleanup port did not perform", async () => {
+    const running = await startRunning();
+    deps.workflowCleanup = {
+      observe: async () => workflowPlacement,
+      // Accepts the call but reports honestly that it changed nothing.
+      abort: async () => ({ ok: false, reason: "nothing to abort" }),
+      release: async () => ({ ok: true }),
+    };
+    workflowPlacement = { kind: "active", status: "running" };
+    service = createExecutionService(deps);
+
+    const abandoned = await service.abandonExecution({
+      executionId: running.id,
+      reason: "superseded by a replanned run",
+      actor: { kind: "human" },
+    });
+
+    expect(abandoned.ok).toBe(false);
+    expect(deps.deliveryRepo.findExecutionById(running.id)).toMatchObject({
+      state: "abandoning",
+      cleanup_phase: "abort_workflow",
+    });
+  });
+
   it("abandons the linked active execution when the workflow reports an abort", async () => {
     const running = await startRunning();
     const callbacks = createExecutionLifecycleCallbacks(deps);
@@ -1332,19 +1522,20 @@ describe("ExecutionService start", () => {
     });
   });
 
-  it("16.9 captures discovered work in an amendment draft without changing the running pin", async () => {
+  it("16.9 captures discovered work without changing the running pin", async () => {
     const running = await startRunning();
     const originalScope = running.scope_json;
-    // Capture drafts against the execution's pinned revision, so it keeps
-    // working while a later revision is under review: it is not an ordinary
-    // authoring continuation and must not take that refusal.
+    // Capture judges the discovery against the execution's pinned revision, so
+    // it keeps working while a later revision is under review: it is not an
+    // ordinary authoring continuation and must not take that refusal.
     expect(
       db
         .prepare("SELECT state FROM spec_revisions WHERE id = ?")
         .get(proposedRevisionId),
     ).toEqual({ state: "proposed" });
 
-    const amendment = await service.captureScopeAmendment({
+    const captured = await service.captureScopeAmendment({
+      specId,
       executionId: running.id,
       actor: { kind: "agent", conversationId: "conversation-discovery" },
       discoveredTask: {
@@ -1356,15 +1547,16 @@ describe("ExecutionService start", () => {
         dependsOnTaskElementIds: [],
       },
     });
-    if (!amendment.ok) throw new Error("amendment was refused");
+    if (!captured.ok) throw new Error("capture was refused");
 
-    expect(amendment.value.revision).toMatchObject({
-      state: "draft",
-      basedOnRevisionId: revisionId,
-    });
-    expect(amendment.value.task.version.payload).toMatchObject({
-      kind: "task",
-      title: "Implement the discovered prerequisite",
+    expect(captured.value).toMatchObject({
+      discovery: {
+        executionId: running.id,
+        attemptId: null,
+        title: "Implement the discovered prerequisite",
+      },
+      restartRequired: false,
+      replacement: null,
     });
     expect(deps.deliveryRepo.findExecutionById(running.id)?.scope_json).toBe(
       originalScope,
@@ -1375,7 +1567,6 @@ describe("ExecutionService start", () => {
     return {
       specId,
       revisionId,
-      scope: fullScope(),
       actor: { kind: "agent" as const, conversationId: "conversation-start" },
       sessionName: "session-execution",
     };
@@ -1403,6 +1594,7 @@ describe("ExecutionService execution-start gate", () => {
   let deps: ExecutionServiceDeps;
   let service: ExecutionService;
   let gate: {
+    launchApprovedDefinition: ReturnType<typeof vi.fn>;
     hasPendingDefinitionApproval: ReturnType<typeof vi.fn>;
     ensurePendingDefinitionApproval: ReturnType<typeof vi.fn>;
     grantApproval: ReturnType<typeof vi.fn>;
@@ -1410,12 +1602,17 @@ describe("ExecutionService execution-start gate", () => {
   };
 
   beforeEach(() => {
+    workflowPlacement = { kind: "archived", status: "aborted" };
     db = _createTestDb();
     seedSpec(db);
     const writeQueue = createWriteQueue();
     const eventsRepo = createSpecEventsRepo(db);
     let nextId = 0;
     gate = {
+      launchApprovedDefinition: vi.fn(async () => ({
+        ok: true as const,
+        workflowExecutionId: "workflow-execution-launched",
+      })),
       hasPendingDefinitionApproval: vi.fn(
         async () => "workflow-execution-pending",
       ),
@@ -1435,6 +1632,9 @@ describe("ExecutionService execution-start gate", () => {
       linksRepo: createSpecLinksRepo(db),
       eventsRepo,
       reviewRepo: createSpecReviewRepo(db),
+      plansRepo: createSpecDeliveryPlanRepo(db, {
+        appendEvent: (event) => eventsRepo.appendInTransaction(event),
+      }),
       events: createSpecEventsPublisher({
         appendInTransaction: eventsRepo.appendInTransaction,
         publish: () => ({ delivered: true }),
@@ -1445,12 +1645,24 @@ describe("ExecutionService execution-start gate", () => {
       sessionExists: async (sessionName) => sessionName === "session-execution",
       getWorkflowExecutionStatus: vi.fn(async () => null),
       getPublishedMerge: vi.fn(async () => null),
+      workflowCleanup: {
+        observe: async () => workflowPlacement,
+        abort: async () => {
+          workflowPlacement = { kind: "archived", status: "aborted" };
+          return { ok: true };
+        },
+        release: async () => {
+          workflowPlacement = { kind: "archived", status: "aborted" };
+          return { ok: true };
+        },
+      },
       nextId: (kind) => `${kind}-${++nextId}`,
       now: () => now,
       runInImmediateTransaction<T>(fn: () => T): T {
         return db.transaction(fn).immediate();
       },
       executionStartGate: gate,
+      deliveryPlanLaunch: approvedDeliveryPlanPort(approvedDeliveryPlanLaunch),
     };
     service = createExecutionService(deps);
   });
@@ -1459,20 +1671,27 @@ describe("ExecutionService execution-start gate", () => {
     return {
       specId,
       revisionId,
-      scope: fullScope(),
       actor: { kind: "agent" as const, conversationId: "conversation-start" },
       sessionName: "session-execution",
     };
   }
 
-  async function startedExecutionId(): Promise<string> {
-    const started = await service.start(startInput());
-    if (!started.ok) throw new Error("start was refused");
-    return started.execution.id;
+  function startedExecutionId(
+    sessionName: string | null = "session-execution",
+  ): string {
+    const execution = historicalExecutionRow(
+      "execution-historical-definition-review",
+      sessionName,
+    );
+    deps.deliveryRepo.insertExecution(execution);
+    return execution.id;
   }
 
-  it("does not touch the gate ports at spec start — the approval request opens when the workflow parks", async () => {
-    await startedExecutionId();
+  it("launches an approved candidate without touching the historical definition-approval ports", async () => {
+    const started = await service.start(startInput());
+
+    expect(started.ok).toBe(true);
+    expect(gate.launchApprovedDefinition).toHaveBeenCalledOnce();
 
     expect(gate.hasPendingDefinitionApproval).not.toHaveBeenCalled();
     expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
@@ -1504,6 +1723,9 @@ describe("ExecutionService execution-start gate", () => {
       sessionName: "session-execution",
       definitionId,
       definitionRevision: 1,
+      // A human Studio grant carries no conversation, so the launched run is
+      // explicitly unowned rather than silently missing an owner.
+      ownerConversationId: null,
     });
     expect(gate.grantApproval).toHaveBeenCalledOnce();
     expect(gate.grantApproval).toHaveBeenCalledWith({
@@ -1715,15 +1937,11 @@ describe("ExecutionService execution-start gate", () => {
   });
 
   it("refuses when the execution has no session to start the workflow in", async () => {
-    const started = await service.start({
-      ...startInput(),
-      sessionName: null,
-    });
-    if (!started.ok) throw new Error("start was refused");
+    const executionId = startedExecutionId(null);
 
     const result = await service.approveExecutionStart({
       specId,
-      executionId: started.execution.id,
+      executionId,
       actor: { kind: "human" },
       approver: "operator",
       projectName: "repo-project",
@@ -1763,20 +1981,28 @@ describe("ExecutionService execution-start gate", () => {
     expect(gate.ensurePendingDefinitionApproval).not.toHaveBeenCalled();
     expect(gate.grantApproval).not.toHaveBeenCalled();
     expect(gate.approveWorkflowDefinition).not.toHaveBeenCalled();
+    if (result.ok) throw new Error("expected a legacy execution refusal");
+    expect(result.refusal.instruction).toContain(
+      "cctl spec plan open native-sdd --seed-from last",
+    );
+    expect(result.refusal.instruction).toContain("cctl spec start native-sdd");
   });
 });
 
 describe("ExecutionService abandon clears open spec attention (runtime wiring)", () => {
   let db: Db;
   let service: ExecutionService;
+  let deliveryRepo: ReturnType<typeof createSpecDeliveryRepo>;
   let notificationsRepo: ReturnType<typeof createNotificationsRepo>;
   let notifier: ReturnType<typeof createSpecApprovalNotifier>;
 
   beforeEach(() => {
+    workflowPlacement = { kind: "archived", status: "aborted" };
     db = _createTestDb();
     seedSpec(db);
     const writeQueue = createWriteQueue();
     const eventsRepo = createSpecEventsRepo(db);
+    deliveryRepo = createSpecDeliveryRepo(db);
     notificationsRepo = createNotificationsRepo(db);
     const notifications = createNotificationsService({
       repo: () => notificationsRepo,
@@ -1795,10 +2021,13 @@ describe("ExecutionService abandon clears open spec attention (runtime wiring)",
     let nextId = 0;
     service = createExecutionService({
       specsRepo: createSpecsRepo(db, writeQueue),
-      deliveryRepo: createSpecDeliveryRepo(db),
+      deliveryRepo,
       linksRepo: createSpecLinksRepo(db),
       eventsRepo,
       reviewRepo: createSpecReviewRepo(db),
+      plansRepo: createSpecDeliveryPlanRepo(db, {
+        appendEvent: (event) => eventsRepo.appendInTransaction(event),
+      }),
       events: createSpecEventsPublisher({
         appendInTransaction: eventsRepo.appendInTransaction,
         publish: () => ({ delivered: true }),
@@ -1856,20 +2085,17 @@ describe("ExecutionService abandon clears open spec attention (runtime wiring)",
     return notificationsRepo.findSpecNotificationsBySpecId(specId);
   }
 
-  async function startExecution() {
-    const started = await service.start({
-      specId,
-      revisionId,
-      scope: fullScope(),
-      actor: { kind: "agent" as const, conversationId: "conversation-start" },
-      sessionName: "session-execution",
-    });
-    if (!started.ok) throw new Error("start was refused");
-    return started.execution;
+  function startExecution() {
+    const execution = historicalExecutionRow(
+      "execution-historical-attention",
+      "session-execution",
+    );
+    deliveryRepo.insertExecution(execution);
+    return execution;
   }
 
   it("abandonExecution resolves execution-scoped requests and waiver requests but leaves authoring reviews open", async () => {
-    const execution = await startExecution();
+    const execution = startExecution();
     openRequest("requirements", "R1", "request-requirements");
     openRequest("execution_start", "execution_start", "request-start");
     openRequest("delivery", "T1", "request-delivery");
@@ -1901,7 +2127,7 @@ describe("ExecutionService abandon clears open spec attention (runtime wiring)",
   });
 
   it("abandonSpec clears every open request, and replays never duplicate resolutions", async () => {
-    await startExecution();
+    startExecution();
     openRequest("requirements", "R1", "request-requirements");
     openRequest("delivery", "T1", "request-delivery");
     openWaiverRequest("attention-waiver");
@@ -1996,6 +2222,233 @@ function definitionRecord(
     layout: { ...draft.layout, workflowId: id },
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function approvedDeliveryPlanLaunch(): DeliveryPlanLaunchCandidate {
+  const materialized = materializeDeliveryPlan({
+    spec: { id: specId, slug: "native-sdd", name: "Native SDD" },
+    attemptId: "attempt-approved",
+    pinnedRevisionId: revisionId,
+    draftRevision: 1,
+    document: approvedPlanDocument(),
+    criteria: [
+      {
+        criterionElementId: "criterion-1",
+        handle: "native-sdd/R1.1",
+        text: "The execution pin is immutable.",
+        validationStrategy: { kinds: ["validator_verdict"] },
+      },
+      {
+        criterionElementId: "criterion-2",
+        handle: "native-sdd/R1.2",
+        text: "Task dependencies remain closed.",
+        validationStrategy: { kinds: ["validator_verdict"] },
+      },
+      {
+        criterionElementId: "criterion-3",
+        handle: "native-sdd/R1.3",
+        text: "Every selected criterion has task coverage.",
+        validationStrategy: { kinds: ["test_run"] },
+      },
+    ],
+    registeredValidationCommandNames: [],
+    defaults: { approvalRequired: false, workflowConfig: {} },
+  });
+  if (!materialized.ok) {
+    throw new Error(materialized.refusal.instruction);
+  }
+  return {
+    attemptId: "attempt-approved",
+    pinnedRevisionId: revisionId,
+    candidate: {
+      candidateId: "candidate-approved",
+      planHash: materialized.value.planHash,
+      compiledDefinitionHash: materialized.value.compiledDefinitionHash,
+    },
+    definition: materialized.value.definition,
+    scope: fullScope(),
+    dispositions: ["criterion-1", "criterion-2", "criterion-3"].map(
+      (criterionElementId) => ({
+        criterionElementId,
+        disposition: "in_scope" as const,
+        deliveredByExecutionId: null,
+      }),
+    ),
+  };
+}
+
+function approvedPlanDocument(): DeliveryPlanDocument {
+  return deliveryPlanDocumentSchema.parse({
+    dispositions: ["criterion-1", "criterion-2", "criterion-3"].map(
+      (criterionElementId) => ({
+        criterionElementId,
+        disposition: "selected",
+        deliveredByExecutionId: null,
+        reaffirmation: null,
+        note: null,
+      }),
+    ),
+    contexts: [
+      {
+        contextId: "delivery",
+        title: "Deliver the approved execution",
+        contextType: "delivery",
+        criterionElementIds: ["criterion-1", "criterion-2", "criterion-3"],
+        acceptanceContract: [
+          "The approved execution pin and its evidence remain durable.",
+        ],
+        proofPlan: [
+          {
+            criterionElementId: "criterion-1",
+            evidenceKinds: ["validator_verdict"],
+            note: "Validate the immutable execution pin.",
+          },
+          {
+            criterionElementId: "criterion-2",
+            evidenceKinds: ["validator_verdict"],
+            note: "Validate the authored dependency contract.",
+          },
+          {
+            criterionElementId: "criterion-3",
+            evidenceKinds: ["test_run"],
+            note: "Run the selected coverage checks.",
+          },
+        ],
+      },
+    ],
+    tasks: [
+      {
+        taskId: "task-1",
+        contextId: "delivery",
+        title: "Prepare execution",
+        instructions: "Prepare the pinned execution.",
+        order: 0,
+        contributesToCriterionElementIds: ["criterion-1"],
+      },
+      {
+        taskId: "task-2",
+        contextId: "delivery",
+        title: "Respect dependencies",
+        instructions: "Start after task one.",
+        order: 1,
+        contributesToCriterionElementIds: ["criterion-2"],
+      },
+      {
+        taskId: "task-3",
+        contextId: "delivery",
+        title: "Validate coverage",
+        instructions: "Validate selected criterion coverage.",
+        order: 2,
+        contributesToCriterionElementIds: ["criterion-3"],
+      },
+    ],
+    edges: [],
+    wiring: [],
+    policyOverrides: [],
+    touchedSurfaces: ["src/lib/specs/execution-service.ts"],
+    governance: {
+      mission: "Launch exactly the delivery plan a human approved.",
+      charterInvariants: [],
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "approved-plan",
+          label: "Approved delivery plan",
+          type: "spec",
+          locator: "spec-plan://spec-execution-service/attempt-approved",
+          description: "The candidate bytes approved for this launch.",
+          appliesTo: null,
+          accessPolicy: "worktree-relative",
+        },
+      ],
+      validationCommandNames: [],
+    },
+  });
+}
+
+function approvedDeliveryPlanPort(
+  readLaunch: () => DeliveryPlanLaunchCandidate,
+): SpecDeliveryPlanLaunchPort {
+  return {
+    resolveLaunch: async () => ({
+      kind: "ready",
+      value: structuredClone(readLaunch()),
+    }),
+    park: async () => ({ ok: true, value: parkedPlanNextAct() }),
+    recordLaunch: async () => ({ ok: true, value: null }),
+  };
+}
+
+function parkedPlanNextAct() {
+  return {
+    nextAct: {
+      actor: "agent" as const,
+      command: "cctl spec start native-sdd",
+      reason: "The parked candidate is ready to launch.",
+    },
+  };
+}
+
+function deliveryPlanExecutionGate(): NonNullable<
+  ExecutionServiceDeps["executionStartGate"]
+> {
+  return {
+    launchApprovedDefinition: vi.fn(async () => ({
+      ok: true as const,
+      workflowExecutionId: "workflow-execution-launched",
+    })),
+    hasPendingDefinitionApproval: vi.fn(async () => null),
+    ensurePendingDefinitionApproval: vi.fn(async () => ({
+      ok: true as const,
+      workflowExecutionId: "workflow-execution-pending",
+    })),
+    grantApproval: vi.fn(async () => ({
+      ok: true as const,
+      value: { id: "approval-grant" },
+    })),
+    approveWorkflowDefinition: vi.fn(async () => ({ ok: true as const })),
+  };
+}
+
+function definitionDraft(
+  definition: DeliveryPlanLaunchCandidate["definition"],
+): WorkflowDefinitionDraft {
+  return {
+    name: "Native SDD revision 1",
+    description: null,
+    definition: structuredClone(definition),
+    layout: {
+      workflowId: "compiled-spec-definition",
+      contextPositions: { delivery: { x: 0, y: 0 } },
+      viewport: { x: 0, y: 0, zoom: 1 },
+    },
+  };
+}
+
+function historicalExecutionRow(
+  id: string,
+  sessionName: string | null,
+): SpecExecutionRow {
+  return {
+    id,
+    spec_id: specId,
+    revision_id: revisionId,
+    scope_json: JSON.stringify(fullScope()),
+    state: "definition_review",
+    execution_start_dial: "gate",
+    workflow_definition_id: "workflow-definition-historical",
+    workflow_definition_revision: 1,
+    workflow_execution_id: null,
+    session_name: sessionName,
+    delivered_at: null,
+    abandoned_reason: null,
+    cleanup_phase: null,
+    linked_workflow_execution_id: null,
+    cleanup_last_error: null,
+    cleanup_last_error_at: null,
+    created_at: now,
+    updated_at: now,
   };
 }
 

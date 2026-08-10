@@ -17,6 +17,7 @@ import { FakeEventSource } from "@/lib/shared/testing/fake-event-source";
 import type { SpecApprovalRow } from "@/lib/specs/schemas";
 import { registerSpecSseReactions } from "@/lib/specs/sse-reactions";
 
+import { planPreviewResponseFixture } from "./SpecControls.fixtures";
 import SpecDetailPage from "./SpecDetailPage";
 import {
   _blockAnnotatableTextForTesting,
@@ -462,9 +463,26 @@ function reviewDetailPayload() {
     },
   };
 
+  const baseSnapshot = {
+    revision: baseRevision,
+    elements: [...baseElements, retiredSection],
+  };
+
   return {
     ...payload,
     revisions: [baseRevision, detailRevision],
+    // What the detail route emits for a revision under review: the proposal,
+    // the verdict that nothing has forked past it, and the snapshots its diff
+    // is read from.
+    liveProposals: [
+      {
+        revision: detailRevision,
+        supersededBy: null,
+        snapshot: payload.currentRevision,
+        baseSnapshot,
+        notes: null,
+      },
+    ],
     approvals: payload.approvals.map((approval) => ({
       ...approval,
       revision_id: baseRevision.id,
@@ -481,14 +499,8 @@ function reviewDetailPayload() {
         { gate: "plan", subject: "plan", elementId: null },
       ],
     },
-    baseRevision: {
-      revision: baseRevision,
-      elements: [...baseElements, retiredSection],
-    },
-    currentApprovedRevision: {
-      revision: baseRevision,
-      elements: [...baseElements, retiredSection],
-    },
+    baseRevision: baseSnapshot,
+    currentApprovedRevision: baseSnapshot,
     comments: [
       ...payload.comments,
       {
@@ -527,17 +539,29 @@ function initialReviewDetailPayload() {
     number: 1,
     basedOnRevisionId: null,
   };
+  const snapshot = {
+    revision: initialRevision,
+    elements: payload.currentRevision.elements.map((entry) => ({
+      ...entry,
+      version: { ...entry.version, revisionId: initialRevision.id },
+    })),
+  };
   return {
     ...payload,
     revisions: [initialRevision],
+    // The first proposal has no base: the projection carries a null
+    // baseSnapshot, and the review reads every element as added.
+    liveProposals: [
+      {
+        revision: initialRevision,
+        supersededBy: null,
+        snapshot,
+        baseSnapshot: null,
+        notes: null,
+      },
+    ],
     baseRevision: null,
-    currentRevision: {
-      revision: initialRevision,
-      elements: payload.currentRevision.elements.map((entry) => ({
-        ...entry,
-        version: { ...entry.version, revisionId: initialRevision.id },
-      })),
-    },
+    currentRevision: snapshot,
   };
 }
 
@@ -678,6 +702,14 @@ describe("Spec Studio routes and inventory", () => {
       pinned: [],
     });
     api.json("GET", "/api/specs/command-center", inventory);
+    // Review compiles a plan preview for the proposal it shows, so a route
+    // that reaches Review reaches this too; without it the surface under test
+    // renders a preview failure instead of the surface production renders.
+    api.reply(
+      "POST",
+      "/api/specs/command-center/native-sdd/plan-preview",
+      (request) => ({ json: planPreviewResponseFixture(request.jsonBody) }),
+    );
   });
 
   afterEach(() => {
@@ -915,6 +947,7 @@ describe("Spec Studio routes and inventory", () => {
       ok: true,
       checkedRevisionIds: [detailRevision.id],
       mismatches: [],
+      consistencyFindings: [],
     });
 
     renderWithQuery(<SpecDetailPage />);
@@ -936,6 +969,7 @@ describe("Spec Studio routes and inventory", () => {
       ok: true,
       checkedRevisionIds: [detailRevision.id],
       mismatches: [],
+      consistencyFindings: [],
     });
 
     const queryClient = createTestQueryClient();
@@ -973,6 +1007,7 @@ describe("Spec Studio routes and inventory", () => {
       ok: true,
       checkedRevisionIds: [detailRevision.id],
       mismatches: [],
+      consistencyFindings: [],
     });
 
     const queryClient = createTestQueryClient();
@@ -1211,6 +1246,7 @@ describe("Spec Studio routes and inventory", () => {
           mismatchedElementIds: ["requirement-1"],
         },
       ],
+      consistencyFindings: [],
     });
     renderWithQuery(<SpecDetailPage />);
 
@@ -1509,9 +1545,11 @@ describe("Spec Studio routes and inventory", () => {
     expect(
       within(change).getByRole("button", { name: "Approve item" }),
     ).toBeInTheDocument();
+    // Outstanding subject approvals were this revision's only blocker, and the
+    // combined act writes them with the sign-off, so it is reachable.
     expect(
-      screen.getByRole("button", { name: "Sign off revision 4" }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: /sign off revision 4$/i }),
+    ).toBeEnabled();
 
     await user.click(screen.getByRole("tab", { name: "Raw diff" }));
     expect(screen.getByText(/secondary view/i)).toBeInTheDocument();
@@ -1546,9 +1584,11 @@ describe("Spec Studio routes and inventory", () => {
     expect(
       within(requirement).getByRole("button", { name: "Unapprove item" }),
     ).toBeEnabled();
+    // Outstanding subject approvals were this revision's only blocker, and the
+    // combined act writes them with the sign-off, so it is reachable.
     expect(
-      screen.getByRole("button", { name: "Sign off revision 1" }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: /sign off revision 1$/i }),
+    ).toBeEnabled();
   });
 
   it("deep-links section and removed changes to targets inside review mode", async () => {
@@ -1733,15 +1773,20 @@ describe("Spec Studio routes and inventory", () => {
       "/api/specs/command-center/native-sdd/actions/approve-item",
       requirementApproval,
     );
-    api.json("POST", "/api/specs/command-center/native-sdd/actions/sign-off", {
-      revision: { ...detailRevision, state: "approved", approvedAt: NOW },
-      approval: {
-        ...reviewPayload.approvals[0],
-        id: "approval-revision-4",
-        subject_kind: "revision",
-        element_id: null,
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
+      {
+        revision: { ...detailRevision, state: "approved", approvedAt: NOW },
+        approval: {
+          ...reviewPayload.approvals[0],
+          id: "approval-revision-4",
+          subject_kind: "revision",
+          element_id: null,
+        },
+        subjectApprovals: [requirementApproval],
       },
-    });
+    );
     const user = userEvent.setup();
     renderWithQuery(<SpecDetailPage />);
 
@@ -1801,13 +1846,13 @@ describe("Spec Studio routes and inventory", () => {
       expect(
         api.requestsTo(
           "POST",
-          "/api/specs/command-center/native-sdd/actions/sign-off",
+          "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
         )[0]?.jsonBody,
       ).toEqual({ revisionId: detailRevision.id }),
     );
   });
 
-  it("bulk-approves every remaining review subject through per-element records", async () => {
+  it("approves every remaining subject and signs off in one act, keeping per-element records", async () => {
     pathname = "/specs/command-center/native-sdd";
     window.history.replaceState(
       {},
@@ -1818,44 +1863,56 @@ describe("Spec Studio routes and inventory", () => {
     api.json("GET", "/api/specs/command-center/native-sdd", reviewPayload);
     api.json(
       "POST",
-      "/api/specs/command-center/native-sdd/actions/bulk-approve",
-      [
-        reviewPayload.approvals[0],
-        {
+      "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
+      {
+        revision: { ...detailRevision, state: "approved", approvedAt: NOW },
+        approval: {
           ...reviewPayload.approvals[0],
-          id: "approval-decision-1",
-          subject_kind: "decision",
-          element_id: "decision-1",
-        },
-        {
-          ...reviewPayload.approvals[0],
-          id: "approval-plan",
-          subject_kind: "plan",
+          id: "approval-revision-4",
+          subject_kind: "revision",
           element_id: null,
         },
-      ],
+        subjectApprovals: [
+          reviewPayload.approvals[0],
+          {
+            ...reviewPayload.approvals[0],
+            id: "approval-plan",
+            subject_kind: "plan",
+            element_id: null,
+          },
+        ],
+      },
     );
     const user = userEvent.setup();
     renderWithQuery(<SpecDetailPage />);
 
+    // The confirmation names the subjects the act approves before it runs.
     await user.click(
       await screen.findByRole("button", {
-        name: /Approve all remaining \(\d+\)/,
+        name: "Approve 2 remaining and sign off revision 4",
       }),
     );
+    const subjects = screen.getByTestId("combined-sign-off-subjects");
+    expect(subjects).toHaveTextContent("requirementsR1");
+    expect(subjects).toHaveTextContent("planplan");
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I reviewed the semantic change list/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Approve 2 and sign off — freeze revision 4",
+      }),
+    );
+
     await waitFor(() =>
       expect(
         api.requestsTo(
           "POST",
-          "/api/specs/command-center/native-sdd/actions/bulk-approve",
+          "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
         )[0]?.jsonBody,
-      ).toEqual({
-        revisionId: detailRevision.id,
-        subjects: [
-          { subjectKind: "requirement", elementId: "requirement-1" },
-          { subjectKind: "plan", elementId: null },
-        ],
-      }),
+      ).toEqual({ revisionId: detailRevision.id }),
     );
   });
 });

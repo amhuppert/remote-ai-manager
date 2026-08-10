@@ -60,33 +60,78 @@ const GUIDANCE_FACTS: readonly GuidanceFact[] = [
     ],
   },
   {
+    id: "a draft element can be removed, and removal's inverse is reintroduction",
+    // Removal existed server-side for the whole pilot and no agent reached it,
+    // because nothing an agent reads said it was possible. This is the fact
+    // that closes that hole, so it is pinned rather than left to prose drift.
+    required: [
+      /`cctl spec remove <slug> <handle\.\.\.>`/,
+      /"removals"/,
+      /one transaction/,
+      /"reintroduceHistorical"/,
+    ],
+  },
+  {
+    id: "what would refuse propose is readable before propose is attempted",
+    // The guidance promised status showed findings long before status carried
+    // any; pinning the verb keeps the promise attached to a surface that
+    // actually prints them.
+    required: [/`cctl spec lint <slug>`/, /block propose/],
+  },
+  {
     id: "authoring is staged and the stage is the server-enforced write boundary",
     required: [
       /`cctl spec status`/,
       /`stage_blocked`/,
-      /requirements[\s\S]{0,180}design[\s\S]{0,180}plan/,
+      /requirements[\s\S]{0,180}design/,
+      /Design is the final evergreen stage/,
+      /`cctl spec plan open <slug>`/,
     ],
+    forbidden: [/plan adds tasks/i, /opens directly at plan stage/i],
   },
   {
-    id: "a stage is concluded by propose, or by advance under a Notify/Off dial",
+    id: "an active stage is concluded by propose, or requirements advances under a Notify/Off dial",
     required: [
       /`cctl spec propose <slug>`/,
-      /`cctl spec advance <slug> --from <requirements\|design>`/,
+      /`cctl spec advance <slug> --from requirements`/,
       /Notify or Off/,
       /dial is Gate/,
     ],
+    forbidden: [/--from <requirements\|design>/],
   },
   {
     id: "an approved spec continues through an amendment",
-    required: [/`cctl spec amend <slug>`/, /amendment/i],
+    required: [
+      /`cctl spec amend <slug>`/,
+      /An amendment opens at design/,
+      /legacy Plan revision remains readable as history/,
+    ],
+    forbidden: [/approved plan-stage revision opens at plan stage/i],
   },
   {
-    id: "`spec start` parks at definition review and hands off to `workflow start`",
+    id: "delivery-plan guidance uses the authored graph shape rather than legacy compiler hints",
     required: [
+      /`contextId`/,
+      /`acceptanceContract`/,
+      /`fromContextId` and `toContextId`/,
+      /`touchedSurfaces`/,
+      /`cctl spec plan preview <slug> --stage draft`/,
+    ],
+    forbidden: [/`dependsOnTaskElementIds`/, /`laneGroup`/, /`touchedPaths`/],
+  },
+  {
+    id: "`spec start` launches exactly the candidate approved on a DeliveryPlanAttempt",
+    required: [
+      /approved DeliveryPlanAttempt/,
+      /`compiledDefinitionHash`/,
+      /`cctl spec start <slug>`/,
+      /does not recompile/i,
+      /`cctl spec plan open <slug> --seed-from last`/,
+    ],
+    forbidden: [
       /`cctl spec start <slug> --file <scope\.json>`/,
       /`definition_review`/,
       /`cctl workflow start <definitionId>`/,
-      /human approval boundary/i,
     ],
   },
   {

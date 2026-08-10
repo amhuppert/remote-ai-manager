@@ -36,6 +36,8 @@ import type {
   GraphWorkflowGraphExpandedEvent,
   GraphWorkflowLiveEditAppliedEvent,
   GraphWorkflowPlanRepairEvent,
+  GraphWorkflowExecutionAmendedEvent,
+  GraphWorkflowExecutionReleasedEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSharedDocumentsUpdatedEvent,
@@ -241,6 +243,8 @@ export type SSEEvent =
   | GraphWorkflowLiveEditAppliedEvent
   | GraphWorkflowGraphExpandedEvent
   | GraphWorkflowPlanRepairEvent
+  | GraphWorkflowExecutionReleasedEvent
+  | GraphWorkflowExecutionAmendedEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent
   | DebugLogReceivedEvent

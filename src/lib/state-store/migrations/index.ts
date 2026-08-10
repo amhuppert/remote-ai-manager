@@ -14,7 +14,14 @@ import { workflowAgentAssignments } from "./0011-workflow-agent-assignments";
 import { validationCostExceedsLimitStatus } from "./0012-validation-cost-exceeds-limit-status";
 import { scriptValidatorCommands } from "./0013-script-validator-commands";
 import { validationRunSessionName } from "./0014-validation-run-session-name";
+import { addDeliveryPlanAttempts } from "./0015-add-delivery-plan-attempts";
 import { mintGraphWorkflowEdgeIds } from "./0015-mint-graph-workflow-edge-ids";
+import { addDeliveryPlanCandidates } from "./0016-add-delivery-plan-candidates";
+import { specExecutionAbandonCoordinator } from "./0017-spec-execution-abandon-coordinator";
+import { deliveryPlanPrelaunch } from "./0018-delivery-plan-prelaunch";
+import { deliveryPlanApprovalIdentity } from "./0019-delivery-plan-approval-identity";
+import { addDeliveryDiscoveries } from "./0020-add-delivery-discoveries";
+import { deliveryPlanComments } from "./0020-delivery-plan-comments";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -38,7 +45,14 @@ export const migrations: readonly StateMigration[] = [
   validationCostExceedsLimitStatus,
   scriptValidatorCommands,
   validationRunSessionName,
+  addDeliveryPlanAttempts,
   mintGraphWorkflowEdgeIds,
+  addDeliveryPlanCandidates,
+  specExecutionAbandonCoordinator,
+  deliveryPlanPrelaunch,
+  deliveryPlanApprovalIdentity,
+  addDeliveryDiscoveries,
+  deliveryPlanComments,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

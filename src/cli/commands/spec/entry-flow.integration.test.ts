@@ -133,6 +133,7 @@ describe("native /spec first-save visibility", () => {
         authoring.lintDraft(specId, revisionId),
       findApprovalsBySpecId: review.findApprovalsBySpecId,
       findCommentsByRevision: () => [],
+      findEventsBySpecId: (specId) => eventRepo.findBySpecId(specId),
       findGateAdmissionsBySpecId: review.findGateAdmissionsBySpecId,
       findLinksBySpecId: () => [],
       getLinkedTickets: async () => [],
@@ -157,6 +158,7 @@ describe("native /spec first-save visibility", () => {
         ok: true,
         checkedRevisionIds: [],
         mismatches: [],
+        consistencyFindings: [],
       }),
       measureProject: async () => computeSpecMeasuresReport([], []),
     };

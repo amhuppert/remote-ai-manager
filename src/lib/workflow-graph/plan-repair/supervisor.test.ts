@@ -192,6 +192,7 @@ function appliedOutcome(liveRevision: number): LiveEditApplyOutcome {
     affectedContextIds: ["context-implement"],
     dryRun: false,
     execution: null,
+    amendmentPolicyBasis: null,
   };
 }
 

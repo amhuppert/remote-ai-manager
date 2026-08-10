@@ -1,13 +1,16 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiFetch } from "@/lib/api/fetcher";
+import { apiFetch, apiFetchOptional } from "@/lib/api/fetcher";
 
 import {
   deliveryDisplaySchema,
   specPhaseProjectionSchema,
   taskWorkStatusSchema,
 } from "./phase";
+import { deliveryDeltaProjectionSchema } from "./delivery-delta";
+import { deliveryPlanReviewViewSchema } from "./delivery-plan-review";
+import { deliveryPlanSnapshotDiffViewSchema } from "./delivery-plan-views";
 import { specKeys } from "./query-keys";
 import {
   actorProvenanceSchema,
@@ -24,6 +27,7 @@ import {
 import {
   integrityReportSchema,
   specDetailViewSchema,
+  specPlanPreviewViewSchema,
   specStatusViewSchema,
   type SpecDetailView,
 } from "./view-schemas";
@@ -340,6 +344,65 @@ export const specQueries = {
         ),
       refetchOnReconnect: false,
     }),
+  // The delivery delta is a pure server projection over immutable revisions, so
+  // it is plain cached read state: no SSE channel pushes it and nothing polls.
+  delta: (projectName: string, slug: string, sinceExecutionId?: string) =>
+    queryOptions({
+      queryKey: specKeys.delta(projectName, slug, sinceExecutionId),
+      queryFn: ({ signal }) => {
+        const query =
+          sinceExecutionId === undefined
+            ? ""
+            : `?since=${encodeURIComponent(sinceExecutionId)}`;
+        return apiFetch(
+          `${specBasePath(projectName, slug)}/delta${query}`,
+          deliveryDeltaProjectionSchema,
+          { signal },
+        );
+      },
+      refetchOnReconnect: false,
+    }),
+  // The delivery-plan attempt as a reviewer reads it. Like the delta it is a
+  // pure server projection over an immutable pin, so it is plain cached read
+  // state; a plan mutation invalidates the key rather than pushing to it.
+  planReview: (projectName: string, slug: string) =>
+    queryOptions({
+      queryKey: specKeys.planReview(projectName, slug),
+      queryFn: () =>
+        apiFetchOptional(
+          `${specBasePath(projectName, slug)}/plan/review`,
+          deliveryPlanReviewViewSchema,
+        ),
+      refetchOnReconnect: false,
+    }),
+  // A comparison of two immutable snapshots: the answer can never change for a
+  // given pair, so it is cached on the pair itself.
+  planDiff: (
+    projectName: string,
+    slug: string,
+    fromSnapshotId: string,
+    toSnapshotId: string,
+  ) =>
+    queryOptions({
+      queryKey: specKeys.planDiff(
+        projectName,
+        slug,
+        fromSnapshotId,
+        toSnapshotId,
+      ),
+      queryFn: ({ signal }) => {
+        const params = new URLSearchParams({
+          from: fromSnapshotId,
+          to: toSnapshotId,
+        });
+        return apiFetch(
+          `${specBasePath(projectName, slug)}/plan/diff?${params.toString()}`,
+          deliveryPlanSnapshotDiffViewSchema,
+          { signal },
+        );
+      },
+      refetchOnReconnect: false,
+    }),
   // Verification recomputes hashes and writes nothing, so it is read state that
   // happens to sit behind the POST action surface. The cache — not a requesting
   // component — has to own the report, because the panel that asks for it can
@@ -355,6 +418,28 @@ export const specQueries = {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: "{}",
+            signal,
+          },
+        ),
+      refetchOnReconnect: false,
+    }),
+  // The compiled-plan preview. Like `integrity`, it is read state behind a POST
+  // — the scope is a document, not a query string — and the handler mutates
+  // nothing. Studio reads THIS rather than compiling anything itself: lane-group
+  // collapse, the criterion-brief union, and edge derivation all live in the
+  // compiler, so a client-side second answer could only ever be a guess at what
+  // the launch would produce.
+  planPreview: (projectName: string, slug: string, revisionId: string) =>
+    queryOptions({
+      queryKey: specKeys.planPreview(projectName, slug, revisionId),
+      queryFn: ({ signal }) =>
+        apiFetch(
+          `${specBasePath(projectName, slug)}/plan-preview`,
+          specPlanPreviewViewSchema,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ revisionId }),
             signal,
           },
         ),
@@ -421,6 +506,35 @@ export function useSpecElementQuery(
 
 export function useSpecLintQuery(projectName: string, slug: string) {
   return useQuery(specQueries.lint(projectName, slug));
+}
+
+export function useSpecDeltaQuery(
+  projectName: string,
+  slug: string,
+  sinceExecutionId?: string,
+) {
+  return useQuery(specQueries.delta(projectName, slug, sinceExecutionId));
+}
+
+export function useSpecPlanReviewQuery(projectName: string, slug: string) {
+  return useQuery(specQueries.planReview(projectName, slug));
+}
+
+export function useSpecPlanDiffQuery(
+  projectName: string,
+  slug: string,
+  fromSnapshotId: string | null,
+  toSnapshotId: string | null,
+) {
+  return useQuery({
+    ...specQueries.planDiff(
+      projectName,
+      slug,
+      fromSnapshotId ?? "",
+      toSnapshotId ?? "",
+    ),
+    enabled: fromSnapshotId !== null && toSnapshotId !== null,
+  });
 }
 
 export function useSpecIntegrityQuery(projectName: string, slug: string) {

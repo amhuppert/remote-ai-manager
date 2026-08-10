@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SpecDetailView } from "@/lib/specs/queries";
 
 import { specControlsDetailFixture } from "./SpecControls.fixtures";
+import { reviewView } from "./delivery-plan-review.fixtures";
 import {
   buildRailGroups,
   detailStatePresentation,
@@ -64,11 +65,28 @@ describe("buildRailGroups", () => {
 
 describe("detailStatePresentation", () => {
   it("derives the phase-specific primary action without inventing a new mutation", () => {
-    expect(detailStatePresentation("approved", [], "plan")).toMatchObject({
+    expect(
+      detailStatePresentation(
+        "approved",
+        [],
+        "design",
+        reviewView({
+          attempt: { status: "approved" },
+          approval: {
+            snapshotId: "snapshot-2",
+            candidateId: "candidate-2",
+            planHash: "sha256:plan-2",
+            compiledDefinitionHash: "sha256:compiled-2",
+            approvedAt: "2026-08-08T10:00:00.000Z",
+            approvedBy: { kind: "human" },
+          },
+        }),
+      ),
+    ).toMatchObject({
       tone: "green",
       banner: "Ready to execute",
       action: "Start execution",
-      view: "execution",
+      view: "plan",
     });
     expect(detailStatePresentation("executing", [])).toMatchObject({
       tone: "cyan",
@@ -86,7 +104,7 @@ describe("detailStatePresentation", () => {
     expect(detailStatePresentation("abandoned", []).action).toBeNull();
   });
 
-  it("keeps execution unavailable until the Plan stage is approved", () => {
+  it("keeps execution unavailable until the delivery-plan candidate is approved", () => {
     expect(
       detailStatePresentation("approved", [], "requirements"),
     ).toMatchObject({
@@ -94,10 +112,53 @@ describe("detailStatePresentation", () => {
       action: null,
       view: null,
     });
-    expect(detailStatePresentation("approved", [], "design")).toMatchObject({
+    expect(
+      detailStatePresentation("approved", [], "design", null),
+    ).toMatchObject({
       banner: "Design approved",
-      action: null,
-      view: null,
+      action: "Open delivery plan",
+      view: "plan",
+    });
+    expect(detailStatePresentation("approved", [], "plan", null)).toMatchObject(
+      {
+        banner: "Design approved",
+        action: "Open delivery plan",
+        view: "plan",
+      },
+    );
+    expect(
+      detailStatePresentation(
+        "approved",
+        [],
+        "design",
+        reviewView({ attempt: { status: "proposed" } }),
+      ),
+    ).toMatchObject({
+      banner: "Delivery plan awaits approval",
+      action: "Review delivery plan",
+      view: "plan",
+    });
+    expect(
+      detailStatePresentation(
+        "approved",
+        [],
+        "design",
+        reviewView({
+          attempt: { status: "launched" },
+          approval: {
+            snapshotId: "snapshot-2",
+            candidateId: "candidate-2",
+            planHash: "sha256:plan-2",
+            compiledDefinitionHash: "sha256:compiled-2",
+            approvedAt: "2026-08-08T10:00:00.000Z",
+            approvedBy: { kind: "human" },
+          },
+        }),
+      ),
+    ).toMatchObject({
+      banner: "Delivery plan launched",
+      action: "Open execution",
+      view: "execution",
     });
   });
 

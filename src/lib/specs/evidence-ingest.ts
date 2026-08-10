@@ -7,12 +7,12 @@ import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type { WriteQueue } from "@/lib/state-store/write-queue";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import {
-  MACHINE_VALIDATION_EVIDENCE_KINDS,
-  type EvidenceKind,
-  type ValidationStrategy,
-} from "./schemas";
+  evidenceKindsForSourceEvent,
+  isEvidenceSourceEvent,
+} from "./evidence-producers";
+import type { EvidenceKind, ValidationStrategy } from "./schemas";
 import type { SpecExecutionRow } from "./schemas";
-import type { CompiledOriginMapEntry } from "./compiler";
+import type { SpecExecutionOriginMapEntry } from "./execution-origin-map";
 import type { EvidenceService } from "./evidence-service";
 
 const logger = createLogger("specs.evidence-ingest");
@@ -36,7 +36,7 @@ export interface EvidenceIngestDeps {
   loadOriginMap(
     workflowDefinitionId: string,
     execution: SpecExecutionRow,
-  ): Promise<CompiledOriginMapEntry[]>;
+  ): Promise<SpecExecutionOriginMapEntry[]>;
   /**
    * The linked graph workflow's live status (`null` when the run was deleted
    * from both the active slot and the archive). Terminality for the deferred
@@ -248,33 +248,30 @@ export function createEvidenceIngestService(
 
 function collectIngestCandidates(
   records: readonly GraphWorkflowEventRecord[],
-  originsByContext: ReadonlyMap<string, readonly CompiledOriginMapEntry[]>,
+  originsByContext: ReadonlyMap<string, readonly SpecExecutionOriginMapEntry[]>,
   executionIsTerminal: boolean,
 ): IngestCandidates {
   const evidence: EvidenceCandidate[] = [];
   const proof: ProofCandidate[] = [];
   for (const [index, record] of records.entries()) {
     const event = record.event;
-    if (
-      event.type !== "graph-workflow-validation-result" &&
-      event.type !== "graph-workflow-lane-commit"
-    ) {
-      continue;
-    }
+    if (!isEvidenceSourceEvent(event)) continue;
     const origins = originsByContext.get(event.contextId);
     if (origins === undefined) continue;
     const criteria = contextCriteria(origins);
 
     if (event.type === "graph-workflow-lane-commit") {
       for (const { criterionElementId } of criteria) {
-        evidence.push({
-          kind: "commit",
-          criterionElementId,
-          contextId: event.contextId,
-          eventRecord: record,
-          commitSha: event.sha,
-          relevantPaths: [],
-        });
+        for (const kind of evidenceKindsForSourceEvent(event.type, undefined)) {
+          evidence.push({
+            kind,
+            criterionElementId,
+            contextId: event.contextId,
+            eventRecord: record,
+            commitSha: event.sha,
+            relevantPaths: [],
+          });
+        }
       }
       continue;
     }
@@ -306,9 +303,7 @@ function collectIngestCandidates(
           sealingCommitRecord: sealing.record,
         });
       }
-      const kinds: EvidenceKind[] = strategy?.kinds.includes("test_run")
-        ? [...MACHINE_VALIDATION_EVIDENCE_KINDS]
-        : ["validator_verdict"];
+      const kinds = evidenceKindsForSourceEvent(event.type, strategy);
       for (const kind of kinds) {
         evidence.push({
           kind,
@@ -456,9 +451,9 @@ function parseEvidenceIds(value: string): string[] | null {
 }
 
 function groupOriginsByContext(
-  origins: readonly CompiledOriginMapEntry[],
-): Map<string, CompiledOriginMapEntry[]> {
-  const grouped = new Map<string, CompiledOriginMapEntry[]>();
+  origins: readonly SpecExecutionOriginMapEntry[],
+): Map<string, SpecExecutionOriginMapEntry[]> {
+  const grouped = new Map<string, SpecExecutionOriginMapEntry[]>();
   for (const origin of origins) {
     const entries = grouped.get(origin.contextId) ?? [];
     entries.push(origin);
@@ -467,16 +462,20 @@ function groupOriginsByContext(
   return grouped;
 }
 
-function contextCriteria(origins: readonly CompiledOriginMapEntry[]): Array<{
+function contextCriteria(
+  origins: readonly SpecExecutionOriginMapEntry[],
+): Array<{
   criterionElementId: string;
-  strategy: CompiledOriginMapEntry["validationStrategies"][string] | undefined;
+  strategy:
+    | SpecExecutionOriginMapEntry["validationStrategies"][string]
+    | undefined;
   relevantPaths: string[];
 }> {
   const criteria = new Map<
     string,
     {
       strategy:
-        | CompiledOriginMapEntry["validationStrategies"][string]
+        | SpecExecutionOriginMapEntry["validationStrategies"][string]
         | undefined;
       relevantPaths: Set<string>;
       fullTree: boolean;

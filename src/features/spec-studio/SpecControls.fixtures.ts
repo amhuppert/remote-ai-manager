@@ -1,14 +1,19 @@
 import { remainingAuthoringSequence } from "@/lib/specs/authoring-sequence";
+import { liveProposalProjection } from "@/lib/specs/proposal-integrity";
 import type { SpecDetailView } from "@/lib/specs/queries";
 import { toDiffRows } from "@/lib/specs/review-state";
 import { consultedAuthoringGates } from "@/lib/specs/transitions";
-import type { SpecAuthoringStage } from "@/lib/specs/schemas";
+import type { SpecAuthoringStage, SpecRevision } from "@/lib/specs/schemas";
 import {
   specDetailViewSchema,
   specExecutionViewSchema,
   specGateAdmissionViewSchema,
+  specPlanPreviewViewSchema,
+  type LiveProposalView,
   type SpecExecutionView,
   type SpecGateAdmissionView,
+  type SpecPlanPreviewView,
+  type SpecRevisionSnapshotView,
 } from "@/lib/specs/view-schemas";
 
 import type { PolicyImpactDraft } from "./SpecPolicyImpact";
@@ -115,6 +120,236 @@ export function executionViewFixture(
     ],
     ...overrides,
   });
+}
+
+/**
+ * The bounded plan preview `/api/specs/{project}/{slug}/plan-preview` returns
+ * for one revision, parsed through the response schema for the same reason the
+ * fixtures above are.
+ *
+ * Its context titles, lane grouping, and criterion briefs deliberately name
+ * things no snapshot element carries: lane-group collapse and the union of
+ * task briefs into a context contract happen inside the compiler, so a surface
+ * that re-derived the plan from the spec content on the client could not
+ * produce these strings. A test asserting on them is asserting that the server
+ * compiled the answer.
+ */
+export function specPlanPreviewFixture(
+  revision: SpecRevision,
+  overrides: Partial<SpecPlanPreviewView> = {},
+): SpecPlanPreviewView {
+  return specPlanPreviewViewSchema.parse({
+    spec: { id: "spec-1", slug: "native-sdd", name: "Native SDD" },
+    revision: {
+      id: revision.id,
+      number: revision.number,
+      state: revision.state,
+      authoringStage: revision.authoringStage,
+    },
+    scopeHash: `scope-${revision.id}`,
+    approvalRequired: true,
+    charter: {
+      mission: "Pin every execution to the exact approved scope.",
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "revision",
+          label: "The pinned revision",
+          type: "spec",
+          locator: "spec://native-sdd",
+          description: "The approved content the lanes implement.",
+          accessPolicy: "worktree-relative",
+        },
+      ],
+    },
+    totalContextCount: 2,
+    shownContextCount: 2,
+    taskCount: 2,
+    criterionCount: 2,
+    contexts: [
+      {
+        contextId: "persistence",
+        title: "Persistence lane group",
+        description: "T1 and T2 collapsed into one lane by their lane group.",
+        acceptanceCriteria: "1. The selected task and criterion are pinned.",
+        taskHandles: ["T1", "T2"],
+        criterionBriefs: [
+          {
+            criterionElementId: "criterion-1",
+            criterionHandle: "R1.1",
+            text: "The selected task and criterion are pinned.",
+            brief: "Prove R1.1 with a test_run over the reloaded repository.",
+            strategyNote: "Round-trip through the repository, not a JS fake.",
+            evidence: [
+              {
+                kind: "test_run",
+                producer: "graph-workflow-validation-result",
+                detail: "minted from this context's validation-result event",
+              },
+            ],
+          },
+        ],
+        totalBriefCount: 1,
+        shownBriefCount: 1,
+        omittedBriefCount: 0,
+      },
+      {
+        contextId: "surface",
+        title: "Gate surface",
+        description: null,
+        acceptanceCriteria: "1. The pinned scope is visible on the gate.",
+        taskHandles: ["T3"],
+        criterionBriefs: [
+          {
+            criterionElementId: "criterion-2",
+            criterionHandle: "R2.1",
+            text: "The pinned scope is visible on the gate screen.",
+            brief: "Prove R2.1 with a screenshot of the gate surface.",
+            strategyNote: null,
+            evidence: [
+              {
+                kind: "screenshot",
+                producer: null,
+                detail:
+                  "no evidence producer mints screenshot; a criterion requiring it can never reach a proof",
+              },
+            ],
+          },
+        ],
+        totalBriefCount: 1,
+        shownBriefCount: 1,
+        omittedBriefCount: 0,
+      },
+    ],
+    edges: [
+      {
+        id: "edge-persistence-surface",
+        sourceContextId: "persistence",
+        targetContextId: "surface",
+      },
+    ],
+    evidenceGaps: ["screenshot"],
+    briefLimit: 20,
+    ...overrides,
+  });
+}
+
+/**
+ * The `revisionId` a plan-preview request named. The route resolves the
+ * revision from this field alone, so a fixture route that ignored it would
+ * answer every proposal with the same plan — exactly the confusion the
+ * revision-keyed preview exists to prevent.
+ */
+export function planPreviewRequestRevisionId(body: unknown): string {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !("revisionId" in body) ||
+    typeof body.revisionId !== "string"
+  ) {
+    throw new Error("Plan preview request carried no revisionId");
+  }
+  return body.revisionId;
+}
+
+/**
+ * The preview the route returns for a request body, with the requested
+ * revision echoed back the way the handler echoes it.
+ */
+export function planPreviewResponseFixture(body: unknown): SpecPlanPreviewView {
+  const revisionId = planPreviewRequestRevisionId(body);
+  return specPlanPreviewFixture({
+    id: revisionId,
+    specId: "spec-1",
+    number: Number(revisionId.replace("revision-", "")) || 1,
+    state: "proposed",
+    authoringStage: "plan",
+    basedOnRevisionId: null,
+    contentHash: `${revisionId}-hash`,
+    proposedAt: SPEC_CONTROLS_FIXTURE_NOW,
+    approvedAt: null,
+    createdAt: SPEC_CONTROLS_FIXTURE_NOW,
+  });
+}
+
+/**
+ * The live-proposals projection the detail route computes, rebuilt over a
+ * fixture's own revisions and snapshots.
+ *
+ * It calls the shared predicate rather than restating "which proposal is
+ * stranded" in fixture code: a fixture that could disagree with the server
+ * would let a surface pass its test while showing the operator a review state
+ * the lineage does not support (#50).
+ */
+export function liveProposalsFixture(
+  revisions: readonly SpecRevision[],
+  snapshots: readonly SpecRevisionSnapshotView[],
+  /** The disposition document each proposal was proposed with, by revision id. */
+  notesByRevisionId: Readonly<Record<string, string>> = {},
+): LiveProposalView[] {
+  const byRevisionId = new Map(
+    snapshots.map((snapshot) => [snapshot.revision.id, snapshot]),
+  );
+  return liveProposalProjection(revisions).flatMap((entry) => {
+    const snapshot = byRevisionId.get(entry.revision.id);
+    if (snapshot === undefined) return [];
+    return [
+      {
+        revision: entry.revision,
+        supersededBy: entry.supersededBy,
+        snapshot,
+        baseSnapshot:
+          entry.revision.basedOnRevisionId === null
+            ? null
+            : (byRevisionId.get(entry.revision.basedOnRevisionId) ?? null),
+        notes: notesByRevisionId[entry.revision.id] ?? null,
+      },
+    ];
+  });
+}
+
+/**
+ * Ticket #50's live shape: revision 3 was approved from revision 1's content,
+ * forking past the still-proposed revision 2. The lineage head is approved, so
+ * a surface keyed off the newest revision reports nothing awaiting review
+ * while revision 2 sits with no reachable act.
+ */
+export function strandedProposalDetailFixture(): SpecDetailView {
+  const base = specControlsDetailFixture();
+  const approved = base.revisions[0];
+  const elements = base.currentRevision?.elements;
+  if (approved === undefined || elements === undefined) {
+    throw new Error("Stranded fixture is missing its revision snapshot");
+  }
+  const stranded: SpecRevision = {
+    ...approved,
+    id: "revision-2",
+    number: 2,
+    state: "proposed",
+    basedOnRevisionId: approved.id,
+    approvedAt: null,
+  };
+  const forkedPast: SpecRevision = {
+    ...approved,
+    id: "revision-3",
+    number: 3,
+    state: "approved",
+    basedOnRevisionId: approved.id,
+  };
+  const revisions = [approved, stranded, forkedPast];
+  return {
+    ...base,
+    revisions,
+    liveProposals: liveProposalsFixture(revisions, [
+      { revision: approved, elements },
+      { revision: stranded, elements },
+      { revision: forkedPast, elements },
+    ]),
+    baseRevision: { revision: approved, elements },
+    currentRevision: { revision: forkedPast, elements },
+    currentApprovedRevision: { revision: forkedPast, elements },
+    executionRevisionSnapshots: [],
+  };
 }
 
 export function specControlsDetailFixture(
@@ -236,6 +471,8 @@ export function specControlsDetailFixture(
     },
     aliases: [],
     revisions: [revision],
+    // The fixture's one revision is approved, so nothing is under review.
+    liveProposals: [],
     baseRevision: null,
     currentRevision: { revision, elements },
     currentApprovedRevision: { revision, elements },
@@ -271,6 +508,14 @@ export function specControlsDetailFixture(
       openQuestions: [],
       assumptions: [],
       taskPlan: [],
+      // Nothing is open to author, so the fixture's draft lints clean.
+      draftHealth: {
+        revisionId: revision.id,
+        total: 0,
+        blocking: 0,
+        counts: [],
+        top: [],
+      },
       coverage: { coveredCriteria: 1, totalCriteria: 1, percentage: 100 },
       delivery: { allWaived: false, provenCount: 0, totalInScope: 1 },
     },

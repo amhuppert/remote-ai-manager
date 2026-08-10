@@ -13,9 +13,17 @@ import {
   verifyExportState,
   type CanonicalSpecBundle,
 } from "@/lib/specs/export";
+import { lint } from "@/lib/specs/lint";
 import { computeSpecMeasuresReport } from "@/lib/specs/measures";
+import { diffRevisions } from "@/lib/specs/revision-diff";
+import { toDiffRows, toLintSnapshot } from "@/lib/specs/review-state";
+import {
+  specDetailViewSchema,
+  specDiffViewSchema,
+} from "@/lib/specs/view-schemas";
 import { narrowEvidenceKinds } from "@/lib/state-store/migrations/0009-narrow-evidence-kinds";
 import { stableStringify } from "@/lib/state-store/serialization";
+import { createSpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import { createSpecReviewRepo } from "@/lib/state-store/spec-review-repo";
 import { createSpecsRepo } from "@/lib/state-store/specs-repo";
 import { _createTestDb } from "@/lib/state-store/state-db";
@@ -239,6 +247,10 @@ const parkedExecution: SpecExecutionRow = {
   session_name: "feature-session",
   delivered_at: null,
   abandoned_reason: null,
+  cleanup_phase: null,
+  linked_workflow_execution_id: null,
+  cleanup_last_error: null,
+  cleanup_last_error_at: null,
   created_at: CREATED_AT,
   updated_at: CREATED_AT,
 };
@@ -307,7 +319,22 @@ const bundle = {
       content: "# Native SDD\n\n- Revision: 1\n",
     },
   ],
-  manifest: '{"formatVersion":1,"spec":{"slug":"native-sdd"}}\n',
+  // The manifest the export renderer produces, cut down to the revisions and
+  // elements the CLI's export summary counts.
+  manifest: `${JSON.stringify({
+    formatVersion: 2,
+    spec: { slug: "native-sdd" },
+    revisions: [
+      {
+        id: revision.id,
+        elements: [
+          { id: "requirement-1" },
+          { id: "criterion-1" },
+          { id: "task-1" },
+        ],
+      },
+    ],
+  })}\n`,
 };
 
 // A second spec in the same project, under a different preset, so a
@@ -358,6 +385,241 @@ const siblingSnapshot: SpecRevisionSnapshot = {
   ],
 };
 
+/**
+ * A three-revision lineage for the diff verb: an approved base, a proposal
+ * above it, and a draft above that. The draft's immediate review base (the
+ * proposal) and its governance base (the approved ancestor) disagree about the
+ * criterion, so a diff that silently swapped one base for the other shows up as
+ * a different class rather than as identical output.
+ */
+const LINEAGE_REVISION_IDS = {
+  approved: "lineage-revision-1",
+  proposed: "lineage-revision-2",
+  draft: "lineage-revision-3",
+} as const;
+
+const lineageRevisions: SpecRevision[] = [
+  {
+    id: LINEAGE_REVISION_IDS.approved,
+    specId: spec.id,
+    number: 1,
+    state: "approved",
+    authoringStage: "requirements",
+    basedOnRevisionId: null,
+    contentHash: "lineage-hash-1",
+    proposedAt: CREATED_AT,
+    approvedAt: CREATED_AT,
+    createdAt: CREATED_AT,
+  },
+  {
+    id: LINEAGE_REVISION_IDS.proposed,
+    specId: spec.id,
+    number: 2,
+    state: "proposed",
+    authoringStage: "design",
+    basedOnRevisionId: LINEAGE_REVISION_IDS.approved,
+    contentHash: "lineage-hash-2",
+    proposedAt: CREATED_AT,
+    approvedAt: null,
+    createdAt: CREATED_AT,
+  },
+  {
+    id: LINEAGE_REVISION_IDS.draft,
+    specId: spec.id,
+    number: 3,
+    state: "draft",
+    authoringStage: "plan",
+    basedOnRevisionId: LINEAGE_REVISION_IDS.proposed,
+    contentHash: null,
+    proposedAt: null,
+    approvedAt: null,
+    createdAt: CREATED_AT,
+  },
+];
+
+const LINEAGE_ELEMENTS = {
+  requirement: {
+    id: "lineage-requirement-1",
+    specId: spec.id,
+    kind: "requirement" as const,
+    number: 1,
+    parentElementId: null,
+    createdAt: CREATED_AT,
+  },
+  criterion: {
+    id: "lineage-criterion-1",
+    specId: spec.id,
+    kind: "criterion" as const,
+    number: 1,
+    parentElementId: "lineage-requirement-1",
+    createdAt: CREATED_AT,
+  },
+  task: {
+    id: "lineage-task-1",
+    specId: spec.id,
+    kind: "task" as const,
+    number: 1,
+    parentElementId: null,
+    createdAt: CREATED_AT,
+  },
+  decision: {
+    id: "lineage-decision-1",
+    specId: spec.id,
+    kind: "decision" as const,
+    number: 1,
+    parentElementId: null,
+    createdAt: CREATED_AT,
+  },
+};
+
+function lineageRow(
+  revisionId: string,
+  element: SpecRevisionSnapshot["elements"][number]["element"],
+  position: number,
+  payload: SpecRevisionSnapshot["elements"][number]["version"]["payload"],
+  payloadHash: string,
+): SpecRevisionSnapshot["elements"][number] {
+  return {
+    element,
+    version: {
+      revisionId,
+      elementId: element.id,
+      position,
+      payload,
+      payloadHash,
+      elementVersion: 1,
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+    },
+  };
+}
+
+const LINEAGE_REQUIREMENT_PAYLOAD = {
+  kind: "requirement" as const,
+  statement: "Reviewers can read a changelog before hunting.",
+  priority: "must" as const,
+  risk: "high" as const,
+};
+
+const LINEAGE_TASK_PAYLOAD = {
+  kind: "task" as const,
+  title: "Build the diff verb",
+  instructions: "Expose the semantic diff engine through cctl.",
+  tracedRequirementElementIds: [LINEAGE_ELEMENTS.requirement.id],
+  tracedDecisionElementIds: [],
+  coveredCriterionElementIds: [LINEAGE_ELEMENTS.criterion.id],
+  dependsOnTaskElementIds: [],
+};
+
+function lineageCriterionPayload(text: string) {
+  return {
+    kind: "criterion" as const,
+    text,
+    validationStrategy: { kinds: ["test_run" as const] },
+  };
+}
+
+const lineageSnapshots = new Map<string, SpecRevisionSnapshot>([
+  [
+    LINEAGE_REVISION_IDS.approved,
+    {
+      revision: lineageRevisions[0]!,
+      elements: [
+        lineageRow(
+          LINEAGE_REVISION_IDS.approved,
+          LINEAGE_ELEMENTS.requirement,
+          0,
+          LINEAGE_REQUIREMENT_PAYLOAD,
+          "lineage-requirement-hash",
+        ),
+        lineageRow(
+          LINEAGE_REVISION_IDS.approved,
+          LINEAGE_ELEMENTS.criterion,
+          1,
+          lineageCriterionPayload("The changelog names every closure."),
+          "lineage-criterion-hash-a",
+        ),
+        lineageRow(
+          LINEAGE_REVISION_IDS.approved,
+          LINEAGE_ELEMENTS.task,
+          2,
+          LINEAGE_TASK_PAYLOAD,
+          "lineage-task-hash",
+        ),
+      ],
+    },
+  ],
+  [
+    LINEAGE_REVISION_IDS.proposed,
+    {
+      revision: lineageRevisions[1]!,
+      elements: [
+        lineageRow(
+          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_ELEMENTS.requirement,
+          0,
+          LINEAGE_REQUIREMENT_PAYLOAD,
+          "lineage-requirement-hash",
+        ),
+        lineageRow(
+          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_ELEMENTS.criterion,
+          1,
+          lineageCriterionPayload(
+            "The changelog names every closure verbatim.",
+          ),
+          "lineage-criterion-hash-b",
+        ),
+        lineageRow(
+          LINEAGE_REVISION_IDS.proposed,
+          LINEAGE_ELEMENTS.task,
+          2,
+          LINEAGE_TASK_PAYLOAD,
+          "lineage-task-hash",
+        ),
+      ],
+    },
+  ],
+  [
+    LINEAGE_REVISION_IDS.draft,
+    {
+      revision: lineageRevisions[2]!,
+      elements: [
+        lineageRow(
+          LINEAGE_REVISION_IDS.draft,
+          LINEAGE_ELEMENTS.requirement,
+          0,
+          LINEAGE_REQUIREMENT_PAYLOAD,
+          "lineage-requirement-hash",
+        ),
+        lineageRow(
+          LINEAGE_REVISION_IDS.draft,
+          LINEAGE_ELEMENTS.criterion,
+          1,
+          lineageCriterionPayload(
+            "The changelog names every closure verbatim.",
+          ),
+          "lineage-criterion-hash-b",
+        ),
+        lineageRow(
+          LINEAGE_REVISION_IDS.draft,
+          LINEAGE_ELEMENTS.decision,
+          2,
+          {
+            kind: "decision" as const,
+            title: "Default to the review base",
+            chosenApproach: "Diff the proposal against basedOnRevisionId.",
+            reason: "Studio's review cards already diff that pair.",
+            rejectedAlternatives: [],
+            tracedRequirementElementIds: [LINEAGE_ELEMENTS.requirement.id],
+          },
+          "lineage-decision-hash",
+        ),
+      ],
+    },
+  ],
+]);
+
 function createDeps(): SpecRouteDeps {
   return {
     async resolveProjectPath(name) {
@@ -385,6 +647,9 @@ function createDeps(): SpecRouteDeps {
       return [] as SpecApprovalRow[];
     },
     findCommentsByRevision() {
+      return [];
+    },
+    findEventsBySpecId() {
       return [];
     },
     findGateAdmissionsBySpecId() {
@@ -451,6 +716,7 @@ function createDeps(): SpecRouteDeps {
         ok: true,
         checkedRevisionIds: [revision.id],
         mismatches: [],
+        consistencyFindings: [],
       };
     },
     async measureProject() {
@@ -500,6 +766,19 @@ function makeHost(
     orphanedCoverage?: boolean;
     /** Point the seeded plan at a depended-on task id the revision lost. */
     orphanedDependency?: boolean;
+    /**
+     * Seed the approved -> proposed -> draft lineage the diff verb reads, so
+     * the immediate review base and the governance base are different rows.
+     */
+    lineage?: boolean;
+    /**
+     * Strip every task's criterion coverage, which leaves the draft with both
+     * halves of the plan-stage lint: a criterion no task covers, and tasks
+     * that cover no criterion.
+     */
+    unplannedCoverage?: boolean;
+    /** Seed this many open questions, to overflow the bounded status section. */
+    questionCount?: number;
   } = {},
 ): CliHost & {
   requests: RecordedRequest[];
@@ -526,11 +805,31 @@ function makeHost(
     options.preset === undefined
       ? spec
       : { ...spec, gatePolicy: { preset: options.preset } };
-  const seededSnapshot: SpecRevisionSnapshot =
-    options.orphanedCoverage === true || options.orphanedDependency === true
+  const plannedSnapshot: SpecRevisionSnapshot =
+    options.unplannedCoverage === true
       ? {
           ...snapshot,
           elements: snapshot.elements.map((row) =>
+            row.version.payload.kind === "task"
+              ? {
+                  ...row,
+                  version: {
+                    ...row.version,
+                    payload: {
+                      ...row.version.payload,
+                      coveredCriterionElementIds: [],
+                    },
+                  },
+                }
+              : row,
+          ),
+        }
+      : snapshot;
+  const seededSnapshot: SpecRevisionSnapshot =
+    options.orphanedCoverage === true || options.orphanedDependency === true
+      ? {
+          ...plannedSnapshot,
+          elements: plannedSnapshot.elements.map((row) =>
             row.element.id === "task-2" && row.version.payload.kind === "task"
               ? {
                   ...row,
@@ -560,7 +859,7 @@ function makeHost(
               : row,
           ),
         }
-      : snapshot;
+      : plannedSnapshot;
   const handlers = createSpecRouteHandlers({
     ...baseDeps,
     async listSpecs() {
@@ -577,6 +876,7 @@ function makeHost(
       if (options.sibling && specId === siblingSpec.id) {
         return [siblingRevision];
       }
+      if (options.lineage) return lineageRevisions;
       return options.priorAdmission
         ? [approvedPredecessor, amendedDraft]
         : [stagedRevision];
@@ -585,6 +885,7 @@ function makeHost(
       if (options.sibling && revisionId === siblingRevision.id) {
         return siblingSnapshot;
       }
+      if (options.lineage) return lineageSnapshots.get(revisionId) ?? null;
       if (!options.priorAdmission) {
         return revisionId === revision.id
           ? { ...seededSnapshot, revision: stagedRevision }
@@ -606,6 +907,29 @@ function makeHost(
     findExecutionsBySpecId() {
       return [...(options.executions ?? [])];
     },
+    findQuestionsBySpecId() {
+      const count = options.questionCount;
+      if (count === undefined) return [question];
+      return Array.from({ length: count }, (_unused, index) => ({
+        ...question,
+        id: `question-${index + 1}`,
+        number: index + 1,
+        text: `Open question ${index + 1}?`,
+      }));
+    },
+    // The real deterministic lint over the seeded revision, not a stub: the
+    // findings the verb prints and the tier counts have to be the ones
+    // production computes, or neither surface proves anything.
+    async lintDraft(_specId, lintedRevisionId) {
+      if (lintedRevisionId !== revision.id) return [];
+      return lint(
+        toLintSnapshot(seededSpec, {
+          ...seededSnapshot,
+          revision: options.priorAdmission ? amendedDraft : stagedRevision,
+        }),
+        {},
+      );
+    },
     async reconcileExecution(_projectPath, execution) {
       const base = await baseDeps.reconcileExecution(_projectPath, execution);
       const override = options.laneStatus?.[execution.id];
@@ -626,11 +950,13 @@ function makeHost(
                 mismatchedElementIds: ["requirement-1"],
               },
             ],
+            consistencyFindings: [],
           }
         : {
             ok: true,
             checkedRevisionIds: [revision.id],
             mismatches: [],
+            consistencyFindings: [],
           };
     },
   });
@@ -668,6 +994,7 @@ function makeHost(
       if (tail === "summary")
         return handlers.getSpecSummaryGET(request, context);
       if (tail === "status") return handlers.getSpecStatusGET(request, context);
+      if (tail === "lint") return handlers.getSpecLintGET(request, context);
       if (tail === "elements") {
         return handlers.getSpecElementGET(request, {
           params: Promise.resolve({
@@ -678,6 +1005,7 @@ function makeHost(
         });
       }
       if (tail === "search") return handlers.searchSpecGET(request, context);
+      if (tail === "diff") return handlers.getSpecDiffGET(request, context);
       if (tail === "export") return handlers.getSpecExportGET(request, context);
       if (tail === "verify") return handlers.getSpecVerifyGET(request, context);
       return handlers.getSpecGET(request, context);
@@ -856,7 +1184,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     ]);
   });
 
-  it("renders every remaining authoring stage and its concluding gate", async () => {
+  it("renders every remaining active authoring stage and its concluding gate", async () => {
     const host = makeHost({ draftStage: "requirements" });
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
     const structured = await runCli(
@@ -866,7 +1194,7 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
 
     expect(text.exitCode).toBe(0);
-    // "this spec still walks three stages" must be readable here rather than
+    // The stages this spec still walks must be readable here rather than
     // inferred from transitions.ts.
     expect(text.stdout).toContain(
       "remaining authoring stages (draft revision 1 pinned at requirements):",
@@ -876,9 +1204,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
     );
     expect(text.stdout).toContain(
       "  design: dial gate — concluded by propose, human sign-off required",
-    );
-    expect(text.stdout).toContain(
-      "  plan: dial gate — concluded by propose, human sign-off required",
     );
     expect(text.stdout).toContain(
       "  next: cctl spec propose native-sdd — human sign-off required; gates consulted: requirements (gate)",
@@ -891,7 +1216,6 @@ describe("cctl spec read verbs against seeded read routes", () => {
       stages: [
         { stage: "requirements", concludedBy: "propose" },
         { stage: "design", concludedBy: "propose" },
-        { stage: "plan", concludedBy: "propose" },
       ],
       nextTransition: { stage: "requirements", action: "propose" },
     });
@@ -1272,6 +1596,120 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(text.stdout).not.toContain("not_required");
   });
 
+  it("prints the whole lint panel grouped by severity, flagging what would block propose", async () => {
+    const host = makeHost({ unplannedCoverage: true });
+    const text = await runCli(["spec", "lint", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "lint", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // Both halves of the plan-stage lint are readable from the verb itself,
+    // before anything is proposed: an author no longer has to trip the propose
+    // refusal to learn what the draft owes.
+    expect(text.stdout).toContain("R1.1 has no covering task.");
+    expect(text.stdout).toContain("T1 covers no acceptance criterion.");
+    expect(text.stdout).toContain("T2 covers no acceptance criterion.");
+    // Grouped by severity, and the blocking group says what it blocks rather
+    // than leaving the caller to decode the severity token.
+    expect(text.stdout).toContain("Blocks propose (3) — would block propose:");
+    expect(text.stdout).toContain("lint: 3 findings, 3 blocking");
+
+    const envelope = JSON.parse(structured.stdout) as {
+      ok: boolean;
+      lint: {
+        revisionId: string;
+        blocking: number;
+        total: number;
+        counts: Array<{ severity: string; count: number }>;
+        groups: Array<{ severity: string; findings: unknown[] }>;
+      };
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.lint.revisionId).toBe(revision.id);
+    expect(envelope.lint.total).toBe(3);
+    expect(envelope.lint.blocking).toBe(3);
+    expect(envelope.lint.counts).toEqual([
+      { severity: "blocks_propose", count: 3 },
+    ]);
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/lint",
+      "/api/specs/demo/native-sdd/lint",
+    ]);
+  });
+
+  it("says a clean draft has nothing to fix rather than printing an empty panel", async () => {
+    const host = makeHost();
+    const text = await runCli(["spec", "lint", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("lint: 0 findings, 0 blocking");
+    expect(text.stdout).toContain("nothing to fix");
+  });
+
+  it("summarises lint findings in status and points at the verb for the rest", async () => {
+    const host = makeHost({ unplannedCoverage: true });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+    const structured = await runCli(
+      ["spec", "status", "native-sdd", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("lint findings: 3 total, 3 blocking");
+    expect(text.stdout).toContain("  blocks_propose: 3");
+    expect(text.stdout).toContain("  R1.1: R1.1 has no covering task.");
+    expect(text.stdout).toContain("  full panel: cctl spec lint native-sdd");
+    // The tier rides the status route's own lint read — status stays one call.
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/status",
+      "/api/specs/demo/native-sdd/status",
+    ]);
+
+    const status = JSON.parse(structured.stdout).status as {
+      draftHealth: {
+        total: number;
+        blocking: number;
+        counts: Array<{ severity: string; count: number }>;
+        top: Array<{ elementHandle: string }>;
+      } | null;
+    };
+    expect(status.draftHealth?.total).toBe(3);
+    expect(status.draftHealth?.blocking).toBe(3);
+    expect(status.draftHealth?.top.map((entry) => entry.elementHandle)).toEqual(
+      ["R1.1", "T1", "T2"],
+    );
+  });
+
+  it("bounds each enumerated status section and reports what it left out", async () => {
+    const host = makeHost({ questionCount: 14 });
+    const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
+
+    expect(text.exitCode).toBe(0);
+    // A spec with a long tail of questions must not push the rest of status
+    // out of the reader's window; the omission is stated, not silent.
+    expect(text.stdout).toContain(
+      "open questions: 14 total, 10 shown, 4 omitted",
+    );
+    expect(text.stdout).toContain("  Q1: Open question 1?");
+    expect(text.stdout).toContain("  Q10: Open question 10?");
+    expect(text.stdout).not.toContain("Open question 11?");
+    // Sections that fit still state their counts, so the shape never changes
+    // between a bounded and an unbounded read.
+    // A clean draft still names the verb: the pointer is how a reader learns
+    // the full panel exists, which is exactly the reader who has not seen one.
+    expect(text.stdout).toContain("lint findings: 0 total, 0 blocking");
+    expect(text.stdout).toContain("  full panel: cctl spec lint native-sdd");
+    expect(text.stdout).toContain("assumptions: 1 total, 1 shown, 0 omitted");
+    expect(text.stdout).toContain("plan tasks: 2 total, 2 shown, 0 omitted");
+    expect(text.stdout).toContain(
+      "pending subject approvals: 2 total, 2 shown, 0 omitted",
+    );
+  });
+
   it("reports the subject approvals and the revision sign-off as separate items", async () => {
     const host = makeHost();
     const text = await runCli(["spec", "status", "native-sdd"], baseEnv, host);
@@ -1481,30 +1919,316 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(result.stderr).toContain("cctl spec search --all <query>");
   });
 
-  it("exports the canonical bundle and writes --out", async () => {
-    const host = makeHost();
-    const result = await runCli(
-      [
-        "spec",
-        "export",
-        "native-sdd",
-        "--out",
-        "/tmp/native-sdd.json",
-        "--json",
-      ],
-      baseEnv,
-      host,
-    );
+  /**
+   * The reviewer-facing changelog. Its default pair is not a free choice: Spec
+   * Studio's review cards diff the current revision against `basedOnRevisionId`,
+   * so a CLI that defaulted to the governance base would classify the same
+   * review differently from the surface a human signs off on.
+   */
+  describe("cctl spec diff", () => {
+    async function readDiff(
+      args: string[],
+      host: CliHost,
+    ): Promise<z.infer<typeof specDiffViewSchema>> {
+      const result = await runCli(
+        ["spec", "diff", "native-sdd", ...args, "--json"],
+        baseEnv,
+        host,
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      return specDiffViewSchema.parse(JSON.parse(result.stdout).diff);
+    }
 
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      out: "/tmp/native-sdd.json",
-      bundle,
+    interface ElementClass {
+      classification: string;
+      summary: string | null;
+    }
+
+    function classesByElement(
+      view: z.infer<typeof specDiffViewSchema>,
+    ): Record<string, ElementClass> {
+      return Object.fromEntries(
+        view.elements.map((element) => [
+          element.elementId,
+          { classification: element.classification, summary: element.summary },
+        ]),
+      );
+    }
+
+    it("defaults to the pair Spec Studio diffs and classes it identically", async () => {
+      const host = makeHost({ lineage: true });
+      const shown = await runCli(
+        ["spec", "show", "native-sdd", "--json"],
+        baseEnv,
+        host,
+      );
+      expect(shown.exitCode, `${shown.stderr}${shown.stdout}`).toBe(0);
+      const detail = specDetailViewSchema.parse(JSON.parse(shown.stdout).spec);
+      const current = detail.currentRevision;
+      if (current === null) throw new Error("no current revision");
+      // Exactly what SpecReviewMode computes from the detail view it renders.
+      const studio = diffRevisions(
+        detail.baseRevision === null ? [] : toDiffRows(detail.baseRevision),
+        toDiffRows(current),
+      );
+      const studioClasses: Record<string, ElementClass> = Object.fromEntries([
+        ...studio.changeList.map((change): [string, ElementClass] => [
+          change.elementId,
+          { classification: change.change, summary: change.summary },
+        ]),
+        ...studio.classifications
+          .filter((entry) => entry.classification === "unchanged")
+          .map((entry): [string, ElementClass] => [
+            entry.elementId,
+            { classification: "unchanged", summary: null },
+          ]),
+      ]);
+
+      const view = await readDiff([], host);
+
+      expect(view.to.revisionId).toBe(current.revision.id);
+      expect(view.from?.revisionId).toBe(detail.baseRevision?.revision.id);
+      expect(view.baseline).toBe("review");
+      expect(classesByElement(view)).toEqual(studioClasses);
+      // Not vacuous: the seeded pair carries one of every class.
+      expect(
+        new Set(
+          Object.values(studioClasses).map((entry) => entry.classification),
+        ),
+      ).toEqual(new Set(["added", "removed", "unchanged"]));
     });
-    expect(
-      JSON.parse(host.written.get("/tmp/native-sdd.json") ?? "null"),
-    ).toEqual(bundle);
+
+    it("prints per-element summaries and the compared pair in human output", async () => {
+      const result = await runCli(
+        ["spec", "diff", "native-sdd"],
+        baseEnv,
+        makeHost({ lineage: true }),
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain("revision 3 (draft)");
+      expect(result.stdout).toContain("revision 2 (proposed)");
+      expect(result.stdout).toContain(
+        "added\tD1\tAdded decision: Default to the review base",
+      );
+      expect(result.stdout).toContain(
+        "removed\tT1\tRemoved task: Build the diff verb",
+      );
+      expect(result.stdout).toContain("unchanged\tR1.1");
+    });
+
+    it("switches the base to the nearest approved ancestor only under --baseline governance", async () => {
+      const host = makeHost({ lineage: true });
+
+      const review = await readDiff([], host);
+      const governance = await readDiff(["--baseline", "governance"], host);
+
+      expect(review.from?.revisionId).toBe(LINEAGE_REVISION_IDS.proposed);
+      expect(classesByElement(review)[LINEAGE_ELEMENTS.criterion.id]).toEqual({
+        classification: "unchanged",
+        summary: null,
+      });
+      expect(governance.baseline).toBe("governance");
+      expect(governance.from?.revisionId).toBe(LINEAGE_REVISION_IDS.approved);
+      expect(
+        classesByElement(governance)[LINEAGE_ELEMENTS.criterion.id],
+      ).toMatchObject({ classification: "modified" });
+      // The criterion's change propagates to its requirement, which is itself
+      // byte-identical — the engine's rule, reported rather than re-derived.
+      expect(
+        governance.elements.find(
+          (element) => element.elementId === LINEAGE_ELEMENTS.requirement.id,
+        ),
+      ).toMatchObject({ classification: "modified", directlyChanged: false });
+    });
+
+    it("compares explicit revision ids for draft, proposed, and approved targets", async () => {
+      const host = makeHost({ lineage: true });
+
+      const toProposed = await readDiff(
+        [
+          "--from",
+          LINEAGE_REVISION_IDS.approved,
+          "--to",
+          LINEAGE_REVISION_IDS.proposed,
+        ],
+        host,
+      );
+      const toApproved = await readDiff(
+        ["--to", LINEAGE_REVISION_IDS.approved],
+        host,
+      );
+      const fromApprovedToDraft = await readDiff(
+        ["--from", LINEAGE_REVISION_IDS.approved],
+        host,
+      );
+
+      expect(toProposed.baseline).toBe("explicit");
+      expect(toProposed.to.state).toBe("proposed");
+      expect(
+        classesByElement(toProposed)[LINEAGE_ELEMENTS.criterion.id],
+      ).toMatchObject({ classification: "modified" });
+      // The root of the lineage has no base at all, so everything it carries
+      // is added rather than silently compared against nothing.
+      expect(toApproved.from).toBeNull();
+      expect(toApproved.to.state).toBe("approved");
+      expect(
+        new Set(toApproved.elements.map((element) => element.classification)),
+      ).toEqual(new Set(["added"]));
+      expect(fromApprovedToDraft.to.state).toBe("draft");
+      expect(fromApprovedToDraft.from?.revisionId).toBe(
+        LINEAGE_REVISION_IDS.approved,
+      );
+    });
+
+    it("refuses --from with --baseline governance, naming both bases", async () => {
+      const host = makeHost({ lineage: true });
+
+      const result = await runCli(
+        [
+          "spec",
+          "diff",
+          "native-sdd",
+          "--baseline",
+          "governance",
+          "--from",
+          LINEAGE_REVISION_IDS.approved,
+        ],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("--from");
+      expect(result.stderr).toContain("--baseline governance");
+      // Refused before the request, so neither base is silently chosen.
+      expect(host.requests.some((entry) => entry.url.includes("/diff"))).toBe(
+        false,
+      );
+    });
+
+    it("refuses conflicting bases at the route, not only at the CLI", async () => {
+      const host = makeHost({ lineage: true });
+
+      const response = await host.fetch(
+        `http://cc.test/api/specs/demo/native-sdd/diff?baseline=governance&from=${LINEAGE_REVISION_IDS.approved}`,
+        { method: "GET", headers: {} },
+      );
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        code: "conflicting_baseline",
+      });
+    });
+
+    it("refuses a revision id that is not part of this spec, naming the flag", async () => {
+      const result = await runCli(
+        ["spec", "diff", "native-sdd", "--to", "revision-from-another-spec"],
+        baseEnv,
+        makeHost({ lineage: true }),
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("revision-from-another-spec");
+      expect(result.stderr).toContain("cctl spec show native-sdd");
+    });
+  });
+
+  /**
+   * The default changed on 2026-08-07 (approved compatibility break): a bundle
+   * large enough to be worth exporting was never worth pasting into a
+   * transcript, so the file is the product and stdout carries only the manifest
+   * a reader checks it by.
+   */
+  describe("cctl spec export", () => {
+    const DERIVED_PATH = ".cc/temp/native-sdd-spec-bundle.json";
+    const exportSummarySchema = z
+      .object({
+        ok: z.literal(true),
+        path: z.string(),
+        revisionCount: z.number(),
+        elementCount: z.number(),
+        contentHash: z.string(),
+      })
+      .strict();
+
+    it("writes a derived path and prints exactly the four manifest facts", async () => {
+      const host = makeHost();
+
+      const result = await runCli(
+        ["spec", "export", "native-sdd"],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const written = host.written.get(DERIVED_PATH);
+      if (written === undefined) throw new Error("no bundle written");
+      expect(JSON.parse(written)).toEqual(bundle);
+      expect(result.stdout.trimEnd().split("\n")).toEqual([
+        "revisions: 1",
+        "elements: 3",
+        `content hash: sha256:${createHash("sha256").update(written, "utf-8").digest("hex")}`,
+        `written: ${DERIVED_PATH}`,
+      ]);
+    });
+
+    it("writes --out when given and reports that path instead", async () => {
+      const host = makeHost();
+
+      const result = await runCli(
+        [
+          "spec",
+          "export",
+          "native-sdd",
+          "--out",
+          "/tmp/native-sdd.json",
+          "--json",
+        ],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const summary = exportSummarySchema.parse(JSON.parse(result.stdout));
+      expect(summary).toMatchObject({
+        ok: true,
+        path: "/tmp/native-sdd.json",
+        revisionCount: 1,
+        elementCount: 3,
+      });
+      expect(summary.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(host.written.has(DERIVED_PATH)).toBe(false);
+      expect(
+        JSON.parse(host.written.get("/tmp/native-sdd.json") ?? "null"),
+      ).toEqual(bundle);
+    });
+
+    it("inlines the bundle only under --stdout, writing no file", async () => {
+      const host = makeHost();
+
+      const result = await runCli(
+        ["spec", "export", "native-sdd", "--stdout", "--json"],
+        baseEnv,
+        host,
+      );
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, bundle });
+      expect(host.written.size).toBe(0);
+    });
+
+    it("refuses --stdout with --out, naming both destinations", async () => {
+      const result = await runCli(
+        ["spec", "export", "native-sdd", "--stdout", "--out", "/tmp/x.json"],
+        baseEnv,
+        makeHost(),
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain("--stdout");
+      expect(result.stderr).toContain("--out");
+    });
   });
 
   it("verifies current integrity and an exported representation", async () => {
@@ -1639,14 +2363,23 @@ describe("cctl spec read verbs against seeded read routes", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("teaches the two-step start lifecycle in spec start help", async () => {
+  it("teaches the single-act launch and its opt-in park in spec start help", async () => {
     const host = makeHost();
     const start = await runCli(["spec", "start", "--help"], baseEnv, host);
 
     expect(start.exitCode).toBe(0);
-    expect(start.stdout).toContain("definition_review");
-    expect(start.stdout).toContain("cctl workflow start");
-    expect(start.stdout).toContain("workflow start");
+    // The two things an agent has to know before running it: the approval it
+    // requires, and that `--park` takes no slot.
+    expect(start.stdout).toContain("spec plan sign-off");
+    expect(start.stdout).toContain("compiledDefinitionHash");
+    expect(start.stdout).toContain("--park");
+    expect(start.stdout).toContain("no session slot");
+    expect(start.stdout).not.toContain(
+      "cctl spec start <slug> --file <scope.json>",
+    );
+    expect(start.stdout).toContain(
+      "cctl spec plan open <slug> --seed-from last",
+    );
     expect(host.requests).toHaveLength(0);
   });
 
@@ -1882,7 +2615,16 @@ describe("cctl spec verify --against across migration 0009", () => {
   ): CliHost & { written: Map<string, string> } {
     const specs = createSpecsRepo(db, createWriteQueue());
     const review = createSpecReviewRepo(db);
-    const exportDeps = { specs, review };
+    const exportDeps = {
+      specs,
+      review,
+      delivery: createSpecDeliveryRepo(db),
+      // The legacy bundle fixture launches no workflows; verification still
+      // reads through the seam so its answer comes from the same shape.
+      async observeLinkedWorkflow() {
+        return { kind: "missing" as const };
+      },
+    };
     const handlers = createSpecRouteHandlers({
       ...createDeps(),
       async resolveProjectPath(name) {
@@ -2010,6 +2752,63 @@ describe("cctl spec verify --against across migration 0009", () => {
     return { markdownFiles, manifest: `${stableStringify(manifest)}\n` };
   }
 
+  /**
+   * The 2026-08-07 default flip moved the bundle from stdout into a file. The
+   * bundle format did not move with it: a file this default writes has to be
+   * the same bytes `verify --against` already accepts, or every stored export
+   * would read as a mismatch on the next CC build.
+   */
+  it("accepts the bundle the default export writes, unchanged, at verify --against", async () => {
+    const db = seedLegacyCliWorld();
+    const files = new Map<string, string>();
+    const host = makePersistenceHost(db, files);
+
+    const exported = await runCli(
+      ["spec", "export", "clean-spec", "--json"],
+      baseEnv,
+      host,
+    );
+    expect(exported.exitCode, exported.stderr).toBe(0);
+    const summary = z
+      .object({
+        path: z.string(),
+        revisionCount: z.number(),
+        elementCount: z.number(),
+        contentHash: z.string(),
+      })
+      .loose()
+      .parse(JSON.parse(exported.stdout));
+    expect(summary.path).toBe(".cc/temp/clean-spec-spec-bundle.json");
+    const written = host.written.get(summary.path);
+    if (written === undefined) throw new Error("default export wrote nothing");
+    expect(summary.contentHash).toBe(
+      `sha256:${createHash("sha256").update(written, "utf-8").digest("hex")}`,
+    );
+    const manifest = manifestShapeSchema.parse(
+      JSON.parse(bundleShapeSchema.parse(JSON.parse(written)).manifest),
+    );
+    expect(summary.revisionCount).toBe(manifest.revisions.length);
+    expect(summary.elementCount).toBe(
+      manifest.revisions.reduce(
+        (total, revisionEntry) => total + revisionEntry.elements.length,
+        0,
+      ),
+    );
+
+    files.set(summary.path, written);
+    const verified = await runCli(
+      ["spec", "verify", "clean-spec", "--against", summary.path, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(verified.exitCode, verified.stderr).toBe(0);
+    expect(JSON.parse(verified.stdout)).toMatchObject({
+      ok: true,
+      against: summary.path,
+    });
+  });
+
   it("proves affected old bundles mismatch at exit 1 while unaffected old bundles still match", async () => {
     const db = seedLegacyCliWorld();
     const files = new Map<string, string>();
@@ -2043,7 +2842,17 @@ describe("cctl spec verify --against across migration 0009", () => {
       ).formatVersion,
     ).toBe(2);
     await expect(
-      loadSpecExportState({ specs, review }, AFFECTED_SPEC_ID),
+      loadSpecExportState(
+        {
+          specs,
+          review,
+          delivery: createSpecDeliveryRepo(db),
+          async observeLinkedWorkflow() {
+            return { kind: "missing" as const };
+          },
+        },
+        AFFECTED_SPEC_ID,
+      ),
     ).rejects.toThrow();
 
     // (2) Migrate the persisted state for real.
@@ -2071,7 +2880,7 @@ describe("cctl spec verify --against across migration 0009", () => {
     // canonical content genuinely changed under the approved vocabulary
     // migration, and the remedy is re-exporting.
     const affectedExport = await runCli(
-      ["spec", "export", "legacy-evidence", "--json"],
+      ["spec", "export", "legacy-evidence", "--stdout", "--json"],
       baseEnv,
       host,
     );

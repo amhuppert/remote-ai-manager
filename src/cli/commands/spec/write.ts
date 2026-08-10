@@ -2,22 +2,31 @@ import { z } from "zod";
 
 import { createLogger } from "@/lib/logging";
 import {
+  BATCH_WITHOUT_WORK_MESSAGE,
+  batchCarriesWork,
   createAuthoringSpecInputSchema,
   createSpecInitialElementSchema,
+  draftElementBatchDocumentSchema,
   draftElementDocumentSchema,
+  type DraftElementBatchRemoval,
   type DraftElementInput,
 } from "@/lib/specs/authoring-service";
 import {
   explainInvalidElementHandle,
+  formatElementHandle,
   isWellFormedElementHandle,
   parseElementHandle,
   specSlugSchema,
 } from "@/lib/specs/handles";
+import { draftHealth } from "@/lib/specs/draft-health";
+import { postLaunchPathActs } from "@/lib/specs/delivery-plan";
 import {
-  dialRequiresHumanApproval,
-  resolveDial,
-  type ResolvedGateDial,
-} from "@/lib/specs/policy";
+  deliveryPlanEditRequestSchema,
+  deliveryPlanMutationViewSchema,
+  deliveryPlanNextActSchema,
+  deliveryPlanPreviewViewSchema,
+  type DeliveryPlanMutationView,
+} from "@/lib/specs/delivery-plan-views";
 import { approvalRequestReceiptSchema } from "@/lib/specs/review-service";
 import {
   specAliasSchema,
@@ -26,14 +35,15 @@ import {
   specExecutionRowSchema,
   specGateSchema,
   specRevisionSchema,
+  specRevisionSupersessionSchema,
   specSchema,
   specTaskClaimRowSchema,
   taskElementPayloadSchema,
 } from "@/lib/specs/schemas";
-import { executionScopeSchema } from "@/lib/specs/scope-validation";
 import {
   specAssumptionViewSchema,
   specEditContextViewSchema,
+  specLintViewSchema,
   specProposeResultViewSchema,
   specQuestionViewSchema,
   specStartedExecutionViewSchema,
@@ -44,6 +54,7 @@ import { flagNamesFor } from "../../help-registry";
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
+  EXIT_USAGE,
   checkFlags,
   cliRequest,
   encodePathSegment,
@@ -62,7 +73,7 @@ import {
   type ProjectConversationContext,
   type GlobalFlags,
 } from "../../shared";
-import { pendingBlockLines } from "./projection-text";
+import { countOf, pendingBlockLines } from "./projection-text";
 
 const logger = createLogger("cli.spec");
 const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
@@ -109,6 +120,18 @@ const draftResponseSchema = z
  * schema, so a document a batch accepts is one a single write accepts too.
  */
 const draftBatchFileSchema = z.array(draftElementDocumentSchema).min(1);
+/**
+ * The keyed batch document: the array form plus the removals that can only
+ * travel with it. A reference and its target have to leave together, so two
+ * sequential documents have no legal order — which is why removal is a key in
+ * this file rather than a second command. Removals are the server's own
+ * removal schema verbatim: `{elementId, baseElementVersion}` and nothing else,
+ * because a handle form here would be a second grammar the server never sees.
+ */
+const draftKeyedBatchFileSchema = draftElementBatchDocumentSchema.refine(
+  batchCarriesWork,
+  { message: BATCH_WITHOUT_WORK_MESSAGE, path: ["elements"] },
+);
 const draftBatchResponseSchema = z
   .object({
     revisionId: z.string().min(1),
@@ -132,6 +155,24 @@ const draftBatchRefusalSchema = z
     code: z.string().min(1),
     unmetConditions: z.array(z.string()),
     currentElementVersion: z.number().int().positive().nullable(),
+    /**
+     * Present only on a dangling-reference refusal. The handles are what the
+     * author addressed the elements by; they are absent on a server that
+     * predates them, and null for an element the batch had not yet named.
+     */
+    danglingReferences: z
+      .array(
+        z
+          .object({
+            sourceElementId: z.string().min(1),
+            sourceHandle: z.string().min(1).nullable().optional(),
+            targetId: z.string().min(1),
+            targetHandle: z.string().min(1).nullable().optional(),
+            relation: z.string().min(1),
+          })
+          .passthrough(),
+      )
+      .optional(),
   })
   .passthrough();
 const draftBatchRefusalsSchema = z
@@ -155,27 +196,60 @@ const amendResponseSchema = z
 const withdrawProposalResponseSchema = z
   .object({ withdrawn: specRevisionSchema, draft: specRevisionSchema })
   .strict();
-const advanceStageSchema = z.enum(["requirements", "design"]);
+const dismissSupersededResponseSchema = z
+  .object({
+    withdrawn: specRevisionSchema,
+    supersession: specRevisionSupersessionSchema,
+  })
+  .strict();
+const advanceStageSchema = z.literal("requirements");
 const advanceResponseSchema = z
   .object({ revision: specRevisionSchema })
   .strict();
-const startResponseSchema = z
+const deliveryPlanCandidateSchema = z
   .object({
-    execution: specStartedExecutionViewSchema,
-    definition: z.object({ id: z.string().min(1) }).passthrough(),
+    attemptId: z.string().min(1),
+    candidateId: z.string().min(1),
+    planHash: z.string().min(1),
+    compiledDefinitionHash: z.string().min(1),
   })
   .strict();
+const parkedDeliveryPlanSchema = deliveryPlanCandidateSchema
+  .extend({ nextAct: deliveryPlanNextActSchema })
+  .strict();
+/** A start either launches one identified candidate or parks one; no legacy shape exists. */
+const startResponseSchema = z.union([
+  z
+    .object({
+      execution: specStartedExecutionViewSchema,
+      definition: z.object({ id: z.string().min(1) }).passthrough(),
+      deliveryPlan: deliveryPlanCandidateSchema,
+    })
+    .strict(),
+  z.object({ parked: parkedDeliveryPlanSchema }).strict(),
+]);
 // The discovered-task file is the server's own capture payload shape (minus
 // the fixed kind), so local validation cannot drift from what the
 // capture-scope-amendment action accepts.
 const discoveredTaskFileSchema = taskElementPayloadSchema.omit({ kind: true });
 const captureResponseSchema = z
   .object({
-    revision: specRevisionSchema,
-    task: z
-      .object({ element: specElementSchema, version: specElementVersionSchema })
+    discovery: z
+      .object({
+        id: z.string().min(1),
+        executionId: z.string().min(1),
+        attemptId: z.string().min(1).nullable(),
+        title: z.string().min(1),
+      })
       .strict(),
     restartRequired: z.boolean(),
+    replacement: z
+      .object({
+        abandonedExecutionId: z.string().min(1),
+        replacementAttemptId: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
   })
   .strict();
 const renameResponseSchema = z
@@ -403,6 +477,7 @@ function batchWrittenLine(
  * index the caller submitted, with the version a stale element is actually at.
  */
 function batchRefusalLine(
+  slug: string,
   refusal: z.infer<typeof draftBatchRefusalSchema>,
 ): string {
   const subject = refusal.elementId ?? "the revision";
@@ -410,7 +485,28 @@ function batchRefusalLine(
     refusal.currentElementVersion === null
       ? ""
       : ` (element is at version ${refusal.currentElementVersion})`;
-  return `  [${refusal.index}] ${subject}: ${refusal.code} — ${refusal.unmetConditions.join(" ")}${version}`;
+  return [
+    `  [${refusal.index}] ${subject}: ${refusal.code} — ${refusal.unmetConditions.join(" ")}${version}`,
+    ...(refusal.danglingReferences ?? []).map(
+      (reference) =>
+        `      ${referenceEnd(slug, reference.sourceElementId, reference.sourceHandle)} ${reference.relation} ${referenceEnd(slug, reference.targetId, reference.targetHandle)}, which this revision would not carry`,
+    ),
+  ].join("\n");
+}
+
+/**
+ * Address one end of a dangling reference the way the author wrote it. The id
+ * is the fallback, not the answer: an author who removed `R1.1` should not
+ * have to look up which opaque id that was to read the refusal.
+ */
+function referenceEnd(
+  slug: string,
+  elementId: string,
+  handle: string | null | undefined,
+): string {
+  return handle === null || handle === undefined
+    ? elementId
+    : `${slug}/${handle}`;
 }
 
 /**
@@ -425,6 +521,8 @@ async function readEditContext(
   slug: string,
   command: string,
   json: boolean,
+  /** A handle or element id to resolve against the current revision. */
+  element?: string,
 ): Promise<CommandResult<SpecEditContextView>> {
   return requestTyped(
     host,
@@ -432,12 +530,74 @@ async function readEditContext(
     env,
     {
       method: "GET",
-      path: `${specBasePath(context, slug)}/edit-context`,
+      path: `${specBasePath(context, slug)}/edit-context${element === undefined ? "" : `?element=${encodeURIComponent(element)}`}`,
       schema: specEditContextViewSchema,
       command,
     },
     json,
   );
+}
+
+/**
+ * The draft's blocking finding count, or null when it cannot be read. A draft
+ * receipt reports the count it moved, which means reading lint on both sides of
+ * the write — but the delta only enriches the receipt, so a lint that refuses
+ * (no draft yet, an older server) drops the line rather than the write.
+ */
+async function readBlockingCount(
+  host: CliHost,
+  context: ProjectConversationContext,
+  env: CliEnv,
+  slug: string,
+): Promise<number | null> {
+  const response = await requestTyped(
+    host,
+    context,
+    env,
+    {
+      method: "GET",
+      path: `${specBasePath(context, slug)}/lint`,
+      schema: specLintViewSchema,
+      command: "draft",
+    },
+    true,
+  );
+  // The same projection the lint verb prints and the propose refusal applies:
+  // what counts as blocking is decided in one place.
+  return response.ok ? draftHealth(response.value.findings).blocking : null;
+}
+
+/**
+ * What the write did to the draft's proposability. Null on either side means
+ * lint could not be read, and an unknown delta is reported as no delta rather
+ * than as a zero — both renderings then simply omit it.
+ */
+interface LintDelta {
+  readonly blockingBefore: number;
+  readonly blockingAfter: number;
+}
+
+function lintDelta(
+  before: number | null,
+  after: number | null,
+): LintDelta | undefined {
+  if (before === null || after === null) return undefined;
+  return { blockingBefore: before, blockingAfter: after };
+}
+
+/**
+ * The one line that answers "did that help?" without a second command. The
+ * `--json` receipt carries the same two numbers structurally, so a machine
+ * reader never has to parse this sentence back apart.
+ */
+function lintDeltaLine(slug: string, delta: LintDelta | undefined): string[] {
+  if (delta === undefined) return [];
+  const summary = `lint: ${delta.blockingBefore} -> ${delta.blockingAfter} blocking`;
+  return [
+    delta.blockingAfter === 0
+      ? `${summary} — nothing here refuses propose`
+      : `${summary} — read them with cctl spec lint ${slug}`,
+  ];
 }
 
 function currentRevisionId(
@@ -484,6 +644,14 @@ interface MutationOutcome {
    */
   readonly items?: readonly string[];
   readonly state: string;
+  /**
+   * What the write did to the draft's blocking finding count. Rendered beside
+   * the state it produced AND carried structurally in the `--json` receipt.
+   * Absent when lint could not be read on both sides of the write. The slug
+   * rides along because the text rendering points at `cctl spec lint <slug>`;
+   * only the two counts reach the `--json` receipt.
+   */
+  readonly lint?: LintDelta & { readonly slug: string };
   /** Server-assigned addressing tokens, keyed machine-side in camelCase. */
   readonly tokens: Readonly<Record<string, string>>;
   readonly actsNext: "agent" | "human";
@@ -495,6 +663,12 @@ interface MutationOutcome {
    * one-sentence blocker cannot carry a multi-gate, multi-condition block.
    */
   readonly detail?: readonly string[];
+  /**
+   * The act that takes this outcome back, named at the moment it becomes
+   * relevant rather than left to be rediscovered from the schema docs. Only
+   * outcomes with a real inverse carry one — it is not a second `next`.
+   */
+  readonly recovery?: string;
   readonly next: string;
   readonly instruction?: string;
 }
@@ -516,6 +690,9 @@ function mutationResult(
     outcome.changed,
     ...(outcome.items ?? []),
     `state: ${outcome.state}`,
+    ...(outcome.lint === undefined
+      ? []
+      : lintDeltaLine(outcome.lint.slug, outcome.lint)),
     ...(tokens.length === 0
       ? []
       : [
@@ -524,6 +701,9 @@ function mutationResult(
         ]),
     `acts next: ${outcome.actsNext}${outcome.blocked === null ? "" : ` — ${outcome.blocked}`}`,
     ...(outcome.detail ?? []),
+    ...(outcome.recovery === undefined
+      ? []
+      : [`recovery: ${outcome.recovery}`]),
     `next: ${outcome.next}`,
     ...(outcome.instruction === undefined
       ? []
@@ -537,9 +717,18 @@ function mutationResult(
       [field]: value,
       changed: outcome.changed,
       state: outcome.state,
+      ...(outcome.lint === undefined
+        ? {}
+        : {
+            lint: {
+              blockingBefore: outcome.lint.blockingBefore,
+              blockingAfter: outcome.lint.blockingAfter,
+            },
+          }),
       tokens: outcome.tokens,
       actsNext: outcome.actsNext,
       blocked: outcome.blocked,
+      ...(outcome.recovery === undefined ? {} : { recovery: outcome.recovery }),
       next: outcome.next,
       ...(outcome.instruction === undefined
         ? {}
@@ -839,26 +1028,37 @@ const BASE_ELEMENT_VERSION_FIELD =
   '"baseElementVersion": <the version you last read, or null to create the element>';
 
 const DRAFT_FILE_USAGE =
-  "spec draft requires --file <element.json>, holding one element write document or a JSON array of them; each element states its own baseElementVersion";
+  'spec draft requires --file <element.json>, holding one element write document, a JSON array of them, or {"elements": [...], "removals": [...]}; each element states its own baseElementVersion';
 
 /**
- * Both `--file` forms hold the same document, so one schema parses both and a
- * lone element cannot be legal in a shape a batch element is not. The forms are
- * told apart by the file, not by a flag: the array is parsed as an array so a
- * schema failure still names the offending element's index and field, which a
- * union parse would flatten away.
+ * The batch a `--file` document asks for: the elements it writes and the
+ * elements it takes out, which travel together because removing a reference
+ * and its target in two documents has no legal order.
+ */
+interface DraftBatchDocument {
+  readonly elements: readonly DraftElementInput[];
+  readonly removals: readonly DraftElementBatchRemoval[];
+}
+
+type ParsedDraftDocument =
+  | { readonly form: "single"; readonly element: DraftElementInput }
+  | ({ readonly form: "batch" } & DraftBatchDocument);
+
+/**
+ * All three `--file` forms hold the same element document, so one schema
+ * parses each of them and a lone element cannot be legal in a shape a batch
+ * element is not. The forms are told apart by the file, not by a flag: the
+ * array and the keyed object are parsed as themselves so a schema failure
+ * still names the offending element's index and field, which a union parse
+ * would flatten away. The keyed form is recognised by its keys — a lone
+ * element document carries neither, since it is strict and has no such field.
  */
 function parseDraftDocument(
   document: unknown,
   filePath: string,
   json: boolean,
 ):
-  | {
-      readonly ok: true;
-      readonly elements: readonly DraftElementInput[];
-      /** The lone element when the file holds an object rather than an array. */
-      readonly single: DraftElementInput | null;
-    }
+  | ({ readonly ok: true } & ParsedDraftDocument)
   | { readonly ok: false; readonly result: CliResult } {
   const invalid = (error: z.ZodError) => ({
     ok: false as const,
@@ -867,13 +1067,32 @@ function parseDraftDocument(
   if (Array.isArray(document)) {
     const parsed = draftBatchFileSchema.safeParse(document);
     return parsed.success
-      ? { ok: true, elements: parsed.data, single: null }
+      ? { ok: true, form: "batch", elements: parsed.data, removals: [] }
+      : invalid(parsed.error);
+  }
+  if (isKeyedBatchDocument(document)) {
+    const parsed = draftKeyedBatchFileSchema.safeParse(document);
+    return parsed.success
+      ? {
+          ok: true,
+          form: "batch",
+          elements: parsed.data.elements,
+          removals: parsed.data.removals,
+        }
       : invalid(parsed.error);
   }
   const parsed = draftElementDocumentSchema.safeParse(document);
   return parsed.success
-    ? { ok: true, elements: [parsed.data], single: parsed.data }
+    ? { ok: true, form: "single", element: parsed.data }
     : invalid(parsed.error);
+}
+
+function isKeyedBatchDocument(document: unknown): boolean {
+  return (
+    typeof document === "object" &&
+    document !== null &&
+    ("elements" in document || "removals" in document)
+  );
 }
 
 /** The command `spec status` names as the next step after any draft save. */
@@ -888,14 +1107,12 @@ async function draftSingleElement(
   const { host, flags, env, slug, json } = request;
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const editContext = await readEditContext(
-    host,
-    resolved.context,
-    env,
-    slug,
-    "draft",
-    json,
-  );
+  // Concurrent with the write's own read: the "before" count costs no serial
+  // round trip that the edit-context read does not already spend.
+  const [editContext, blockingBefore] = await Promise.all([
+    readEditContext(host, resolved.context, env, slug, "draft", json),
+    readBlockingCount(host, resolved.context, env, slug),
+  ]);
   if (!editContext.ok) return editContext.result;
   const revisionId = currentRevisionId(editContext.value, "draft", json);
   if (!revisionId.ok) return revisionId.result;
@@ -915,9 +1132,17 @@ async function draftSingleElement(
   if (!response.ok) return response.result;
   const saved = response.value;
   const label = elementLabel(slug, saved.handle, saved.element.kind);
+  const blockingAfter = await readBlockingCount(
+    host,
+    resolved.context,
+    env,
+    slug,
+  );
+  const delta = lintDelta(blockingBefore, blockingAfter);
   return mutationResult(
     json,
     {
+      ...(delta === undefined ? {} : { lint: { ...delta, slug } }),
       // A revival is not a fresh save: the id was already the spec's, and the
       // address readers know it by came back with it.
       changed: saved.revived
@@ -938,14 +1163,32 @@ async function draftSingleElement(
   );
 }
 
+/** One element a batch takes out, with the address the caller named it by. */
+interface RemovedElement extends DraftElementBatchRemoval {
+  /** Null when the caller addressed the element by id, as a file does. */
+  readonly handle: string | null;
+  readonly kind: string | null;
+}
+
 /**
- * Many elements, one transaction, still one compare-and-swap per element. The
- * batch is reported element by element — a whole-document write would hide
- * both which element refused and which version each landed at (R7.3).
+ * Removal's exact inverse, named on the receipt that makes it relevant rather
+ * than left in the schema docs: a historical id refuses an ordinary write, so
+ * an author who does not learn the flag here learns it from a refusal.
+ */
+function reintroductionRecovery(slug: string): string {
+  return `bring a removed element back with its original number and handle by re-saving it with "reintroduceHistorical": true and "baseElementVersion": null — ${draftNextCommand(slug)}`;
+}
+
+/**
+ * Many elements, one transaction, still one compare-and-swap per element —
+ * removals included. The batch is reported item by item: a whole-document
+ * write would hide both which element refused and which version each landed
+ * at (R7.3), and a removal reports no version because it leaves none behind.
  */
 async function draftElementBatch(
   request: DraftWriteRequest,
-  elements: readonly DraftElementInput[],
+  document: DraftBatchDocument,
+  removedAddresses: readonly RemovedElement[],
 ): Promise<CliResult> {
   const { host, flags, env, slug, json } = request;
   const resolved = await resolveProjectConversationContext(flags, env, host);
@@ -961,14 +1204,44 @@ async function draftElementBatch(
   if (!editContext.ok) return editContext.result;
   const revisionId = currentRevisionId(editContext.value, "draft", json);
   if (!revisionId.ok) return revisionId.result;
+  return submitDraftBatch(
+    request,
+    resolved.context,
+    revisionId.value,
+    document,
+    removedAddresses,
+  );
+}
+
+/**
+ * The one transport every removal takes — the file form and the `spec remove`
+ * verb submit the identical document, so the two can never drift into
+ * different atomicity or different refusals.
+ */
+async function submitDraftBatch(
+  request: DraftWriteRequest,
+  context: ProjectConversationContext,
+  revisionId: string,
+  document: DraftBatchDocument,
+  removedAddresses: readonly RemovedElement[],
+): Promise<CliResult> {
+  const { host, env, slug, json } = request;
+  const { elements, removals } = document;
+  // Read here rather than in each caller so the batch file form and the
+  // `spec remove` verb report the same delta over the same transaction.
+  const blockingBefore = await readBlockingCount(host, context, env, slug);
   const response = await requestTyped(
     host,
-    resolved.context,
+    context,
     env,
     {
       method: "POST",
-      path: actionPath(resolved.context, slug, "draft-batch"),
-      body: { revisionId: revisionId.value, elements },
+      path: actionPath(context, slug, "draft-batch"),
+      body: {
+        revisionId,
+        elements,
+        ...(removals.length === 0 ? {} : { removals }),
+      },
       schema: draftBatchResponseSchema,
       command: "draft",
       onRefusal: (error) => {
@@ -977,7 +1250,9 @@ async function draftElementBatch(
         return failure({
           exitCode: EXIT_OPERATION_FAILED,
           message: error.error,
-          detail: refused.data.refusals.map(batchRefusalLine).join("\n"),
+          detail: refused.data.refusals
+            .map((refusal) => batchRefusalLine(slug, refusal))
+            .join("\n"),
           ...structuredErrorFields(error),
           json,
         });
@@ -987,21 +1262,48 @@ async function draftElementBatch(
   );
   if (!response.ok) return response.result;
   const saved = response.value;
-  const count = saved.written.length;
-  const plural = count === 1 ? "" : "s";
+  const written = saved.written.length;
+  const removed = removedAddresses.length;
+  const changed = [
+    ...(written === 0 ? [] : [`saved ${countOf(written, "element")}`]),
+    ...(removed === 0 ? [] : [`removed ${countOf(removed, "element")}`]),
+  ].join(" and ");
+  const state = [
+    ...(written === 0 ? [] : [`all ${countOf(written, "element")} current`]),
+    ...(removed === 0 ? [] : [`${countOf(removed, "element")} no longer`]),
+  ].join(" and ");
+  const blockingAfter = await readBlockingCount(host, context, env, slug);
+  const delta = lintDelta(blockingBefore, blockingAfter);
   return mutationResult(
     json,
     {
-      changed: `saved ${count} element${plural} in one transaction`,
-      items: saved.written.map((entry) => batchWrittenLine(slug, entry)),
-      state: `all ${count} element${plural} current in the open draft`,
+      changed: `${changed} in one transaction`,
+      ...(delta === undefined ? {} : { lint: { ...delta, slug } }),
+      items: [
+        ...saved.written.map((entry) => batchWrittenLine(slug, entry)),
+        ...removedAddresses.map(
+          (entry, index) =>
+            `  removed [${index}] ${entry.handle === null ? entry.elementId : elementLabel(slug, entry.handle, entry.kind ?? "element")}`,
+        ),
+      ],
+      state: `${state} in the open draft`,
       tokens: { revision: saved.revisionId },
       actsNext: "agent",
       blocked: null,
+      ...(removed === 0 ? {} : { recovery: reintroductionRecovery(slug) }),
       next: draftStatusNext(slug),
     },
     "batch",
     saved,
+    removed === 0
+      ? {}
+      : {
+          removed: removedAddresses.map((entry) => ({
+            elementId: entry.elementId,
+            handle: entry.handle,
+            baseElementVersion: entry.baseElementVersion,
+          })),
+        },
   );
 }
 
@@ -1042,12 +1344,209 @@ export async function runSpecDraft(
     slug: slug.value,
     json,
   };
-  // The document's own shape selects how the write is reported: an array is
+  // The document's own shape selects how the write is reported: a batch is
   // one transaction reported per index, a lone object is the element form
   // whose refusal carries the winning content back.
-  return parsed.single === null
-    ? draftElementBatch(request, parsed.elements)
-    : draftSingleElement(request, parsed.single);
+  return parsed.form === "single"
+    ? draftSingleElement(request, parsed.element)
+    : draftElementBatch(
+        request,
+        { elements: parsed.elements, removals: parsed.removals },
+        // A file addresses removals by element id, which is the whole reason
+        // `spec remove` exists: it is the same document with handles resolved.
+        parsed.removals.map((removal) => ({
+          ...removal,
+          handle: null,
+          kind: null,
+        })),
+      );
+}
+
+const REMOVE_USAGE =
+  "spec remove requires <slug> and at least one <handle> — cctl spec remove <slug> <handle...>";
+
+/**
+ * Removal by the address the author writes in. Handles are resolved here,
+ * against the write path's own read, rather than in the file contract: the
+ * server's removal schema is `{elementId, baseElementVersion}`, and teaching
+ * the transport a second grammar would put handle resolution on both sides of
+ * the wire. One batch is still submitted, so a set of removals that only
+ * resolves together lands together.
+ */
+export async function runSpecRemove(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec remove"), json);
+  if (denied) return denied;
+  const slug = validateSlug(rest[0], "remove", json);
+  if (!slug.ok) return slug.result;
+  const handles = rest.slice(1);
+  if (handles.length === 0) return usageFailure(REMOVE_USAGE, json);
+  const addressed = readRemovalHandles(handles, slug.value, json);
+  if (!addressed.ok) return addressed.result;
+
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const removals: RemovedElement[] = [];
+  let revisionId: string | null = null;
+  for (const handle of addressed.value) {
+    const editContext = await readEditContext(
+      host,
+      resolved.context,
+      env,
+      slug.value,
+      "remove",
+      json,
+      handle,
+    );
+    if (!editContext.ok) return editContext.result;
+    const current = currentRevisionId(editContext.value, "remove", json);
+    if (!current.ok) return current.result;
+    // Every handle is resolved against one revision. A draft that moved mid
+    // resolution would mix versions read from two revisions into one
+    // compare-and-swap, which is the conflict the CAS exists to report.
+    if (revisionId !== null && revisionId !== current.value) {
+      return failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: `spec remove: the open draft changed to revision ${current.value} while ${slug.value}'s handles were being resolved`,
+        code: "stale_revision",
+        instruction: "Nothing was removed. Run the same command again.",
+        json,
+      });
+    }
+    revisionId = current.value;
+    const element = editContext.value.element;
+    if (element === null) {
+      return failure({
+        exitCode: EXIT_OPERATION_FAILED,
+        message: `spec remove: the open draft of ${slug.value} carries no ${slug.value}/${handle}`,
+        code: "not_found",
+        instruction: `Nothing was removed. Read the elements the draft carries with \`cctl spec show ${slug.value}\`, then remove the handles it lists.`,
+        json,
+      });
+    }
+    removals.push({
+      elementId: element.elementId,
+      baseElementVersion: element.elementVersion,
+      handle: element.handle ?? handle,
+      kind: element.kind,
+    });
+  }
+  if (revisionId === null) return usageFailure(REMOVE_USAGE, json);
+  return submitDraftBatch(
+    { host, flags, env, slug: slug.value, json },
+    resolved.context,
+    revisionId,
+    {
+      elements: [],
+      removals: removals.map(({ elementId, baseElementVersion }) => ({
+        elementId,
+        baseElementVersion,
+      })),
+    },
+    removals,
+  );
+}
+
+/**
+ * The bare handles a removal names, refused before any read when one is not a
+ * handle, addresses another spec, or repeats — a batch that removed the same
+ * element twice would refuse on the second compare-and-swap, which reads as a
+ * concurrency conflict rather than as the typo it is.
+ */
+function readRemovalHandles(
+  handles: readonly string[],
+  slug: string,
+  json: boolean,
+): CommandResult<string[]> {
+  const bare: string[] = [];
+  for (const raw of handles) {
+    if (!isWellFormedElementHandle(raw, slug)) {
+      return {
+        ok: false,
+        result: usageFailure(
+          `spec remove: ${explainInvalidElementHandle(raw)}`,
+          json,
+        ),
+      };
+    }
+    const parsed = parseElementHandle(raw, slug);
+    if (parsed.slug !== slug) {
+      return {
+        ok: false,
+        result: usageFailure(
+          `spec remove: ${JSON.stringify(raw)} addresses spec ${parsed.slug}, not ${slug}`,
+          json,
+        ),
+      };
+    }
+    if (parsed.kind === "question" || parsed.kind === "assumption") {
+      return {
+        ok: false,
+        result: usageFailure(
+          `spec remove: ${JSON.stringify(raw)} is a ${parsed.kind}, which is a spec-scoped record rather than a draft element — answer or dispose of it instead`,
+          json,
+        ),
+      };
+    }
+    const formatted = formatElementHandle(parsed, "bare");
+    if (bare.includes(formatted)) {
+      return {
+        ok: false,
+        result: usageFailure(
+          `spec remove: ${slug}/${formatted} is named twice; name each handle once`,
+          json,
+        ),
+      };
+    }
+    bare.push(formatted);
+  }
+  return { ok: true, value: bare };
+}
+
+/**
+ * The proposal's disposition document, read whole from the file the author
+ * edits between rounds. It is a file rather than a flag value because it is
+ * markdown — headings, lists, fenced blocks — which no shell argument carries
+ * intact.
+ *
+ * The size cap is the server's, not this reader's: a limit enforced here would
+ * be a second answer to the same question, and a CLI older than its server
+ * would refuse documents the server accepts.
+ */
+async function readProposalNotesFile(
+  host: CliHost,
+  filePath: string | undefined,
+  json: boolean,
+): Promise<CommandResult<string | null>> {
+  if (filePath === undefined || filePath.trim() === "") {
+    return { ok: true, value: null };
+  }
+  const raw = await host.readTextFile(filePath);
+  if (raw === null) {
+    return {
+      ok: false,
+      result: usageFailure(
+        `cannot read proposal notes file ${JSON.stringify(filePath)}`,
+        json,
+      ),
+    };
+  }
+  if (raw.trim() === "") {
+    return {
+      ok: false,
+      result: usageFailure(
+        `proposal notes file ${JSON.stringify(filePath)} is empty — write the round's disposition into it, or propose without --notes`,
+        json,
+      ),
+    };
+  }
+  return { ok: true, value: raw };
 }
 
 export async function runSpecPropose(
@@ -1077,6 +1576,8 @@ export async function runSpecPropose(
   if (!editContext.ok) return editContext.result;
   const revisionId = currentRevisionId(editContext.value, "propose", json);
   if (!revisionId.ok) return revisionId.result;
+  const notes = await readProposalNotesFile(host, values["notes"], json);
+  if (!notes.ok) return notes.result;
   const response = await requestTyped(
     host,
     resolved.context,
@@ -1084,7 +1585,10 @@ export async function runSpecPropose(
     {
       method: "POST",
       path: actionPath(resolved.context, slug.value, "propose"),
-      body: { revisionId: revisionId.value },
+      body: {
+        revisionId: revisionId.value,
+        ...(notes.value === null ? {} : { notes: notes.value }),
+      },
       schema: proposeResponseSchema,
       command: "propose",
     },
@@ -1174,6 +1678,78 @@ export async function runSpecWithdrawProposal(
   );
 }
 
+/**
+ * The agent-side attempt at the human-only dismissal (#50). It exists so an
+ * agent that finds a stranded proposal learns the act and its surface from a
+ * typed refusal instead of concluding the state has no exit.
+ */
+export async function runSpecDismissSuperseded(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(
+    values,
+    flagNamesFor("spec dismiss-superseded"),
+    json,
+  );
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "dismiss-superseded", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "dismiss-superseded", json);
+  if (!slug.ok) return slug.result;
+  const revisionId = values["revision"];
+  if (revisionId === undefined || revisionId.trim() === "") {
+    return usageFailure(
+      "spec dismiss-superseded requires --revision <revision-id> — the stranded proposal `cctl spec status` reports",
+      json,
+    );
+  }
+  const reason = values["reason"];
+  if (reason === undefined || reason.trim() === "") {
+    return usageFailure(
+      "spec dismiss-superseded requires --reason <text> — the durable marker records why reviewed work was disposed of",
+      json,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const response = await requestTyped(
+    host,
+    resolved.context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(resolved.context, slug.value, "dismiss-superseded"),
+      body: { revisionId, reason },
+      schema: dismissSupersededResponseSchema,
+      command: "dismiss-superseded",
+    },
+    json,
+  );
+  if (!response.ok) return response.result;
+  const { withdrawn, supersession } = response.value;
+  return mutationResult(
+    json,
+    {
+      changed: `dismissed proposed revision ${withdrawn.number} as superseded`,
+      state: `revision ${withdrawn.number} is withdrawn; no draft was opened`,
+      tokens: {
+        revision: withdrawn.id,
+        supersededByRevision: supersession.supersededByRevisionId,
+      },
+      actsNext: "agent",
+      blocked: null,
+      next: `cctl spec status ${slug.value}`,
+    },
+    "dismissal",
+    response.value,
+  );
+}
+
 export async function runSpecAdvance(
   rest: string[],
   flags: GlobalFlags,
@@ -1188,12 +1764,15 @@ export async function runSpecAdvance(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "advance", json);
   if (!slug.ok) return slug.result;
-  const expectedStage = advanceStageSchema.safeParse(values["from"]);
-  if (!expectedStage.success) {
+  if (values["from"] === "design") {
     return usageFailure(
-      "spec advance requires --from requirements or design",
+      `spec advance --from design is retired: design is the final evergreen stage. Run \`cctl spec propose ${slug.value}\`; after sign-off, open delivery planning with \`cctl spec plan open ${slug.value}\`.`,
       json,
     );
+  }
+  const expectedStage = advanceStageSchema.safeParse(values["from"]);
+  if (!expectedStage.success) {
+    return usageFailure("spec advance requires --from requirements", json);
   }
   const resolved = await resolveProjectConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
@@ -1704,19 +2283,6 @@ export async function runSpecRequestApproval(
   );
 }
 
-/**
- * Who unblocks a run parked at definition review. It asks the canonical
- * predicate rather than testing for a dial value, so the CLI's notion of "a
- * human acts next" cannot drift from the server's: a dial the server treats as
- * an approval boundary but the CLI reads as agent work would name an agent as
- * the next actor for a run that only a human can move.
- */
-export function executionStartActor(
-  dial: ResolvedGateDial,
-): MutationOutcome["actsNext"] {
-  return dialRequiresHumanApproval(dial) ? "human" : "agent";
-}
-
 export async function runSpecStart(
   rest: string[],
   flags: GlobalFlags,
@@ -1731,24 +2297,20 @@ export async function runSpecStart(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "start", json);
   if (!slug.ok) return slug.result;
-  // `spec start` is the ONE session-only verb in the spec group: it pins the
-  // execution to a session, and `approveExecutionStart` refuses an execution
-  // whose session is null ("The execution is not pinned to a session"). A project
-  // conversation would otherwise persist an unapprovable execution. Resolving the
-  // session BEFORE the scope file means the refusal lands before the agent has
-  // done the work, not after.
+  if (values["file"] !== undefined) {
+    return failure({
+      exitCode: EXIT_USAGE,
+      message:
+        "spec start --file is retired: the approved delivery plan is the execution graph.",
+      instruction: `Nothing was started. Import legacy planning with \`cctl spec plan open ${slug.value} --seed-from last\`, then propose and sign off that candidate before starting.`,
+      json,
+    });
+  }
+  // `spec start` is the one session-only spec verb: the approved candidate is
+  // launched into, and its merge is pinned to, that concrete session.
   const resolved = await resolveConversationContext(flags, env, host);
   if (!resolved.ok) return resolved.result;
-  const filePath = values["file"];
-  if (filePath === undefined) {
-    return usageFailure("spec start requires --file <scope.json>", json);
-  }
-  const file = await readJsonObjectFile(host, filePath, "scope", json);
-  if (!file.ok) return file.result;
-  const scope = executionScopeSchema.safeParse(file.value);
-  if (!scope.success) {
-    return invalidFileResult("start", filePath, "scope", json, scope.error);
-  }
+  const park = values["park"] !== undefined;
   const editContext = await readEditContext(
     host,
     resolved.context,
@@ -1769,8 +2331,8 @@ export async function runSpecStart(
       path: actionPath(resolved.context, slug.value, "start-execution"),
       body: {
         revisionId: revisionId.value,
-        scope: scope.data,
         sessionName: resolved.context.session,
+        ...(park ? { park: true } : {}),
       },
       schema: startResponseSchema,
       command: "start",
@@ -1778,65 +2340,54 @@ export async function runSpecStart(
     json,
   );
   if (!response.ok) return response.result;
-  const execution = response.value.execution;
-  const definitionId = response.value.definition.id;
-  const launchedLaneId = execution.workflowExecutionId;
-  if (launchedLaneId !== null) {
+  if ("parked" in response.value) {
+    const parked = response.value.parked;
     return mutationResult(
       json,
       {
-        changed: `started execution ${execution.id} — workflow lane ${launchedLaneId} is running`,
-        state: `execution ${execution.state}, workflow lane running`,
+        changed: `parked plan attempt ${parked.attemptId} for prelaunch review — candidate ${parked.candidateId} (compiled ${parked.compiledDefinitionHash})`,
+        state:
+          "attempt parked, no workflow execution created and no session slot taken",
         tokens: {
-          execution: execution.id,
-          workflowDefinition: definitionId,
-          workflowExecution: launchedLaneId,
+          planAttempt: parked.attemptId,
+          planHash: parked.planHash,
+          compiledDefinitionHash: parked.compiledDefinitionHash,
         },
-        actsNext: "agent",
-        blocked: null,
-        next: `cctl spec status ${slug.value} — reports the run's lane position`,
+        actsNext: parked.nextAct.actor,
+        blocked:
+          parked.nextAct.actor === "human" ? parked.nextAct.reason : null,
+        detail: [
+          `cctl spec plan preview ${slug.value} --stage proposed reads exactly the bytes a launch will run`,
+          `tuning the parked plan with \`cctl spec plan reopen ${slug.value} --reason <why>\` changes the candidate hash and demands a fresh sign-off before launch`,
+        ],
+        next: `${parked.nextAct.command} — ${parked.nextAct.reason}`,
       },
-      "execution",
+      "plan",
       response.value,
-      {
-        workflowDefinitionId: definitionId,
-        workflowLaunched: true,
-        executionState: execution.state,
-      },
     );
   }
-  // Starting a spec execution compiles a workflow definition and parks the run
-  // at definition review; no lane exists until `workflow start` is run. The
-  // dial the server compiled `approvalRequired` from decides who unblocks it,
-  // so resolve the same dial rather than mapping the preset name.
-  const dial = resolveDial(editContext.value.gatePolicy, "execution_start");
-  const actsNext = executionStartActor(dial);
-  const nextCommand = `cctl workflow start ${definitionId}`;
-  const instruction =
-    actsNext === "human"
-      ? `Run \`${nextCommand}\`. The execution_start dial is ${dial} for this spec, so the run parks awaiting definition approval until a human approves the compiled definition.`
-      : `Run \`${nextCommand}\` to launch the workflow lane — nothing is running until you do.`;
+  const { deliveryPlan, execution } = response.value;
   return mutationResult(
     json,
     {
-      changed: `started execution ${execution.id} — no workflow lane has launched yet`,
-      state: `execution ${execution.state}, no workflow lane launched`,
-      tokens: { execution: execution.id, workflowDefinition: definitionId },
-      actsNext,
-      blocked:
-        actsNext === "human"
-          ? `execution_start dial is ${dial}, so a human approves the compiled definition before the lane runs`
-          : `execution_start dial is ${dial}; nothing runs until the lane is launched`,
-      next: nextCommand,
-      instruction,
+      changed: `launched execution ${execution.id} from plan attempt ${deliveryPlan.attemptId} — the approved candidate ${deliveryPlan.candidateId} ran unchanged`,
+      state: `execution ${execution.state}, workflow definition ${response.value.definition.id} at compiled hash ${deliveryPlan.compiledDefinitionHash}`,
+      tokens: {
+        execution: execution.id,
+        workflowDefinition: response.value.definition.id,
+        planAttempt: deliveryPlan.attemptId,
+        compiledDefinitionHash: deliveryPlan.compiledDefinitionHash,
+      },
+      actsNext: "agent",
+      blocked: null,
+      next: `cctl spec status ${slug.value} — reports the run's lane position`,
     },
     "execution",
     response.value,
     {
-      workflowDefinitionId: definitionId,
-      workflowLaunched: false,
+      workflowDefinitionId: response.value.definition.id,
+      workflowLaunched: true,
       executionState: execution.state,
-      executionStartDial: dial,
     },
   );
 }
@@ -1855,11 +2406,13 @@ export async function runSpecCapture(
   if (extra) return extra;
   const slug = validateSlug(rest[0], "capture", json);
   if (!slug.ok) return slug.result;
+  // `--execution` is optional: the spec's live attempt already knows the run
+  // it launched, and naming one matters only for a legacy compiled run.
   const executionId = values["execution"];
   const filePath = values["file"];
-  if (executionId === undefined || filePath === undefined) {
+  if (filePath === undefined) {
     return usageFailure(
-      "spec capture requires --execution <execution-id> --file <task.json>",
+      "spec capture requires --file <task.json> (add --execution <execution-id> only for a legacy run with no delivery plan attempt)",
       json,
     );
   }
@@ -1898,7 +2451,7 @@ export async function runSpecCapture(
       method: "POST",
       path: actionPath(resolved.context, slug.value, "capture-scope-amendment"),
       body: {
-        executionId,
+        ...(executionId === undefined ? {} : { executionId }),
         discoveredTask: parsedFile.data,
         ...(blockingReason === undefined ? {} : { blockingReason }),
       },
@@ -1909,36 +2462,55 @@ export async function runSpecCapture(
   );
   if (!response.ok) return response.result;
   const captured = response.value;
-  const taskNumber = captured.task.element.number;
-  const taskLabel = taskNumber === null ? "a task" : `T${taskNumber}`;
-  const restartRequired = captured.restartRequired;
-  const runOutcome = restartRequired
-    ? "the blocked run was abandoned — restart from the amended revision once approved"
-    : "the run continues on its pinned scope";
+  const { discovery, replacement } = captured;
+  // The three post-launch paths, side by side and bounded to three, so a
+  // receipt never leaves the operator to guess which exits exist (design §11).
+  const paths = postLaunchPathActs({
+    slug: slug.value,
+    executionId: discovery.executionId,
+  });
+  const nonBlockingGuidance = `The run keeps its pinned scope — no capture form mutates it. The three post-launch paths are: ${paths.join(
+    "; ",
+  )}. Only the third, \`cctl workflow live amend\`, adds this work to the CURRENT run: it is the dedicated audited amendment, and nothing else may change a launched definition.`;
+  if (replacement === null) {
+    return mutationResult(
+      json,
+      {
+        changed: `recorded discovery ${discovery.id} ("${discovery.title}") against running execution ${discovery.executionId}`,
+        state: `the discovery is queued for the next plan; execution ${discovery.executionId} keeps its pinned scope`,
+        tokens: {
+          discovery: discovery.id,
+          execution: discovery.executionId,
+          ...(discovery.attemptId === null
+            ? {}
+            : { attempt: discovery.attemptId }),
+        },
+        actsNext: "agent",
+        blocked: null,
+        next: `cctl spec plan open ${slug.value} --seed-from last`,
+        instruction: nonBlockingGuidance,
+      },
+      "captured",
+      captured,
+    );
+  }
   return mutationResult(
     json,
     {
-      changed: `captured discovered work as ${taskLabel} in draft revision ${captured.revision.number}; ${runOutcome}`,
-      state: restartRequired
-        ? `draft revision ${captured.revision.number} carries the discovered task; the run was retired`
-        : `draft revision ${captured.revision.number} carries the discovered task; the run keeps its pinned scope`,
+      changed: `recorded discovery ${discovery.id} ("${discovery.title}"), abandoned execution ${replacement.abandonedExecutionId}, and opened seeded replacement attempt ${replacement.replacementAttemptId}`,
+      state: `execution ${replacement.abandonedExecutionId} is retired; attempt ${replacement.replacementAttemptId} carries the discovery as planned work`,
       tokens: {
-        revision: captured.revision.id,
-        ...(taskNumber === null
-          ? { elementId: captured.task.element.id }
-          : { handle: `${slug.value}/${taskLabel}` }),
-        execution: executionId,
+        discovery: discovery.id,
+        execution: replacement.abandonedExecutionId,
+        attempt: replacement.replacementAttemptId,
       },
       actsNext: "agent",
       blocked: null,
-      next: restartRequired
-        ? `cctl spec propose ${slug.value}`
-        : `cctl spec status ${slug.value}`,
-      ...(restartRequired
-        ? {
-            instruction: `The run no longer exists. Finish the amendment, obtain its approval, then start a new execution with \`cctl spec start ${slug.value} --file <scope.json>\` — do not continue the retired run's work.`,
-          }
-        : {}),
+      next: `cctl spec plan get ${slug.value}`,
+      // The other two paths are named rather than re-offered: the run they
+      // address is retired, so re-listing them as live options would send the
+      // operator at an execution that no longer exists.
+      instruction: `This took the second of the three post-launch paths — ${paths[1]}. The other two — ${paths[0]} and ${paths[2]} — addressed execution ${replacement.abandonedExecutionId}, which is now retired, so neither remains available for it. Do not continue the retired run's work: review attempt ${replacement.replacementAttemptId}, edit it with \`cctl spec plan edit ${slug.value} --file <plan.json>\`, then propose and sign it off to launch the replacement.`,
     },
     "captured",
     captured,
@@ -2100,5 +2672,476 @@ export async function runSpecAbandon(
     },
     "abandoned",
     abandoned,
+  );
+}
+
+/**
+ * The delivery-plan mutation receipt. Every plan write reports the same three
+ * things — what it produced, what it did to the draft's proposability, and the
+ * act that comes next — because the four verbs are one lifecycle and an author
+ * reading a receipt is deciding what to do next, not admiring a state.
+ */
+function planMutationResult(
+  json: boolean,
+  slug: string,
+  changed: string,
+  view: DeliveryPlanMutationView,
+  extra: { recovery?: string } = {},
+): CliResult {
+  const attempt = view.attempt;
+  return mutationResult(
+    json,
+    {
+      changed,
+      state: `attempt ${attempt.status}, draft revision ${attempt.draftRevision}, ${attempt.pinnedRevisionId} pinned`,
+      ...(view.previousHealth === null
+        ? {}
+        : {
+            lint: {
+              slug,
+              blockingBefore: view.previousHealth.blocking,
+              blockingAfter: view.health.blocking,
+            },
+          }),
+      tokens: {
+        planAttempt: attempt.id,
+        ...(attempt.planHash === null ? {} : { planHash: attempt.planHash }),
+        ...(attempt.compiledDefinitionHash === null
+          ? {}
+          : { compiledDefinitionHash: attempt.compiledDefinitionHash }),
+      },
+      actsNext: view.nextAct.actor,
+      blocked:
+        view.health.blocking === 0
+          ? null
+          : `${view.health.blocking} finding${view.health.blocking === 1 ? "" : "s"} refuse propose`,
+      detail: planReceiptDetail(slug, view),
+      ...(extra.recovery === undefined ? {} : { recovery: extra.recovery }),
+      next: `${view.nextAct.command} — ${view.nextAct.reason}`,
+    },
+    "plan",
+    view,
+  );
+}
+
+/**
+ * The lines between the position and the next act: the dispositions that still
+ * owe a human act, and the approval a reopen took away. Both are things the
+ * caller cannot act on without being told the id.
+ */
+function planReceiptDetail(
+  slug: string,
+  view: DeliveryPlanMutationView,
+): string[] {
+  const unresolved = view.unresolved.slice(0, PLAN_RECEIPT_ROWS);
+  const omitted = view.unresolved.length - unresolved.length;
+  return [
+    ...legacyImportDetail(view.legacyImport),
+    ...(view.attempt.compiledDefinitionHash === null
+      ? []
+      : [
+          `cctl spec plan preview ${slug} --stage proposed reads the stored candidate exactly as a launch will run it`,
+        ]),
+    ...(view.invalidatedApproval === null
+      ? []
+      : [
+          `the approval of snapshot ${view.invalidatedApproval.snapshotId} (${view.invalidatedApproval.planHash}) no longer stands; a re-propose needs a new one`,
+        ]),
+    ...prelaunchDetail(slug, view.prelaunch),
+    ...(view.unresolved.length === 0
+      ? []
+      : [
+          `unresolved dispositions: ${view.unresolved.length}`,
+          ...unresolved.map((row) => `  ${row.handle}: ${row.resolution}`),
+          ...(omitted > 0
+            ? [`  …and ${omitted} more — cctl spec plan status ${slug}`]
+            : []),
+        ]),
+  ];
+}
+
+/**
+ * What a parked attempt is holding. The two compiled hashes are printed side
+ * by side once tuning has moved the candidate, because the text receipt is the
+ * inventory a CLI caller actually reads — carrying them only in the JSON view
+ * would leave the re-approval unexplained on the default surface.
+ */
+function prelaunchDetail(
+  slug: string,
+  prelaunch: DeliveryPlanMutationView["prelaunch"],
+): string[] {
+  if (prelaunch === null) return [];
+  if (!prelaunch.candidateChanged) {
+    return [
+      `parked for prelaunch review at compiled hash ${prelaunch.parkedCompiledDefinitionHash}`,
+    ];
+  }
+  return [
+    `parked for prelaunch review at compiled hash ${prelaunch.parkedCompiledDefinitionHash}`,
+    `tuning moved the candidate to ${prelaunch.currentCompiledDefinitionHash ?? "no frozen candidate"}, so the parked approval no longer covers it`,
+    `sign the new candidate off with \`cctl spec plan sign-off ${slug}\` before \`cctl spec start ${slug}\``,
+  ];
+}
+
+/** How many unresolved rows a receipt names before pointing at the status verb. */
+const PLAN_RECEIPT_ROWS = 5;
+
+/**
+ * What a seeded open lifted out of a legacy compiled plan. Every split entry is
+ * named rather than capped: an unowned criterion already refuses propose, and a
+ * receipt that hid one would send the author to a blocking finding with no
+ * explanation of where it came from.
+ */
+function legacyImportDetail(
+  legacyImport: DeliveryPlanMutationView["legacyImport"],
+): string[] {
+  if (legacyImport === null) return [];
+  return [
+    `imported the legacy plan of execution ${legacyImport.sourceExecutionId} (revision ${legacyImport.sourceRevisionId}): ${legacyImport.contextCount} context${legacyImport.contextCount === 1 ? "" : "s"}, ${legacyImport.taskCount} task${legacyImport.taskCount === 1 ? "" : "s"}`,
+    ...legacyImport.notes.map((note) => `  ${note}`),
+    ...(legacyImport.requiresHumanSplit.length === 0
+      ? []
+      : [
+          `${legacyImport.requiresHumanSplit.length} criterion${legacyImport.requiresHumanSplit.length === 1 ? "" : "a"} spanned more than one context and no context owns them:`,
+          ...legacyImport.requiresHumanSplit.map(
+            (entry) => `  ${entry.handle}: ${entry.resolution}`,
+          ),
+        ]),
+  ];
+}
+
+async function postPlanAction(
+  host: CliHost,
+  context: ProjectConversationContext,
+  env: CliEnv,
+  slug: string,
+  action: string,
+  body: unknown,
+  command: string,
+  json: boolean,
+): Promise<CommandResult<DeliveryPlanMutationView>> {
+  return requestTyped(
+    host,
+    context,
+    env,
+    {
+      method: "POST",
+      path: actionPath(context, slug, action),
+      body,
+      schema: deliveryPlanMutationViewSchema,
+      command,
+    },
+    json,
+  );
+}
+
+export async function runSpecPlanOpen(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec plan open"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "plan open", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "plan open", json);
+  if (!slug.ok) return slug.result;
+  const seedFrom = values["seed-from"];
+  if (seedFrom !== undefined && seedFrom !== "last") {
+    return usageFailure(
+      `spec plan open: --seed-from takes "last" (the previous delivery), not ${JSON.stringify(seedFrom)}. Omit it to author from an empty plan.`,
+      json,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+
+  const response = await postPlanAction(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "plan-open",
+    { seedFromLast: seedFrom === "last" },
+    "plan open",
+    json,
+  );
+  if (!response.ok) return response.result;
+  const view = response.value;
+  return planMutationResult(
+    json,
+    slug.value,
+    seedFrom === "last"
+      ? `opened plan attempt ${view.attempt.id}, seeded from the last delivery: every one of the ${view.document.dispositions.length} criteria on ${view.attempt.pinnedRevisionId} carries exactly one disposition`
+      : `opened an empty plan attempt ${view.attempt.id} against ${view.attempt.pinnedRevisionId}`,
+    view,
+  );
+}
+
+export async function runSpecPlanEdit(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec plan edit"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "plan edit", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "plan edit", json);
+  if (!slug.ok) return slug.result;
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      "spec plan edit requires --file <plan.json> — read the current document with `cctl spec plan get <slug> --json`, edit it, and send it back with the draftRevision you read",
+      json,
+    );
+  }
+  const raw = await host.readTextFile(filePath);
+  if (raw === null) {
+    return usageFailure(
+      `spec plan edit: cannot read plan file ${JSON.stringify(filePath)}`,
+      json,
+    );
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    return usageFailure(
+      `spec plan edit: plan file ${JSON.stringify(filePath)} is not valid JSON`,
+      json,
+    );
+  }
+  const parsed = deliveryPlanEditRequestSchema.safeParse(decoded);
+  if (!parsed.success) {
+    return invalidFileResult(
+      "plan edit",
+      filePath,
+      "plan edit",
+      json,
+      parsed.error,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+
+  const response = await postPlanAction(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "plan-edit",
+    parsed.data,
+    "plan edit",
+    json,
+  );
+  if (!response.ok) return response.result;
+  return planMutationResult(
+    json,
+    slug.value,
+    `wrote the plan document at draft revision ${parsed.data.expectedDraftRevision}`,
+    response.value,
+  );
+}
+
+export async function runSpecPlanPropose(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec plan propose"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "plan propose", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "plan propose", json);
+  if (!slug.ok) return slug.result;
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+
+  const response = await postPlanAction(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "plan-propose",
+    {},
+    "plan propose",
+    json,
+  );
+  if (!response.ok) return response.result;
+  const view = response.value;
+  // One act freezes both: the snapshot an approval is granted against and the
+  // compiled candidate that approval binds to. Naming the compiled hash here
+  // is what lets a reader check that a launch ran the bytes they approved.
+  return planMutationResult(
+    json,
+    slug.value,
+    `froze plan snapshot ${view.attempt.proposedSnapshotId ?? "(none)"} at ${view.attempt.planHash ?? "(no hash)"} and compiled candidate ${view.attempt.compiledDefinitionHash ?? "(no hash)"}`,
+    view,
+    {
+      recovery: `cctl spec plan reopen ${slug.value} --reason <why> — returns the attempt to draft and invalidates any approval of this snapshot`,
+    },
+  );
+}
+
+export async function runSpecPlanReopen(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec plan reopen"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "plan reopen", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "plan reopen", json);
+  if (!slug.ok) return slug.result;
+  const reason = values["reason"];
+  if (reason === undefined) {
+    return usageFailure(
+      "spec plan reopen requires --reason <why> — the reason lands in the durable audit row beside the approval it invalidates",
+      json,
+    );
+  }
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+
+  const response = await postPlanAction(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "plan-reopen",
+    { reason },
+    "plan reopen",
+    json,
+  );
+  if (!response.ok) return response.result;
+  const view = response.value;
+  return planMutationResult(
+    json,
+    slug.value,
+    `returned plan attempt ${view.attempt.id} to draft at revision ${view.attempt.draftRevision}`,
+    view,
+  );
+}
+
+/**
+ * The one default approval. It names the candidate identity rather than "the
+ * current proposal" so a re-propose landing between the read and the sign-off
+ * refuses instead of quietly approving different bytes (`exact-approval`); the
+ * three ids come straight off `spec plan preview --stage proposed`.
+ */
+export async function runSpecPlanSignOff(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("spec plan sign-off"), json);
+  if (denied) return denied;
+  const extra = noExtraPositionals(rest, 1, "plan sign-off", json);
+  if (extra) return extra;
+  const slug = validateSlug(rest[0], "plan sign-off", json);
+  if (!slug.ok) return slug.result;
+  const resolved = await resolveProjectConversationContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+
+  // Resolve the candidate from the stored proposal, then state it back on the
+  // write. The caller may pin it explicitly; omitting the flags is the common
+  // case and still binds, because the read and the write are one command.
+  const stated = {
+    candidateId: values["candidate"],
+    planHash: values["plan-hash"],
+    compiledDefinitionHash: values["compiled-hash"],
+  };
+  let candidate: {
+    candidateId: string;
+    planHash: string;
+    compiledDefinitionHash: string;
+  };
+  if (
+    stated.candidateId !== undefined &&
+    stated.planHash !== undefined &&
+    stated.compiledDefinitionHash !== undefined
+  ) {
+    candidate = {
+      candidateId: stated.candidateId,
+      planHash: stated.planHash,
+      compiledDefinitionHash: stated.compiledDefinitionHash,
+    };
+  } else if (
+    stated.candidateId !== undefined ||
+    stated.planHash !== undefined ||
+    stated.compiledDefinitionHash !== undefined
+  ) {
+    return usageFailure(
+      "spec plan sign-off takes all three of --candidate, --plan-hash, and --compiled-hash together, or none of them: a partial identity would bind an approval to bytes nobody named. Run `cctl spec plan preview <slug> --stage proposed` to read all three.",
+      json,
+    );
+  } else {
+    const preview = await requestTyped(
+      host,
+      resolved.context,
+      env,
+      {
+        method: "GET",
+        path: `${specBasePath(resolved.context, slug.value)}/plan-preview?stage=proposed`,
+        schema: deliveryPlanPreviewViewSchema,
+        command: "plan sign-off",
+      },
+      json,
+    );
+    if (!preview.ok) return preview.result;
+    const candidateId = preview.value.candidateId;
+    if (candidateId === null) {
+      return usageFailure(
+        `spec plan sign-off: ${slug.value} has frozen no candidate. Run \`cctl spec plan propose ${slug.value}\` first.`,
+        json,
+      );
+    }
+    candidate = {
+      candidateId,
+      planHash: preview.value.planHash,
+      compiledDefinitionHash: preview.value.compiledDefinitionHash,
+    };
+  }
+
+  const response = await postPlanAction(
+    host,
+    resolved.context,
+    env,
+    slug.value,
+    "plan-sign-off",
+    candidate,
+    "plan sign-off",
+    json,
+  );
+  if (!response.ok) return response.result;
+  const view = response.value;
+  const admission = view.executionStartAdmission;
+  return planMutationResult(
+    json,
+    slug.value,
+    admission === null || admission.basis === "human_approval"
+      ? `signed off candidate ${candidate.candidateId} (compiled ${candidate.compiledDefinitionHash}) and admitted the execution_start gate`
+      : `signed off candidate ${candidate.candidateId} (compiled ${candidate.compiledDefinitionHash}); the execution_start dial is ${admission.dial}, so admission ${admission.admissionId} was recorded on a ${admission.basis} basis`,
+    view,
+    {
+      recovery: `cctl spec plan reopen ${slug.value} --reason <why> — returns the attempt to draft and invalidates this approval`,
+    },
   );
 }

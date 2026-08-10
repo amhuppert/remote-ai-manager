@@ -21,6 +21,7 @@ import {
   type SpecQuestionRow,
   type SpecRevision,
   type SpecRevisionSnapshot,
+  type SpecRevisionSupersession,
 } from "@/lib/specs/schemas";
 import type { SpecDeliveryRepo } from "@/lib/state-store/spec-delivery-repo";
 import type {
@@ -54,8 +55,15 @@ import {
 } from "./gate-projection";
 import { authoringReviewProjection } from "./authoring-review-projection";
 import { lint } from "./lint";
+import {
+  dismissSupersededHumanActRefusal,
+  dismissSupersededIneligibleRefusal,
+  proposalsStrandedBySignOff,
+  strandedProposalSignOffRefusal,
+  supersedingRevision,
+} from "./proposal-integrity";
 import { evaluateProposalWithdrawal } from "./proposal-withdrawal";
-import { loadProposalState } from "./review-state";
+import { loadProposalState, type LoadedProposalState } from "./review-state";
 import { governanceBaseRevisionId } from "./revision-lineage";
 import {
   approveElement,
@@ -160,6 +168,28 @@ export const signOffRevisionInputSchema = reviewIdentitySchema
   .extend({ approver: z.string().min(1) })
   .strict();
 export type SignOffRevisionInput = z.infer<typeof signOffRevisionInputSchema>;
+
+/**
+ * The combined act takes no subject list. Which subjects are still outstanding
+ * is a server projection, and accepting the caller's answer would give the
+ * question two owners — the surface that renders the confirmation and the
+ * transaction that writes the rows.
+ */
+export const approveRemainingAndSignOffInputSchema = signOffRevisionInputSchema;
+export type ApproveRemainingAndSignOffInput = z.infer<
+  typeof approveRemainingAndSignOffInputSchema
+>;
+
+export interface CombinedSignOffOutcome {
+  revision: SpecRevision;
+  /** The revision sign-off row; null when policy dials admitted the gates. */
+  approval: SpecApprovalRow | null;
+  /**
+   * Every granular per-subject approval standing on the revision after the
+   * act — the rows a collapsed sign-off would have erased.
+   */
+  subjectApprovals: SpecApprovalRow[];
+}
 
 export const grantGateApprovalInputSchema = reviewIdentitySchema
   .extend({
@@ -269,9 +299,52 @@ export const changeSpecPolicyInputSchema = z
   .strict();
 export type ChangeSpecPolicyInput = z.infer<typeof changeSpecPolicyInputSchema>;
 
+export const dismissSupersededProposalInputSchema = z
+  .object({
+    specId: z.string().min(1),
+    revisionId: z.string().min(1),
+    reason: z.string().min(1),
+    actor: actorProvenanceSchema,
+  })
+  .strict();
+export type DismissSupersededProposalInput = z.infer<
+  typeof dismissSupersededProposalInputSchema
+>;
+
 export type ReviewResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly refusal: TransitionRefusal };
+
+type ApprovalSubject = z.infer<typeof bulkApprovalSubjectSchema>;
+
+interface SignOffTransactionOutcome {
+  result: ReviewResult<{
+    revision: SpecRevision;
+    approval: SpecApprovalRow | null;
+  }>;
+  prepared: PreparedSpecEventPublication[];
+  grantedNotice: SpecApprovalGrantNotice | null;
+  policyNotices: SpecPolicyAdmissionNotice[];
+}
+
+interface CombinedSignOffTransactionOutcome {
+  result: ReviewResult<CombinedSignOffOutcome>;
+  prepared: PreparedSpecEventPublication[];
+  grantedNotices: SpecApprovalGrantNotice[];
+  policyNotices: SpecPolicyAdmissionNotice[];
+}
+
+/**
+ * Carries a refusal out of the combined act's transaction. A refusal reached
+ * after the subject approvals are written can only unwind them by throwing —
+ * `specs.transaction` commits whatever the callback returns.
+ */
+class CombinedSignOffRefusedError extends Error {
+  constructor(readonly refusal: TransitionRefusal) {
+    super(`spec combined sign-off refused: ${refusal.code}`);
+    this.name = "CombinedSignOffRefusedError";
+  }
+}
 
 export interface ReviewService {
   comment(input: ReviewCommentInput): Promise<ReviewResult<SpecCommentRow>>;
@@ -291,6 +364,14 @@ export interface ReviewService {
       approval: SpecApprovalRow | null;
     }>
   >;
+  /**
+   * Approve everything the revision still owes and sign it off, atomically.
+   * The two-step flow it replaces could come to rest between the steps, which
+   * is how a proposal ends up approved-but-unsigned with no surface saying so.
+   */
+  approveRemainingAndSignOff(
+    input: ApproveRemainingAndSignOffInput,
+  ): Promise<ReviewResult<CombinedSignOffOutcome>>;
   grantGateApproval(
     input: GrantGateApprovalInput,
   ): Promise<ReviewResult<SpecApprovalRow>>;
@@ -305,6 +386,18 @@ export interface ReviewService {
   withdrawProposal(
     input: WithdrawProposalInput,
   ): Promise<ReviewResult<{ withdrawn: SpecRevision; draft: SpecRevision }>>;
+  /**
+   * The human exit from a proposal an approved revision forked past (#50).
+   * Deliberately not `requestChanges`: reopening the stranded content as a
+   * draft would make stale content the spec's only editable revision and block
+   * amending the newer approved content.
+   */
+  dismissSupersededProposal(input: DismissSupersededProposalInput): Promise<
+    ReviewResult<{
+      withdrawn: SpecRevision;
+      supersession: SpecRevisionSupersession;
+    }>
+  >;
   bulkApprove(
     input: BulkApproveInput,
   ): Promise<ReviewResult<SpecApprovalRow[]>>;
@@ -770,6 +863,41 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
   }
 
   /**
+   * Records a human ending a proposal an approved revision forked past. The
+   * superseding revision and the stated reason ride the payload: #50's manual
+   * repair left a `withdrawn` row no reader could explain, and this is the
+   * record that makes the disposal explainable without one.
+   */
+  function appendProposalDismissedEvent(
+    spec: Spec,
+    revisionId: string,
+    supersededByRevisionId: string,
+    reason: string,
+    actor: ActorProvenance,
+    occurredAt: string,
+  ): PreparedSpecEventPublication {
+    return deps.events.appendInTransaction({
+      actor,
+      durableEventType: "spec-revision-changed",
+      durablePayload: {
+        kind: "proposal-dismissed-superseded",
+        revisionId,
+        supersededByRevisionId,
+        reason,
+      },
+      sseEvent: {
+        type: "spec-revision-changed",
+        kind: "proposal-dismissed-superseded",
+        projectPath: spec.projectPath,
+        specId: spec.id,
+        specSlug: spec.slug,
+        occurredAt,
+        revisionId,
+      },
+    });
+  }
+
+  /**
    * The one way a proposed revision becomes an editable draft again. Request
    * Changes and the proposing agent's own withdrawal both land here, so
    * neither can open a second editable revision beside a draft an execution
@@ -959,6 +1087,540 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
       };
     }
     return null;
+  }
+
+  interface ApproveSubjectsOutcome {
+    result: ReviewResult<SpecApprovalRow[]>;
+    prepared: PreparedSpecEventPublication[];
+    grantedNotice: SpecApprovalGrantNotice | null;
+  }
+
+  /**
+   * The one per-subject approval body. Bulk approval and the combined
+   * approve-remaining act both run it, so the granular rows, their audit
+   * events, and the requests they retire cannot drift between the callers.
+   */
+  function approveSubjectsInTransaction(
+    repo: SpecsRepoTransaction,
+    target: { spec: Spec; revision: SpecRevision },
+    subjects: readonly ApprovalSubject[],
+    parsed: {
+      specId: string;
+      revisionId: string;
+      approver: string;
+      actor: ActorProvenance;
+      activeStartedAt?: string;
+    },
+    occurredAt: string,
+  ): ApproveSubjectsOutcome {
+    for (const subject of subjects) {
+      const refusal = validateApprovalSubject(
+        repo,
+        target.revision,
+        subject,
+        parsed.actor,
+      );
+      if (refusal !== null)
+        return {
+          result: { ok: false, refusal },
+          prepared: [],
+          grantedNotice: null,
+        };
+    }
+    const rows = subjects.map((subject) =>
+      approvalForSubject(
+        parsed.specId,
+        parsed.revisionId,
+        subject.subjectKind,
+        subject.elementId,
+        parsed.approver,
+        occurredAt,
+      ),
+    );
+    for (const row of rows) deps.review.saveApproval(row);
+    const answered = requestsSatisfiedByItems(
+      target.spec.id,
+      target.revision.id,
+      subjects.flatMap((subject) =>
+        subject.elementId === null
+          ? ["plan"]
+          : [
+              subject.elementId,
+              ...approvedElementHandle(
+                repo,
+                target.revision.id,
+                subject.elementId,
+              ),
+            ],
+      ),
+    );
+    return {
+      result: { ok: true, value: rows },
+      prepared: [
+        ...rows.map((row) =>
+          appendEvent(
+            target.spec,
+            target.revision.id,
+            parsed.actor,
+            occurredAt,
+            "spec-review-item-approved",
+            "item-approved",
+            row.element_id ?? "plan",
+            parsed.activeStartedAt,
+          ),
+        ),
+        ...retireAnsweredRequests(
+          target.spec,
+          parsed.actor,
+          occurredAt,
+          answered,
+        ),
+      ],
+      grantedNotice: grantNoticeFor(target.spec, {
+        approvalId: rows[0]?.id ?? null,
+        satisfiedAttentionIds: answered,
+        occurredAt,
+      }),
+    };
+  }
+
+  /**
+   * The one sign-off body. The combined approve-remaining act runs it rather
+   * than re-deriving the transition, so the live-sibling recheck, the gate
+   * admissions, the waiver sweep, and the audit event keep a single owner. The
+   * caller may pin `occurredAt` when the sign-off shares a transaction with
+   * writes that must carry the same instant.
+   */
+  function signOffInTransaction(
+    repo: SpecsRepoTransaction,
+    parsed: SignOffRevisionInput,
+    occurredAtOverride?: string,
+  ): SignOffTransactionOutcome {
+    let grantedNotice: SpecApprovalGrantNotice | null = null;
+    const policyNotices: SpecPolicyAdmissionNotice[] = [];
+    const target = requireReviewTarget(repo, parsed.specId, parsed.revisionId);
+    if (target === null)
+      return {
+        result: refused(
+          "not_found",
+          ["Review target not found."],
+          "Refresh Spec Studio.",
+        ),
+        prepared: [],
+        grantedNotice,
+        policyNotices,
+      };
+    if (target.revision.state === "approved") {
+      const approval =
+        deps.review
+          .findApprovalsBySpecId(parsed.specId)
+          .find(
+            (candidate) =>
+              candidate.subject_kind === "revision" &&
+              candidate.revision_id === parsed.revisionId,
+          ) ?? null;
+      return {
+        result: {
+          ok: true,
+          value: { revision: target.revision, approval },
+        } as ReviewResult<{
+          revision: SpecRevision;
+          approval: SpecApprovalRow | null;
+        }>,
+        prepared: [],
+        grantedNotice,
+        policyNotices,
+      };
+    }
+    // Ticket #50: the propose guard should make this impossible, but a
+    // lineage that already carries a second live proposal (written
+    // before the guard, or by a path that bypassed it) must not have it
+    // silently forked past here. Read inside the transaction, refuse —
+    // never dispose — and name the act that ends the sibling.
+    const stranded = proposalsStrandedBySignOff(
+      repo.listRevisions(parsed.specId),
+      parsed.revisionId,
+    )[0];
+    if (stranded !== undefined)
+      return {
+        result: {
+          ok: false,
+          refusal: strandedProposalSignOffRefusal(target.revision, stranded),
+        } as ReviewResult<{
+          revision: SpecRevision;
+          approval: SpecApprovalRow | null;
+        }>,
+        prepared: [],
+        grantedNotice,
+        policyNotices,
+      };
+    const occurredAt = occurredAtOverride ?? now();
+    const snapshot = repo.getRevisionSnapshot(target.revision.id);
+    if (snapshot === null)
+      return {
+        result: refused(
+          "not_found",
+          ["Revision snapshot not found."],
+          "Refresh Spec Studio.",
+        ),
+        prepared: [],
+        grantedNotice,
+        policyNotices,
+      };
+    const loaded = loadProposalState(
+      repo,
+      deps.review,
+      deps.links,
+      target.spec,
+      snapshot,
+    );
+    const decision = evaluateSignOffRevision({
+      actor: parsed.actor,
+      revisionState: target.revision.state,
+      authoringStage: target.revision.authoringStage,
+      policy: target.spec.gatePolicy,
+      draft: loaded.draft,
+      records: loaded.records,
+      review: loaded.reviewSnapshot,
+      approvalApplies: loaded.approvalApplies,
+    });
+    if (!decision.ok)
+      return {
+        result: { ok: false, refusal: decision.refusal } as ReviewResult<{
+          revision: SpecRevision;
+          approval: SpecApprovalRow | null;
+        }>,
+        prepared: [],
+        grantedNotice,
+        policyNotices,
+      };
+    const resolvedGates = consultedAuthoringGates(
+      target.revision.authoringStage,
+      loaded.reviewSnapshot.governanceBaseRevisionRows,
+      loaded.reviewSnapshot.revisionRows,
+    ).map((gate) => ({
+      gate,
+      dial: resolveDial(target.spec.gatePolicy, gate),
+    }));
+    const policyAdmitted = resolvedGates.every(
+      ({ dial }) => dial === "notify" || dial === "off",
+    );
+    const approval = policyAdmitted
+      ? null
+      : approvalForSubject(
+          parsed.specId,
+          parsed.revisionId,
+          "revision",
+          null,
+          parsed.approver,
+          occurredAt,
+        );
+    if (approval !== null) deps.review.saveApproval(approval);
+    const globalAuthoringDials = resolveAuthoringDials(target.spec.gatePolicy);
+    const allCombined = Object.values(globalAuthoringDials).every(
+      (dial) => dial === COMBINED_APPROVAL_DIAL,
+    );
+    // R11.5: under the fast-path policy this human sign-off IS the
+    // combined approval — every per-element approval is recorded with
+    // the revision sign-off in the same transaction, all or none.
+    const combinedSubjects = allCombined
+      ? [
+          ...snapshot.elements.flatMap(({ element }) =>
+            element.kind === "requirement" || element.kind === "decision"
+              ? [
+                  {
+                    subjectKind: element.kind,
+                    elementId: element.id,
+                  } as const,
+                ]
+              : [],
+          ),
+          ...(target.revision.authoringStage === "plan"
+            ? [{ subjectKind: "plan", elementId: null } as const]
+            : []),
+        ]
+      : [];
+    for (const subject of combinedSubjects) {
+      deps.review.saveApproval(
+        approvalForSubject(
+          parsed.specId,
+          parsed.revisionId,
+          subject.subjectKind,
+          subject.elementId,
+          parsed.approver,
+          occurredAt,
+        ),
+      );
+    }
+    const revision = repo.approveRevision({
+      revisionId: parsed.revisionId,
+      approvedAt: occurredAt,
+    });
+    const stalePrepared = markWaiversStaleAtSignOffInTransaction({
+      spec: target.spec,
+      approvedRevisionId: parsed.revisionId,
+      getSnapshot: (targetRevisionId) =>
+        repo.getRevisionSnapshot(targetRevisionId),
+      waivers: deps.delivery,
+      events: deps.events,
+      actor: parsed.actor,
+      occurredAt,
+    });
+    const existingAdmissions = deps.review.findGateAdmissionsByRevision(
+      parsed.revisionId,
+    );
+    for (const { gate, dial } of resolvedGates) {
+      const basis =
+        dial === "notify"
+          ? ("notify_policy" as const)
+          : dial === "off"
+            ? ("off_policy" as const)
+            : ("human_approval" as const);
+      if (
+        existingAdmissions.some(
+          (admission) => admission.gate === gate && admission.basis === basis,
+        )
+      )
+        continue;
+      const admissionId = newId("admission");
+      deps.review.insertGateAdmission({
+        id: admissionId,
+        spec_id: parsed.specId,
+        gate,
+        basis,
+        approval_id: approval?.id ?? null,
+        revision_id: parsed.revisionId,
+        execution_id: null,
+        actor_json: stableStringify(parsed.actor),
+        created_at: occurredAt,
+      });
+      if (basis === "notify_policy") {
+        // R11.2: the transition proceeded under the Notify dial — the
+        // human gets a post-hoc review notice for the admission.
+        policyNotices.push({
+          specId: target.spec.id,
+          specSlug: target.spec.slug,
+          specName: target.spec.name,
+          projectPath: target.spec.projectPath,
+          gate,
+          basis,
+          admissionId,
+          revisionId: parsed.revisionId,
+          executionId: null,
+          occurredAt,
+        });
+      }
+    }
+    // Sign-off is the act that admits the revision's gates, so it
+    // answers every authoring ask filed against it — the whole-gate
+    // entries no item approval could clear, and any item entry still
+    // open under a policy that collapsed the per-item approvals.
+    const admittedGates = new Set<string>(
+      resolvedGates.map(({ gate }) => gate),
+    );
+    const answered = authoringRequestsForRevision(
+      target.spec.id,
+      parsed.revisionId,
+    )
+      .filter((request) => admittedGates.has(request.gate))
+      .map((request) => request.attentionId);
+    grantedNotice = grantNoticeFor(target.spec, {
+      approvalId: approval?.id ?? null,
+      satisfiedAttentionIds: answered,
+      occurredAt,
+    });
+    return {
+      result: {
+        ok: true,
+        value: { revision, approval },
+      } as ReviewResult<{
+        revision: SpecRevision;
+        approval: SpecApprovalRow | null;
+      }>,
+      prepared: [
+        appendEvent(
+          target.spec,
+          revision.id,
+          parsed.actor,
+          occurredAt,
+          "spec-review-revision-signed-off",
+          policyAdmitted
+            ? "policy-signed-off"
+            : allCombined
+              ? "combined-signed-off"
+              : "signed-off",
+          approval?.id,
+          parsed.activeStartedAt,
+        ),
+        ...stalePrepared,
+        ...retireAnsweredRequests(
+          target.spec,
+          parsed.actor,
+          occurredAt,
+          answered,
+        ),
+      ],
+      grantedNotice,
+      policyNotices,
+    };
+  }
+
+  /**
+   * The subjects the projection still owes on this revision, in gate order.
+   * Derived here rather than taken from the caller: "what is still outstanding"
+   * has exactly one answer, and a list the client assembled a moment earlier
+   * can name a subject the policy collapsed or miss one a concurrent write
+   * opened. Under the combined dial the projection owes none — sign-off itself
+   * records them — so this act adds no second copy.
+   */
+  function outstandingAuthoringSubjects(
+    repo: SpecsRepoTransaction,
+    spec: Spec,
+    snapshot: SpecRevisionSnapshot,
+    loaded: LoadedProposalState,
+  ): ApprovalSubject[] {
+    const revisions = repo.listRevisions(spec.id);
+    const projection = authoringReviewProjection({
+      policy: spec.gatePolicy,
+      snapshot,
+      governanceBaseSnapshot: loaded.governanceBaseSnapshot,
+      approvals: deps.review.findApprovalsBySpecId(spec.id),
+      admissions: deps.review.findGateAdmissionsBySpecId(spec.id),
+      currentExecution: currentExecution(
+        deps.delivery.findExecutionsBySpecId(spec.id),
+      ),
+      revisionNumberById: new Map(
+        revisions.map((revision) => [revision.id, revision.number]),
+      ),
+      applies: loaded.approvalApplies,
+      blockingThreads: loaded.reviewSnapshot.blockingThreads,
+      signOffFindings: lint(loaded.draft, loaded.records).filter(
+        (finding) => finding.severity === "blocks_signoff",
+      ),
+    });
+    return projection.pendingApprovals.flatMap((pending): ApprovalSubject[] => {
+      if (pending.elementId !== null && pending.gate === "requirements")
+        return [{ subjectKind: "requirement", elementId: pending.elementId }];
+      if (pending.elementId !== null && pending.gate === "design")
+        return [{ subjectKind: "decision", elementId: pending.elementId }];
+      return pending.gate === "plan"
+        ? [{ subjectKind: "plan", elementId: null }]
+        : [];
+    });
+  }
+
+  function combinedSignOffInTransaction(
+    repo: SpecsRepoTransaction,
+    parsed: ApproveRemainingAndSignOffInput,
+  ): CombinedSignOffTransactionOutcome {
+    const target = requireReviewTarget(repo, parsed.specId, parsed.revisionId);
+    if (target === null)
+      return {
+        result: refused(
+          "not_found",
+          ["Review target not found."],
+          "Refresh Spec Studio.",
+        ),
+        prepared: [],
+        grantedNotices: [],
+        policyNotices: [],
+      };
+    const approvals: PreparedSpecEventPublication[] = [];
+    const grantedNotices: SpecApprovalGrantNotice[] = [];
+    let occurredAt: string | undefined;
+    // An already-approved revision owes nothing: the sign-off body answers it
+    // idempotently, and deriving subjects for it would re-approve a frozen
+    // revision. Ordered ahead of the sibling guard so a re-run of the act that
+    // committed cannot start refusing.
+    if (target.revision.state !== "approved") {
+      // Inherited from the sign-off recheck (ticket #50): a lineage carrying a
+      // live sibling is refused BEFORE any approval is written, so the caller
+      // gets the named remedy over an untouched spec rather than a rollback.
+      const stranded = proposalsStrandedBySignOff(
+        repo.listRevisions(parsed.specId),
+        parsed.revisionId,
+      )[0];
+      if (stranded !== undefined)
+        return {
+          result: {
+            ok: false,
+            refusal: strandedProposalSignOffRefusal(target.revision, stranded),
+          },
+          prepared: [],
+          grantedNotices: [],
+          policyNotices: [],
+        };
+      const snapshot = repo.getRevisionSnapshot(target.revision.id);
+      if (snapshot === null)
+        return {
+          result: refused(
+            "not_found",
+            ["Revision snapshot not found."],
+            "Refresh Spec Studio.",
+          ),
+          prepared: [],
+          grantedNotices: [],
+          policyNotices: [],
+        };
+      const subjects = outstandingAuthoringSubjects(
+        repo,
+        target.spec,
+        snapshot,
+        loadProposalState(repo, deps.review, deps.links, target.spec, snapshot),
+      );
+      if (subjects.length > 0) {
+        occurredAt = now();
+        const approved = approveSubjectsInTransaction(
+          repo,
+          target,
+          subjects,
+          parsed,
+          occurredAt,
+        );
+        // Every subject is validated before the first row is written, so a
+        // refusal here has applied nothing and needs no unwind.
+        if (!approved.result.ok)
+          return {
+            result: approved.result,
+            prepared: [],
+            grantedNotices: [],
+            policyNotices: [],
+          };
+        approvals.push(...approved.prepared);
+        if (approved.grantedNotice !== null)
+          grantedNotices.push(approved.grantedNotice);
+      }
+    }
+    const signOff = signOffInTransaction(repo, parsed, occurredAt);
+    // The approvals are already written, and `specs.transaction` unwinds only
+    // on a throw: a sign-off refusal has to leave by throwing or the act would
+    // commit half of itself.
+    if (!signOff.result.ok)
+      throw new CombinedSignOffRefusedError(signOff.result.refusal);
+    if (signOff.grantedNotice !== null)
+      grantedNotices.push(signOff.grantedNotice);
+    return {
+      result: {
+        ok: true,
+        value: {
+          revision: signOff.result.value.revision,
+          approval: signOff.result.value.approval,
+          // Read back rather than echoed: under the combined dial sign-off
+          // wrote the subject rows itself, and the caller is owed what the act
+          // durably left, not what this pass happened to write.
+          subjectApprovals: deps.review
+            .findApprovalsBySpecId(parsed.specId)
+            .filter(
+              (row) =>
+                row.revision_id === parsed.revisionId &&
+                row.subject_kind !== "revision",
+            ),
+        },
+      },
+      prepared: [...approvals, ...signOff.prepared],
+      grantedNotices,
+      policyNotices: signOff.policyNotices,
+    };
   }
 
   return {
@@ -2044,7 +2706,6 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
     async bulkApprove(input) {
       const parsed = bulkApproveInputSchema.parse(input);
       const occurredAt = now();
-      let grantedNotice: SpecApprovalGrantNotice | null = null;
       const transaction = await deps.specs.transaction(
         "specs.review.bulk-approve",
         (repo) => {
@@ -2061,343 +2722,71 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
                 "Refresh Spec Studio.",
               ),
               prepared: [],
+              grantedNotice: null,
             };
-          for (const subject of parsed.subjects) {
-            const refusal = validateApprovalSubject(
-              repo,
-              target.revision,
-              subject,
-              parsed.actor,
-            );
-            if (refusal !== null)
-              return {
-                result: { ok: false, refusal } as ReviewResult<
-                  SpecApprovalRow[]
-                >,
-                prepared: [],
-              };
-          }
-          const rows = parsed.subjects.map((subject) =>
-            approvalForSubject(
-              parsed.specId,
-              parsed.revisionId,
-              subject.subjectKind,
-              subject.elementId,
-              parsed.approver,
-              occurredAt,
-            ),
-          );
-          for (const row of rows) deps.review.saveApproval(row);
-          const answered = requestsSatisfiedByItems(
-            target.spec.id,
-            target.revision.id,
-            parsed.subjects.flatMap((subject) =>
-              subject.elementId === null
-                ? ["plan"]
-                : [
-                    subject.elementId,
-                    ...approvedElementHandle(
-                      repo,
-                      target.revision.id,
-                      subject.elementId,
-                    ),
-                  ],
-            ),
-          );
-          grantedNotice = grantNoticeFor(target.spec, {
-            approvalId: rows[0]?.id ?? null,
-            satisfiedAttentionIds: answered,
+          return approveSubjectsInTransaction(
+            repo,
+            target,
+            parsed.subjects,
+            parsed,
             occurredAt,
-          });
-          return {
-            result: { ok: true, value: rows } as ReviewResult<
-              SpecApprovalRow[]
-            >,
-            prepared: [
-              ...rows.map((row) =>
-                appendEvent(
-                  target.spec,
-                  target.revision.id,
-                  parsed.actor,
-                  occurredAt,
-                  "spec-review-item-approved",
-                  "item-approved",
-                  row.element_id ?? "plan",
-                  parsed.activeStartedAt,
-                ),
-              ),
-              ...retireAnsweredRequests(
-                target.spec,
-                parsed.actor,
-                occurredAt,
-                answered,
-              ),
-            ],
-          };
+          );
         },
       );
       publishAll(transaction.prepared);
-      if (transaction.result.ok && grantedNotice !== null) {
-        deps.notifier?.approvalGranted(grantedNotice);
+      if (transaction.result.ok && transaction.grantedNotice !== null) {
+        deps.notifier?.approvalGranted(transaction.grantedNotice);
       }
       return transaction.result;
     },
 
     async signOffRevision(input) {
       const parsed = signOffRevisionInputSchema.parse(input);
-      let grantedNotice: SpecApprovalGrantNotice | null = null;
-      const policyNotices: SpecPolicyAdmissionNotice[] = [];
       const transaction = await deps.specs.transaction(
         "specs.review.sign-off",
-        (repo) => {
-          const target = requireReviewTarget(
-            repo,
-            parsed.specId,
-            parsed.revisionId,
-          );
-          if (target === null)
-            return {
-              result: refused(
-                "not_found",
-                ["Review target not found."],
-                "Refresh Spec Studio.",
-              ),
-              prepared: [],
-            };
-          if (target.revision.state === "approved") {
-            const approval =
-              deps.review
-                .findApprovalsBySpecId(parsed.specId)
-                .find(
-                  (candidate) =>
-                    candidate.subject_kind === "revision" &&
-                    candidate.revision_id === parsed.revisionId,
-                ) ?? null;
-            return {
-              result: {
-                ok: true,
-                value: { revision: target.revision, approval },
-              } as ReviewResult<{
-                revision: SpecRevision;
-                approval: SpecApprovalRow | null;
-              }>,
-              prepared: [],
-            };
-          }
-          const occurredAt = now();
-          const snapshot = repo.getRevisionSnapshot(target.revision.id);
-          if (snapshot === null)
-            return {
-              result: refused(
-                "not_found",
-                ["Revision snapshot not found."],
-                "Refresh Spec Studio.",
-              ),
-              prepared: [],
-            };
-          const loaded = loadProposalState(
-            repo,
-            deps.review,
-            deps.links,
-            target.spec,
-            snapshot,
-          );
-          const decision = evaluateSignOffRevision({
-            actor: parsed.actor,
-            revisionState: target.revision.state,
-            authoringStage: target.revision.authoringStage,
-            policy: target.spec.gatePolicy,
-            draft: loaded.draft,
-            records: loaded.records,
-            review: loaded.reviewSnapshot,
-            approvalApplies: loaded.approvalApplies,
-          });
-          if (!decision.ok)
-            return {
-              result: { ok: false, refusal: decision.refusal } as ReviewResult<{
-                revision: SpecRevision;
-                approval: SpecApprovalRow | null;
-              }>,
-              prepared: [],
-            };
-          const resolvedGates = consultedAuthoringGates(
-            target.revision.authoringStage,
-            loaded.reviewSnapshot.governanceBaseRevisionRows,
-            loaded.reviewSnapshot.revisionRows,
-          ).map((gate) => ({
-            gate,
-            dial: resolveDial(target.spec.gatePolicy, gate),
-          }));
-          const policyAdmitted = resolvedGates.every(
-            ({ dial }) => dial === "notify" || dial === "off",
-          );
-          const approval = policyAdmitted
-            ? null
-            : approvalForSubject(
-                parsed.specId,
-                parsed.revisionId,
-                "revision",
-                null,
-                parsed.approver,
-                occurredAt,
-              );
-          if (approval !== null) deps.review.saveApproval(approval);
-          const globalAuthoringDials = resolveAuthoringDials(
-            target.spec.gatePolicy,
-          );
-          const allCombined = Object.values(globalAuthoringDials).every(
-            (dial) => dial === COMBINED_APPROVAL_DIAL,
-          );
-          // R11.5: under the fast-path policy this human sign-off IS the
-          // combined approval — every per-element approval is recorded with
-          // the revision sign-off in the same transaction, all or none.
-          const combinedSubjects = allCombined
-            ? [
-                ...snapshot.elements.flatMap(({ element }) =>
-                  element.kind === "requirement" || element.kind === "decision"
-                    ? [
-                        {
-                          subjectKind: element.kind,
-                          elementId: element.id,
-                        } as const,
-                      ]
-                    : [],
-                ),
-                ...(target.revision.authoringStage === "plan"
-                  ? [{ subjectKind: "plan", elementId: null } as const]
-                  : []),
-              ]
-            : [];
-          for (const subject of combinedSubjects) {
-            deps.review.saveApproval(
-              approvalForSubject(
-                parsed.specId,
-                parsed.revisionId,
-                subject.subjectKind,
-                subject.elementId,
-                parsed.approver,
-                occurredAt,
-              ),
-            );
-          }
-          const revision = repo.approveRevision({
-            revisionId: parsed.revisionId,
-            approvedAt: occurredAt,
-          });
-          const stalePrepared = markWaiversStaleAtSignOffInTransaction({
-            spec: target.spec,
-            approvedRevisionId: parsed.revisionId,
-            getSnapshot: (targetRevisionId) =>
-              repo.getRevisionSnapshot(targetRevisionId),
-            waivers: deps.delivery,
-            events: deps.events,
-            actor: parsed.actor,
-            occurredAt,
-          });
-          const existingAdmissions = deps.review.findGateAdmissionsByRevision(
-            parsed.revisionId,
-          );
-          for (const { gate, dial } of resolvedGates) {
-            const basis =
-              dial === "notify"
-                ? ("notify_policy" as const)
-                : dial === "off"
-                  ? ("off_policy" as const)
-                  : ("human_approval" as const);
-            if (
-              existingAdmissions.some(
-                (admission) =>
-                  admission.gate === gate && admission.basis === basis,
-              )
-            )
-              continue;
-            const admissionId = newId("admission");
-            deps.review.insertGateAdmission({
-              id: admissionId,
-              spec_id: parsed.specId,
-              gate,
-              basis,
-              approval_id: approval?.id ?? null,
-              revision_id: parsed.revisionId,
-              execution_id: null,
-              actor_json: stableStringify(parsed.actor),
-              created_at: occurredAt,
-            });
-            if (basis === "notify_policy") {
-              // R11.2: the transition proceeded under the Notify dial — the
-              // human gets a post-hoc review notice for the admission.
-              policyNotices.push({
-                specId: target.spec.id,
-                specSlug: target.spec.slug,
-                specName: target.spec.name,
-                projectPath: target.spec.projectPath,
-                gate,
-                basis,
-                admissionId,
-                revisionId: parsed.revisionId,
-                executionId: null,
-                occurredAt,
-              });
-            }
-          }
-          // Sign-off is the act that admits the revision's gates, so it
-          // answers every authoring ask filed against it — the whole-gate
-          // entries no item approval could clear, and any item entry still
-          // open under a policy that collapsed the per-item approvals.
-          const admittedGates = new Set<string>(
-            resolvedGates.map(({ gate }) => gate),
-          );
-          const answered = authoringRequestsForRevision(
-            target.spec.id,
-            parsed.revisionId,
-          )
-            .filter((request) => admittedGates.has(request.gate))
-            .map((request) => request.attentionId);
-          grantedNotice = grantNoticeFor(target.spec, {
-            approvalId: approval?.id ?? null,
-            satisfiedAttentionIds: answered,
-            occurredAt,
-          });
-          return {
-            result: {
-              ok: true,
-              value: { revision, approval },
-            } as ReviewResult<{
-              revision: SpecRevision;
-              approval: SpecApprovalRow | null;
-            }>,
-            prepared: [
-              appendEvent(
-                target.spec,
-                revision.id,
-                parsed.actor,
-                occurredAt,
-                "spec-review-revision-signed-off",
-                policyAdmitted
-                  ? "policy-signed-off"
-                  : allCombined
-                    ? "combined-signed-off"
-                    : "signed-off",
-                approval?.id,
-                parsed.activeStartedAt,
-              ),
-              ...stalePrepared,
-              ...retireAnsweredRequests(
-                target.spec,
-                parsed.actor,
-                occurredAt,
-                answered,
-              ),
-            ],
-          };
-        },
+        (repo) => signOffInTransaction(repo, parsed),
       );
       publishAll(transaction.prepared);
-      if (transaction.result.ok && grantedNotice !== null) {
-        deps.notifier?.approvalGranted(grantedNotice);
+      if (transaction.result.ok && transaction.grantedNotice !== null) {
+        deps.notifier?.approvalGranted(transaction.grantedNotice);
       }
       if (transaction.result.ok) {
-        for (const notice of policyNotices) {
+        for (const notice of transaction.policyNotices) {
+          deps.policyNotifier?.policyAdmitted(notice);
+        }
+      }
+      return transaction.result;
+    },
+
+    /**
+     * R#50/#47: the human's convergence act. Every subject the projection still
+     * owes plus the revision sign-off land in one transaction, so a review can
+     * never come to rest half-approved — the two-step Studio flow it replaces
+     * could, and a stranded proposal is exactly what the gap between the steps
+     * let through.
+     */
+    async approveRemainingAndSignOff(input) {
+      const parsed = approveRemainingAndSignOffInputSchema.parse(input);
+      const humanRefusal = humanRequired(parsed.actor);
+      if (humanRefusal !== null) return humanRefusal;
+      let transaction: CombinedSignOffTransactionOutcome;
+      try {
+        transaction = await deps.specs.transaction(
+          "specs.review.approve-remaining-and-sign-off",
+          (repo) => combinedSignOffInTransaction(repo, parsed),
+        );
+      } catch (error) {
+        // The refusal was discovered after the subject approvals were written,
+        // and `specs.transaction` unwinds only on a throw. Nothing is applied.
+        if (!(error instanceof CombinedSignOffRefusedError)) throw error;
+        return { ok: false, refusal: error.refusal };
+      }
+      publishAll(transaction.prepared);
+      if (transaction.result.ok) {
+        for (const notice of transaction.grantedNotices) {
+          deps.notifier?.approvalGranted(notice);
+        }
+        for (const notice of transaction.policyNotices) {
           deps.policyNotifier?.policyAdmitted(notice);
         }
       }
@@ -2643,6 +3032,117 @@ export function createReviewService(deps: ReviewServiceDeps): ReviewService {
           occurredAt,
         });
       }
+      return transaction.result;
+    },
+
+    async dismissSupersededProposal(input) {
+      const parsed = dismissSupersededProposalInputSchema.parse(input);
+      type DismissResult = ReviewResult<{
+        withdrawn: SpecRevision;
+        supersession: SpecRevisionSupersession;
+      }>;
+      if (parsed.actor.kind !== "human") {
+        return {
+          ok: false,
+          refusal: dismissSupersededHumanActRefusal(parsed.revisionId),
+        } satisfies DismissResult;
+      }
+      const occurredAt = now();
+      let endedRequests: OpenApprovalRequest[] = [];
+      const closedReason = "the revision it asked about was superseded";
+      const transaction = await deps.specs.transaction(
+        "specs.review.dismiss-superseded-proposal",
+        (repo) => {
+          const target = requireReviewTarget(
+            repo,
+            parsed.specId,
+            parsed.revisionId,
+          );
+          if (target === null)
+            return {
+              result: refused(
+                "not_found",
+                [
+                  `Revision ${parsed.revisionId} is not a revision of this spec.`,
+                ],
+                "Reopen the spec in Spec Studio and dismiss the proposal the Review tab lists.",
+              ),
+              prepared: [],
+            };
+          // The eligibility question is asked inside the transaction, over the
+          // same predicate the Studio surfaces and verification read, so a
+          // dismissal cannot commit against a lineage that changed since the
+          // human saw the button.
+          const superseding = supersedingRevision(
+            repo.listRevisions(parsed.specId),
+            parsed.revisionId,
+          );
+          if (superseding === null)
+            return {
+              result: {
+                ok: false,
+                refusal: dismissSupersededIneligibleRefusal(target.revision),
+              } as DismissResult,
+              prepared: [],
+            };
+          const { revision: withdrawn, supersession } = repo.supersedeRevision({
+            revisionId: parsed.revisionId,
+            supersededByRevisionId: superseding.id,
+            reason: parsed.reason,
+            actor: parsed.actor,
+            dismissedAt: occurredAt,
+          });
+          endedRequests = authoringRequestsForRevision(
+            target.spec.id,
+            target.revision.id,
+          );
+          return {
+            result: {
+              ok: true,
+              value: { withdrawn, supersession },
+            } as DismissResult,
+            prepared: [
+              appendProposalDismissedEvent(
+                target.spec,
+                withdrawn.id,
+                superseding.id,
+                parsed.reason,
+                parsed.actor,
+                occurredAt,
+              ),
+              ...endedRequests.map((request) =>
+                appendRequestRetirement(
+                  target.spec,
+                  parsed.actor,
+                  occurredAt,
+                  request.attentionId,
+                  closedReason,
+                ),
+              ),
+            ],
+          };
+        },
+      );
+      publishAll(transaction.prepared);
+      if (transaction.result.ok && endedRequests.length > 0) {
+        deps.notifier?.approvalRequestsClosed({
+          specId: parsed.specId,
+          attentionIds: endedRequests.map((request) => request.attentionId),
+          reason: closedReason,
+          occurredAt,
+        });
+      }
+      logger.info("specs.review.dismiss_superseded_proposal.complete", {
+        specId: parsed.specId,
+        revisionId: parsed.revisionId,
+        ok: transaction.result.ok,
+        ...(transaction.result.ok
+          ? {
+              supersededByRevisionId:
+                transaction.result.value.supersession.supersededByRevisionId,
+            }
+          : { refusalCode: transaction.result.refusal.code }),
+      });
       return transaction.result;
     },
 

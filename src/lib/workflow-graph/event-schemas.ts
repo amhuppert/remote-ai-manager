@@ -706,6 +706,56 @@ export type GraphWorkflowPlanRepairEvent = z.infer<
 >;
 
 /**
+ * The explicit, audited archive act of the lifecycle contract: a human (or the
+ * spec abandon coordinator acting for one) released the session's execution
+ * slot. Durable rather than merely broadcast — releasing is the act that ends a
+ * run's ownership of the session, so "who released this, when, and why" has to
+ * outlive the SSE stream. `status` is the status the run held when released,
+ * which is what makes the release auditable against the contract's
+ * explicit-archive eligibility.
+ */
+export const graphWorkflowExecutionReleasedEventSchema = z.object({
+  type: z.literal("graph-workflow-execution-released"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  status: graphWorkflowStatusSchema,
+  reason: z.string(),
+  /** `null` when the release came from a flow with no human attribution. */
+  actor: z.string().nullable().default(null),
+});
+export type GraphWorkflowExecutionReleasedEvent = z.infer<
+  typeof graphWorkflowExecutionReleasedEventSchema
+>;
+
+/**
+ * The audited amendment of a launched delivery-plan execution (design §11).
+ * Durable rather than merely broadcast: `exact-approval` makes the launched
+ * definition immutable except through this act, so the hash pair — what the
+ * working definition was, what it became — is the only record that says the run
+ * no longer hashes to the candidate a human approved, and why.
+ */
+export const graphWorkflowExecutionAmendedEventSchema = z.object({
+  type: z.literal("graph-workflow-execution-amended"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  liveRevision: z.number().int().min(1),
+  reason: z.string(),
+  /** Server-derived: the transport decided this, never the request body. */
+  actor: z.string(),
+  policyBasis: z.enum(["human_operator", "pinned_allow_agent_task_add"]),
+  previousWorkingDefinitionHash: z.string(),
+  workingDefinitionHash: z.string(),
+  addedContextIds: z.array(z.string()),
+  addedTaskIds: z.array(z.string()),
+  addedEdgeIds: z.array(z.string()),
+});
+export type GraphWorkflowExecutionAmendedEvent = z.infer<
+  typeof graphWorkflowExecutionAmendedEventSchema
+>;
+
+/**
  * One loop pass's settlement decision (D4 R16, decision D9). The blob keeps only
  * the LATEST record per pass, so this append-only event is the ledger: a pass
  * re-decided under an amended `loopControlRevision` emits again, which is
@@ -734,6 +784,8 @@ export type GraphWorkflowLoopDecisionEvent = z.infer<
 >;
 
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
+  graphWorkflowExecutionReleasedEventSchema,
+  graphWorkflowExecutionAmendedEventSchema,
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
   graphWorkflowContextSkippedEventSchema,

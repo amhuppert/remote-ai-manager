@@ -49,6 +49,7 @@ import {
   type AuthoringNextAction,
   type AuthoringPendingBlock,
 } from "./authoring-review-projection";
+import { draftHealth } from "./draft-health";
 import type { ReferenceIssue } from "./element-references";
 import {
   danglingReferenceRefusal,
@@ -62,6 +63,11 @@ import { specSlugSchema } from "./handles";
 import { lint, type LintFinding } from "./lint";
 import type { SpecMeasureEventPayload } from "./measures";
 import { resolveDial } from "./policy";
+import {
+  liveSiblingProposals,
+  proposalAlreadyLiveRefusal,
+} from "./proposal-integrity";
+import { oversizedProposalNotesRefusal } from "./proposal-notes";
 import { diffRevisions, type RevisionDiffResult } from "./revision-diff";
 import {
   elementHandleInSnapshot,
@@ -184,6 +190,28 @@ export const draftElementBatchInputSchema = draftElementBatchShapeSchema.refine(
   batchCarriesWork,
   { message: BATCH_WITHOUT_WORK_MESSAGE, path: ["elements"] },
 );
+
+/**
+ * The batch as a caller authors it in a file: the same shape minus the
+ * identity the transport carries, and minus the revision-level token, which is
+ * a read a document cannot hold. Both arrays default to empty so a file may
+ * write only, remove only, or do both — the refinement is what rejects a
+ * document that does neither. One schema serves the `--file` contract and the
+ * published `cctl spec schema` document, so what an author is shown is what
+ * the server parses.
+ */
+export const draftElementBatchDocumentSchema = draftElementBatchShapeSchema
+  .omit({
+    specId: true,
+    revisionId: true,
+    actor: true,
+    expectedRevisionToken: true,
+  })
+  .extend({
+    elements: z.array(draftElementDocumentSchema).default([]),
+    removals: z.array(draftElementBatchRemovalSchema).default([]),
+  })
+  .strict();
 export type DraftElementBatchInput = z.infer<
   typeof draftElementBatchInputSchema
 >;
@@ -196,6 +224,18 @@ export interface DraftElementBatchEntry extends DraftElementWriteResult {
 
 /** Which submitted array a batch refusal is addressed against. */
 export type DraftElementBatchInputKind = "element" | "removal" | "revision";
+
+/**
+ * A dangling reference as a batch reports it: the guard's issue plus the
+ * handles each end is addressed by. Handles are derived from the revision the
+ * batch was judged against rather than stored, so they belong to the report
+ * and not to the guard — and an element the batch is only now introducing has
+ * no handle yet, which is what null says.
+ */
+export interface BatchReferenceIssue extends ReferenceIssue {
+  readonly sourceHandle: string | null;
+  readonly targetHandle: string | null;
+}
 
 /**
  * One element that refused, addressed by its index in the submitted array so a
@@ -216,7 +256,7 @@ export interface DraftElementBatchRefusal {
    * The references this item's write would have left unresolved, carried
    * structurally so a writer can repair them without parsing prose.
    */
-  readonly danglingReferences?: readonly ReferenceIssue[];
+  readonly danglingReferences?: readonly BatchReferenceIssue[];
 }
 
 export type DraftElementBatchResult =
@@ -389,6 +429,13 @@ export const proposeAuthoringRevisionInputSchema = z
     specId: z.string().min(1),
     revisionId: z.string().min(1),
     actor: actorProvenanceSchema,
+    /**
+     * The author's disposition/changelog document for this review round. Left
+     * uncapped here on purpose: the size limit is a refusal that names the cap
+     * and the size sent (`oversizedProposalNotesRefusal`), which a schema bound
+     * could only report as an unrecognized validation error.
+     */
+    notes: z.string().min(1).optional(),
   })
   .strict();
 export type ProposeAuthoringRevisionInput = z.infer<
@@ -755,6 +802,7 @@ function batchDanglingRefusals(
     { input: DraftElementBatchInputKind; index: number }
   >,
   removalIndexById: ReadonlyMap<string, number>,
+  handleOf: (elementId: string) => string | null,
 ): DraftElementBatchRefusal[] {
   const grouped = new Map<string, ReferenceIssue[]>();
   const entries = new Map<
@@ -794,7 +842,11 @@ function batchDanglingRefusals(
       unmetConditions: refusal.unmetConditions,
       instruction: refusal.instruction,
       currentElementVersion: null,
-      danglingReferences: groupIssues,
+      danglingReferences: groupIssues.map((issue) => ({
+        ...issue,
+        sourceHandle: handleOf(issue.sourceElementId),
+        targetHandle: handleOf(issue.targetId),
+      })),
     };
   });
 }
@@ -930,6 +982,13 @@ export function createAuthoringService(
     occurredAt: string,
     kind: string,
     measureEvents: SpecMeasureEventPayload[] = [],
+    /**
+     * The proposal's disposition document, on the propose event alone. Omitted
+     * rather than written as null when there is none, so a payload written
+     * before notes existed and one written without them are the same bytes
+     * (`proposal-notes.ts`).
+     */
+    notes?: string,
   ): PreparedSpecEventPublication {
     return deps.events.appendInTransaction({
       actor,
@@ -937,6 +996,7 @@ export function createAuthoringService(
       durablePayload: {
         kind,
         revisionId,
+        ...(notes === undefined ? {} : { notes }),
         ...(measureEvents.length === 0 ? {} : { measureEvents }),
       },
       sseEvent: {
@@ -1269,6 +1329,23 @@ export function createAuthoringService(
       const transactionResult = await deps.specs.transaction(
         "specs.authoring.propose-revision",
         (repo) => {
+          // Before every other check, and before any write: an over-cap
+          // disposition document must leave no propose event behind, and the
+          // cheapest way to guarantee that is to answer it from the input.
+          const oversized =
+            parsed.notes === undefined
+              ? null
+              : oversizedProposalNotesRefusal(parsed.notes);
+          if (oversized !== null) {
+            return {
+              result: {
+                ok: false,
+                refusal: oversized,
+              } satisfies ProposeResult,
+              prepared: [] as PreparedSpecEventPublication[],
+              policyNotices: [] as SpecPolicyAdmissionNotice[],
+            };
+          }
           const spec = requireSpec(repo, parsed.specId);
           const revision = requireOwnedRevision(
             repo,
@@ -1298,9 +1375,7 @@ export function createAuthoringService(
           });
           const blocksPropose =
             !decision.ok &&
-            (decision.refusal.findings ?? []).some(
-              (finding) => finding.severity === "blocks_propose",
-            );
+            draftHealth(decision.refusal.findings ?? []).blocking > 0;
           if (revision.state !== "draft" || blocksPropose) {
             const refusal = decision.ok
               ? {
@@ -1312,6 +1387,25 @@ export function createAuthoringService(
               : decision.refusal;
             return {
               result: { ok: false, refusal } satisfies ProposeResult,
+              prepared: [] as PreparedSpecEventPublication[],
+              policyNotices: [] as SpecPolicyAdmissionNotice[],
+            };
+          }
+
+          // Ticket #50: at most one live proposal per lineage. Read inside the
+          // transaction so two proposes racing for the same lineage cannot
+          // both pass a check taken before either wrote — the write queue
+          // serializes them and the second sees the first's committed row.
+          const liveProposal = liveSiblingProposals(
+            repo.listRevisions(parsed.specId),
+            revision.id,
+          )[0];
+          if (liveProposal !== undefined) {
+            return {
+              result: {
+                ok: false,
+                refusal: proposalAlreadyLiveRefusal(liveProposal),
+              } satisfies ProposeResult,
               prepared: [] as PreparedSpecEventPublication[],
               policyNotices: [] as SpecPolicyAdmissionNotice[],
             };
@@ -1496,6 +1590,7 @@ export function createAuthoringService(
                     },
                   ]
                 : revisionMeasureEvents,
+              parsed.notes,
             ),
             ...stalePrepared,
           ];
@@ -1922,6 +2017,10 @@ export function createAuthoringService(
                 new Map(
                   removals.map((removal, index) => [removal.elementId, index]),
                 ),
+                (elementId) =>
+                  before === null
+                    ? null
+                    : elementHandleInSnapshot(before, elementId),
               ),
             );
 
@@ -2065,9 +2164,11 @@ export function createAuthoringService(
             const refusal = decision.ok
               ? {
                   code: "gate_blocked" as const,
-                  unmetConditions: ["Plan is the final authoring stage."],
+                  unmetConditions: [
+                    "Design is the final evergreen authoring stage.",
+                  ],
                   instruction:
-                    "Propose the plan stage when it is ready for review.",
+                    "Propose the design stage when it is ready for review, then run `cctl spec plan open <slug>` after sign-off.",
                 }
               : decision.refusal;
             deps.events.appendDurableInTransaction({

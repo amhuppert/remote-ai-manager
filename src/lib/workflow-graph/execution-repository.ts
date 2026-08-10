@@ -23,6 +23,7 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import { IllegalContextStatusTransitionError } from "./context-transitions";
+import { replacementPolicy } from "./lifecycle-classifier";
 import { computeLanePlan } from "./lane-plan";
 import { substituteContent } from "./parameter-substitution";
 import type { TemplateTier } from "./template-library-service";
@@ -57,6 +58,7 @@ import {
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecutionEvent } from "@/lib/workflow-graph/event-schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import type {
   GraphWorkflowStatus,
   WorkflowSemanticDefinition,
@@ -85,6 +87,13 @@ export interface GraphWorkflowExecutionSeed {
    * it rides the definition tier and never mutates after seed.
    */
   launchedTier: TemplateTier;
+  /**
+   * The conversation that launched this run, as captured server-side by the
+   * start seam (`null` for a launch with no conversation identity, e.g. a
+   * browser-driven start). Required on the seed rather than optional so a new
+   * start seam cannot forget to decide: an owner is produced, never assumed.
+   */
+  ownerConversationId: string | null;
 }
 
 /**
@@ -160,7 +169,9 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   archiveActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
-  ): Promise<void>;
+    audit?: { reason: string; actor: string | null },
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+  ): Promise<GraphWorkflowArchiveOutcome>;
   /**
    * Mark every persisted event for a context up to the current boundary as
    * pre-reset, replacing the old in-memory `history.map` reset marking.
@@ -316,6 +327,7 @@ async function createExecutionFromSeed(
     seedDefinitionRevision: seed.definitionRevision,
     boundInputs: seed.inputs,
     launchedTier: seed.launchedTier,
+    ownerConversationId: seed.ownerConversationId,
     definitionApproval:
       concrete.approvalRequired === true
         ? { requestedAt: seed.startedAt, approvedAt: null }
@@ -449,6 +461,41 @@ export function createGraphWorkflowExecutionRepository(
         sessionName,
       });
 
+    // Replacement runs through the AUDITED archive before the CAS, never as a
+    // silent overwrite (lifecycle contract, design §10). The contract decides
+    // whether the incumbent may be replaced at all; a replaceable one is
+    // archived here — which durably records it in
+    // `graph_workflow_archived_executions` — so by the time the CAS runs there
+    // is nothing left to overwrite. An unreplaceable incumbent is rejected with
+    // the same guard error the start path raises.
+    const incumbent = await deps.getActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+    );
+    if (incumbent) {
+      if (replacementPolicy(incumbent.status) !== "audited-archive") {
+        logger.warn("graph-workflow.execution.create_conflict_rejected", {
+          projectPath,
+          sessionName,
+          attemptedExecutionId: seededExecution.id,
+          activeExecutionId: incumbent.id,
+          activeStatus: incumbent.status,
+        });
+        throw new WorkflowStartGuardError(
+          "active_execution",
+          `Session "${sessionName}" already has an active graph workflow execution`,
+        );
+      }
+      logger.info("graph-workflow.execution.archived", {
+        projectPath,
+        sessionName,
+        executionId: incumbent.id,
+        status: incumbent.status,
+        reason: "replaced_on_start",
+      });
+      await deps.archiveActiveGraphWorkflowExecution(projectPath, sessionName);
+    }
+
     // Conflict details captured (pure) inside the reducer and logged AFTER the
     // critical section, so the queue callback performs no logging I/O
     // (`no-slow-work-in-critical-section`). The reducer throws the guard error
@@ -469,14 +516,13 @@ export function createGraphWorkflowExecutionRepository(
           // starts can both pass it — the second create must not silently
           // overwrite the first execution, which would leave two loop drivers
           // on one execution under matching (executionId, loopEpoch) fences.
-          // Terminal statuses mirror the start() guard: those actives are
-          // replaceable (start archives them before creating).
-          const replaceableStatuses: GraphWorkflowStatus[] = [
-            "completed",
-            "halted",
-            "aborted",
-          ];
-          if (current && !replaceableStatuses.includes(current.status)) {
+          //
+          // The slot must be EMPTY here: any replaceable incumbent was already
+          // archived above through the audited path. So a non-null `current` is
+          // always a conflict — including a terminal one, which can only mean a
+          // concurrent start won the race after our archive. Refusing it is
+          // what makes silent replacement impossible.
+          if (current) {
             createConflict = {
               activeExecutionId: current.id,
               activeStatus: current.status,
@@ -702,8 +748,15 @@ export function createGraphWorkflowExecutionRepository(
   async function archiveActive(
     projectPath: string,
     sessionName: string,
-  ): Promise<void> {
-    await deps.archiveActiveGraphWorkflowExecution(projectPath, sessionName);
+    audit?: { reason: string; actor: string | null },
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+  ): Promise<GraphWorkflowArchiveOutcome> {
+    return deps.archiveActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+      audit,
+      guard,
+    );
   }
 
   async function markContextEventsPreReset(

@@ -705,6 +705,10 @@ describe("0009-narrow-evidence-kinds", () => {
     const exportDeps = {
       specs: createSpecsRepo(db, createWriteQueue()),
       review: createSpecReviewRepo(db),
+      delivery: createSpecDeliveryRepo(db),
+      async observeLinkedWorkflow() {
+        return { kind: "missing" as const };
+      },
     };
     const state = await loadSpecExportState(exportDeps, SPEC_ID);
 

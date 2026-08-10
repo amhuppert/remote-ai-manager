@@ -9,7 +9,10 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-import { createSpecEventsRepo } from "@/lib/state-store/spec-events-repo";
+import {
+  createSpecEventsRepo,
+  type SpecEventsRepo,
+} from "@/lib/state-store/spec-events-repo";
 import { createSpecLinksRepo } from "@/lib/state-store/spec-links-repo";
 import {
   createSpecReviewRepo,
@@ -25,6 +28,11 @@ import {
   type AuthoringService,
 } from "./authoring-service";
 import { createSpecEventsPublisher } from "./events";
+import {
+  PROPOSAL_NOTES_MAX_CHARACTERS,
+  oversizedProposalNotesRefusal,
+  proposalNotes,
+} from "./proposal-notes";
 
 const PROJECT_PATH = "/repos/native-sdd-propose";
 const ACTOR = { kind: "agent", conversationId: "conversation-1" } as const;
@@ -32,6 +40,7 @@ const ACTOR = { kind: "agent", conversationId: "conversation-1" } as const;
 let db: Db;
 let specs: SpecsRepo;
 let review: SpecReviewRepo;
+let events: SpecEventsRepo;
 let service: AuthoringService;
 let idSequence: number;
 let timeSequence: number;
@@ -43,6 +52,7 @@ beforeEach(() => {
   specs = createSpecsRepo(db, writeQueue);
   review = createSpecReviewRepo(db);
   const eventRows = createSpecEventsRepo(db);
+  events = eventRows;
   idSequence = 0;
   timeSequence = 0;
   service = createAuthoringService({
@@ -91,6 +101,9 @@ async function createSpec(
     },
     actor: ACTOR,
   });
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(created.draft.id);
   await specs.updateGatePolicy({
     specId: created.spec.id,
     gatePolicy: { preset },
@@ -556,7 +569,7 @@ describe("AuthoringService propose transaction", () => {
         .map(({ id, validity }) => ({ id, validity })),
     ).toEqual([
       { id: "approval-decision", validity: "closed" },
-      { id: "approval-plan", validity: "valid" },
+      { id: "approval-plan", validity: "stale" },
       { id: "approval-requirement", validity: "stale" },
     ]);
   });
@@ -578,6 +591,287 @@ describe("AuthoringService propose transaction", () => {
     expect(repeated).toEqual({
       ok: false,
       refusal: expect.objectContaining({ code: "gate_blocked" }),
+    });
+  });
+});
+
+/**
+ * The author's disposition document (design §8). Review converges when the
+ * reviewer can read what the round claims to have changed and closed before
+ * re-deriving it from the diff, so the document is persisted with the
+ * transition it describes rather than posted beside it.
+ */
+describe("AuthoringService propose notes", () => {
+  const NOTES = "## Disposition\n\nClosed F3 by rebinding the loop exit.";
+
+  function proposeEvents(specId: string) {
+    return events
+      .findBySpecId(specId)
+      .filter((row) => row.event_type === "spec-revision-changed")
+      .map((row) => JSON.parse(row.payload_json) as Record<string, unknown>)
+      .filter(
+        (payload) => payload.kind === "proposed" || payload.kind === "approved",
+      );
+  }
+
+  it("persists the notes on the durable propose event in the propose transaction", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+      notes: NOTES,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(proposeEvents(created.spec.id)).toEqual([
+      { kind: "proposed", revisionId: created.draft.id, notes: NOTES },
+    ]);
+    expect(
+      proposalNotes(events.findBySpecId(created.spec.id), created.draft.id),
+    ).toBe(NOTES);
+  });
+
+  /**
+   * A propose that carries no notes must keep writing exactly the payload it
+   * wrote before this field existed — a `notes: null` key would make every
+   * legacy row look different from every new one for no reader's benefit.
+   */
+  it("writes the pre-existing payload shape when no notes are supplied", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+
+    expect(proposeEvents(created.spec.id)).toEqual([
+      { kind: "proposed", revisionId: created.draft.id },
+    ]);
+    expect(
+      proposalNotes(events.findBySpecId(created.spec.id), created.draft.id),
+    ).toBeNull();
+  });
+
+  it("keeps the notes on a propose that absorbed the sign-off", async () => {
+    const created = await createSpec("exploratory");
+    await addCleanContent(created.spec.id, created.draft.id);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+      notes: NOTES,
+    });
+
+    expect(result).toMatchObject({ ok: true, absorbedSignOff: true });
+    expect(
+      proposalNotes(events.findBySpecId(created.spec.id), created.draft.id),
+    ).toBe(NOTES);
+  });
+
+  it("refuses an over-cap document naming the cap and proposes nothing", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    const oversized = "x".repeat(PROPOSAL_NOTES_MAX_CHARACTERS + 1);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+      notes: oversized,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      refusal: oversizedProposalNotesRefusal(oversized),
+    });
+    // No propose event, and the revision is still editable: the refusal costs
+    // the author nothing but the resend.
+    expect(proposeEvents(created.spec.id)).toEqual([]);
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "draft",
+      contentHash: null,
+    });
+  });
+
+  it("admits a document exactly at the cap", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    const atCap = "x".repeat(PROPOSAL_NOTES_MAX_CHARACTERS);
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+      notes: atCap,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      proposalNotes(events.findBySpecId(created.spec.id), created.draft.id),
+    ).toBe(atCap);
+  });
+});
+
+/**
+ * Ticket #50: a lineage carrying two live proposals is how a reviewed
+ * revision gets forked past and stranded. A draft legitimately coexists with a
+ * proposal (execution capture opens one), so the guard belongs at propose —
+ * the moment the second review attempt would begin.
+ */
+describe("AuthoringService propose one-live-proposal guard", () => {
+  async function proposedSpecWithSecondDraft() {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    const first = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+    if (!first.ok) throw new Error("expected the first proposal to commit");
+    const second = await specs.createDraftFromBase({
+      id: "revision-second",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T13:05:00.000Z",
+    });
+    return { created, proposal: first.revision, second };
+  }
+
+  it("refuses a second proposal, naming the live one by id and number", async () => {
+    const { created, proposal, second } = await proposedSpecWithSecondDraft();
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: second.id,
+      actor: ACTOR,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the second proposal to refuse");
+    expect(result.refusal.code).toBe("revision_in_review");
+    expect(result.refusal.unmetConditions.join(" ")).toContain(proposal.id);
+    expect(result.refusal.unmetConditions.join(" ")).toContain(
+      `revision ${proposal.number}`,
+    );
+    expect(result.refusal.instruction).toContain("sign off");
+    expect(result.refusal.instruction).toContain("Dismiss superseded proposal");
+  });
+
+  it("leaves the live proposal untouched when it refuses", async () => {
+    const { created, proposal, second } = await proposedSpecWithSecondDraft();
+
+    await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: second.id,
+      actor: ACTOR,
+    });
+
+    expect(await specs.findRevision(proposal.id)).toMatchObject({
+      state: "proposed",
+    });
+    expect(await specs.findRevision(second.id)).toMatchObject({
+      state: "draft",
+    });
+  });
+
+  it("commits exactly one of two concurrent proposals and names the winner in the loser's refusal", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    const rival = await specs.createDraftFromBase({
+      id: "revision-rival",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T13:05:00.000Z",
+    });
+
+    const [first, second] = await Promise.all([
+      service.proposeRevision({
+        specId: created.spec.id,
+        revisionId: created.draft.id,
+        actor: ACTOR,
+      }),
+      service.proposeRevision({
+        specId: created.spec.id,
+        revisionId: rival.id,
+        actor: ACTOR,
+      }),
+    ]);
+
+    const committed = [first, second].filter((result) => result.ok);
+    const refused = [first, second].filter((result) => !result.ok);
+    expect(committed).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    const winner = committed[0];
+    const loser = refused[0];
+    if (winner === undefined || !winner.ok) {
+      throw new Error("expected one proposal to commit");
+    }
+    if (loser === undefined || loser.ok) {
+      throw new Error("expected one proposal to refuse");
+    }
+    expect(loser.refusal.code).toBe("revision_in_review");
+    expect(loser.refusal.unmetConditions.join(" ")).toContain(
+      winner.revision.id,
+    );
+    expect(
+      (await specs.listRevisions(created.spec.id)).filter(
+        (revision) => revision.state === "proposed",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("disposes of no sibling revision when a proposal commits", async () => {
+    const created = await createSpec("contract-bearing");
+    await addCleanContent(created.spec.id, created.draft.id);
+    await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      actor: ACTOR,
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T13:06:00.000Z",
+    });
+    const abandoned = await specs.createDraftFromBase({
+      id: "revision-abandoned",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T13:07:00.000Z",
+    });
+    await specs.proposeRevision({
+      revisionId: abandoned.id,
+      proposedAt: "2026-07-18T13:08:00.000Z",
+    });
+    await specs.withdrawRevision({ revisionId: abandoned.id });
+    const next = await specs.createDraftFromBase({
+      id: "revision-next",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T13:09:00.000Z",
+    });
+
+    const result = await service.proposeRevision({
+      specId: created.spec.id,
+      revisionId: next.id,
+      actor: ACTOR,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(await specs.findRevision(created.draft.id)).toMatchObject({
+      state: "approved",
+    });
+    expect(await specs.findRevision(abandoned.id)).toMatchObject({
+      state: "withdrawn",
     });
   });
 });

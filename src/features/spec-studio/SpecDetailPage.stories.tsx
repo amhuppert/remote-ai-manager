@@ -21,6 +21,7 @@ import {
   SPEC_CONTROLS_FIXTURE_NOW,
   specControlsDetailFixture,
 } from "./SpecControls.fixtures";
+import { reviewView } from "./delivery-plan-review.fixtures";
 import { SpecDetailContent } from "./SpecDetailPage";
 
 type SpecDetailContentProps = ComponentProps<typeof SpecDetailContent>;
@@ -55,7 +56,29 @@ function createStoryQueryClient(
         .filter(({ state }) => state === "approved")
         .map(({ id }) => id),
       mismatches: [],
+      consistencyFindings: [],
     },
+  );
+  const phase = detail.status.phase.primary;
+  const deliveryPlan =
+    phase === "approved" || phase === "executing" || phase === "delivered"
+      ? reviewView({
+          attempt: {
+            status: phase === "approved" ? "approved" : "launched",
+          },
+          approval: {
+            snapshotId: "snapshot-2",
+            candidateId: "candidate-2",
+            planHash: "sha256:plan-2",
+            compiledDefinitionHash: "sha256:compiled-2",
+            approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
+            approvedBy: { kind: "human" },
+          },
+        })
+      : null;
+  client.setQueryData(
+    specQueries.planReview(projectName, detail.spec.slug).queryKey,
+    deliveryPlan,
   );
 
   const snapshots = [
@@ -212,7 +235,7 @@ function parsedDetail(detail: SpecDetailView): SpecDetailView {
   return specDetailViewSchema.parse(detail);
 }
 
-const AUTHORING_STAGES = ["requirements", "design", "plan"] as const;
+const AUTHORING_STAGES = ["requirements", "design"] as const;
 
 function revisionFor(
   template: SpecRevision,
@@ -263,23 +286,23 @@ function authoringDetail(
     AUTHORING_STAGES[0],
     "approved",
   );
-  const design = revisionFor(template, 2, AUTHORING_STAGES[1], "approved");
-  const plan = revisionFor(template, 3, AUTHORING_STAGES[2], state);
+  const design = revisionFor(template, 2, AUTHORING_STAGES[1], state);
+  const requirementsSnapshot = snapshotFor(source, requirements, false);
   const designSnapshot = snapshotFor(source, design, false);
 
   return parsedDetail({
     ...base,
-    revisions: [requirements, design, plan],
-    baseRevision: designSnapshot,
-    currentRevision: snapshotFor(source, plan, true),
-    currentApprovedRevision: designSnapshot,
+    revisions: [requirements, design],
+    baseRevision: requirementsSnapshot,
+    currentRevision: designSnapshot,
+    currentApprovedRevision: requirementsSnapshot,
     executionRevisionSnapshots: [],
     approvals: [],
     status: {
       ...base.status,
       phase: {
         primary: state === "draft" ? "draft" : "in_review",
-        authoringStage: "plan",
+        authoringStage: "design",
       },
     },
   });
@@ -459,6 +482,7 @@ function detailFor(
   const revision = {
     ...snapshot.revision,
     state: "approved" as const,
+    authoringStage: "design" as const,
     approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
   };
   return parsedDetail({
@@ -471,6 +495,7 @@ function detailFor(
     },
     revisions: [revision],
     currentRevision: { ...snapshot, revision },
+    currentApprovedRevision: { ...snapshot, revision },
     status: {
       ...base.status,
       phase: {

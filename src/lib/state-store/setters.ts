@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed, timedSync } from "@/lib/logging/timed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
@@ -15,9 +16,24 @@ import type {
   GraphWorkflowPushInfo,
 } from "@/lib/workflow-graph/execution-events";
 import type { GraphWorkflowExecution } from "@/lib/workflow-graph/schemas";
+
 import type { GraphWorkflowArchivedExecutionRow } from "./graph-workflow-archived-executions-repo";
 import { jsonOrNull } from "./serialization";
 import type { StateStoreCore } from "./schemas";
+
+/**
+ * What an explicit archive attempt did. `guard_rejected` carries the execution
+ * the guard actually saw, so the caller can report the run that really owns the
+ * slot rather than the one it expected.
+ */
+export type GraphWorkflowArchiveOutcome =
+  | { archived: true; execution: GraphWorkflowExecution }
+  | { archived: false; reason: "no_active" }
+  | {
+      archived: false;
+      reason: "guard_rejected";
+      execution: GraphWorkflowExecution;
+    };
 
 const logger = createLogger("state-store");
 
@@ -1021,10 +1037,18 @@ export function createSetters(
    * (control-state only; its events stay in `graph_workflow_events` keyed by the
    * same execution id) and null the active blob, inside one write-queue section.
    */
+  /**
+   * `audit` records the explicit archive act. It is appended inside the SAME
+   * transaction that moves the execution out of the active slot: releasing IS
+   * the state change, so a release whose audit row could be lost separately
+   * would leave no durable answer to "who released this session's run".
+   */
   async function archiveActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
-  ): Promise<void> {
+    audit?: { reason: string; actor: string | null },
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+  ): Promise<GraphWorkflowArchiveOutcome> {
     return writeQueue.withWriteQueue(
       `archiveGraphWorkflowExecution[${sessionName}]`,
       async () =>
@@ -1041,7 +1065,17 @@ export function createSetters(
               projectPath,
               sessionName,
             );
-            if (!execution) return;
+            if (!execution) return { archived: false, reason: "no_active" };
+            // The caller's expected-id and lifecycle-eligibility test is
+            // re-applied HERE, inside the queue's critical section, against the
+            // row as it is right now. Checking before acquiring the queue is a
+            // TOCTOU: a concurrent resume can turn an eligible `paused` run
+            // into `running`, and a concurrent start can install a different
+            // execution, either of which the stale decision would then archive.
+            // The guard is pure by contract, so it is legal in here.
+            if (guard !== undefined && !guard(execution)) {
+              return { archived: false, reason: "guard_rejected", execution };
+            }
             const now = new Date().toISOString();
             const row: GraphWorkflowArchivedExecutionRow = {
               projectPath,
@@ -1054,6 +1088,29 @@ export function createSetters(
               execution,
             };
             const txn = db.transaction(() => {
+              if (audit !== undefined) {
+                repos.graphWorkflowEvents.appendMany(
+                  projectPath,
+                  sessionName,
+                  execution.id,
+                  now,
+                  [
+                    {
+                      occurredAt: now,
+                      preReset: false,
+                      event: {
+                        type: "graph-workflow-execution-released",
+                        projectName: path.basename(projectPath),
+                        sessionName,
+                        executionId: execution.id,
+                        status: execution.status,
+                        reason: audit.reason,
+                        actor: audit.actor,
+                      },
+                    },
+                  ],
+                );
+              }
               repos.graphWorkflowArchivedExecutions.insert(row);
               repos.graphWorkflowExecutions.setActive(
                 projectPath,
@@ -1063,6 +1120,7 @@ export function createSetters(
               );
             });
             txn.immediate();
+            return { archived: true, execution };
           },
         ),
     );

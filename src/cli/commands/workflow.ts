@@ -80,6 +80,18 @@ import {
 
 const WORKFLOW_START_HINT = "track progress with 'cctl workflow status'";
 
+/**
+ * Names the conversation issuing the request. On `workflow start` the server
+ * verifies it against the session's own conversations and, only then, records
+ * it as the execution's owner — the single identity allowed to run validation
+ * while the run holds the slot with no lanes yet. A header rather than a body
+ * field because the body is client-supplied data the start path never reads for
+ * identity; absent (a browser start, or a shell outside any conversation) is an
+ * honest unowned launch, not an error.
+ */
+const CALLER_CONVERSATION_HEADER = "x-cc-conversation-id";
+const CALLER_BACKEND_HEADER = "x-cc-agent-backend";
+
 /** JSON-object plan file the author flow (validate/create/replace) reads. */
 const definitionItemSchema = z.object({
   id: z.string(),
@@ -928,12 +940,18 @@ async function runWorkflowStart(
   if (!resolved.ok) return resolved.result;
   const context = resolved.context;
 
+  const callerConversationId = env["CC_CONVERSATION_ID"] ?? null;
   const result = await cliRequest(host, {
     server: context.server,
     token: context.token,
     tokenSource: context.tokenSource,
     method: "POST",
     path: graphWorkflowPath(context),
+    ...(callerConversationId === null
+      ? {}
+      : {
+          headers: { [CALLER_CONVERSATION_HEADER]: callerConversationId },
+        }),
     body: {
       definitionId: id,
       ...(parameters !== undefined ? { parameters } : {}),
@@ -1106,6 +1124,17 @@ const LIVE_GET_SELECTOR_FLAGS = [
   "outputs",
 ] as const;
 
+const amendResponseSchema = z.object({
+  amended: z.number(),
+  liveRevision: z.number(),
+  policyBasis: z.string(),
+  addedContextIds: z.array(z.string()).default([]),
+  addedTaskIds: z.array(z.string()).default([]),
+  addedEdgeIds: z.array(z.string()).default([]),
+  previousWorkingDefinitionHash: z.string(),
+  workingDefinitionHash: z.string().nullable(),
+});
+
 const liveEditResponseSchema = z.object({
   applied: z.number(),
   liveRevision: z.number(),
@@ -1142,11 +1171,142 @@ async function runWorkflowLive(
       get: (r) => runWorkflowLiveGet(r, flags, values, env, host),
       ledger: (r) => runWorkflowLiveLedger(r, flags, values, env, host),
       edit: (r) => runWorkflowLiveEdit(r, flags, values, env, host),
+      amend: (r) => runWorkflowLiveAmend(r, flags, values, env, host),
       pause: (r) => runWorkflowLivePause(r, flags, values, env, host),
       resume: (r) => runWorkflowLiveResume(r, flags, values, env, host),
+      abort: (r) => runWorkflowLiveAbort(r, flags, values, env, host),
+      release: (r) => runWorkflowLiveRelease(r, flags, values, env, host),
     },
   });
 }
+
+/**
+ * `workflow live abort` — end the session's active run. The recovery verb the
+ * orphan dead end lacked: abort and release existed only as API routes, so an
+ * agent that stranded a run had to call them raw (ticket #47 note 9e5ba960).
+ *
+ * `aborted` auto-releases, so this hands the session's execution slot back on
+ * its own; `live release` is the backstop for a run that settled without one.
+ */
+async function runWorkflowLiveAbort(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow live abort"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure("workflow live abort takes no arguments", json);
+  }
+  const reason = (values["reason"] ?? "").trim();
+  if (reason.length === 0) {
+    return usageFailure("workflow live abort requires --reason <reason>", json);
+  }
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/abort`,
+    body: { reason },
+  });
+  if (result.kind !== "ok") return workflowFailure(result, json);
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, "aborted\n", {
+      ok: true,
+      aborted: true,
+      released: true,
+    }),
+    stderr: "",
+  };
+}
+
+/**
+ * `workflow live release` — the explicit, audited archive act: hand the
+ * session's execution slot back. Releasing an already-released session is a
+ * success, not a conflict, so a retry after a partial cleanup converges.
+ */
+async function runWorkflowLiveRelease(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(
+    values,
+    flagNamesFor("workflow live release"),
+    json,
+  );
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure("workflow live release takes no arguments", json);
+  }
+  const reason = (values["reason"] ?? "").trim();
+  if (reason.length === 0) {
+    return usageFailure(
+      "workflow live release requires --reason <reason>",
+      json,
+    );
+  }
+  const expectedExecutionId = values["execution"]?.trim();
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/release`,
+    body:
+      expectedExecutionId === undefined || expectedExecutionId.length === 0
+        ? { reason }
+        : { reason, expectedExecutionId },
+  });
+  if (result.kind !== "ok") return workflowFailure(result, json);
+
+  const parsed = releaseResponseSchema.safeParse(result.body);
+  const alreadyReleased =
+    parsed.success && parsed.data.alreadyReleased === true;
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(
+      json,
+      alreadyReleased
+        ? "already released — this session owns no execution slot\n"
+        : "released\n",
+      {
+        ok: true,
+        released: true,
+        alreadyReleased,
+        execution: parsed.success ? parsed.data.executionId : undefined,
+        status: parsed.success ? parsed.data.status : undefined,
+      },
+    ),
+    stderr: "",
+  };
+}
+
+const releaseResponseSchema = z.object({
+  released: z.boolean(),
+  alreadyReleased: z.boolean().optional(),
+  executionId: z.string().optional(),
+  status: z.string().optional(),
+});
 
 /** The endpoint body's `section` slice value, for pretty-printing a selector. */
 function liveOutlineSectionValue(body: unknown): unknown {
@@ -1463,6 +1623,107 @@ async function runWorkflowLiveEdit(
       affectedContextIds,
       ...(dryRun ? { dryRun: true } : {}),
     }),
+    stderr: "",
+  };
+}
+
+/**
+ * `workflow live amend` — the dedicated audited amendment of a launched
+ * delivery-plan run (design §11). A delivery plan's compiled regions are locked
+ * once launched, so a direct `live edit` into them refuses; this verb is the
+ * escape that keeps locking safe. It is additive only (add-context, add-task,
+ * add-edge with caller-chosen ids) and it never touches the approved candidate
+ * — the rationale and the old/new working-definition hashes land in a durable
+ * amendment event so the drift from the approved bytes stays readable.
+ */
+async function runWorkflowLiveAmend(
+  rest: string[],
+  flags: GlobalFlags,
+  values: Record<string, string>,
+  env: CliEnv,
+  host: CliHost,
+): Promise<CliResult> {
+  const json = flags.json;
+  const denied = checkFlags(values, flagNamesFor("workflow live amend"), json);
+  if (denied) return denied;
+  if (rest.length > 0) {
+    return usageFailure(
+      "workflow live amend takes no positional arguments — pass --reason and --file",
+      json,
+    );
+  }
+  const reason = (values["reason"] ?? "").trim();
+  if (reason.length === 0) {
+    return usageFailure(
+      "workflow live amend requires --reason <rationale> — the rationale lands in the durable amendment event beside the old and new definition hashes",
+      json,
+    );
+  }
+  const filePath = values["file"];
+  if (filePath === undefined) {
+    return usageFailure(
+      "workflow live amend requires --file <live-ops.json> (or --file - for stdin)",
+      json,
+    );
+  }
+
+  // Deterministic local checks first (doc 06 §CLI surface): a missing flag or
+  // an unreadable/unparseable file exits 2 before any network round-trip.
+  const ops = await readJsonObjectFile(host, filePath, "ops", json);
+  if (!ops.ok) return ops.result;
+
+  const resolved = await resolveSessionContext(flags, env, host);
+  if (!resolved.ok) return resolved.result;
+  const context = resolved.context;
+
+  const callerConversationId = env["CC_CONVERSATION_ID"] ?? null;
+  const callerBackend = env["CC_AGENT_BACKEND"];
+  const result = await cliRequest(host, {
+    server: context.server,
+    token: context.token,
+    tokenSource: context.tokenSource,
+    method: "POST",
+    path: `${graphWorkflowPath(context)}/amend`,
+    ...(callerConversationId === null
+      ? {}
+      : {
+          headers: {
+            [CALLER_CONVERSATION_HEADER]: callerConversationId,
+            ...(callerBackend
+              ? { [CALLER_BACKEND_HEADER]: callerBackend }
+              : {}),
+          },
+        }),
+    // `--reason` wins over a `reason` in the file: the flag is what the shell
+    // history and the receipt both show, so the two must not disagree.
+    body: { ...ops.value, reason },
+  });
+  if (result.kind !== "ok") return workflowLiveFailure(result, json);
+
+  const parsed = amendResponseSchema.safeParse(result.body);
+  if (!parsed.success) {
+    return {
+      exitCode: EXIT_OK,
+      stdout: render(json, "amended\n", { ok: true }),
+      stderr: "",
+    };
+  }
+  const amended = parsed.data;
+  const added = [
+    ...amended.addedContextIds.map((id) => `context ${id}`),
+    ...amended.addedTaskIds.map((id) => `task ${id}`),
+    ...amended.addedEdgeIds.map((id) => `edge ${id}`),
+  ];
+  const humanText = [
+    `amended ${amended.amended} operation${amended.amended === 1 ? "" : "s"} · liveRev ${amended.liveRevision} · admitted by ${amended.policyBasis}`,
+    ...added.map((entry) => `  + ${entry}`),
+    `  working definition ${amended.previousWorkingDefinitionHash} -> ${amended.workingDefinitionHash ?? "unchanged"}`,
+    "",
+  ].join("\n");
+
+  return {
+    exitCode: EXIT_OK,
+    stdout: render(json, humanText, { ok: true, ...amended }),
     stderr: "",
   };
 }

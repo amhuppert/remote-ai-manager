@@ -24,7 +24,7 @@ import {
   postJson,
   proposeSpineRevision,
   runSpineWorkflowToEvidence,
-  startSpineExecution,
+  startLegacySpineExecution,
   SPINE_WORKFLOW_EXECUTION_ID,
   type MergeScenario,
   type SpecSpineWorld,
@@ -33,14 +33,14 @@ import {
 const SLUG = "spec-spine";
 
 /**
- * Drives the golden-path run to Delivered, exactly as the 19.1 rehearsal
- * does, so the navigation check below operates over the same captured state.
+ * Drives a historical evergreen-plan run to Delivered so this compatibility
+ * check continues to exercise the legacy task-to-code navigation contract.
  */
 async function deliverGoldenPath(world: SpecSpineWorld) {
   const authored = await authorSpineDraft(world, SLUG);
   await proposeSpineRevision(world, SLUG, authored);
   await approveAndSignOffSpine(world, SLUG, authored);
-  const started = await startSpineExecution(world, SLUG, authored);
+  const started = await startLegacySpineExecution(world, SLUG, authored);
   const { commitShas } = await runSpineWorkflowToEvidence(world, started);
   await world.ingest.ingestAuthoritatively(started.specExecutionId);
 
@@ -118,7 +118,7 @@ async function deliverGoldenPath(world: SpecSpineWorld) {
   return { authored, started, commitShas };
 }
 
-describe("release-evidence navigation check (kiro 19.3): captured state only", () => {
+describe("historical evergreen release-evidence navigation check (kiro 19.3): captured state only", () => {
   let world: SpecSpineWorld;
 
   beforeEach(() => {
@@ -162,8 +162,8 @@ describe("release-evidence navigation check (kiro 19.3): captured state only", (
     expect(deliveredInScope.length).toBeGreaterThan(0);
 
     // --- The run itself was legally admitted: captured state carries the
-    // human execution-start approval (admission row + durable event with
-    // human provenance), not a fixture bypass.
+    // execution-start approval (admission row + durable event with human
+    // provenance), not a fixture bypass.
     const startAdmission = world.repos.review
       .findGateAdmissionsByRevision(execution.revision_id)
       .find(
@@ -240,7 +240,7 @@ describe("release-evidence navigation check (kiro 19.3): captured state only", (
       );
       expect(chain, `navigation chain for ${criterionId}`).toBeDefined();
       if (!chain) continue;
-      expect(chain.complete).toBe(true);
+      expect(chain.complete, JSON.stringify(chain, null, 2)).toBe(true);
 
       // Requirement: the chain's requirement is this criterion's parent in
       // the approved revision snapshot.

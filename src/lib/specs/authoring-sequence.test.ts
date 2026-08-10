@@ -87,13 +87,6 @@ describe("R25.5 remaining authoring sequence", () => {
         concludedBy: "propose",
         requiresHumanSignOff: true,
       },
-      {
-        stage: "plan",
-        gate: "plan",
-        dial: "gate",
-        concludedBy: "propose",
-        requiresHumanSignOff: true,
-      },
     ]);
     expect(sequence.nextTransition).toEqual({
       stage: "requirements",
@@ -104,7 +97,7 @@ describe("R25.5 remaining authoring sequence", () => {
     });
   });
 
-  it("still reports three stages for a requirements-pinned draft under fast-path", () => {
+  it("caps a new requirements-pinned fast-path draft at design", () => {
     const sequence = remainingAuthoringSequence({
       policy: { preset: "fast-path" },
       revisionId: "revision-1",
@@ -116,7 +109,6 @@ describe("R25.5 remaining authoring sequence", () => {
     expect(sequence.stages.map((step) => step.stage)).toEqual([
       "requirements",
       "design",
-      "plan",
     ]);
     expect(sequence.stages.every((step) => step.requiresHumanSignOff)).toBe(
       true,
@@ -125,7 +117,7 @@ describe("R25.5 remaining authoring sequence", () => {
     expect(sequence.nextTransition.action).toBe("propose");
   });
 
-  it("reports advance as the concluding transition for a notify stage", () => {
+  it("reports propose as the concluding transition for the final design stage", () => {
     const sequence = remainingAuthoringSequence({
       policy: { preset: "exploratory" },
       revisionId: "revision-3",
@@ -139,20 +131,13 @@ describe("R25.5 remaining authoring sequence", () => {
         stage: "design",
         gate: "design",
         dial: "notify",
-        concludedBy: "advance",
-        requiresHumanSignOff: false,
-      },
-      {
-        stage: "plan",
-        gate: "plan",
-        dial: "notify",
         concludedBy: "propose",
         requiresHumanSignOff: false,
       },
     ]);
     expect(sequence.nextTransition).toEqual({
       stage: "design",
-      action: "advance",
+      action: "propose",
       requiresHumanSignOff: false,
       consultedGates: [{ gate: "design", dial: "notify" }],
       governanceConsultedGates: ["design"],

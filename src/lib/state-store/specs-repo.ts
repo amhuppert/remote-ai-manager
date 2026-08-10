@@ -5,6 +5,7 @@ import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { formatBareElementHandle } from "@/lib/specs/handles";
 import {
+  actorProvenanceSchema,
   specAliasRowSchema,
   specAliasSchema,
   specAuthoringStageSchema,
@@ -21,6 +22,8 @@ import {
   specRevisionRowSchema,
   specRevisionSchema,
   specRevisionSnapshotSchema,
+  specRevisionSupersessionRowSchema,
+  specRevisionSupersessionSchema,
   specRowSchema,
   specSchema,
   type Spec,
@@ -35,6 +38,7 @@ import {
   type SpecRevision,
   type SpecRevisionElement,
   type SpecRevisionSnapshot,
+  type SpecRevisionSupersession,
 } from "@/lib/specs/schemas";
 import { PersistenceError, getErrorMessage } from "@/lib/shared/errors";
 import { stableStringify } from "./serialization";
@@ -136,6 +140,29 @@ const withdrawRevisionInputSchema = z
   .object({ revisionId: z.string().min(1) })
   .strict();
 export type WithdrawRevisionInput = z.infer<typeof withdrawRevisionInputSchema>;
+
+/**
+ * Ending a proposal an approved revision already forked past (#50). The
+ * marker travels with the state change because a bare `withdrawn` row cannot
+ * answer why the attempt ended or who ended it.
+ */
+const supersedeRevisionInputSchema = z
+  .object({
+    revisionId: z.string().min(1),
+    supersededByRevisionId: z.string().min(1),
+    reason: z.string().min(1),
+    actor: actorProvenanceSchema,
+    dismissedAt: z.string().min(1),
+  })
+  .strict();
+export type SupersedeRevisionInput = z.infer<
+  typeof supersedeRevisionInputSchema
+>;
+
+export interface SupersedeRevisionResult {
+  readonly revision: SpecRevision;
+  readonly supersession: SpecRevisionSupersession;
+}
 
 const createDraftElementInputSchema = z
   .object({
@@ -428,6 +455,13 @@ export interface SpecsRepo {
   proposeRevision(input: ProposeRevisionInput): Promise<SpecRevision>;
   approveRevision(input: ApproveRevisionInput): Promise<SpecRevision>;
   withdrawRevision(input: WithdrawRevisionInput): Promise<SpecRevision>;
+  supersedeRevision(
+    input: SupersedeRevisionInput,
+  ): Promise<SupersedeRevisionResult>;
+  findSupersession(
+    revisionId: string,
+  ): Promise<SpecRevisionSupersession | null>;
+  listSupersessions(specId: string): Promise<SpecRevisionSupersession[]>;
   getRevisionSnapshot(revisionId: string): Promise<SpecRevisionSnapshot | null>;
   verifyRevision(revisionId: string): Promise<RevisionVerification>;
   findElementVersion(
@@ -466,6 +500,9 @@ export interface SpecsRepoTransaction {
   proposeRevision(input: ProposeRevisionInput): SpecRevision;
   approveRevision(input: ApproveRevisionInput): SpecRevision;
   withdrawRevision(input: WithdrawRevisionInput): SpecRevision;
+  supersedeRevision(input: SupersedeRevisionInput): SupersedeRevisionResult;
+  findSupersession(revisionId: string): SpecRevisionSupersession | null;
+  listSupersessions(specId: string): SpecRevisionSupersession[];
   createDraftElement(input: CreateDraftElementInput): CreateDraftElementResult;
   updateDraftElement(input: UpdateDraftElementInput): SpecElementVersion;
   removeDraftElement(input: RemoveDraftElementInput): void;
@@ -728,8 +765,16 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         element_version, created_at, updated_at)
      SELECT @revision_id, element_id, position, payload_json, payload_hash,
             1, @created_at, @created_at
-     FROM spec_element_versions
+     FROM spec_element_versions AS versions
      WHERE revision_id = @base_revision_id
+       AND (
+         @copy_tasks = 1 OR NOT EXISTS (
+           SELECT 1
+           FROM spec_elements AS elements
+           WHERE elements.id = versions.element_id
+             AND elements.kind = 'task'
+         )
+       )
      ORDER BY position ASC, element_id ASC`,
   );
   const proposeRevisionStmt = db.prepare(
@@ -747,6 +792,20 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     `UPDATE spec_revisions
      SET state = 'withdrawn'
      WHERE id = @id AND state = 'proposed' AND content_hash IS NOT NULL`,
+  );
+  const insertSupersessionStmt = db.prepare(
+    `INSERT INTO spec_revision_supersessions
+       (revision_id, spec_id, superseded_by_revision_id, reason,
+        actor_json, dismissed_at)
+     VALUES
+       (@revision_id, @spec_id, @superseded_by_revision_id, @reason,
+        @actor_json, @dismissed_at)`,
+  );
+  const findSupersessionStmt = db.prepare(
+    "SELECT * FROM spec_revision_supersessions WHERE revision_id = ? LIMIT 1",
+  );
+  const listSupersessionsStmt = db.prepare(
+    "SELECT * FROM spec_revision_supersessions WHERE spec_id = ?",
   );
   const insertElementStmt = db.prepare(
     `INSERT INTO spec_elements
@@ -929,6 +988,34 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     );
   }
 
+  function rowToSupersession(raw: unknown): SpecRevisionSupersession {
+    const row = parseRow(
+      specRevisionSupersessionRowSchema,
+      raw,
+      "spec_revision_supersession",
+      "<unknown>",
+    );
+    return parseRow(
+      specRevisionSupersessionSchema,
+      {
+        revisionId: row.revision_id,
+        specId: row.spec_id,
+        supersededByRevisionId: row.superseded_by_revision_id,
+        reason: row.reason,
+        actor: parseJson(
+          actorProvenanceSchema,
+          row.actor_json,
+          "spec_revision_supersession",
+          row.revision_id,
+          "actor_json",
+        ),
+        dismissedAt: row.dismissed_at,
+      },
+      "spec_revision_supersession",
+      row.revision_id,
+    );
+  }
+
   function rowToElementVersion(raw: unknown): SpecElementVersion {
     const row = parseRow(
       specElementVersionRowSchema,
@@ -1042,6 +1129,19 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
 
   function listRevisions(specId: string): SpecRevision[] {
     return (listRevisionsStmt.all(specId) as unknown[]).map(rowToRevision);
+  }
+
+  function readSupersession(
+    revisionId: string,
+  ): SpecRevisionSupersession | null {
+    const raw: unknown = findSupersessionStmt.get(revisionId);
+    return raw === undefined ? null : rowToSupersession(raw);
+  }
+
+  function listSupersessions(specId: string): SpecRevisionSupersession[] {
+    return (listSupersessionsStmt.all(specId) as unknown[]).map(
+      rowToSupersession,
+    );
   }
 
   function readDraft(specId: string): SpecRevision | null {
@@ -1316,6 +1416,7 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         revision_id: input.id,
         base_revision_id: input.baseRevisionId,
         created_at: input.createdAt,
+        copy_tasks: input.authoringStage === "plan" ? 1 : 0,
       });
       return requireRevision(input.id);
     },
@@ -1457,6 +1558,61 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
         });
       }
       return requireRevision(input.revisionId);
+    },
+  );
+
+  /**
+   * Withdraw a proposal AND record why, atomically. The two writes are one
+   * transaction on purpose: #50's manual repair produced a `withdrawn` row
+   * with no audit trail, and a marker that can be written separately from the
+   * state change reintroduces exactly that gap.
+   */
+  const supersedeRevisionTx = db.transaction(
+    (
+      input: z.output<typeof supersedeRevisionInputSchema>,
+    ): SupersedeRevisionResult => {
+      const current = requireRevision(input.revisionId);
+      if (current.state !== "proposed") {
+        return validationFailure("spec_revision", input.revisionId, [
+          {
+            code: "custom",
+            path: ["state"],
+            message: "only proposed revisions can be superseded",
+          },
+        ]);
+      }
+      const superseding = requireRevision(input.supersededByRevisionId);
+      if (superseding.specId !== current.specId) {
+        return validationFailure("spec_revision", input.revisionId, [
+          {
+            code: "custom",
+            path: ["supersededByRevisionId"],
+            message: "the superseding revision belongs to a different spec",
+          },
+        ]);
+      }
+      const result = withdrawRevisionStmt.run({ id: input.revisionId });
+      if (result.changes !== 1) {
+        throw new PersistenceError({
+          kind: "constraint",
+          constraint: "spec_revisions.withdrawal_requires_content_hash",
+          entity: "spec_revision",
+          identifier: input.revisionId,
+        });
+      }
+      insertSupersessionStmt.run({
+        revision_id: input.revisionId,
+        spec_id: current.specId,
+        superseded_by_revision_id: input.supersededByRevisionId,
+        reason: input.reason,
+        actor_json: stableStringify(input.actor),
+        dismissed_at: input.dismissedAt,
+      });
+      const supersession = readSupersession(input.revisionId);
+      if (supersession === null) {
+        return notFound("spec_revision_supersession", input.revisionId);
+      }
+      return { revision: requireRevision(input.revisionId), supersession };
     },
   );
 
@@ -1818,6 +1974,11 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
     withdrawRevision(input) {
       return withdrawRevisionTx(withdrawRevisionInputSchema.parse(input));
     },
+    supersedeRevision(input) {
+      return supersedeRevisionTx(supersedeRevisionInputSchema.parse(input));
+    },
+    findSupersession: readSupersession,
+    listSupersessions,
     createDraftElement(input) {
       return createDraftElementTx(createDraftElementInputSchema.parse(input));
     },
@@ -2112,6 +2273,40 @@ export function createSpecsRepo(db: Db, writeQueue: WriteQueue): SpecsRepo {
           writeQueue.withWriteQueue("specs.withdrawRevision", async () =>
             withdrawRevisionTx.immediate(validated),
           ),
+      );
+    },
+
+    async supersedeRevision(input) {
+      const validated = supersedeRevisionInputSchema.parse(input);
+      return timed(
+        logger,
+        "state-store.specs.supersede_revision",
+        {
+          revisionId: validated.revisionId,
+          supersededByRevisionId: validated.supersededByRevisionId,
+        },
+        () =>
+          writeQueue.withWriteQueue("specs.supersedeRevision", async () =>
+            supersedeRevisionTx.immediate(validated),
+          ),
+      );
+    },
+
+    async findSupersession(revisionId) {
+      return timed(
+        logger,
+        "state-store.specs.find_supersession",
+        { revisionId },
+        async () => readSupersession(revisionId),
+      );
+    },
+
+    async listSupersessions(specId) {
+      return timed(
+        logger,
+        "state-store.specs.list_supersessions",
+        { specId },
+        async () => listSupersessions(specId),
       );
     },
 

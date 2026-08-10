@@ -409,6 +409,7 @@ describe("graph workflow execution repository", () => {
       startedAt: "2026-03-27T12:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(created.status).toBe("pending");

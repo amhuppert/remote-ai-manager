@@ -1259,3 +1259,63 @@ describe("graph-workflow-executions-repo behavior", () => {
     expect(() => freshRepo.getActive(PROJECT_PATH, SESSION_NAME)).toThrow();
   });
 });
+
+describe("graph-workflow-executions owner identity durability", () => {
+  it("round-trips the seed-time ownerConversationId through SQLite", () => {
+    const execution: GraphWorkflowExecution = {
+      ...maximalExecution(),
+      ownerConversationId: "conv-owner-1",
+    };
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    // A fresh repo instance bypasses the parsed-row cache so the read decodes
+    // the persisted blob rather than returning the in-memory object.
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded?.ownerConversationId).toBe("conv-owner-1");
+  });
+
+  it("floors a row written before the owner field existed to a null owner", () => {
+    const execution: GraphWorkflowExecution = {
+      ...maximalExecution(),
+      ownerConversationId: "conv-owner-1",
+    };
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
+
+    // Reshape the stored blob into a genuine pre-field row: the key is absent
+    // from definition_json exactly as every execution written before this
+    // change looks on disk.
+    const row = db
+      .prepare(
+        `SELECT definition_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { definition_json: string };
+    const legacy: Record<string, unknown> = JSON.parse(row.definition_json);
+    expect(legacy).toHaveProperty("ownerConversationId");
+    delete legacy["ownerConversationId"];
+    db.prepare(
+      `UPDATE graph_workflow_executions SET definition_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(legacy), PROJECT_PATH, SESSION_NAME);
+
+    const reloaded = createGraphWorkflowExecutionsRepo(db).getActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(reloaded).not.toBeNull();
+    expect(reloaded?.ownerConversationId).toBeNull();
+  });
+});

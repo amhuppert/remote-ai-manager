@@ -147,7 +147,6 @@ describe("R25 policy-change staging semantics", () => {
     ).toEqual([
       ["requirements", "combined-approval"],
       ["design", "combined-approval"],
-      ["plan", "combined-approval"],
     ]);
     expect(result.value.authoringSequence?.nextTransition).toEqual({
       stage: "requirements",
@@ -161,9 +160,9 @@ describe("R25 policy-change staging semantics", () => {
     expect(reloaded?.authoringStage).toBe("requirements");
   });
 
-  it("never moves a plan-stage draft backward when the policy tightens", async () => {
+  it("never moves a design-stage draft backward when the policy tightens", async () => {
     const created = await authoredSpec("pin-backward", { preset: "fast-path" });
-    expect(created.draft.authoringStage).toBe("plan");
+    expect(created.draft.authoringStage).toBe("design");
 
     const result = await reviewing.changePolicy({
       specId: created.spec.id,
@@ -174,18 +173,18 @@ describe("R25 policy-change staging semantics", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.authoringSequence?.pinnedStage).toBe("plan");
+    expect(result.value.authoringSequence?.pinnedStage).toBe("design");
     expect(result.value.authoringSequence?.stages).toEqual([
       {
-        stage: "plan",
-        gate: "plan",
+        stage: "design",
+        gate: "design",
         dial: "gate",
         concludedBy: "propose",
         requiresHumanSignOff: true,
       },
     ]);
     expect((await specs.findDraft(created.spec.id))?.authoringStage).toBe(
-      "plan",
+      "design",
     );
   });
 
@@ -207,25 +206,6 @@ describe("R25 policy-change staging semantics", () => {
 
   it("never restages a proposed revision and reports no sequence for it", async () => {
     const created = await authoredSpec("no-restage", { preset: "fast-path" });
-    await authoring.upsertDraftElement({
-      specId: created.spec.id,
-      revisionId: created.draft.id,
-      elementId: "no-restage-task-1",
-      kind: "task",
-      parentElementId: null,
-      position: 2,
-      payload: {
-        kind: "task",
-        title: "Report the sequence",
-        instructions: "Report the remaining stage sequence.",
-        tracedRequirementElementIds: ["no-restage-requirement-1"],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: ["no-restage-criterion-1"],
-        dependsOnTaskElementIds: [],
-      },
-      baseElementVersion: null,
-      actor: AGENT,
-    });
     const proposed = await authoring.proposeRevision({
       specId: created.spec.id,
       revisionId: created.draft.id,
@@ -245,7 +225,7 @@ describe("R25 policy-change staging semantics", () => {
     expect(result.value.authoringSequence).toBeNull();
     const revisions = await specs.listRevisions(created.spec.id);
     expect(revisions.map((revision) => revision.authoringStage)).toEqual([
-      "plan",
+      "design",
     ]);
     expect(revisions[0]?.state).toBe("proposed");
   });
@@ -296,7 +276,9 @@ describe("R25 policy-change staging semantics", () => {
       const created = await authoredSpec(`sweep-${index}`, {
         preset: "fast-path",
       });
-      expect(created.draft.authoringStage).toBe("plan");
+      db.prepare(
+        "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+      ).run(created.draft.id);
       expect(undecidedAuthoringStages(proposedPolicy, "plan")).toEqual([]);
 
       const result = await reviewing.changePolicy({

@@ -46,6 +46,13 @@ export interface SkillRef {
   path: string;
 }
 
+export interface GeneratedReferenceSection {
+  /** Heading for one registry-derived mechanical reference. */
+  title: string;
+  /** Pre-rendered rows derived from the owning typed registry. */
+  lines: readonly string[];
+}
+
 export interface CommandHelpEntry {
   /** e.g. ["workflow","create"]; length ≥ 1; a length-1 node may be a group. */
   path: string[];
@@ -65,6 +72,8 @@ export interface CommandHelpEntry {
   related: RelatedRef[];
   /** Outbound graph edges. */
   skills?: SkillRef[];
+  /** Mechanical reference rows generated from production registries. */
+  generatedReference?: readonly GeneratedReferenceSection[];
   /** Whether `--help` queries /api/agent/help-context (docs/design/cc-cli/04 §4). */
   dynamicContext?: boolean;
 }

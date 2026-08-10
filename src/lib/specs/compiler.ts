@@ -18,6 +18,13 @@ import {
   contractTaskGroups,
   type ContractedTaskGroup,
 } from "./group-contraction";
+import {
+  bareHandle,
+  LEGACY_GROUP_ACCEPTANCE_CRITERIA,
+  legacyContextTitle,
+  legacyCriterionBrief,
+  legacyTaskInstructions,
+} from "./legacy-plan-render";
 import type { ExecutionScope } from "./scope-validation";
 import type { ScopePlan } from "./scope-validation";
 
@@ -35,36 +42,36 @@ export interface CompileSpecExecutionPlanInput {
   approvalRequired: boolean;
 }
 
-interface IndexedRequirement {
+export interface IndexedRequirement {
   element: SpecRevisionElement;
   payload: RequirementElementPayload;
   handle: string;
 }
 
-interface IndexedCriterion {
+export interface IndexedCriterion {
   element: SpecRevisionElement;
   payload: CriterionElementPayload;
   handle: string;
 }
 
-interface IndexedDecision {
+export interface IndexedDecision {
   element: SpecRevisionElement;
   payload: DecisionElementPayload;
   handle: string;
 }
 
-interface IndexedSection {
+export interface IndexedSection {
   element: SpecRevisionElement;
   payload: SectionElementPayload;
 }
 
-interface IndexedTask {
+export interface IndexedTask {
   element: SpecRevisionElement;
   payload: TaskElementPayload;
   handle: string;
 }
 
-interface RevisionIndex {
+export interface RevisionIndex {
   requirements: Map<string, IndexedRequirement>;
   criteria: Map<string, IndexedCriterion>;
   decisions: Map<string, IndexedDecision>;
@@ -104,8 +111,7 @@ const metadataKeys = {
   touchedPaths: "specTouchedPaths",
 } as const;
 
-const GROUP_ACCEPTANCE_CRITERIA =
-  "Validate the locked criterion briefs of every task currently assigned to this context. The effective contract is the union of those task briefs; regrouping must never drop or weaken one.";
+const GROUP_ACCEPTANCE_CRITERIA = LEGACY_GROUP_ACCEPTANCE_CRITERIA;
 
 export function compileSpecExecutionPlan(
   input: CompileSpecExecutionPlanInput,
@@ -115,6 +121,20 @@ export function compileSpecExecutionPlan(
       `Cannot compile revision ${input.revisionSnapshot.revision.id}: revision is not approved.`,
     );
   }
+  return materializeSpecExecutionPlan(input);
+}
+
+/**
+ * The legacy evergreen materialization, without the approved-revision
+ * precondition.
+ *
+ * Only the retired read-only evergreen preview calls this. Active execution
+ * starts read the immutable candidate a DeliveryPlanAttempt materialized at
+ * propose time; neither function in this module participates in launch.
+ */
+export function materializeSpecExecutionPlan(
+  input: CompileSpecExecutionPlanInput,
+): WorkflowSemanticDefinition {
   if (input.scopeHash.length === 0) {
     throw new Error("Cannot compile an execution scope without a scope hash.");
   }
@@ -732,6 +752,20 @@ export function readCompiledContextContract(
   };
 }
 
+/**
+ * The approved revision read in the legacy plan vocabulary: qualified handles
+ * and by-id lookups for every element a compiled task cites. Exported because
+ * the legacy plan importer must resolve exactly the same handles the compiler
+ * did — a second indexing rule would rewrite every handle in every imported
+ * instruction.
+ */
+export function indexLegacyRevision(
+  slug: string,
+  snapshot: SpecRevisionSnapshot,
+): RevisionIndex {
+  return indexRevision(slug, snapshot);
+}
+
 function indexRevision(
   slug: string,
   snapshot: SpecRevisionSnapshot,
@@ -872,17 +906,16 @@ function coveredSelectedCriteria(
 }
 
 function validatorBrief(criteria: readonly IndexedCriterion[]): string {
-  if (criteria.length === 0) {
-    return "Verify the approved task instructions are complete without expanding the pinned execution scope.";
-  }
-  return [
-    "Validate only these approved acceptance criteria:",
-    ...criteria.flatMap((criterion) => [
-      `- ${criterion.handle}: ${criterion.payload.text}`,
-      `  Required evidence: ${requiredKinds(criterion.payload.validationStrategy)}`,
-      `  Approved strategy note: ${strategyNote(criterion.payload.validationStrategy)}`,
-    ]),
-  ].join("\n");
+  return legacyCriterionBrief(criteria.map(renderCriterion));
+}
+
+/** One indexed element as the shared renderer's plain input. */
+export function renderCriterion(criterion: IndexedCriterion) {
+  return {
+    handle: criterion.handle,
+    text: criterion.payload.text,
+    validationStrategy: criterion.payload.validationStrategy,
+  };
 }
 
 function contextTitle(
@@ -890,13 +923,14 @@ function contextTitle(
   inputMembers: readonly IndexedTask[],
 ): string {
   const members = [...inputMembers].sort(compareIndexedTasks);
-  const memberHandles = members.map((member) => bareHandle(member.handle));
-  if (group.laneGroup !== undefined) {
-    return `${group.laneGroup} — ${memberHandles.join(", ")}`;
-  }
-  const member = members[0];
-  if (member === undefined) return group.id;
-  return `${bareHandle(member.handle)} — ${member.payload.title}`;
+  return legacyContextTitle({
+    laneGroup: group.laneGroup,
+    members: members.map((member) => ({
+      handle: member.handle,
+      title: member.payload.title,
+    })),
+    fallbackId: group.id,
+  });
 }
 
 function contextDescription(
@@ -937,48 +971,25 @@ function taskInstructions(
   criteria: readonly IndexedCriterion[],
   decisions: readonly IndexedDecision[],
 ): string {
-  return [
-    `Approved task ${task.handle}`,
-    "",
-    task.payload.instructions,
-    "",
-    "Narrow context pack",
-    "Requirements:",
-    ...requirements.map(
-      (requirement) =>
-        `- ${requirement.handle}: ${requirement.payload.statement}`,
-    ),
-    ...(decisions.length === 0
-      ? []
-      : [
-          "Approved decisions:",
-          ...decisions.flatMap((decision) => [
-            `- ${decision.handle}: ${decision.payload.title}`,
-            `  Chosen approach: ${decision.payload.chosenApproach}`,
-            `  Reason: ${decision.payload.reason}`,
-          ]),
-        ]),
-    "Acceptance criteria and required validation:",
-    ...(criteria.length === 0
-      ? [
-          "- No selected criterion is directly mapped to this prerequisite task.",
-        ]
-      : criteria.flatMap((criterion) => [
-          `- ${criterion.handle}: ${criterion.payload.text}`,
-          `  Required evidence: ${requiredKinds(criterion.payload.validationStrategy)}`,
-          `  Approved strategy note: ${strategyNote(criterion.payload.validationStrategy)}`,
-        ])),
-  ].join("\n");
-}
-
-function strategyNote(strategy: ValidationStrategy): string {
-  return strategy.note ?? "No additional strategy note was approved.";
-}
-
-function requiredKinds(strategy: ValidationStrategy): string {
-  return strategy.kinds.length === 0
-    ? "none declared"
-    : strategy.kinds.join(", ");
+  return legacyTaskInstructions({
+    task: {
+      handle: task.handle,
+      title: task.payload.title,
+      instructions: task.payload.instructions,
+    },
+    requirements: requirements.map((requirement) => ({
+      handle: requirement.handle,
+      statement: requirement.payload.statement,
+    })),
+    criteria: criteria.map(renderCriterion),
+    decisions: decisions.map((decision) => ({
+      handle: decision.handle,
+      title: decision.payload.title,
+      chosenApproach: decision.payload.chosenApproach,
+      reason: decision.payload.reason,
+    })),
+    unmappedCriterionNotice: "keep",
+  });
 }
 
 function qualifiedHandle(
@@ -1080,10 +1091,6 @@ function opaqueIdComponent(value: string): string {
     }
     return `utf16/${codeUnits.join("")}`;
   }
-}
-
-function bareHandle(handle: string): string {
-  return handle.slice(handle.lastIndexOf("/") + 1);
 }
 
 function compareText(left: string, right: string): number {

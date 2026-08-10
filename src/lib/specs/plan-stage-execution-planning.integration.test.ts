@@ -291,6 +291,9 @@ async function authorGroupedPlan(
     },
     actor: ACTOR,
   });
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(created.draft.id);
 
   const criteria = [
     ["criterion-1", "The first build task produces its approved output."],

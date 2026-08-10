@@ -70,8 +70,16 @@ const DB_FILE_NAME = "command-center.db";
  * Version 3 and version 4 were authored concurrently on two branches and both
  * originally claimed 3; they are sequenced here because one number cannot fence
  * two independent cutovers, and 3 is already stamped in live databases.
+ *
+ * Version 5 is the spec_executions state widening: migration
+ * `0017-spec-execution-abandon-coordinator` rebuilds the table's CHECK to admit
+ * `abandoning`, the abandon coordinator's in-flight cleanup state (design §10).
+ * A row parked in that state is unreadable to an older build — the spec
+ * execution repository throws a PersistenceError on an unknown `state` rather
+ * than quarantining the row — so the gate refuses such a build once the
+ * migration has stamped the upgraded DB.
  */
-export const KNOWN_SCHEMA_VERSION = 4;
+export const KNOWN_SCHEMA_VERSION = 5;
 
 /**
  * Marker id for the one-time legacy graph-workflow purge. Tracked in the
@@ -231,6 +239,50 @@ const NOTIFICATIONS_INDEX_DDL = `
     WHERE source = 'spec';
 `;
 
+/**
+ * Spec delivery executions. Extracted from the spec schema block so migration
+ * 0015 can rebuild the table from this exact DDL rather than a hand-synced
+ * copy — the `state` CHECK is a vocabulary SQLite cannot widen in place.
+ */
+export const SPEC_EXECUTIONS_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS spec_executions (
+    id                     TEXT PRIMARY KEY,
+    spec_id                TEXT NOT NULL,
+    revision_id            TEXT NOT NULL,
+    scope_json             TEXT NOT NULL,
+    state                  TEXT NOT NULL CHECK (state IN (
+      'definition_review', 'running', 'delivered', 'abandoned', 'abandoning'
+    )),
+    cleanup_phase          TEXT CHECK (cleanup_phase IN (
+      'abort_workflow', 'release_slot', 'finalize'
+    )),
+    linked_workflow_execution_id TEXT,
+    cleanup_last_error     TEXT,
+    cleanup_last_error_at  TEXT,
+    execution_start_dial   TEXT CHECK (execution_start_dial IN (
+      'gate', 'notify', 'off'
+    )),
+    workflow_definition_id TEXT NOT NULL,
+    workflow_definition_revision INTEGER CHECK (
+      workflow_definition_revision > 0
+    ),
+    workflow_execution_id  TEXT,
+    session_name           TEXT,
+    delivered_at           TEXT,
+    abandoned_reason       TEXT,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_executions_spec_state
+    ON spec_executions (spec_id, state, created_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
+    ON spec_executions (workflow_execution_id)
+    WHERE workflow_execution_id IS NOT NULL;
+`;
+
 const SPEC_SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS specs (
     id                TEXT PRIMARY KEY,
@@ -312,6 +364,26 @@ const SPEC_SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_spec_revisions_spec_state
     ON spec_revisions (spec_id, state, number DESC);
 
+  /*
+   * Why a proposal ended as superseded (#50). One row per dismissed revision,
+   * written in the same transaction as its withdrawal, so the state change can
+   * never exist without the record of who ended it and what forked past it.
+   */
+  CREATE TABLE IF NOT EXISTS spec_revision_supersessions (
+    revision_id                TEXT PRIMARY KEY,
+    spec_id                    TEXT NOT NULL,
+    superseded_by_revision_id  TEXT NOT NULL,
+    reason                     TEXT NOT NULL,
+    actor_json                 TEXT NOT NULL,
+    dismissed_at               TEXT NOT NULL,
+    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (superseded_by_revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_revision_supersessions_spec
+    ON spec_revision_supersessions (spec_id);
+
   CREATE TABLE IF NOT EXISTS spec_element_versions (
     revision_id     TEXT NOT NULL,
     element_id      TEXT NOT NULL,
@@ -331,36 +403,7 @@ const SPEC_SCHEMA_DDL = `
   CREATE INDEX IF NOT EXISTS idx_spec_element_versions_order
     ON spec_element_versions (revision_id, position);
 
-  CREATE TABLE IF NOT EXISTS spec_executions (
-    id                     TEXT PRIMARY KEY,
-    spec_id                TEXT NOT NULL,
-    revision_id            TEXT NOT NULL,
-    scope_json             TEXT NOT NULL,
-    state                  TEXT NOT NULL CHECK (state IN (
-      'definition_review', 'running', 'delivered', 'abandoned'
-    )),
-    execution_start_dial   TEXT CHECK (execution_start_dial IN (
-      'gate', 'notify', 'off'
-    )),
-    workflow_definition_id TEXT NOT NULL,
-    workflow_definition_revision INTEGER CHECK (
-      workflow_definition_revision > 0
-    ),
-    workflow_execution_id  TEXT,
-    session_name           TEXT,
-    delivered_at           TEXT,
-    abandoned_reason       TEXT,
-    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_executions_spec_state
-    ON spec_executions (spec_id, state, created_at DESC);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
-    ON spec_executions (workflow_execution_id)
-    WHERE workflow_execution_id IS NOT NULL;
+  ${SPEC_EXECUTIONS_SCHEMA_DDL}
 
   CREATE TABLE IF NOT EXISTS spec_approvals (
     id            TEXT PRIMARY KEY,
@@ -622,6 +665,140 @@ const SPEC_SCHEMA_DDL = `
     ON spec_events (event_type, id);
 `;
 
+/**
+ * `DeliveryPlanAttempt` storage (design §4). The attempt is the per-execution
+ * delivery plan document that is also the scope; it is keyed by its own id,
+ * independently of evergreen revisions and workflow executions, because it
+ * exists before the execution does.
+ *
+ * The document lives whole in `content_json` rather than in normalized child
+ * tables: it is edited, proposed, and materialized as one unit under a single
+ * compare-and-swap token, and a per-node table would let a partial write leave
+ * a plan whose contexts and dispositions disagree.
+ *
+ * Snapshots are append-only. Nothing updates a snapshot row — a reopen bumps
+ * the attempt's `draft_revision` and clears `approval_json`, and the prior
+ * snapshots stay readable exactly as they were proposed.
+ *
+ * A compiled candidate is keyed one-to-one to the snapshot it materialized:
+ * the UNIQUE constraint on `snapshot_id` is what makes "exactly one immutable
+ * candidate per proposed snapshot" a database fact rather than a service
+ * convention, so a second materialization of the same proposal cannot quietly
+ * replace the bytes a human approved (`exact-approval`).
+ *
+ * Exported so migrations 0015 and 0016 apply the identical DDL to pre-floor
+ * databases without a second hand-synced copy.
+ */
+export const SPEC_DELIVERY_PLAN_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS spec_delivery_plan_attempts (
+    id                        TEXT PRIMARY KEY,
+    spec_id                   TEXT NOT NULL,
+    pinned_revision_id        TEXT NOT NULL,
+    delta_basis_execution_id  TEXT,
+    status                    TEXT NOT NULL CHECK (status IN (
+      'draft', 'proposed', 'approved', 'parked', 'launched', 'abandoned'
+    )),
+    draft_revision            INTEGER NOT NULL CHECK (draft_revision > 0),
+    content_json              TEXT NOT NULL,
+    proposed_snapshot_id      TEXT,
+    approval_json             TEXT,
+    prelaunch_json            TEXT,
+    launched_execution_id     TEXT,
+    created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (pinned_revision_id) REFERENCES spec_revisions(id),
+    FOREIGN KEY (delta_basis_execution_id) REFERENCES spec_executions(id),
+    FOREIGN KEY (launched_execution_id) REFERENCES spec_executions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_spec
+    ON spec_delivery_plan_attempts (spec_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_attempts_revision
+    ON spec_delivery_plan_attempts (pinned_revision_id);
+
+  CREATE TABLE IF NOT EXISTS spec_delivery_plan_snapshots (
+    id                  TEXT PRIMARY KEY,
+    attempt_id          TEXT NOT NULL,
+    draft_revision      INTEGER NOT NULL CHECK (draft_revision > 0),
+    plan_hash           TEXT NOT NULL,
+    content_json        TEXT NOT NULL,
+    pinned_revision_id  TEXT NOT NULL,
+    proposed_at         TEXT NOT NULL,
+    proposed_by_json    TEXT NOT NULL,
+    UNIQUE (attempt_id, draft_revision),
+    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
+      ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_snapshots_attempt
+    ON spec_delivery_plan_snapshots (attempt_id, draft_revision DESC);
+
+  CREATE TABLE IF NOT EXISTS spec_delivery_plan_candidates (
+    id                        TEXT PRIMARY KEY,
+    attempt_id                TEXT NOT NULL,
+    snapshot_id               TEXT NOT NULL UNIQUE,
+    compiled_definition_hash  TEXT NOT NULL,
+    definition_json           TEXT NOT NULL,
+    materialized_at           TEXT NOT NULL,
+    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
+      ON DELETE CASCADE,
+    FOREIGN KEY (snapshot_id) REFERENCES spec_delivery_plan_snapshots(id)
+      ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_candidates_attempt
+    ON spec_delivery_plan_candidates (attempt_id);
+
+  CREATE TABLE IF NOT EXISTS spec_delivery_plan_comments (
+    id           TEXT PRIMARY KEY,
+    attempt_id   TEXT NOT NULL,
+    context_id   TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    author_json  TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
+      ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_plan_comments_attempt
+    ON spec_delivery_plan_comments (attempt_id, created_at ASC);
+`;
+
+/**
+ * Work a running execution found and deliberately left for the next plan
+ * (design §11). Kept out of `SPEC_DELIVERY_PLAN_SCHEMA_DDL` so the migration
+ * that introduced the attempt tables keeps meaning exactly what it meant.
+ *
+ * `attempt_id` is nullable because a legacy compiled run has no attempt behind
+ * it, and it is `ON DELETE SET NULL` rather than cascading: the discovery is
+ * work the next plan still owes, so it must outlive the attempt that found it.
+ */
+export const SPEC_DELIVERY_DISCOVERY_SCHEMA_DDL = `
+  CREATE TABLE IF NOT EXISTS spec_delivery_discoveries (
+    id                    TEXT PRIMARY KEY,
+    spec_id               TEXT NOT NULL,
+    execution_id          TEXT NOT NULL,
+    attempt_id            TEXT,
+    pinned_revision_id    TEXT NOT NULL,
+    discovered_task_json  TEXT NOT NULL,
+    blocking_reason       TEXT,
+    captured_by_json      TEXT NOT NULL,
+    captured_at           TEXT NOT NULL,
+    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
+    FOREIGN KEY (execution_id) REFERENCES spec_executions(id)
+      ON DELETE CASCADE,
+    FOREIGN KEY (attempt_id) REFERENCES spec_delivery_plan_attempts(id)
+      ON DELETE SET NULL,
+    FOREIGN KEY (pinned_revision_id) REFERENCES spec_revisions(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_discoveries_spec
+    ON spec_delivery_discoveries (spec_id, captured_at ASC, id ASC);
+  CREATE INDEX IF NOT EXISTS idx_spec_delivery_discoveries_execution
+    ON spec_delivery_discoveries (execution_id);
+`;
+
 const SPEC_SCHEMA_DDL_DUPLICATE = `
   CREATE TABLE IF NOT EXISTS specs (
     id                TEXT PRIMARY KEY,
@@ -722,36 +899,7 @@ const SPEC_SCHEMA_DDL_DUPLICATE = `
   CREATE INDEX IF NOT EXISTS idx_spec_element_versions_order
     ON spec_element_versions (revision_id, position);
 
-  CREATE TABLE IF NOT EXISTS spec_executions (
-    id                     TEXT PRIMARY KEY,
-    spec_id                TEXT NOT NULL,
-    revision_id            TEXT NOT NULL,
-    scope_json             TEXT NOT NULL,
-    state                  TEXT NOT NULL CHECK (state IN (
-      'definition_review', 'running', 'delivered', 'abandoned'
-    )),
-    execution_start_dial   TEXT CHECK (execution_start_dial IN (
-      'gate', 'notify', 'off'
-    )),
-    workflow_definition_id TEXT NOT NULL,
-    workflow_definition_revision INTEGER CHECK (
-      workflow_definition_revision > 0
-    ),
-    workflow_execution_id  TEXT,
-    session_name           TEXT,
-    delivered_at           TEXT,
-    abandoned_reason       TEXT,
-    created_at             TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (spec_id) REFERENCES specs(id) ON DELETE CASCADE,
-    FOREIGN KEY (revision_id) REFERENCES spec_revisions(id)
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_spec_executions_spec_state
-    ON spec_executions (spec_id, state, created_at DESC);
-  CREATE UNIQUE INDEX IF NOT EXISTS uq_spec_executions_workflow_execution
-    ON spec_executions (workflow_execution_id)
-    WHERE workflow_execution_id IS NOT NULL;
+  ${SPEC_EXECUTIONS_SCHEMA_DDL}
 
   CREATE TABLE IF NOT EXISTS spec_approvals (
     id            TEXT PRIMARY KEY,
@@ -1592,6 +1740,10 @@ const SCHEMA_DDL = `
   ${VALIDATION_RUNS_SCHEMA_DDL}
 
   ${SPEC_SCHEMA_DDL}
+
+  ${SPEC_DELIVERY_PLAN_SCHEMA_DDL}
+
+  ${SPEC_DELIVERY_DISCOVERY_SCHEMA_DDL}
 `;
 
 function applyConnectionPragmas(db: Db): void {
@@ -1712,7 +1864,32 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "workflow_definition_revision",
     type: "INTEGER CHECK (workflow_definition_revision > 0)",
   },
+  // Abandon-coordinator cleanup state (design §10). Additive and nullable: a
+  // legacy row has no cleanup in flight, so null is the meaningful value and
+  // no backfill is possible or wanted. Widening the `state` CHECK to admit
+  // `abandoning` needs a table rebuild instead — migration 0015.
+  {
+    table: "spec_executions",
+    column: "cleanup_phase",
+    type: "TEXT CHECK (cleanup_phase IN ('abort_workflow', 'release_slot', 'finalize'))",
+  },
+  {
+    table: "spec_executions",
+    column: "linked_workflow_execution_id",
+    type: "TEXT",
+  },
+  { table: "spec_executions", column: "cleanup_last_error", type: "TEXT" },
+  { table: "spec_executions", column: "cleanup_last_error_at", type: "TEXT" },
   { table: "validation_runs", column: "session_name", type: "TEXT" },
+  // The durable prelaunch review record `spec start --park` writes (design
+  // §5). Additive and nullable: an attempt that was never parked has no
+  // prelaunch record, so null is the meaningful legacy value and there is
+  // nothing to backfill.
+  {
+    table: "spec_delivery_plan_attempts",
+    column: "prelaunch_json",
+    type: "TEXT",
+  },
   {
     table: "conversations",
     column: "name_origin",

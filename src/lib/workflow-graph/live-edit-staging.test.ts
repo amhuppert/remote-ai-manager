@@ -779,7 +779,9 @@ describe("the staging seam over the real repository fence", () => {
         entry.graphWorkflowExecution = execution;
         return { execution, delivery: { events, pushes: pushes ?? [] } };
       },
-      async archiveActiveGraphWorkflowExecution() {},
+      async archiveActiveGraphWorkflowExecution() {
+        return { archived: false as const, reason: "no_active" as const };
+      },
       async markGraphWorkflowContextEventsPreReset() {
         return 0;
       },

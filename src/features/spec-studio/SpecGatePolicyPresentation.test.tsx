@@ -36,7 +36,10 @@ describe("PolicyDialog presentation", () => {
     ).toBeVisible();
 
     const dials = screen.getAllByRole("radiogroup", { name: /gate mode/i });
-    expect(dials).toHaveLength(5);
+    expect(dials).toHaveLength(4);
+    expect(
+      screen.queryByRole("radiogroup", { name: "Plan gate mode" }),
+    ).not.toBeInTheDocument();
     const requirements = screen.getByRole("radiogroup", {
       name: "Requirements gate mode",
     });

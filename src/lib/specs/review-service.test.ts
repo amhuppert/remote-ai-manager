@@ -104,6 +104,9 @@ async function proposedSpec(
     },
     actor: AGENT,
   });
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(created.draft.id);
   for (const element of [
     {
       elementId: "criterion-1",
@@ -512,7 +515,7 @@ describe("ReviewService", () => {
         .findGateAdmissionsByRevision(followUp.id)
         .map(({ gate }) => gate)
         .sort(),
-    ).toEqual(["design", "plan", "requirements"]);
+    ).toEqual(["design", "requirements"]);
 
     // The read must agree: the requirements gate is satisfied BY THIS
     // revision's own admission. Reading it as pending with a rev-1 row filed
@@ -783,7 +786,7 @@ describe("ReviewService", () => {
     expect(specEvents.findBySpecId(created.spec.id)).toEqual(before.events);
   });
 
-  it("refuses bulk plan approval for draft and withdrawn revisions", async () => {
+  it("refuses bulk plan approval for a withdrawn legacy plan and its design follow-up", async () => {
     const created = await proposedSpec();
     const requested = await reviewing.requestChanges({
       specId: created.spec.id,
@@ -792,19 +795,29 @@ describe("ReviewService", () => {
     });
     if (!requested.ok) throw new Error("expected requested changes");
 
-    for (const revisionId of [created.draft.id, requested.value.draft.id]) {
-      const result = await reviewing.bulkApprove({
-        specId: created.spec.id,
-        revisionId,
-        subjects: [{ subjectKind: "plan", elementId: null }],
-        approver: "alex",
-        actor: HUMAN,
-      });
-      expect(result).toMatchObject({
-        ok: false,
-        refusal: { code: "gate_blocked" },
-      });
-    }
+    const withdrawnLegacyPlan = await reviewing.bulkApprove({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      subjects: [{ subjectKind: "plan", elementId: null }],
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(withdrawnLegacyPlan).toMatchObject({
+      ok: false,
+      refusal: { code: "gate_blocked" },
+    });
+
+    const designFollowUp = await reviewing.bulkApprove({
+      specId: created.spec.id,
+      revisionId: requested.value.draft.id,
+      subjects: [{ subjectKind: "plan", elementId: null }],
+      approver: "alex",
+      actor: HUMAN,
+    });
+    expect(designFollowUp).toMatchObject({
+      ok: false,
+      refusal: { code: "stage_blocked" },
+    });
     expect(reviewRepo.findApprovalsBySpecId(created.spec.id)).toEqual([]);
   });
 

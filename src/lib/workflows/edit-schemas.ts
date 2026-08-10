@@ -546,6 +546,10 @@ export const workflowLiveEditOperationSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("add-edge"),
+    // Generic live edits may derive the id from the endpoints. An audited
+    // amendment supplies its own id so the durable record names the same edge
+    // the caller requested (`cctl workflow live amend`).
+    id: z.string().trim().min(1).optional(),
     sourceContextId: z.string().trim().min(1),
     targetContextId: z.string().trim().min(1),
     when: graphWorkflowEdgeGuardSchema.optional(),

@@ -342,7 +342,7 @@ function applyOperation(
   if (locked) {
     return fail("region_locked", regionLockedMessage(locked), {
       field: locked.lockedPath,
-      instruction: regionLockedInstruction(locked.sourceUri),
+      instruction: regionLockedInstruction(locked),
     });
   }
 

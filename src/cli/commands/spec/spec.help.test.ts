@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+
+import { NATIVE_SDD_GUIDANCE_SECTIONS } from "@/lib/specs/native-sdd-guidance";
 
 import { runCli } from "../../core";
 import type { CliEnv, CliHost } from "../../shared";
@@ -26,6 +29,20 @@ async function helpText(path: string[]): Promise<string> {
   const result = await runCli([...path, "--help"], env, helpHost());
   expect(result.exitCode).toBe(0);
   return result.stdout;
+}
+
+async function generatedReference(path: string[]) {
+  const result = await runCli([...path, "--help", "--json"], env, helpHost());
+  expect(result.exitCode).toBe(0);
+  return z
+    .object({
+      help: z.object({
+        generatedReference: z.array(
+          z.object({ title: z.string(), lines: z.array(z.string()) }),
+        ),
+      }),
+    })
+    .parse(JSON.parse(result.stdout)).help.generatedReference;
 }
 
 describe("cctl spec help nodes", () => {
@@ -60,6 +77,83 @@ describe("cctl spec help nodes", () => {
     const text = await helpText(["spec", "draft"]);
 
     expect(text).toContain("cctl spec schema");
+  });
+
+  it("routes retired evergreen plan acts to delivery-plan attempts", async () => {
+    const draft = await helpText(["spec", "draft"]);
+    expect(draft).toContain("cctl spec plan edit");
+    expect(draft).toMatch(/task.*legacy/i);
+
+    const advance = await helpText(["spec", "advance"]);
+    expect(advance).toContain("--from <requirements>");
+    expect(advance).not.toContain("<requirements|design>");
+    expect(advance).toContain("cctl spec plan open");
+
+    const task = await helpText(["spec", "task"]);
+    expect(task).toContain("cctl spec plan edit");
+
+    const propose = await helpText(["spec", "propose"]);
+    expect(propose).toContain("cctl spec plan propose");
+
+    const requestApproval = await helpText(["spec", "request-approval"]);
+    expect(requestApproval).toContain("cctl spec plan sign-off");
+
+    const remove = await helpText(["spec", "remove"]);
+    expect(remove).toMatch(/task handles are legacy-only/i);
+    expect(remove).toContain("cctl spec plan edit");
+
+    const preview = await helpText(["spec", "plan", "preview"]);
+    expect(preview).toContain("--stage draft|proposed");
+    for (const flag of ["scope", "context", "revision"]) {
+      expect(preview).toMatch(new RegExp(`--${flag}[^\\n]+retired`, "i"));
+    }
+    expect(preview).toContain("spec plan open <slug> --seed-from last");
+  });
+
+  it("keeps the retired start --file flag recognizable without advertising it as a launch path", async () => {
+    const start = await helpText(["spec", "start"]);
+
+    expect(start).toContain("cctl spec start <slug> [--park]");
+    expect(start).not.toContain("cctl spec start <slug> --file <scope.json>");
+    expect(start).toMatch(/--file[\s\S]{0,240}retired/i);
+    expect(start).toContain("cctl spec plan open <slug> --seed-from last");
+    expect(start).not.toContain("cctl spec schema scope");
+    expect(start).not.toMatch(/starts the legacy way/i);
+    expect(start).toContain("proposed or approved candidate");
+    expect(start).toContain("receipt reports the plan's projected next act");
+  });
+
+  it("surfaces registry-generated guidance on the lint and compilation leaves", async () => {
+    const lint = await helpText(["spec", "lint"]);
+    expect(lint).toContain("Evergreen lint taxonomy");
+    expect(lint).toContain("9.7.claim-without-evidence — blocks_claim");
+
+    const planStatus = await helpText(["spec", "plan", "status"]);
+    expect(planStatus).toContain("Delivery-plan lint taxonomy");
+    expect(planStatus).toContain("plan/selected-multi-owned — blocks_propose");
+
+    const preview = await helpText(["spec", "plan", "preview"]);
+    expect(preview).toContain("Materializer field mappings");
+    expect(preview).toContain(
+      "contexts[].contextId -> executionContexts[].id (copy)",
+    );
+    expect(preview).toContain("Evidence producers");
+    expect(preview).toContain("test_run <- graph-workflow-validation-result");
+    expect(preview).toContain("same validation event");
+
+    const schema = await helpText(["spec", "schema"]);
+    expect(schema).toContain("cctl spec schema guidance");
+
+    expect(await generatedReference(["spec", "lint"])).toEqual([
+      NATIVE_SDD_GUIDANCE_SECTIONS.evergreenLint,
+    ]);
+    expect(await generatedReference(["spec", "plan", "status"])).toEqual([
+      NATIVE_SDD_GUIDANCE_SECTIONS.deliveryPlanLint,
+    ]);
+    expect(await generatedReference(["spec", "plan", "preview"])).toEqual([
+      NATIVE_SDD_GUIDANCE_SECTIONS.materializer,
+      NATIVE_SDD_GUIDANCE_SECTIONS.evidenceProducers,
+    ]);
   });
 
   /**
@@ -349,5 +443,87 @@ describe("cctl spec help nodes", () => {
     const text = await helpText(["spec", "search"]);
 
     expect(text).toContain("cctl spec search --all <query>");
+  });
+
+  /**
+   * The default pair is the whole point of the verb: a reviewer who reads it
+   * as "diff against the last approved revision" would take a different set of
+   * changes to the sign-off than Spec Studio shows.
+   */
+  it("names the default diff pair and the explicit governance baseline", async () => {
+    const text = await helpText(["spec", "diff"]);
+
+    expect(text).toContain("immediate review base");
+    expect(text).toContain("--baseline governance");
+    expect(text).toContain("nearest APPROVED ancestor");
+  });
+
+  /**
+   * Export stopped printing the bundle on 2026-08-07. A caller who reads only
+   * the old help pipes an empty bundle, so the node has to state the new
+   * default, the flag that restores the old one, and the date it changed.
+   */
+  it("documents the changed export default and the flag that restores stdout", async () => {
+    const text = await helpText(["spec", "export"]);
+
+    expect(text).toContain("--stdout");
+    expect(text).toContain("2026-08-07");
+    expect(text).toContain(".cc/temp/<slug>-spec-bundle.json");
+    expect(text).toContain("content hash");
+  });
+
+  /**
+   * The delta is only worth reading if the caller knows what it is for. An
+   * agent about to author the next delivery plan has to learn from the help
+   * itself that this is that plan's input, and that a capped listing is not
+   * the whole answer.
+   */
+  it("names the delta as the authoring input for the next execution's plan", async () => {
+    const text = await helpText(["spec", "delta"]);
+
+    expect(text).toContain(
+      "the authoring input for the next execution's delivery plan",
+    );
+    expect(text).toContain("--since <executionId>");
+    expect(text).toContain("capped at 30 rows");
+    expect(text).toContain("--out writes the complete projection JSON");
+  });
+
+  /**
+   * An agent that finds work mid-run reads this node to learn what it may do
+   * about it. If the help names fewer than three exits the agent invents one;
+   * if it names more, something other than the audited amendment is being
+   * offered as a way to change a launched definition.
+   */
+  it("presents the three post-launch paths side by side on the capture node", async () => {
+    const text = await helpText(["spec", "capture"]);
+
+    expect(text).toContain("exactly three post-launch paths");
+    expect(text).toContain("--blocking-reason");
+    expect(text).toContain("cctl workflow live amend");
+    expect(text).toContain(
+      "the only operation that may change a launched definition",
+    );
+    expect(text).toContain("cctl spec plan open");
+  });
+
+  /**
+   * Before launch there is no run, so capture has to hand the agent the plan
+   * verb rather than a refusal it cannot act on — and the two prelaunch verbs
+   * differ by attempt status.
+   */
+  it("names both prelaunch plan verbs on the capture node", async () => {
+    const text = await helpText(["spec", "capture"]);
+
+    expect(text).toContain("cctl spec plan edit");
+    expect(text).toContain("cctl spec plan reopen");
+  });
+
+  it("reaches the delta from the spec group node", async () => {
+    const text = await helpText(["spec"]);
+
+    expect(text).toMatch(
+      /spec delta\s+— compare the approved spec against a delivered execution/,
+    );
   });
 });

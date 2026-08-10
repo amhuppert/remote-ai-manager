@@ -107,16 +107,18 @@ export function policyChangeImpact(
         });
   return {
     sequence,
-    gateChanges: specGateSchema.options.map((gate) => {
-      const currentDial = resolveDial(currentPolicy, gate);
-      const proposedDial = resolveDial(proposedPolicy, gate);
-      return {
-        gate,
-        currentDial,
-        proposedDial,
-        approval: approvalEffect(currentDial, proposedDial),
-      };
-    }),
+    gateChanges: specGateSchema.options
+      .filter((gate) => gate !== "plan" || draft?.pinnedStage === "plan")
+      .map((gate) => {
+        const currentDial = resolveDial(currentPolicy, gate);
+        const proposedDial = resolveDial(proposedPolicy, gate);
+        return {
+          gate,
+          currentDial,
+          proposedDial,
+          approval: approvalEffect(currentDial, proposedDial),
+        };
+      }),
     // The domain sequence covers authoring only; execution start and delivery
     // still bound the draft's lifecycle, so they close the list under the same
     // proposed dials.

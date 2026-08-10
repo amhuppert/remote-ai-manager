@@ -67,6 +67,7 @@ import type { WorkflowSemanticDefinition } from "@/lib/workflow-graph/definition
 import { applyDefinitionEdits } from "./definition-edits";
 import { createSpecExecutionContract } from "@/lib/specs/execution-contract";
 import { GraphExecutionContractViolationError } from "./execution-contract-port";
+import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -84,9 +85,15 @@ interface InMemoryExecutionRepository {
       startedAt: string;
       inputs: Record<string, string>;
       launchedTier: TemplateTier;
+      ownerConversationId: string | null;
     },
   ): Promise<GraphWorkflowExecution>;
-  archiveActive(projectPath: string, sessionName: string): Promise<void>;
+  archiveActive(
+    projectPath: string,
+    sessionName: string,
+    audit?: { reason: string; actor: string | null },
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+  ): Promise<GraphWorkflowArchiveOutcome>;
   update(
     projectPath: string,
     sessionName: string,
@@ -116,6 +123,7 @@ type CreateSeedCapture = {
   startedAt: string;
   inputs: Record<string, string>;
   launchedTier: TemplateTier;
+  ownerConversationId: string | null;
 };
 
 function createRepository(
@@ -186,6 +194,7 @@ function createRepository(
         startedAt: seed.startedAt,
         inputs: seed.inputs,
         launchedTier: seed.launchedTier,
+        ownerConversationId: seed.ownerConversationId,
       });
       activeExecution = createWorkflowExecution({
         id: seed.executionId,
@@ -193,6 +202,7 @@ function createRepository(
         seedDefinitionRevision: seed.definitionRevision,
         boundInputs: seed.inputs,
         launchedTier: seed.launchedTier,
+        ownerConversationId: seed.ownerConversationId,
         definitionApproval:
           seed.definition.approvalRequired === true
             ? { requestedAt: seed.startedAt, approvedAt: null }
@@ -203,9 +213,13 @@ function createRepository(
       });
       return activeExecution;
     },
-    async archiveActive() {
+    async archiveActive(): Promise<GraphWorkflowArchiveOutcome> {
       archiveCalls += 1;
+      const archived = activeExecution;
       activeExecution = null;
+      return archived === null
+        ? { archived: false, reason: "no_active" }
+        : { archived: true, execution: archived };
     },
     async update(_projectPath, _sessionName, execution) {
       activeExecution = execution;
@@ -711,6 +725,55 @@ describe("graph workflow manager", () => {
       );
       expect(reloaded?.seedDefinitionId).toBe("project-def");
       expect(reloaded?.launchedTier).toBe("project");
+    });
+
+    it("threads the start input's ownerConversationId onto the persisted execution", async () => {
+      const loadCalls: Array<{ definitionId: string; tier: TemplateTier }> = [];
+      const manager = buildManager({
+        tierDefinitions: {
+          project: createWorkflowDefinitionRecord({ id: "project-def" }),
+          global: createWorkflowDefinitionRecord({ id: "global-def" }),
+        },
+        loadCalls,
+      });
+
+      const execution = await manager.start({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        definitionId: "project-def",
+        ownerConversationId: "conv-owner",
+      });
+
+      expect(execution.ownerConversationId).toBe("conv-owner");
+
+      const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.ownerConversationId).toBe("conv-owner");
+    });
+
+    it("persists a null owner when the start seam captured no conversation", async () => {
+      const loadCalls: Array<{ definitionId: string; tier: TemplateTier }> = [];
+      const manager = buildManager({
+        tierDefinitions: {
+          project: createWorkflowDefinitionRecord({ id: "project-def" }),
+          global: createWorkflowDefinitionRecord({ id: "global-def" }),
+        },
+        loadCalls,
+      });
+
+      await manager.start({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        definitionId: "project-def",
+      });
+
+      const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.ownerConversationId).toBeNull();
     });
 
     it("records boundInputs unchanged alongside the additive launchedTier on a parameterized launch (R3.3)", async () => {

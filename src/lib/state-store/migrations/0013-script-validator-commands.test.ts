@@ -17,6 +17,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import {
@@ -49,10 +50,15 @@ function freshDb(projectPath: string): Db {
   return fixture.db;
 }
 
+/**
+ * Rooted in the OS temp dir, not the worktree: the stored-workflow layout keys
+ * each project by `base64url(projectPath)` as a SINGLE directory name (see
+ * `workflowPath`, mirroring `workflow-graph/storage.ts`). Encoding inflates a
+ * path by ~4/3, so a fixture under a deep worktree pushes that one component
+ * past the 255-byte filename limit and every seed fails with ENAMETOOLONG.
+ */
 function freshFixtureRoot(): string {
-  const tempRoot = path.join(process.cwd(), ".cc", "temp");
-  mkdirSync(tempRoot, { recursive: true });
-  const dir = mkdtempSync(path.join(tempRoot, "script-validator-"));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "cc-script-validator-"));
   tempDirs.push(dir);
   return dir;
 }

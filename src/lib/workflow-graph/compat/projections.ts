@@ -255,6 +255,21 @@ export function projectTypedEvent(
         // pass from its first decision, exactly as it does for routes.
         detail: `r${event.loopControlRevision}:${event.verdict}:${event.outcome}`,
       };
+    case "graph-workflow-execution-released":
+      return {
+        kind: event.type,
+        subject: null,
+        detail: `${event.status}:${event.reason}`,
+      };
+    case "graph-workflow-execution-amended":
+      // The definition hashes are deliberately absent: they are generated
+      // values this projection exists to look past, and the revision plus the
+      // shape of what the amendment added is what a scenario comparison needs.
+      return {
+        kind: event.type,
+        subject: null,
+        detail: `r${event.liveRevision}:${event.policyBasis}:+${event.addedContextIds.length}c+${event.addedTaskIds.length}t`,
+      };
     default: {
       const unprojected: never = event;
       throw new Error(

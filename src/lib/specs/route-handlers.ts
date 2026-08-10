@@ -54,8 +54,19 @@ import {
   reorderDraftElementInputSchema,
   type AuthoringService,
 } from "./authoring-service";
-import { compiledWorkflowTaskId, readCompiledOriginMap } from "./compiler";
+import { compiledWorkflowTaskId, scopePlanFromRevision } from "./compiler";
 import { isEarlierMergedDelivery } from "./delivery-gate";
+import type { DeliveryPlanService } from "./delivery-plan-service";
+import {
+  deliveryPlanEditRequestSchema,
+  deliveryPlanOpenRequestSchema,
+  deliveryPlanPreviewRequestSchema,
+  deliveryPlanReopenRequestSchema,
+  deliveryPlanCommentRequestSchema,
+  deliveryPlanReaffirmRequestSchema,
+  deliveryPlanSignOffRequestSchema,
+} from "./delivery-plan-views";
+import { DRAFT_HEALTH_TOP_FINDINGS, draftHealth } from "./draft-health";
 import type { EvidenceService } from "./evidence-service";
 import { createSpecEventsPublisher } from "./events";
 import {
@@ -66,10 +77,14 @@ import {
   type CanonicalSpecBundle,
   type IntegrityReport,
 } from "./export";
-import type {
-  ExecutionService,
-  ReconciledSpecExecution,
+import {
+  hashExecutionScope,
+  type ExecutionService,
+  type ReconciledSpecExecution,
+  type SpecWorkflowCleanupTarget,
 } from "./execution-service";
+import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
+import { readSpecExecutionOriginMap } from "./execution-origin-map";
 import {
   createApprovalApplicability,
   type ApprovalApplicability,
@@ -88,7 +103,12 @@ import {
   type ProjectedGateStatus,
   type RevisionSignOffProjection,
 } from "./authoring-review-projection";
-import { ancestorIds, governanceBaseRevisionId } from "./revision-lineage";
+import { diffRevisions } from "./revision-diff";
+import {
+  ancestorIds,
+  governanceBaseRevisionId,
+  SpecRevisionLineageError,
+} from "./revision-lineage";
 import {
   explainInvalidElementHandle,
   formatBareElementHandle,
@@ -106,9 +126,16 @@ import {
   type LinksService,
   type LinkedTicketReadThrough,
 } from "./links-service";
+import { loadDeliveryDelta } from "./delivery-delta-query";
 import type { LintFinding } from "./lint";
 import type { SpecMeasuresReport } from "./measures";
 import { createMeasuresQuery } from "./measures-query";
+import {
+  boundSpecPlanPreview,
+  buildSpecPlanPreview,
+  type SpecPlanPreview,
+} from "./plan-preview";
+import { resolveDial } from "./policy";
 import {
   projectDeliveryDisplay,
   projectRequirementStatus,
@@ -117,6 +144,8 @@ import {
   type DeliveryCriterion,
   type SpecPhaseProjection,
 } from "./phase";
+import { liveProposalProjection } from "./proposal-integrity";
+import { proposalNotes } from "./proposal-notes";
 import {
   elementHandleInSnapshot,
   toDiffRows,
@@ -128,6 +157,7 @@ import {
   unapproveItemInputSchema,
   bulkApproveInputSchema,
   changeSpecPolicyInputSchema,
+  dismissSupersededProposalInputSchema,
   disposeAssumptionInputSchema,
   openQuestionInputSchema,
   proposeAssumptionInputSchema,
@@ -136,15 +166,20 @@ import {
   requestChangesInputSchema,
   resolveReviewThreadInputSchema,
   reviewCommentInputSchema,
+  approveRemainingAndSignOffInputSchema,
   signOffRevisionInputSchema,
   withdrawProposalInputSchema,
   type ReviewService,
 } from "./review-service";
 import { executionScopeSchema, type ExecutionScope } from "./scope-validation";
+import { isWaiverValidForExecution } from "./waiver-staleness";
 import type {
   CriterionDeliveryProjection,
+  LiveProposalView,
   RemainingAuthoringSequence,
   SpecAssumptionView,
+  SpecDiffBaseline,
+  SpecDiffView,
   SpecQuestionView,
   SpecRevisionSnapshotView,
   SpecEditContextView,
@@ -153,6 +188,7 @@ import type {
   SpecSearchHit,
   SpecStartedExecutionView,
   SpecStatusExecution,
+  SpecStatusView as PublishedSpecStatusView,
 } from "./view-schemas";
 import {
   actorProvenanceSchema,
@@ -167,6 +203,7 @@ import {
   type SpecAssumptionRow,
   type SpecCommentRow,
   type SpecCriterionDispositionRow,
+  type SpecEventRow,
   type SpecEvidenceRow,
   type SpecExecutionRow,
   type SpecGate,
@@ -198,6 +235,12 @@ export interface SpecRouteDeps {
   lintDraft(specId: string, revisionId: string): Promise<LintFinding[]>;
   findApprovalsBySpecId(specId: string): SpecApprovalRow[];
   findCommentsByRevision(revisionId: string): SpecCommentRow[];
+  /**
+   * The spec's durable events, oldest first. The detail view reads them for
+   * the disposition document each proposal was proposed with — the notes live
+   * on the propose event, so nothing else can answer for them.
+   */
+  findEventsBySpecId(specId: string): SpecEventRow[];
   findGateAdmissionsBySpecId(specId: string): SpecGateAdmissionRow[];
   findLinksBySpecId(specId: string): SpecLinkRow[];
   getLinkedTickets(
@@ -304,6 +347,8 @@ interface SpecStatusView {
     elementId: string | null;
   }>;
   taskPlan: ReturnType<typeof taskPlanStatus>;
+  /** Taken from the view schema so the tier cannot drift from what it parses. */
+  draftHealth: PublishedSpecStatusView["draftHealth"];
   coverage: SpecCoverage;
   delivery: ReturnType<typeof projectDeliveryDisplay>;
 }
@@ -359,7 +404,11 @@ function createDefaultDeps(): SpecRouteDeps {
         scopeForTier("project", projectPath),
         workflowDefinitionId,
       );
-      return record === null ? [] : readCompiledOriginMap(record.definition);
+      return record === null
+        ? []
+        : readSpecExecutionOriginMap(record.definition, (revisionId) =>
+            specs.getRevisionSnapshot(revisionId),
+          );
     },
     now: () => new Date().toISOString(),
   });
@@ -371,6 +420,16 @@ function createDefaultDeps(): SpecRouteDeps {
       appendInTransaction: (event) => eventsRepo.append(event),
     }),
   });
+  // Verification reads the linked run through the SAME observe seam the
+  // abandon coordinator acts through, so an orphan it reports is an orphan
+  // the coordinator would agree it has to clear.
+  const exportDeps = {
+    specs,
+    review,
+    delivery,
+    observeLinkedWorkflow: (target: SpecWorkflowCleanupTarget) =>
+      createProductionSpecWorkflowCleanupPort().observe(target),
+  };
 
   return {
     resolveProjectPath: defaultResolveProjectPath,
@@ -384,6 +443,7 @@ function createDefaultDeps(): SpecRouteDeps {
     findApprovalsBySpecId: (specId) => review.findApprovalsBySpecId(specId),
     findCommentsByRevision: (revisionId) =>
       review.findCommentsByRevision(revisionId),
+    findEventsBySpecId: (specId) => eventsRepo.findBySpecId(specId),
     findGateAdmissionsBySpecId: (specId) =>
       review.findGateAdmissionsBySpecId(specId),
     findLinksBySpecId: (specId) => links.findBySpecId(specId),
@@ -422,13 +482,11 @@ function createDefaultDeps(): SpecRouteDeps {
       delivery.findWaiversByRevision(revisionId),
     async exportSpec(specId) {
       return renderCanonicalBundle(
-        await loadSpecExportState({ specs, review }, specId),
+        await loadSpecExportState(exportDeps, specId),
       );
     },
     async verifySpec(specId) {
-      return verifyExportState(
-        await loadSpecExportState({ specs, review }, specId),
-      );
+      return verifyExportState(await loadSpecExportState(exportDeps, specId));
     },
     measureProject: (projectPath) => measures.forProject(projectPath),
   };
@@ -464,6 +522,31 @@ export async function resolveSpecRoute(
   return {
     ok: true,
     value: { ...project.value, requestedSlug: slug ?? "", spec },
+  };
+}
+
+const planPreviewBodySchema = z
+  .object({
+    revisionId: z.string().min(1).optional(),
+    scope: executionScopeSchema.optional(),
+    contextId: z.string().min(1).optional(),
+  })
+  .strict();
+
+/**
+ * The whole revision as a scope: every task selected, every criterion in
+ * scope, nothing excluded. This serves only the read-only legacy preview;
+ * active start reads its graph from an approved DeliveryPlanAttempt.
+ */
+function fullRevisionScope(
+  slug: string,
+  snapshot: SpecRevisionSnapshot,
+): ExecutionScope {
+  const plan = scopePlanFromRevision(slug, snapshot);
+  return {
+    selectedTaskIds: plan.tasks.map((task) => task.id),
+    selectedCriterionIds: plan.criteria.map((criterion) => criterion.id),
+    exclusionDispositions: [],
   };
 }
 
@@ -1078,13 +1161,7 @@ function criterionDeliveryProofState(
       disposition.waiver_id === null
         ? null
         : deps.findWaiverById(disposition.waiver_id);
-    if (
-      waiver !== null &&
-      waiver.stale === 0 &&
-      waiver.spec_id === execution.spec_id &&
-      waiver.revision_id === execution.revision_id &&
-      waiver.criterion_element_id === criterionElementId
-    ) {
+    if (isWaiverValidForExecution(waiver, execution, criterionElementId)) {
       return "waived";
     }
   }
@@ -1138,6 +1215,14 @@ function parseExecutionScope(raw: string): ExecutionScope | null {
   } catch {
     return null;
   }
+}
+
+function toDiffRevisionRef(revision: SpecRevision): SpecDiffView["to"] {
+  return {
+    revisionId: revision.id,
+    number: revision.number,
+    state: revision.state,
+  };
 }
 
 function toGateAdmissionView(
@@ -1217,13 +1302,14 @@ async function buildStatus(
   const applies = await loadApprovalApplicability(deps, state, approvals);
   // Sign-off is blocked by unresolved blocking threads and sign-off lint as
   // well as by outstanding subjects, so the status projection reads the same
-  // three sources the sign-off transition does.
+  // three sources the sign-off transition does. The findings tier rides this
+  // same read rather than adding a second one: status stays one round trip.
+  const health = draftHealth(
+    revisionId === null ? [] : await deps.lintDraft(spec.id, revisionId),
+  );
   const signOffFindings =
-    revisionId === null
-      ? []
-      : (await deps.lintDraft(spec.id, revisionId)).filter(
-          (finding) => finding.severity === "blocks_signoff",
-        );
+    health.groups.find((group) => group.severity === "blocks_signoff")
+      ?.findings ?? [];
   const projection = authoringReviewProjection({
     policy: spec.gatePolicy,
     snapshot: state.currentSnapshot,
@@ -1308,6 +1394,16 @@ async function buildStatus(
       elementId: assumption.element_id,
     })),
     taskPlan: taskPlanStatus(state.currentSnapshot),
+    draftHealth:
+      revisionId === null
+        ? null
+        : {
+            revisionId,
+            total: health.total,
+            blocking: health.blocking,
+            counts: health.counts.map((entry) => ({ ...entry })),
+            top: health.ordered.slice(0, DRAFT_HEALTH_TOP_FINDINGS),
+          },
     coverage: coverage(state.currentSnapshot),
     delivery: projectDeliveryDisplay(displayCriteria),
   };
@@ -1442,6 +1538,61 @@ async function snapshotForRevisionId(
 ): Promise<SpecRevisionSnapshot | null> {
   if (revisionId === null) return null;
   return deps.getRevisionSnapshot(revisionId);
+}
+
+/**
+ * Every revision under review, with the verdict the shared supersession
+ * predicate reached and the snapshots its diff needs.
+ *
+ * The verdict is read from `liveProposalProjection`, never from a rule
+ * restated here: the surfaces that render this list must offer exactly the
+ * dismissals the review service would accept, and a second copy of the
+ * ancestry test is how they would drift apart.
+ */
+async function buildLiveProposals(
+  deps: SpecRouteDeps,
+  revisions: readonly SpecRevision[],
+  loadedSnapshots: ReadonlyMap<string, SpecRevisionSnapshot>,
+  specId: string,
+  events: readonly SpecEventRow[],
+): Promise<LiveProposalView[]> {
+  const cache = new Map(loadedSnapshots);
+  const read = async (
+    revisionId: string | null,
+  ): Promise<SpecRevisionSnapshot | null> => {
+    if (revisionId === null) return null;
+    const cached = cache.get(revisionId);
+    if (cached !== undefined) return cached;
+    const loaded = await deps.getRevisionSnapshot(revisionId);
+    if (loaded !== null) cache.set(revisionId, loaded);
+    return loaded;
+  };
+
+  const entries = await Promise.all(
+    liveProposalProjection(revisions).map(async (entry) => {
+      const snapshot = await read(entry.revision.id);
+      if (snapshot === null) {
+        // A proposed revision row with no snapshot is broken storage. Say so
+        // rather than dropping it: an unlisted proposal is the dead end this
+        // projection exists to end (#50).
+        logger.warn("specs.routes.live_proposal.snapshot_missing", {
+          specId,
+          revisionId: entry.revision.id,
+        });
+        return null;
+      }
+      const baseSnapshot = await read(entry.revision.basedOnRevisionId);
+      return {
+        revision: entry.revision,
+        supersededBy: entry.supersededBy,
+        snapshot: toSnapshotView(snapshot),
+        baseSnapshot:
+          baseSnapshot === null ? null : toSnapshotView(baseSnapshot),
+        notes: proposalNotes(events, entry.revision.id),
+      };
+    }),
+  );
+  return entries.filter((entry): entry is LiveProposalView => entry !== null);
 }
 
 async function latestContainingElement(
@@ -1638,6 +1789,13 @@ export function createSpecRouteHandlers(
         )
         .map((candidate) => [candidate.revision.id, candidate]),
     );
+    const liveProposals = await buildLiveProposals(
+      deps,
+      state.revisions,
+      snapshotsByRevisionId,
+      resolved.value.spec.id,
+      deps.findEventsBySpecId(resolved.value.spec.id),
+    );
     const executionById = new Map(
       executions.map((execution) => [execution.id, execution]),
     );
@@ -1676,6 +1834,7 @@ export function createSpecRouteHandlers(
       spec: resolved.value.spec,
       aliases,
       revisions: state.revisions,
+      liveProposals,
       baseRevision: baseRevision === null ? null : toSnapshotView(baseRevision),
       currentRevision:
         state.currentSnapshot === null
@@ -1792,6 +1951,47 @@ export function createSpecRouteHandlers(
     return NextResponse.json(view);
   }
 
+  /**
+   * The delivery-delta projection (P1/P2). Read-only and computed per request:
+   * it persists nothing, so there is no cached classification that can drift
+   * from the revisions it compares.
+   */
+  async function getSpecDeltaGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const state = await loadCurrentState(deps, resolved.value.spec.id);
+    if (state.currentApprovedSnapshot === null) {
+      return notFound(
+        `Spec ${resolved.value.spec.slug} has no approved revision, so there is nothing to compare a delivery against. Approve a revision first, then read the delta.`,
+      );
+    }
+    const since = new URL(request.url).searchParams.get("since") ?? undefined;
+    const result = await loadDeliveryDelta(deps, {
+      spec: resolved.value.spec,
+      currentApprovedSnapshot: state.currentApprovedSnapshot,
+      sinceExecutionId: since,
+    });
+    if (!result.ok) {
+      logger.debug("specs.routes.delta.refused", {
+        specId: resolved.value.spec.id,
+        code: result.code,
+      });
+      return result.code === "execution_not_found"
+        ? notFound(result.message, result.code)
+        : jsonError(result.message, 409, result.code);
+    }
+    logger.debug("specs.routes.delta.complete", {
+      specId: resolved.value.spec.id,
+      comparedExecutionId: result.projection.comparedExecution?.executionId,
+      criterionCount: result.projection.criteria.length,
+      advisoryCount: result.projection.advisories.length,
+    });
+    return NextResponse.json(result.projection);
+  }
+
   async function getSpecLintGET(
     _request: Request,
     context: SpecRouteContext,
@@ -1815,6 +2015,111 @@ export function createSpecRouteHandlers(
       findingCount: findings.length,
     });
     return NextResponse.json({ revisionId: lintRevision.id, findings });
+  }
+
+  /**
+   * The compiled-plan preview. POST because the scope is a document, not a
+   * query string — the handler mutates nothing and writes no audit record.
+   *
+   * Unlike the compile path this accepts a draft or proposed revision: the
+   * whole point is showing a planner the shape their plan compiles to while it
+   * is still editable. A plan the compiler refuses is itself the answer, so a
+   * materialization error is returned as a 422 the planner can act on rather
+   * than a 500.
+   */
+  async function planPreviewPOST(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { spec } = resolved.value;
+    // An absent body is the explicit "preview the whole revision" request, but
+    // a MALFORMED one is not: silently reading it as {} would answer a request
+    // that meant to narrow by scope, revision, or context with the full plan
+    // instead — a wider answer than was asked for, and indistinguishable from
+    // a correct one.
+    const rawBody = await request.text();
+    let body: unknown = {};
+    if (rawBody.trim().length > 0) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return jsonError(
+          `Plan preview request body is not valid JSON. Send no body (or {}) to preview the whole revision, or a JSON object with scope, revisionId, or contextId, then re-run cctl spec plan preview ${spec.slug}.`,
+          400,
+          "plan_preview_invalid_body",
+        );
+      }
+    }
+    const parsedBody = planPreviewBodySchema.safeParse(body ?? {});
+    if (!parsedBody.success) {
+      return jsonError("Invalid plan preview request body", 400);
+    }
+    const state = await loadCurrentState(deps, spec.id);
+    const requestedRevisionId = parsedBody.data.revisionId ?? null;
+    const revision =
+      requestedRevisionId === null
+        ? state.currentRevision
+        : (state.revisions.find(
+            (candidate) => candidate.id === requestedRevisionId,
+          ) ?? null);
+    if (revision === null) return notFound("Spec revision not found");
+    const snapshot =
+      revision.id === state.currentRevision?.id
+        ? state.currentSnapshot
+        : await deps.getRevisionSnapshot(revision.id);
+    if (snapshot === null) return notFound("Spec revision not found");
+
+    // No scope document means "preview the whole plan": every task and every
+    // criterion this revision carries, which is the scope a planner is reading
+    // the compiled shape of before they narrow it.
+    const scope =
+      parsedBody.data.scope ?? fullRevisionScope(spec.slug, snapshot);
+    let preview: SpecPlanPreview;
+    try {
+      preview = buildSpecPlanPreview({
+        spec: { id: spec.id, slug: spec.slug, name: spec.name },
+        revisionSnapshot: snapshot,
+        scope,
+        scopeHash: hashExecutionScope(scope),
+        approvalRequired:
+          resolveDial(spec.gatePolicy, "execution_start") === "gate",
+      });
+    } catch (error) {
+      logger.debug("specs.routes.plan-preview.uncompilable", {
+        specId: spec.id,
+        revisionId: revision.id,
+      });
+      // The refusal names its own repair: an uncompilable plan is a plan
+      // defect or a scope defect, and both are edits the caller makes before
+      // re-running the same preview.
+      return jsonError(
+        `${error instanceof Error ? error.message : String(error)} Repair the plan elements or the selection in --scope, then re-run cctl spec plan preview ${spec.slug}.`,
+        422,
+        "plan_preview_uncompilable",
+      );
+    }
+    const bounded = boundSpecPlanPreview(preview, {
+      ...(parsedBody.data.contextId === undefined
+        ? {}
+        : { contextId: parsedBody.data.contextId }),
+    });
+    if (!bounded.ok) {
+      return jsonError(
+        `This plan has no context ${JSON.stringify(parsedBody.data.contextId)}. Re-run without --context, or name one of: ${bounded.knownContextIds.join(", ")}.`,
+        422,
+        "plan_preview_unknown_context",
+      );
+    }
+    logger.debug("specs.routes.plan-preview.complete", {
+      specId: spec.id,
+      revisionId: revision.id,
+      revisionState: revision.state,
+      contextCount: bounded.value.totalContextCount,
+      evidenceGapCount: bounded.value.evidenceGaps.length,
+    });
+    return NextResponse.json(bounded.value);
   }
 
   function resolveQuestionOrAssumption(
@@ -2114,6 +2419,136 @@ export function createSpecRouteHandlers(
     return NextResponse.json({ query, results });
   }
 
+  /**
+   * The reviewer's changelog (R26). Its default pair is the one Spec Studio's
+   * review cards diff — the current revision against `basedOnRevisionId` —
+   * because that is the comparison a human signs off on. The governance base is
+   * reachable, but only when the caller asks for it by name: swapping it in
+   * silently would classify the same review differently from the surface that
+   * approves it.
+   */
+  async function getSpecDiffGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const spec = resolved.value.spec;
+    const params = new URL(request.url).searchParams;
+    const requestedBaseline = params.get("baseline");
+    if (requestedBaseline !== null && requestedBaseline !== "governance") {
+      return jsonError(
+        `Unknown diff baseline ${JSON.stringify(requestedBaseline)}; the only explicit baseline is "governance" (the nearest approved ancestor). Omit it to compare against the immediate review base.`,
+        400,
+        "invalid_baseline",
+      );
+    }
+    // Each names a base. Picking one would drop a base the caller asked for,
+    // so the ambiguity is refused rather than resolved by precedence.
+    if (requestedBaseline !== null && params.get("from") !== null) {
+      return jsonError(
+        `Diff baseline "governance" and an explicit "from" revision name different bases; send one of them — drop "from" to compare against the nearest approved ancestor, or drop "baseline" to compare against the revision you name.`,
+        400,
+        "conflicting_baseline",
+      );
+    }
+    const revisions = await deps.listRevisions(spec.id);
+    const requestedTo = params.get("to");
+    const to =
+      requestedTo === null
+        ? latestRevision(revisions)
+        : (revisions.find((revision) => revision.id === requestedTo) ?? null);
+    if (to === null) {
+      return notFound(
+        requestedTo === null
+          ? `Spec ${spec.slug} has no revision to diff`
+          : `Revision ${requestedTo} is not part of spec ${spec.slug} — list its revisions with cctl spec show ${spec.slug}`,
+      );
+    }
+
+    const requestedFrom = params.get("from");
+    let baseline: SpecDiffBaseline;
+    let baseRevisionId: string | null;
+    try {
+      if (requestedFrom !== null) {
+        baseline = "explicit";
+        baseRevisionId = requestedFrom;
+      } else if (requestedBaseline === "governance") {
+        baseline = "governance";
+        baseRevisionId = governanceBaseRevisionId(revisions, to);
+      } else {
+        baseline = "review";
+        baseRevisionId = to.basedOnRevisionId;
+      }
+    } catch (error) {
+      if (!(error instanceof SpecRevisionLineageError)) throw error;
+      return jsonError(
+        `Spec ${spec.slug} has broken revision lineage: ${error.message}. Compare explicit revision ids with --from/--to.`,
+        409,
+        "broken_lineage",
+      );
+    }
+    const from =
+      baseRevisionId === null
+        ? null
+        : (revisions.find((revision) => revision.id === baseRevisionId) ??
+          null);
+    if (baseRevisionId !== null && from === null) {
+      return notFound(
+        `Revision ${baseRevisionId} is not part of spec ${spec.slug} — list its revisions with cctl spec show ${spec.slug}`,
+      );
+    }
+
+    const toSnapshot = await deps.getRevisionSnapshot(to.id);
+    if (toSnapshot === null) {
+      return notFound(`Revision ${to.id} has no stored content`);
+    }
+    const fromSnapshot =
+      from === null ? null : await deps.getRevisionSnapshot(from.id);
+    if (from !== null && fromSnapshot === null) {
+      return notFound(`Revision ${from.id} has no stored content`);
+    }
+    const diff = diffRevisions(
+      fromSnapshot === null ? [] : toDiffRows(fromSnapshot),
+      toDiffRows(toSnapshot),
+    );
+    const changeByElementId = new Map(
+      diff.changeList.map((change) => [change.elementId, change]),
+    );
+    logger.debug("specs.routes.diff.complete", {
+      specId: spec.id,
+      baseline,
+      fromRevisionId: from?.id ?? null,
+      toRevisionId: to.id,
+      changeCount: diff.changeList.length,
+      planStale: diff.planStale,
+    });
+    return NextResponse.json({
+      slug: spec.slug,
+      baseline,
+      from: from === null ? null : toDiffRevisionRef(from),
+      to: toDiffRevisionRef(to),
+      elements: diff.classifications.map((entry) => {
+        const change = changeByElementId.get(entry.elementId);
+        return {
+          elementId: entry.elementId,
+          // A removed element is absent from the compared revision, so its
+          // handle can only come from the base it was removed from.
+          handle:
+            elementHandleInSnapshot(toSnapshot, entry.elementId) ??
+            (fromSnapshot === null
+              ? null
+              : elementHandleInSnapshot(fromSnapshot, entry.elementId)),
+          kind: entry.kind,
+          classification: change?.change ?? "unchanged",
+          directlyChanged: entry.directlyChanged,
+          summary: change?.summary ?? null,
+        };
+      }),
+      planStale: diff.planStale,
+    });
+  }
+
   async function getSpecExportGET(
     _request: Request,
     context: SpecRouteContext,
@@ -2152,9 +2587,12 @@ export function createSpecRouteHandlers(
     getSpecStatusGET,
     getSpecEditContextGET,
     getSpecLintGET,
+    getSpecDeltaGET,
+    planPreviewPOST,
     getSpecElementGET,
     searchSpecGET,
     searchProjectSpecsGET,
+    getSpecDiffGET,
     getSpecExportGET,
     getSpecVerifyGET,
   };
@@ -2168,9 +2606,12 @@ export const specDetailGET = withTracing(handlers.getSpecGET);
 export const specStatusGET = withTracing(handlers.getSpecStatusGET);
 export const specEditContextGET = withTracing(handlers.getSpecEditContextGET);
 export const specLintGET = withTracing(handlers.getSpecLintGET);
+export const specDeltaGET = withTracing(handlers.getSpecDeltaGET);
+export const specPlanPreviewPOST = withTracing(handlers.planPreviewPOST);
 export const specElementGET = withTracing(handlers.getSpecElementGET);
 export const specSearchGET = withTracing(handlers.searchSpecGET);
 export const specProjectSearchGET = withTracing(handlers.searchProjectSpecsGET);
+export const specDiffGET = withTracing(handlers.getSpecDiffGET);
 export const specExportGET = withTracing(handlers.getSpecExportGET);
 export const specVerifyGET = withTracing(handlers.getSpecVerifyGET);
 
@@ -2195,6 +2636,7 @@ export interface SpecMutationServices {
   execution: Pick<
     ExecutionService,
     | "start"
+    | "parkDeliveryPlan"
     | "approveExecutionStart"
     | "linkWorkflowExecution"
     | "markRunning"
@@ -2213,6 +2655,7 @@ export interface SpecMutationServices {
     | "getSpecLinkedTickets"
     | "getTicketReadThrough"
   >;
+  deliveryPlan: DeliveryPlanService;
   ingestEvidenceBestEffort(executionId: string): Promise<unknown>;
   verify(specId: string): Promise<IntegrityReport>;
 }
@@ -2286,6 +2729,13 @@ const withdrawProposalBodySchema = withdrawProposalInputSchema.omit({
   specId: true,
   actor: true,
 });
+// The reason is required, not defaulted: the row it lands in is the only
+// place a later reader learns why reviewed work was disposed of (#50).
+const dismissSupersededProposalBodySchema =
+  dismissSupersededProposalInputSchema.omit({
+    specId: true,
+    actor: true,
+  });
 const approveItemBodySchema = approveItemInputSchema.omit({
   specId: true,
   actor: true,
@@ -2300,6 +2750,15 @@ const signOffBodySchema = signOffRevisionInputSchema.omit({
   actor: true,
   approver: true,
 });
+// No subject list at the transport: the combined act derives what is still
+// outstanding from the same projection Studio renders, so the confirmation the
+// operator read and the rows the transaction writes cannot disagree.
+const approveRemainingAndSignOffBodySchema =
+  approveRemainingAndSignOffInputSchema.omit({
+    specId: true,
+    actor: true,
+    approver: true,
+  });
 // Delivery-only at the transport: execution-start grants must flow through
 // the approve-execution-start action, which also approves the pending
 // workflow definition so the granted gate actually starts the run.
@@ -2389,8 +2848,14 @@ const dispositionBodySchema = z
 const startExecutionBodySchema = z
   .object({
     revisionId: z.string().min(1),
-    scope: executionScopeSchema,
+    /**
+     * Recognized only so retired clients receive the migration act rather than
+     * a generic strict-schema refusal. Active delivery-plan starts omit it.
+     */
+    scope: executionScopeSchema.nullable().optional(),
     sessionName: z.string().min(1).nullable(),
+    /** Hold a proposed or approved candidate for prelaunch review. */
+    park: z.boolean().optional(),
   })
   .strict();
 const abandonExecutionBodySchema = z
@@ -2402,12 +2867,22 @@ const renameSpecBodySchema = z
   .strict();
 const captureScopeAmendmentBodySchema = z
   .object({
-    executionId: z.string().min(1),
+    /** Optional: the spec's live attempt names the run it launched. */
+    executionId: z.string().min(1).optional(),
     discoveredTask: taskElementPayloadSchema.omit({ kind: true }),
     blockingReason: z.string().optional(),
   })
   .strict();
 const emptyBodySchema = z.object({}).strict();
+
+// The plan request bodies are the CLI's `--file` documents, parsed by the same
+// schemas on both sides (`src/lib/specs/delivery-plan-views.ts`).
+const planOpenBodySchema = deliveryPlanOpenRequestSchema;
+const planEditBodySchema = deliveryPlanEditRequestSchema;
+const planReopenBodySchema = deliveryPlanReopenRequestSchema;
+const planSignOffBodySchema = deliveryPlanSignOffRequestSchema;
+const planCommentBodySchema = deliveryPlanCommentRequestSchema;
+const planReaffirmBodySchema = deliveryPlanReaffirmRequestSchema;
 
 type TransportResolution = RouteResolution<ActorProvenance>;
 
@@ -2528,37 +3003,51 @@ function serviceResultResponse(result: unknown): Response {
   return NextResponse.json(result ?? { ok: true });
 }
 
-const HUMAN_ONLY_ACTIONS = new Set([
-  "approve-item",
-  "unapprove-item",
-  "sign-off",
-  "bulk-approve",
-  "grant-gate-approval",
-  "approve-execution-start",
-  "grant-waiver",
-  "change-policy",
+const BROWSER_SESSION_REMEDY =
+  "Perform this action from the authenticated browser session.";
+
+/**
+ * Action -> the remedy its refusal hands the agent. Most human-only acts have
+ * one obvious home in Studio, so the generic browser-session line is enough;
+ * an act whose surface an agent could not otherwise find names that surface.
+ */
+const HUMAN_ONLY_ACTIONS = new Map<string, string>([
+  ["approve-item", BROWSER_SESSION_REMEDY],
+  ["unapprove-item", BROWSER_SESSION_REMEDY],
+  ["sign-off", BROWSER_SESSION_REMEDY],
+  ["approve-remaining-and-sign-off", BROWSER_SESSION_REMEDY],
+  ["bulk-approve", BROWSER_SESSION_REMEDY],
+  ["grant-gate-approval", BROWSER_SESSION_REMEDY],
+  ["approve-execution-start", BROWSER_SESSION_REMEDY],
+  ["grant-waiver", BROWSER_SESSION_REMEDY],
+  ["change-policy", BROWSER_SESSION_REMEDY],
   // Assumption disposition is the human half of the propose/dispose split
   // (mirrors waiver origin rules); the service also refuses agents, but the
   // route gate returns the typed refusal before any service work.
-  "dispose-assumption",
+  ["dispose-assumption", BROWSER_SESSION_REMEDY],
   // Questions have the same split: an agent opens one FOR a human, so an
   // agent answering would clear its own blocking signal with no record that
   // no human ever decided. Studio's answer control is the human half.
-  "answer-question",
+  ["answer-question", BROWSER_SESSION_REMEDY],
   // Renames change the identity every copied reference resolves through, so
   // only the operator performs them; agents receive human_act_required.
-  "rename",
+  ["rename", BROWSER_SESSION_REMEDY],
   // Retiring the whole durable spec is the least reversible act on this
   // surface. Abandoning a single run ("abandon-execution") stays agent
   // reachable because stopping one run is ordinary agent work.
-  "abandon-spec",
+  ["abandon-spec", BROWSER_SESSION_REMEDY],
+  // "dismiss-superseded" is deliberately absent: its refusal must name the
+  // target revision, which only exists in the parsed body, and this gate runs
+  // before the body is read. The service refuses it as its first act after
+  // schema parse — no state read, no mutation — so the agent still gets a
+  // typed human_act_required, and that one names the revision it refused.
 ]);
 
 function humanActRequiredResponse(action: string): Response {
   return specRefusalResponse({
     code: "human_act_required",
     unmetConditions: [`${action} is a human-only Spec Studio action.`],
-    instruction: "Perform this action from the authenticated browser session.",
+    instruction: HUMAN_ONLY_ACTIONS.get(action) ?? BROWSER_SESSION_REMEDY,
   });
 }
 
@@ -2916,6 +3405,16 @@ export function createSpecWriteRouteHandlers(
               approver: "operator",
             }),
           );
+        case "approve-remaining-and-sign-off":
+          return invokeAction(
+            request,
+            approveRemainingAndSignOffBodySchema,
+            (input) =>
+              services.review.approveRemainingAndSignOff({
+                ...withReviewIdentity(input),
+                approver: "operator",
+              }),
+          );
         case "grant-gate-approval":
           return invokeAction(request, grantGateApprovalBodySchema, (input) =>
             services.review.grantGateApproval({
@@ -2943,6 +3442,15 @@ export function createSpecWriteRouteHandlers(
         case "withdraw-proposal":
           return invokeAction(request, withdrawProposalBodySchema, (input) =>
             services.review.withdrawProposal(withReviewIdentity(input)),
+          );
+        case "dismiss-superseded":
+          return invokeAction(
+            request,
+            dismissSupersededProposalBodySchema,
+            (input) =>
+              services.review.dismissSupersededProposal(
+                withReviewIdentity(input),
+              ),
           );
         case "bulk-approve":
           return invokeAction(request, bulkApproveBodySchema, (input) =>
@@ -3081,21 +3589,51 @@ export function createSpecWriteRouteHandlers(
             request,
             startExecutionBodySchema,
             async (input) => {
-              const result = await services.execution.start({
-                ...input,
+              if (input.scope !== undefined && input.scope !== null) {
+                logger.warn("specs.routes.execution-scope-retired", {
+                  specId,
+                  specSlug: resolved.value.spec.slug,
+                  actorKind: actor.value.kind,
+                  parkRequested: input.park === true,
+                });
+                return {
+                  ok: false as const,
+                  refusal: {
+                    code: "validation" as const,
+                    unmetConditions: [
+                      "Execution scope documents are retired; the approved delivery plan is the execution graph.",
+                    ],
+                    instruction: `Nothing was started. Import legacy planning with \`cctl spec plan open ${resolved.value.spec.slug} --seed-from last\`, then propose and sign off that candidate before rerunning \`cctl spec start ${resolved.value.spec.slug}\`.`,
+                  },
+                };
+              }
+              const { scope: _retiredScope, ...activeInput } = input;
+              const startInput = {
+                ...activeInput,
                 specId,
                 actor: actor.value,
-              });
-              return result.ok
-                ? {
-                    ok: true as const,
-                    execution: toStartedExecutionView(
-                      result.execution,
-                      result.revisionNumber,
-                    ),
-                    definition: result.definition,
-                  }
-                : result;
+                projectName: name ?? "",
+              };
+              // A park launches nothing, so it is a different act with a
+              // different receipt rather than a start that quietly did less.
+              if (activeInput.park === true) {
+                const parked =
+                  await services.execution.parkDeliveryPlan(startInput);
+                return parked.ok
+                  ? { ok: true as const, parked: parked.value }
+                  : parked;
+              }
+              const result = await services.execution.start(startInput);
+              if (!result.ok) return result;
+              return {
+                ok: true as const,
+                execution: toStartedExecutionView(
+                  result.execution,
+                  result.revisionNumber,
+                ),
+                definition: result.definition,
+                deliveryPlan: result.deliveryPlan,
+              };
             },
           );
         case "abandon-execution":
@@ -3120,6 +3658,7 @@ export function createSpecWriteRouteHandlers(
             (input) =>
               services.execution.captureScopeAmendment({
                 ...input,
+                specId,
                 actor: actor.value,
               }),
           );
@@ -3146,6 +3685,73 @@ export function createSpecWriteRouteHandlers(
             ok: true as const,
             value: await services.verify(specId),
           }));
+        case "plan-open":
+          return invokeAction(request, planOpenBodySchema, (input) =>
+            services.deliveryPlan.open({
+              spec: resolved.value.spec,
+              seedFromLast: input.seedFromLast,
+              actor: actor.value,
+            }),
+          );
+        case "plan-edit":
+          return invokeAction(request, planEditBodySchema, (input) =>
+            services.deliveryPlan.edit({
+              spec: resolved.value.spec,
+              expectedDraftRevision: input.expectedDraftRevision,
+              document: input.document,
+              actor: actor.value,
+            }),
+          );
+        case "plan-propose":
+          return invokeAction(request, emptyBodySchema, () =>
+            services.deliveryPlan.propose({
+              spec: resolved.value.spec,
+              actor: actor.value,
+            }),
+          );
+        case "plan-reopen":
+          return invokeAction(request, planReopenBodySchema, (input) =>
+            services.deliveryPlan.reopen({
+              spec: resolved.value.spec,
+              reason: input.reason,
+              actor: actor.value,
+            }),
+          );
+        // The one default approval: it binds the candidate identity the caller
+        // read and admits `execution_start` in the same act. Human attribution
+        // rides the transport actor, so a Studio sign-off is a human act and an
+        // agent's is refused whenever the dial says a human decides.
+        case "plan-sign-off":
+          return invokeAction(request, planSignOffBodySchema, (input) =>
+            services.deliveryPlan.signOff({
+              spec: resolved.value.spec,
+              ...input,
+              actor: actor.value,
+              approver: actor.value.kind === "human" ? "operator" : "agent",
+            }),
+          );
+        // The audited human reaffirmation of one soft-stale criterion. Human
+        // attribution rides the transport actor, so an agent's call is refused
+        // by the service rather than by a client-side guard.
+        case "plan-reaffirm":
+          return invokeAction(request, planReaffirmBodySchema, (input) =>
+            services.deliveryPlan.reaffirm({
+              spec: resolved.value.spec,
+              ...input,
+              actor: actor.value,
+            }),
+          );
+        // A review note anchored to one context of the live attempt. The
+        // transport actor is the author, so the comment carries the same
+        // durable attribution every other spec act does.
+        case "plan-comment":
+          return invokeAction(request, planCommentBodySchema, (input) =>
+            services.deliveryPlan.comment({
+              spec: resolved.value.spec,
+              ...input,
+              actor: actor.value,
+            }),
+          );
         default:
           return notFound("Spec action not found");
       }
@@ -3154,7 +3760,139 @@ export function createSpecWriteRouteHandlers(
     }
   }
 
-  return { projectActionPOST, specActionPOST };
+  /**
+   * The delivery-plan read. It lives beside the plan mutations rather than in
+   * the read-handler family because it reads through the same service the
+   * mutations write through — one projection owner, so `spec plan status` and
+   * an edit receipt can never disagree about what the attempt owes.
+   */
+  async function specPlanGET(
+    _request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    try {
+      const services = await deps.getServices(resolved.value.projectPath);
+      const result = await services.deliveryPlan.read({
+        spec: resolved.value.spec,
+      });
+      return serviceResultResponse(result);
+    } catch (error) {
+      return routeFailure(error, "plan-read");
+    }
+  }
+
+  /**
+   * The delivery-plan review read: the plan projection resolved with its
+   * pinned criteria in full. It is a separate route rather than a field on
+   * `specPlanGET` because the criterion text is what a Studio reviewer needs
+   * and what a `cctl spec plan status` receipt would only have to truncate —
+   * one service call behind both, two response bounds in front.
+   */
+  async function specPlanReviewGET(
+    _request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    try {
+      const services = await deps.getServices(resolved.value.projectPath);
+      return serviceResultResponse(
+        await services.deliveryPlan.review({ spec: resolved.value.spec }),
+      );
+    } catch (error) {
+      return routeFailure(error, "plan-review");
+    }
+  }
+
+  /**
+   * The semantic diff between two of the attempt's frozen snapshots. A read,
+   * mounted beside the plan mutations for the same reason the others are: the
+   * snapshots it compares are written by propose, and one owner is what keeps
+   * a diff from ever describing bytes no proposal froze.
+   */
+  async function specPlanDiffGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const url = new URL(request.url);
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
+    if (from === null || to === null) {
+      return jsonError(
+        `Invalid plan diff request. Pass ?from=<snapshotId>&to=<snapshotId>; list this attempt's snapshots with cctl spec plan status ${resolved.value.spec.slug}.`,
+        400,
+        "plan_diff_invalid_request",
+      );
+    }
+    try {
+      const services = await deps.getServices(resolved.value.projectPath);
+      return serviceResultResponse(
+        await services.deliveryPlan.diffSnapshots({
+          spec: resolved.value.spec,
+          fromSnapshotId: from,
+          toSnapshotId: to,
+        }),
+      );
+    } catch (error) {
+      return routeFailure(error, "plan-diff");
+    }
+  }
+
+  /**
+   * The delivery-plan preview. A read, but mounted here beside the plan
+   * mutations for the same reason `specPlanGET` is: previewing a draft
+   * compiles the very document propose freezes, and one owner is what keeps a
+   * preview and a proposal from ever compiling different bytes.
+   */
+  async function specPlanPreviewGET(
+    request: Request,
+    context: SpecRouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSpecRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const url = new URL(request.url);
+    const rawExpected = url.searchParams.get("expectedDraftRevision");
+    const parsed = deliveryPlanPreviewRequestSchema.safeParse({
+      stage: url.searchParams.get("stage") ?? "proposed",
+      ...(rawExpected === null
+        ? {}
+        : { expectedDraftRevision: Number(rawExpected) }),
+    });
+    if (!parsed.success) {
+      return jsonError(
+        `Invalid plan preview request. Pass ?stage=draft or ?stage=proposed, and an optional integer ?expectedDraftRevision, then re-run cctl spec plan preview ${resolved.value.spec.slug} --stage <draft|proposed>.`,
+        400,
+        "plan_preview_invalid_request",
+      );
+    }
+    try {
+      const services = await deps.getServices(resolved.value.projectPath);
+      return serviceResultResponse(
+        await services.deliveryPlan.preview({
+          spec: resolved.value.spec,
+          stage: parsed.data.stage,
+          ...(parsed.data.expectedDraftRevision === undefined
+            ? {}
+            : { expectedDraftRevision: parsed.data.expectedDraftRevision }),
+        }),
+      );
+    } catch (error) {
+      return routeFailure(error, "plan-preview");
+    }
+  }
+
+  return {
+    projectActionPOST,
+    specActionPOST,
+    specPlanGET,
+    specPlanReviewGET,
+    specPlanDiffGET,
+    specPlanPreviewGET,
+  };
 }
 
 const writeHandlers = createSpecWriteRouteHandlers();
@@ -3162,3 +3900,9 @@ export const specProjectActionPOST = withTracing(
   writeHandlers.projectActionPOST,
 );
 export const specActionPOST = withTracing(writeHandlers.specActionPOST);
+export const specPlanGET = withTracing(writeHandlers.specPlanGET);
+export const specPlanReviewGET = withTracing(writeHandlers.specPlanReviewGET);
+export const specPlanDiffGET = withTracing(writeHandlers.specPlanDiffGET);
+export const specPlanAttemptPreviewGET = withTracing(
+  writeHandlers.specPlanPreviewGET,
+);

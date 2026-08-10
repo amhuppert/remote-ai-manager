@@ -11,6 +11,8 @@ import type {
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowLifecycleDecision } from "@/lib/workflow-graph/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   buildInitialContextState,
@@ -19,9 +21,15 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import {
+  autoReleasesSlot,
   classifyContextLifecycle,
   classifyExecutionEditability,
+  explicitArchiveEligibility,
+  graphWorkflowLifecycleDecision,
   isResumableHalt,
+  isTerminalStatus,
+  replacementPolicy,
+  retainsSlotOwnership,
 } from "./lifecycle-classifier";
 import { makeProfileSnapshot } from "./test-fixtures";
 
@@ -470,4 +478,99 @@ describe("isResumableHalt", () => {
       );
     });
   }
+});
+
+describe("graph-workflow lifecycle contract", () => {
+  // The full decision table (design §10). Every status appears exactly once and
+  // every decision the contract owns is pinned here, so a consumer that keeps a
+  // local copy of any of these rules diverges visibly rather than silently.
+  const TABLE: Record<GraphWorkflowStatus, GraphWorkflowLifecycleDecision> = {
+    pending: {
+      status: "pending",
+      terminal: false,
+      slotOwnership: "retained",
+      explicitArchive: "refused",
+      replacement: "refused",
+    },
+    running: {
+      status: "running",
+      terminal: false,
+      slotOwnership: "retained",
+      explicitArchive: "refused",
+      replacement: "refused",
+    },
+    paused: {
+      status: "paused",
+      terminal: false,
+      slotOwnership: "retained",
+      explicitArchive: "eligible",
+      replacement: "refused",
+    },
+    halted: {
+      status: "halted",
+      terminal: true,
+      slotOwnership: "retained",
+      explicitArchive: "eligible",
+      replacement: "audited-archive",
+    },
+    completed: {
+      status: "completed",
+      terminal: true,
+      slotOwnership: "auto-release",
+      explicitArchive: "idempotent",
+      replacement: "audited-archive",
+    },
+    aborted: {
+      status: "aborted",
+      terminal: true,
+      slotOwnership: "auto-release",
+      explicitArchive: "idempotent",
+      replacement: "audited-archive",
+    },
+  };
+
+  it("covers every status in graphWorkflowStatusSchema", () => {
+    expect(Object.keys(TABLE).sort()).toEqual(
+      [...graphWorkflowStatusSchema.options].sort(),
+    );
+  });
+
+  for (const status of graphWorkflowStatusSchema.options) {
+    const expected = TABLE[status];
+
+    it(`${status} → ${JSON.stringify(expected)}`, () => {
+      expect(graphWorkflowLifecycleDecision(status)).toEqual(expected);
+    });
+
+    it(`${status} predicates agree with the decision row`, () => {
+      expect(isTerminalStatus(status)).toBe(expected.terminal);
+      expect(autoReleasesSlot(status)).toBe(
+        expected.slotOwnership === "auto-release",
+      );
+      expect(retainsSlotOwnership(status)).toBe(
+        expected.slotOwnership === "retained",
+      );
+      expect(explicitArchiveEligibility(status)).toBe(expected.explicitArchive);
+      expect(replacementPolicy(status)).toBe(expected.replacement);
+    });
+  }
+
+  it("never both auto-releases and retains the slot", () => {
+    for (const status of graphWorkflowStatusSchema.options) {
+      expect(autoReleasesSlot(status)).toBe(!retainsSlotOwnership(status));
+    }
+  });
+
+  it("refuses replacement for every status that is not terminal", () => {
+    for (const status of graphWorkflowStatusSchema.options) {
+      if (isTerminalStatus(status)) continue;
+      expect(replacementPolicy(status)).toBe("refused");
+    }
+  });
+
+  it("never allows a silent replacement: every replaceable status archives", () => {
+    for (const status of graphWorkflowStatusSchema.options) {
+      expect(replacementPolicy(status)).not.toBe("silent");
+    }
+  });
 });

@@ -46,6 +46,7 @@ import {
   type DeliveryCriterionSnapshot,
   type TransitionRefusal,
 } from "./transitions";
+import { isWaiverValidForExecution } from "./waiver-staleness";
 
 const logger = createLogger("specs.delivery-gate");
 
@@ -468,13 +469,7 @@ async function evaluateCriterion(
     const waiver = disposition.waiver_id
       ? deps.deliveryRepo.findWaiverById(disposition.waiver_id)
       : null;
-    if (
-      waiver !== null &&
-      waiver.stale === 0 &&
-      waiver.spec_id === execution.spec_id &&
-      waiver.revision_id === execution.revision_id &&
-      waiver.criterion_element_id === contract.id
-    ) {
+    if (isWaiverValidForExecution(waiver, execution, contract.id)) {
       return satisfiedOutcome(
         contract,
         "waived",
@@ -832,12 +827,76 @@ function verdictAlreadyCitesValidation(
 }
 
 /**
- * The single owner of the prior-run rule for `delivered_elsewhere`
- * dispositions. Exported so the detail route's per-criterion projection
- * validates external delivery with exactly the rule the gate enforces —
- * a client or route re-derivation of "earlier merged delivery" is how the
- * Studio counter drifted from gate truth in the first place (F26).
+ * Why a claimed `delivered_elsewhere` base is or is not an earlier merged
+ * delivery. The gate itself only needs the yes/no, but a plan that refuses a
+ * claim has to say which way it failed and name the id it judged — "this is
+ * not an earlier delivery" leaves the author guessing between a typo, a run
+ * that never merged, and one that merged too late.
  */
+export type EarlierMergedDeliveryVerdict =
+  | { readonly code: "accepted"; readonly baseExecutionId: string }
+  | { readonly code: "missing_base"; readonly baseExecutionId: null }
+  | { readonly code: "self_reference"; readonly baseExecutionId: string }
+  | { readonly code: "unknown_base"; readonly baseExecutionId: string }
+  | { readonly code: "foreign_spec"; readonly baseExecutionId: string }
+  | { readonly code: "not_merged"; readonly baseExecutionId: string }
+  | { readonly code: "not_earlier"; readonly baseExecutionId: string }
+  | { readonly code: "base_did_not_deliver"; readonly baseExecutionId: string };
+
+/**
+ * The single owner of the prior-run rule for `delivered_elsewhere`
+ * dispositions. Exported so the detail route's per-criterion projection and
+ * the delivery-plan lint validate external delivery with exactly the rule the
+ * gate enforces — a client, route, or plan re-derivation of "earlier merged
+ * delivery" is how the Studio counter drifted from gate truth in the first
+ * place (F26).
+ */
+export function classifyEarlierMergedDelivery(
+  repo: Pick<
+    SpecDeliveryRepo,
+    "findExecutionById" | "findCriterionDisposition"
+  >,
+  /**
+   * The run whose claim is being judged. Narrowed to what "earlier" is
+   * measured from, so a delivery plan attempt — which is the execution before
+   * it exists — is judged by exactly the gate's rule rather than a copy of it.
+   */
+  execution: Pick<SpecExecutionRow, "id" | "spec_id" | "created_at">,
+  disposition: Pick<
+    SpecCriterionDispositionRow,
+    "criterion_element_id" | "delivered_by_execution_id"
+  >,
+): EarlierMergedDeliveryVerdict {
+  const priorId = disposition.delivered_by_execution_id;
+  if (priorId === null) return { code: "missing_base", baseExecutionId: null };
+  if (priorId === execution.id) {
+    return { code: "self_reference", baseExecutionId: priorId };
+  }
+  const prior = repo.findExecutionById(priorId);
+  if (prior === null) {
+    return { code: "unknown_base", baseExecutionId: priorId };
+  }
+  if (prior.spec_id !== execution.spec_id) {
+    return { code: "foreign_spec", baseExecutionId: priorId };
+  }
+  if (prior.state !== "delivered" || prior.delivered_at === null) {
+    return { code: "not_merged", baseExecutionId: priorId };
+  }
+  if (
+    prior.created_at >= execution.created_at ||
+    prior.delivered_at > execution.created_at
+  ) {
+    return { code: "not_earlier", baseExecutionId: priorId };
+  }
+  const priorDisposition = repo.findCriterionDisposition(
+    prior.id,
+    disposition.criterion_element_id,
+  );
+  return priorDisposition?.delivered_by_execution_id === prior.id
+    ? { code: "accepted", baseExecutionId: priorId }
+    : { code: "base_did_not_deliver", baseExecutionId: priorId };
+}
+
 export function isEarlierMergedDelivery(
   repo: Pick<
     SpecDeliveryRepo,
@@ -846,24 +905,10 @@ export function isEarlierMergedDelivery(
   execution: SpecExecutionRow,
   disposition: SpecCriterionDispositionRow,
 ): boolean {
-  const priorId = disposition.delivered_by_execution_id;
-  if (priorId === null || priorId === execution.id) return false;
-  const prior = repo.findExecutionById(priorId);
-  if (
-    prior === null ||
-    prior.spec_id !== execution.spec_id ||
-    prior.state !== "delivered" ||
-    prior.delivered_at === null ||
-    prior.created_at >= execution.created_at ||
-    prior.delivered_at > execution.created_at
-  ) {
-    return false;
-  }
-  const priorDisposition = repo.findCriterionDisposition(
-    prior.id,
-    disposition.criterion_element_id,
+  return (
+    classifyEarlierMergedDelivery(repo, execution, disposition).code ===
+    "accepted"
   );
-  return priorDisposition?.delivered_by_execution_id === prior.id;
 }
 
 function criterionContracts(

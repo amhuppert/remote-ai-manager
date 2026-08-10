@@ -6,6 +6,7 @@ import type {
 import type {
   ActorProvenance,
   Spec,
+  SpecExecutionRow,
   SpecRevisionSnapshot,
   SpecWaiverRow,
 } from "./schemas";
@@ -41,6 +42,32 @@ export function shouldMarkWaiverStale(input: WaiverStalenessInput): boolean {
     input.waivedHash !== null &&
     input.laterHash !== null &&
     input.waivedHash !== input.laterHash
+  );
+}
+
+/**
+ * The single owner of waiver validity. A waiver excuses a criterion only while
+ * it is non-stale and belongs to this spec, to this execution's pinned
+ * revision, and to this criterion. It lives here rather than beside the
+ * delivery gate that enforces it because the read-time delta projection needs
+ * the same verdict and reaches client bundles: the gate module pulls the
+ * server logger and therefore `node:async_hooks`, which cannot be bundled for
+ * the browser. Keeping the rule in this dependency-free module is what lets
+ * every surface share one copy instead of re-deriving it — a criterion that
+ * reads `waived` on one surface and is refused on another is exactly that
+ * drift.
+ */
+export function isWaiverValidForExecution(
+  waiver: SpecWaiverRow | null,
+  execution: SpecExecutionRow,
+  criterionElementId: string,
+): waiver is SpecWaiverRow {
+  return (
+    waiver !== null &&
+    waiver.stale === 0 &&
+    waiver.spec_id === execution.spec_id &&
+    waiver.revision_id === execution.revision_id &&
+    waiver.criterion_element_id === criterionElementId
   );
 }
 

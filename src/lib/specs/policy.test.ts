@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SpecGate, SpecGatePolicy, SpecGatePreset } from "./schemas";
 import {
+  authoringApprovalsCollapseIntoSignOff,
   COMBINED_APPROVAL_DIAL,
   dialRequiresHumanApproval,
   isExploratoryShippingRefused,
@@ -82,6 +83,16 @@ describe("spec gate policy", () => {
     expect(resolveDial(policy, "execution_start")).toBe("notify");
     expect(resolveDial(policy, "delivery")).toBe("gate");
     expect(policy.preset).toBe("fast-path");
+  });
+
+  it("ignores the retired Plan dial for active collapse while retaining it for legacy Plan review", () => {
+    const policy: SpecGatePolicy = {
+      preset: "fast-path",
+      overrides: { plan: "notify" },
+    };
+
+    expect(authoringApprovalsCollapseIntoSignOff(policy)).toBe(true);
+    expect(authoringApprovalsCollapseIntoSignOff(policy, "plan")).toBe(false);
   });
 
   it.each<SpecGatePreset>(["contract-bearing", "exploratory", "fast-path"])(

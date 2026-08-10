@@ -324,6 +324,21 @@ export const refusalCodeSchema = z.enum([
   "gate_not_applicable",
   "invalid_subject",
   "already_satisfied",
+  // A delivery-plan draft edit whose compare-and-swap token is behind the
+  // attempt's current draft revision. Distinct from `stale_element`, which is
+  // element-granular within a revision: this one guards the whole plan
+  // document, and its remedy is a re-read of the attempt rather than of one
+  // element.
+  "stale_plan_draft",
+  // A delivery-plan act asked for in an attempt status that cannot serve it —
+  // editing a proposal, reopening a launched run, opening a second attempt.
+  // Every one names the act that IS available from that status.
+  "plan_status_conflict",
+  // A launch whose spec-side records committed but whose workflow start did
+  // not take. Distinct from `integrity_mismatch`: nothing about the approved
+  // candidate is wrong, so the remedy is a retry or an abandon of the run that
+  // now exists — never a re-approval.
+  "workflow_unavailable",
   "not_found",
   "validation",
 ]);
@@ -372,10 +387,29 @@ export type SpecInterventionEventType = z.infer<
   typeof specInterventionEventTypeSchema
 >;
 
+/**
+ * Durable-only audit trail for `DeliveryPlanAttempt` transitions. Not part of
+ * the SSE union: the attempt is a spec-side document with no live subscriber
+ * yet, and the rows exist so every status move — including the reopen that
+ * invalidates an approval — is reconstructable after the fact.
+ */
+export const specDeliveryPlanEventTypeSchema = z.enum([
+  "spec-delivery-plan-opened",
+  "spec-delivery-plan-proposed",
+  "spec-delivery-plan-reopened",
+  "spec-delivery-plan-transitioned",
+  "spec-delivery-plan-commented",
+  "spec-delivery-plan-reaffirmed",
+]);
+export type SpecDeliveryPlanEventType = z.infer<
+  typeof specDeliveryPlanEventTypeSchema
+>;
+
 export const specEventTypeSchema = z.union([
   specSseEventTypeSchema,
   specReviewEventTypeSchema,
   specInterventionEventTypeSchema,
+  specDeliveryPlanEventTypeSchema,
 ]);
 export type SpecEventType = z.infer<typeof specEventTypeSchema>;
 
@@ -463,8 +497,31 @@ export const specExecutionStateSchema = z.enum([
   "running",
   "delivered",
   "abandoned",
+  /**
+   * Cleanup is in flight (design §10): the abandonment was accepted and its
+   * coordinator is working through `cleanup_phase`. A durable, resumable state
+   * rather than an in-memory step because a crash between aborting the linked
+   * workflow and releasing its slot is exactly the orphan this replaces —
+   * `abandoned` is reachable only after the final phase.
+   */
+  "abandoning",
 ]);
 export type SpecExecutionState = z.infer<typeof specExecutionStateSchema>;
+
+/**
+ * The abandon coordinator's ordered cleanup phases (design §10). This exact
+ * vocabulary is what downstream orphan verification reads, so no other
+ * cleanup-state naming exists anywhere. The transition table lives in
+ * `abandon-coordinator.ts`.
+ */
+export const specExecutionCleanupPhaseSchema = z.enum([
+  "abort_workflow",
+  "release_slot",
+  "finalize",
+]);
+export type SpecExecutionCleanupPhase = z.infer<
+  typeof specExecutionCleanupPhaseSchema
+>;
 
 /**
  * The linked graph-workflow execution's live status, as the reconcile read
@@ -554,6 +611,18 @@ export const specRevisionRowSchema = z.object({
 });
 export type SpecRevisionRow = z.infer<typeof specRevisionRowSchema>;
 
+export const specRevisionSupersessionRowSchema = z.object({
+  revision_id: idSchema,
+  spec_id: idSchema,
+  superseded_by_revision_id: idSchema,
+  reason: z.string().min(1),
+  actor_json: jsonColumnSchema,
+  dismissed_at: timestampSchema,
+});
+export type SpecRevisionSupersessionRow = z.infer<
+  typeof specRevisionSupersessionRowSchema
+>;
+
 export const specElementVersionRowSchema = z.object({
   revision_id: idSchema,
   element_id: idSchema,
@@ -632,6 +701,27 @@ export const specRevisionSchema = z
   })
   .strict();
 export type SpecRevision = z.infer<typeof specRevisionSchema>;
+
+/**
+ * The durable marker a dismissed superseded proposal leaves behind (#50). It
+ * is a satellite of the revision rather than columns on it: `withdrawn` stays
+ * the one lifecycle state, and the reader that asks "why did this attempt
+ * end?" gets the superseding revision, the human who dismissed it, and their
+ * reason from one row.
+ */
+export const specRevisionSupersessionSchema = z
+  .object({
+    revisionId: idSchema,
+    specId: idSchema,
+    supersededByRevisionId: idSchema,
+    reason: z.string().min(1),
+    actor: actorProvenanceSchema,
+    dismissedAt: timestampSchema,
+  })
+  .strict();
+export type SpecRevisionSupersession = z.infer<
+  typeof specRevisionSupersessionSchema
+>;
 
 export const specElementVersionSchema = z
   .object({
@@ -812,6 +902,23 @@ export const specExecutionRowSchema = z.object({
   session_name: z.string().nullable(),
   delivered_at: nullableTimestampSchema,
   abandoned_reason: z.string().nullable(),
+  /** Non-null exactly while `state` is `abandoning` (design §10). */
+  cleanup_phase: specExecutionCleanupPhaseSchema.nullable(),
+  /**
+   * The cleanup target, pinned when the coordinator enters `abandoning`. Every
+   * phase, every retry, and the downstream orphan verification read this one
+   * id, so the run being released can never drift from the run the abandonment
+   * accepted responsibility for.
+   */
+  linked_workflow_execution_id: nullableIdSchema,
+  /**
+   * Why the last cleanup attempt stopped, and when. Durable because a
+   * coordinator that fails mid-chain is resumed by re-running the SAME
+   * command: without the recorded cause, the operator sees only a row parked
+   * in `abandoning` with no way to tell a live-run refusal from an infra fault.
+   */
+  cleanup_last_error: z.string().nullable(),
+  cleanup_last_error_at: nullableTimestampSchema,
   created_at: timestampSchema,
   updated_at: timestampSchema,
 });
@@ -830,6 +937,150 @@ export const specLinkRowSchema = z.object({
   created_at: timestampSchema,
 });
 export type SpecLinkRow = z.infer<typeof specLinkRowSchema>;
+
+/**
+ * A `DeliveryPlanAttempt`'s lifecycle. The three unlaunched states a reopen
+ * has to return to draft are `proposed`, `approved`, and `parked`; `launched`
+ * is the one that refuses, because the compiled candidate is already running.
+ */
+export const deliveryPlanAttemptStatusSchema = z.enum([
+  "draft",
+  "proposed",
+  "approved",
+  "parked",
+  "launched",
+  "abandoned",
+]);
+export type DeliveryPlanAttemptStatus = z.infer<
+  typeof deliveryPlanAttemptStatusSchema
+>;
+
+/**
+ * The attempt is keyed by its own id, independently of both evergreen
+ * revisions and workflow executions: it exists before the execution does, and
+ * a later evergreen amendment can never fork or block it (design §4). The
+ * pinned revision and the delta basis are references, not identity.
+ */
+export const specDeliveryPlanAttemptRowSchema = z.object({
+  id: idSchema,
+  spec_id: idSchema,
+  pinned_revision_id: idSchema,
+  /** The earlier delivered execution the seeding delta was computed against. */
+  delta_basis_execution_id: nullableIdSchema,
+  status: deliveryPlanAttemptStatusSchema,
+  /** Compare-and-swap token for draft edits; bumped by every edit and reopen. */
+  draft_revision: z.number().int().positive(),
+  content_json: jsonColumnSchema,
+  /** The frozen snapshot the live proposal points at; null while drafting. */
+  proposed_snapshot_id: nullableIdSchema,
+  approval_json: jsonColumnSchema.nullable(),
+  /**
+   * The durable prelaunch review record `spec start --park` writes. It
+   * outlives the approval a reopen clears, because the parked candidate's hash
+   * is what a later launch refusal names as the old one.
+   */
+  prelaunch_json: jsonColumnSchema.nullable(),
+  launched_execution_id: nullableIdSchema,
+  created_at: timestampSchema,
+  updated_at: timestampSchema,
+});
+export type SpecDeliveryPlanAttemptRow = z.infer<
+  typeof specDeliveryPlanAttemptRowSchema
+>;
+
+/**
+ * An immutable proposal snapshot. Nothing ever updates a row here: a reopen
+ * bumps the attempt's draft revision and clears its approval, and the prior
+ * snapshots stay readable exactly as proposed.
+ */
+export const specDeliveryPlanSnapshotRowSchema = z.object({
+  id: idSchema,
+  attempt_id: idSchema,
+  /** The attempt draft revision this snapshot froze. */
+  draft_revision: z.number().int().positive(),
+  plan_hash: z.string().min(1),
+  content_json: jsonColumnSchema,
+  pinned_revision_id: idSchema,
+  proposed_at: timestampSchema,
+  proposed_by_json: jsonColumnSchema,
+});
+export type SpecDeliveryPlanSnapshotRow = z.infer<
+  typeof specDeliveryPlanSnapshotRowSchema
+>;
+
+/**
+ * The compiled candidate a proposal materialized: the exact
+ * `WorkflowSemanticDefinition` bytes a human approves and a launch runs. It is
+ * immutable and one-to-one with its snapshot, so `compiled_definition_hash` can
+ * be compared against a launched definition without re-deriving anything
+ * (`exact-approval`).
+ */
+export const specDeliveryPlanCandidateRowSchema = z.object({
+  id: idSchema,
+  attempt_id: idSchema,
+  snapshot_id: idSchema,
+  compiled_definition_hash: z.string().min(1),
+  definition_json: jsonColumnSchema,
+  materialized_at: timestampSchema,
+});
+export type SpecDeliveryPlanCandidateRow = z.infer<
+  typeof specDeliveryPlanCandidateRowSchema
+>;
+
+/**
+ * A review note anchored to one context of one attempt. `context_id` is
+ * deliberately NOT a foreign key: contexts live inside the attempt's document
+ * blob, and a comment must outlive the context it discusses so a later edit
+ * that removes that context surfaces the note as a visible orphan anchor
+ * rather than silently deleting reviewed work.
+ */
+export const specDeliveryPlanCommentRowSchema = z.object({
+  id: idSchema,
+  attempt_id: idSchema,
+  context_id: z.string().min(1),
+  body: z.string().min(1),
+  author_json: jsonColumnSchema,
+  created_at: timestampSchema,
+});
+export type SpecDeliveryPlanCommentRow = z.infer<
+  typeof specDeliveryPlanCommentRowSchema
+>;
+
+/**
+ * Work a running execution found and deliberately did not do (design §11). It
+ * is the durable half of the non-blocking capture path: the run keeps its
+ * pinned scope, and the next seeded attempt places the discovery as a task.
+ *
+ * It is stored against the execution rather than as a task element on an
+ * evergreen amendment because a discovery is plan content, not spec content —
+ * the evergreen spec carries requirements, decisions, and criteria, and the
+ * `DeliveryPlanAttempt` carries the work.
+ */
+export const specDeliveryDiscoveryRowSchema = z.object({
+  id: idSchema,
+  spec_id: idSchema,
+  /** The running execution the discovery was captured against. */
+  execution_id: idSchema,
+  /** The launched attempt behind that execution; null for a legacy run. */
+  attempt_id: nullableIdSchema,
+  /** The revision the run pinned — where the discovery's ids resolve. */
+  pinned_revision_id: idSchema,
+  /** The `taskElementPayloadSchema` body, minus its fixed kind. */
+  discovered_task_json: jsonColumnSchema,
+  /** Non-null when this capture also abandoned the run it was found in. */
+  blocking_reason: z.string().min(1).nullable(),
+  captured_by_json: jsonColumnSchema,
+  captured_at: timestampSchema,
+});
+export type SpecDeliveryDiscoveryRow = z.infer<
+  typeof specDeliveryDiscoveryRowSchema
+>;
+
+/** The capture payload a discovery row carries, parsed out of its column. */
+export const discoveredTaskSchema = taskElementPayloadSchema.omit({
+  kind: true,
+});
+export type DiscoveredTask = z.infer<typeof discoveredTaskSchema>;
 
 export const specEventRowSchema = z.object({
   id: z.number().int().positive(),

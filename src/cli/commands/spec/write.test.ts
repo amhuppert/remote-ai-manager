@@ -2,19 +2,13 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
-  COMBINED_APPROVAL_DIAL,
-  dialRequiresHumanApproval,
-  resolveDial,
-  type ResolvedGateDial,
-} from "@/lib/specs/policy";
-import {
-  resolvedGateDialSchema,
-  type SpecGatePreset,
-} from "@/lib/specs/schemas";
+  PROPOSAL_NOTES_MAX_CHARACTERS,
+  oversizedProposalNotesRefusal,
+} from "@/lib/specs/proposal-notes";
+import type { SpecGatePreset } from "@/lib/specs/schemas";
 import { revisionInReviewInstruction } from "@/lib/specs/authoring-service";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost, FetchInit } from "../../shared";
-import { executionStartActor } from "./write";
 
 const CREATED_AT = "2026-07-18T00:00:00.000Z";
 // Built from the server's own instruction builder: a hand-copied string here
@@ -28,6 +22,7 @@ const DRAFT_FILE = "/tmp/spec-draft-element.json";
 const BATCH_FILE = "/tmp/spec-elements.json";
 const SCOPE_FILE = "/tmp/spec-scope.json";
 const TASK_FILE = "/tmp/spec-discovered-task.json";
+const NOTES_FILE = "/tmp/spec-proposal-notes.md";
 
 const spec = {
   id: "spec-1",
@@ -100,12 +95,46 @@ function detailBody(
   };
 }
 
+/**
+ * The elements the fixture draft carries, addressed the way an author does.
+ * The edit-context read resolves a handle to exactly this record, which is
+ * what lets a removal state an element id and the version it is taking out.
+ */
+const DRAFT_ELEMENTS_BY_HANDLE: Record<
+  string,
+  { elementId: string; kind: string; elementVersion: number; position: number }
+> = {
+  R1: {
+    elementId: "requirement-id-1",
+    kind: "requirement",
+    elementVersion: 3,
+    position: 0,
+  },
+  "R1.1": {
+    elementId: "criterion-id-1",
+    kind: "criterion",
+    elementVersion: 1,
+    position: 1,
+  },
+  T1: {
+    elementId: "task-id-1",
+    kind: "task",
+    elementVersion: 2,
+    position: 2,
+  },
+};
+
 // The write path's own read: everything a write must name and nothing else.
 function editContextBody(
   state: "draft" | "approved" = "draft",
   preset = "contract-bearing",
+  requestedElement: string | null = null,
 ) {
   const current = revision(state);
+  const found =
+    requestedElement === null
+      ? undefined
+      : DRAFT_ELEMENTS_BY_HANDLE[requestedElement];
   return {
     specId: spec.id,
     slug: spec.slug,
@@ -119,7 +148,8 @@ function editContextBody(
     },
     latestApprovedRevision:
       state === "approved" ? { id: current.id, number: current.number } : null,
-    element: null,
+    element:
+      found === undefined ? null : { handle: requestedElement, ...found },
   };
 }
 
@@ -234,9 +264,11 @@ function makeHost(
     files?: Record<string, string>;
     refusal?:
       | "propose"
+      | "propose-notes-cap"
       | "claim-task-complete"
       | "draft-upsert"
       | "draft-batch"
+      | "draft-batch-dangling"
       | "rename"
       | "capture-scope-amendment"
       | "abandon-spec"
@@ -255,11 +287,24 @@ function makeHost(
     absorbedSignOff?: boolean;
     /** The write brought a historical element id back into the revision. */
     revived?: boolean;
+    /**
+     * Blocking finding counts the lint read answers with, consumed in order —
+     * the first is the draft before the write, the second after it.
+     */
+    blockingCounts?: readonly number[];
+    /** No draft to lint — the shape a server answers a spec with no revision. */
+    lintUnavailable?: boolean;
+    /**
+     * The start-execution answer, for the delivery-plan shapes: a launch that
+     * ran an approved candidate, and a park that launched nothing.
+     */
+    startBody?: { body: unknown; status?: number };
   } = {},
 ): CliHost & { requests: RecordedRequest[] } {
   const requests: RecordedRequest[] = [];
   const handle = (value: string): { handle?: string } =>
     options.handles === false ? {} : { handle: value };
+  let lintReads = 0;
   return {
     requests,
     async fetch(url, init) {
@@ -268,11 +313,28 @@ function makeHost(
       const pathname = parsed.pathname;
       if (init.method === "GET") {
         if (pathname.endsWith("/status")) return response(statusBody());
+        if (pathname.endsWith("/lint")) {
+          if (options.lintUnavailable === true) {
+            return response({ error: "Spec draft not found" }, 404);
+          }
+          const blocking = options.blockingCounts?.[lintReads] ?? 0;
+          lintReads += 1;
+          return response({
+            revisionId: "revision-draft",
+            findings: Array.from({ length: blocking }, (_unused, index) => ({
+              ruleId: "9.3.uncovered-criterion",
+              severity: "blocks_propose",
+              elementHandle: `R1.${index + 1}`,
+              message: `R1.${index + 1} has no covering task.`,
+            })),
+          });
+        }
         if (pathname.endsWith("/edit-context"))
           return response(
             editContextBody(
               options.approved ? "approved" : "draft",
               options.preset,
+              parsed.searchParams.get("element"),
             ),
           );
         if (pathname.includes("/elements/T1"))
@@ -283,6 +345,14 @@ function makeHost(
       }
 
       const action = pathname.split("/").at(-1);
+      if (options.refusal === "propose-notes-cap" && action === "propose") {
+        // The server's own refusal, built by oversizedProposalNotesRefusal.
+        const refusal = oversizedProposalNotesRefusal(
+          "x".repeat(PROPOSAL_NOTES_MAX_CHARACTERS + 1),
+        );
+        if (refusal === null) throw new Error("expected a cap refusal");
+        return response(refusal, 409);
+      }
       if (options.refusal === "propose" && action === "propose") {
         const findings = [
           {
@@ -382,10 +452,10 @@ function makeHost(
           {
             code: "gate_blocked",
             unmetConditions: [
-              "Discovered execution work can be captured only while the execution is running.",
+              "Delivery plan attempt attempt-1 is draft and has launched no execution, so there is no run to capture against.",
             ],
             instruction:
-              "Start the linked workflow or create a normal amendment outside execution.",
+              "Nothing was captured. Add the discovered work to the plan itself with `cctl spec plan edit native-sdd --file <plan.json>`.",
           },
           409,
         );
@@ -424,6 +494,54 @@ function makeHost(
             ),
             instruction:
               "The batch was refused as a whole and nothing was written. Correct the elements named in details.refusals, then resubmit the batch.",
+            details: { refusals },
+          },
+          409,
+        );
+      }
+      if (
+        options.refusal === "draft-batch-dangling" &&
+        action === "draft-batch"
+      ) {
+        // The refusal the server sends when a removal would strand a
+        // surviving reference: addressed at the removal's own index, and
+        // carrying the handles both ends of the reference are known by.
+        const refusals = [
+          {
+            input: "removal",
+            index: 0,
+            elementId: "criterion-id-1",
+            code: "dangling_reference",
+            unmetConditions: [
+              "task-id-1.coveredCriterionElementIds[0] covers criterion criterion-id-1, which is not in this revision.",
+            ],
+            instruction:
+              "Nothing was written. Rewrite or remove task-id-1 in the same write: drop the entry, repoint it at an element this revision carries, or remove the source alongside its target.",
+            currentElementVersion: null,
+            danglingReferences: [
+              {
+                code: "missing_target",
+                sourceElementId: "task-id-1",
+                sourceHandle: "T1",
+                field: "coveredCriterionElementIds",
+                index: 0,
+                targetId: "criterion-id-1",
+                targetHandle: "R1.1",
+                expectedKind: "criterion",
+                actualKind: null,
+                relation: "covers",
+              },
+            ],
+          },
+        ];
+        return response(
+          {
+            code: "dangling_reference",
+            unmetConditions: refusals.flatMap(
+              (refusal) => refusal.unmetConditions,
+            ),
+            instruction:
+              "The batch was refused as a whole and nothing was written.",
             details: { refusals },
           },
           409,
@@ -700,6 +818,12 @@ function makeHost(
           });
         }
         case "start-execution":
+          if (options.startBody !== undefined) {
+            return response(
+              options.startBody.body,
+              options.startBody.status ?? 200,
+            );
+          }
           return response({
             execution: {
               id: "execution-1",
@@ -711,11 +835,7 @@ function makeHost(
               workflowDefinitionId: "workflow-1",
               workflowDefinitionRevision: 1,
               workflowExecutionId: null,
-              definitionApprovalRequired:
-                resolveDial(
-                  { preset: options.preset ?? "contract-bearing" },
-                  "execution_start",
-                ) === "gate",
+              definitionApprovalRequired: false,
               sessionName: "feature-session",
               deliveredAt: null,
               abandonedReason: null,
@@ -723,6 +843,12 @@ function makeHost(
               updatedAt: CREATED_AT,
             },
             definition: { id: "workflow-1" },
+            deliveryPlan: {
+              attemptId: "attempt-1",
+              candidateId: "candidate-1",
+              planHash: "sha256:plan",
+              compiledDefinitionHash: "sha256:compiled",
+            },
           });
         case "open-amendment":
           return response({
@@ -784,51 +910,33 @@ function makeHost(
             session_name: "feature-session",
             delivered_at: null,
             abandoned_reason: "Superseded",
+            cleanup_phase: null,
+            linked_workflow_execution_id: null,
+            cleanup_last_error: null,
+            cleanup_last_error_at: null,
             created_at: CREATED_AT,
             updated_at: CREATED_AT,
           });
         case "capture-scope-amendment": {
           const body: unknown = JSON.parse(init.body ?? "{}");
-          const restartRequired =
+          const blocking =
             typeof body === "object" &&
             body !== null &&
             "blockingReason" in body;
           return response({
-            revision: {
-              ...revision(),
-              id: "revision-amendment",
-              number: 2,
-              basedOnRevisionId: "revision-approved",
+            discovery: {
+              id: "discovery-1",
+              executionId: "execution-1",
+              attemptId: "attempt-1",
+              title: "Handle the discovered migration",
             },
-            task: {
-              element: {
-                id: "task-id-2",
-                specId: spec.id,
-                kind: "task",
-                number: 2,
-                parentElementId: null,
-                createdAt: CREATED_AT,
-              },
-              version: {
-                revisionId: "revision-amendment",
-                elementId: "task-id-2",
-                position: 3,
-                payload: {
-                  kind: "task",
-                  title: "Handle the discovered migration",
-                  instructions: "Write the follow-up migration.",
-                  tracedRequirementElementIds: [],
-                  tracedDecisionElementIds: [],
-                  coveredCriterionElementIds: [],
-                  dependsOnTaskElementIds: [],
-                },
-                payloadHash: "task-2-hash",
-                elementVersion: 1,
-                createdAt: CREATED_AT,
-                updatedAt: CREATED_AT,
-              },
-            },
-            restartRequired,
+            restartRequired: blocking,
+            replacement: blocking
+              ? {
+                  abandonedExecutionId: "execution-1",
+                  replacementAttemptId: "attempt-2",
+                }
+              : null,
           });
         }
         default:
@@ -891,6 +999,19 @@ const BATCH_ELEMENTS = [
   },
 ];
 const BATCH_FILE_CONTENT = JSON.stringify(BATCH_ELEMENTS);
+
+// The keyed batch document: writes and removals in one transaction, because a
+// reference and its target can only leave together. Removals are addressed by
+// element id and the version they take out — the file contract carries no
+// handle form, which is the server's own removal schema.
+const BATCH_REMOVALS = [{ elementId: "task-id-1", baseElementVersion: 2 }];
+const BATCH_DOCUMENT_FILE_CONTENT = JSON.stringify({
+  elements: BATCH_ELEMENTS,
+  removals: BATCH_REMOVALS,
+});
+const REMOVALS_ONLY_FILE_CONTENT = JSON.stringify({
+  removals: BATCH_REMOVALS,
+});
 
 const DISCOVERED_TASK_FILE_CONTENT = JSON.stringify({
   title: "Handle the discovered migration",
@@ -1587,6 +1708,81 @@ describe("cctl spec write verbs", () => {
     expect(host.requests).toHaveLength(0);
   });
 
+  it("reports what the write did to the blocking finding count", async () => {
+    const host = makeHost({
+      files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
+      blockingCounts: [2, 0],
+    });
+
+    const text = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // The receipt answers "did that help?" without a second command: the draft
+    // went from refusing propose to accepting it.
+    expect(text.stdout).toContain("lint: 2 -> 0 blocking");
+  });
+
+  it("carries the blocking-count delta structurally in the --json receipt", async () => {
+    const host = makeHost({
+      files: { [BATCH_FILE]: BATCH_FILE_CONTENT },
+      blockingCounts: [2, 0],
+    });
+
+    const structured = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(structured.exitCode).toBe(0);
+    // A machine reader must not have to parse the English sentence back apart
+    // to learn what the write did to the draft's proposability.
+    expect(JSON.parse(structured.stdout).lint).toEqual({
+      blockingBefore: 2,
+      blockingAfter: 0,
+    });
+  });
+
+  it("names the blocking findings the write left behind", async () => {
+    const host = makeHost({
+      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
+      blockingCounts: [1, 3],
+    });
+
+    const text = await runCli(
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("lint: 1 -> 3 blocking");
+    // A draft that still refuses propose says where to read why.
+    expect(text.stdout).toContain("cctl spec lint native-sdd");
+  });
+
+  it("omits the lint delta rather than failing the write when lint cannot be read", async () => {
+    const host = makeHost({
+      files: { [DRAFT_FILE]: DRAFT_FILE_CONTENT },
+      lintUnavailable: true,
+    });
+
+    const text = await runCli(
+      ["spec", "draft", "native-sdd", "--file", DRAFT_FILE],
+      baseEnv,
+      host,
+    );
+
+    // The delta enriches a receipt; it never decides whether the write stands.
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("saved native-sdd/T1");
+    expect(text.stdout).not.toContain("blocking");
+  });
+
   it("submits an array --file as one batch and reports each element by its index", async () => {
     const host = makeHost({ files: { [BATCH_FILE]: BATCH_FILE_CONTENT } });
     const text = await runCli(
@@ -1705,6 +1901,112 @@ describe("cctl spec write verbs", () => {
     });
   });
 
+  it("submits writes and removals from one keyed document as a single batch", async () => {
+    const host = makeHost({
+      files: { [BATCH_FILE]: BATCH_DOCUMENT_FILE_CONTENT },
+    });
+
+    const text = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE, "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    const actions = actionRequests(host);
+    // A write and the removal it depends on land in ONE transaction: two
+    // requests would have no legal order.
+    expect(actions).toHaveLength(2);
+    expect(new URL(actions[0]?.url ?? "").pathname).toBe(
+      "/api/specs/demo/native-sdd/actions/draft-batch",
+    );
+    expect(JSON.parse(actions[0]?.init.body ?? "{}")).toEqual({
+      revisionId: "revision-draft",
+      elements: BATCH_ELEMENTS,
+      removals: BATCH_REMOVALS,
+    });
+
+    expect(text.stdout).toContain("saved 2 elements and removed 1 element");
+    expect(text.stdout).toContain("removed [0] task-id-1");
+    // Undo is named at the moment it becomes relevant, not left to be
+    // rediscovered from the schema docs.
+    expect(text.stdout).toContain("reintroduceHistorical");
+
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      batch: { revisionId: "revision-draft" },
+      removed: [{ elementId: "task-id-1", handle: null }],
+      recovery: expect.stringContaining("reintroduceHistorical"),
+    });
+  });
+
+  it("accepts a keyed document that only removes", async () => {
+    const host = makeHost({
+      files: { [BATCH_FILE]: REMOVALS_ONLY_FILE_CONTENT },
+    });
+
+    const result = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
+      revisionId: "revision-draft",
+      elements: [],
+      removals: BATCH_REMOVALS,
+    });
+    expect(result.stdout).toContain("removed 1 element");
+  });
+
+  it("refuses a keyed document whose removal states a handle instead of an id", async () => {
+    const host = makeHost({
+      files: {
+        [BATCH_FILE]: JSON.stringify({
+          elements: [],
+          // The file contract has no handle form: the server's removal schema
+          // is {elementId, baseElementVersion} and this file speaks it exactly.
+          removals: [{ handle: "T1", baseElementVersion: 2 }],
+        }),
+      },
+    });
+
+    const result = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("does not match the required schema");
+    expect(result.stderr).toContain("removals.0");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("refuses a keyed document that neither writes nor removes anything", async () => {
+    const host = makeHost({
+      files: {
+        [BATCH_FILE]: JSON.stringify({ elements: [], removals: [] }),
+      },
+    });
+
+    const result = await runCli(
+      ["spec", "draft", "native-sdd", "--file", BATCH_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(host.requests).toHaveLength(0);
+  });
+
   it("refuses a batch element that omits its own baseElementVersion", async () => {
     const host = makeHost({
       files: {
@@ -1767,23 +2069,19 @@ describe("cctl spec write verbs", () => {
 
     expect(result.exitCode).toBe(0);
     // Pinned as exact paths: a regression to the full spec GET would transfer
-    // the whole document once per saved element.
+    // the whole document once per saved element. The two lint reads are the
+    // blocking-count delta's own — findings only, on either side of the write.
     expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
       "/api/specs/demo/native-sdd/edit-context",
+      "/api/specs/demo/native-sdd/lint",
       "/api/specs/demo/native-sdd/actions/draft-upsert",
+      "/api/specs/demo/native-sdd/lint",
     ]);
   });
 
-  it("resolves an execution's pinned revision and dial from the edit-context read alone", async () => {
-    const host = makeHost({
-      approved: true,
-      files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
-    });
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-      baseEnv,
-      host,
-    );
+  it("resolves an execution's pinned revision from the edit-context read alone", async () => {
+    const host = makeHost({ approved: true });
+    const result = await runCli(["spec", "start", "native-sdd"], baseEnv, host);
 
     expect(result.exitCode).toBe(0);
     expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
@@ -1793,6 +2091,115 @@ describe("cctl spec write verbs", () => {
     expect(
       JSON.parse(actionRequests(host)[0]?.init.body ?? "{}").revisionId,
     ).toBe("revision-approved");
+  });
+
+  it("resolves every handle spec remove names before submitting one batch", async () => {
+    const host = makeHost();
+
+    const text = await runCli(
+      ["spec", "remove", "native-sdd", "R1.1", "T1"],
+      baseEnv,
+      host,
+    );
+    const structured = await runCli(
+      ["spec", "remove", "native-sdd", "R1.1", "T1", "--json"],
+      baseEnv,
+      host,
+    );
+
+    expect(text.exitCode).toBe(0);
+    // Handles are resolved client-side against the write path's own read, so
+    // the file contract and the verb submit the identical removal document.
+    expect(host.requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/specs/demo/native-sdd/edit-context",
+      "/api/specs/demo/native-sdd/edit-context",
+      "/api/specs/demo/native-sdd/lint",
+      "/api/specs/demo/native-sdd/actions/draft-batch",
+      "/api/specs/demo/native-sdd/lint",
+      "/api/specs/demo/native-sdd/edit-context",
+      "/api/specs/demo/native-sdd/edit-context",
+      "/api/specs/demo/native-sdd/lint",
+      "/api/specs/demo/native-sdd/actions/draft-batch",
+      "/api/specs/demo/native-sdd/lint",
+    ]);
+    expect(
+      host.requests
+        .filter(({ init }) => init.method === "GET")
+        .filter(({ url }) => !new URL(url).pathname.endsWith("/lint"))
+        .map(({ url }) => new URL(url).searchParams.get("element")),
+    ).toEqual(["R1.1", "T1", "R1.1", "T1"]);
+    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
+      revisionId: "revision-draft",
+      elements: [],
+      removals: [
+        { elementId: "criterion-id-1", baseElementVersion: 1 },
+        { elementId: "task-id-1", baseElementVersion: 2 },
+      ],
+    });
+
+    expect(text.stdout).toContain("removed 2 elements in one transaction");
+    expect(text.stdout).toContain("[0] native-sdd/R1.1 (criterion)");
+    expect(text.stdout).toContain("[1] native-sdd/T1 (task)");
+    expect(text.stdout).toContain("reintroduceHistorical");
+
+    expect(structured.exitCode).toBe(0);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: true,
+      removed: [
+        { elementId: "criterion-id-1", handle: "R1.1" },
+        { elementId: "task-id-1", handle: "T1" },
+      ],
+      tokens: { revision: "revision-draft" },
+      recovery: expect.stringContaining("reintroduceHistorical"),
+    });
+  });
+
+  it("refuses spec remove before any write when a handle is not in the draft", async () => {
+    const host = makeHost();
+
+    const result = await runCli(
+      ["spec", "remove", "native-sdd", "R1.1", "T9"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("native-sdd/T9");
+    expect(actionRequests(host)).toHaveLength(0);
+  });
+
+  it("refuses spec remove with no handle and refuses a repeated handle", async () => {
+    const host = makeHost();
+
+    const bare = await runCli(["spec", "remove", "native-sdd"], baseEnv, host);
+    const repeated = await runCli(
+      ["spec", "remove", "native-sdd", "T1", "T1"],
+      baseEnv,
+      host,
+    );
+
+    expect(bare.exitCode).toBe(2);
+    expect(bare.stderr).toContain("<handle>");
+    expect(repeated.exitCode).toBe(2);
+    expect(repeated.stderr).toContain("T1");
+    expect(host.requests).toHaveLength(0);
+  });
+
+  it("names the handle a removal would strand when the batch is refused", async () => {
+    const host = makeHost({ refusal: "draft-batch-dangling" });
+
+    const result = await runCli(
+      ["spec", "remove", "native-sdd", "R1.1"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(1);
+    // The author wrote handles, so the refusal answers in handles: naming only
+    // the opaque ids would send them back to the spec to look both up.
+    expect(result.stderr).toContain(
+      "native-sdd/T1 covers native-sdd/R1.1, which this revision would not carry",
+    );
   });
 
   it("prints the server's lint finding list when propose is refused", async () => {
@@ -1829,16 +2236,17 @@ describe("cctl spec write verbs", () => {
     });
   });
 
-  it("validates the expected advance stage before making a request", async () => {
+  it("redirects the retired design advance to delivery-plan authoring", async () => {
     const host = makeHost();
     const result = await runCli(
-      ["spec", "advance", "native-sdd", "--from", "plan"],
+      ["spec", "advance", "native-sdd", "--from", "design"],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("requirements or design");
+    expect(result.stderr).toContain("design is the final evergreen stage");
+    expect(result.stderr).toContain("cctl spec plan open native-sdd");
     expect(host.requests).toHaveLength(0);
   });
 
@@ -1863,105 +2271,6 @@ describe("cctl spec write verbs", () => {
     expect(
       JSON.parse(actionRequests(host)[0]?.init.body ?? "{}").evidenceIds,
     ).toEqual([]);
-  });
-
-  it("starts from a locally validated schema-backed scope file", async () => {
-    const scope = SPEC_SCOPE;
-    const host = makeHost({
-      approved: true,
-      files: { [SCOPE_FILE]: JSON.stringify(scope) },
-    });
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
-      revisionId: "revision-approved",
-      scope,
-      sessionName: "feature-session",
-    });
-  });
-
-  it("reports that spec start launched no workflow lane and names the next command", async () => {
-    const host = makeHost({
-      approved: true,
-      preset: "exploratory",
-      files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
-    });
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("execution-1");
-    expect(result.stdout).toContain("no workflow lane has launched");
-    expect(result.stdout).toContain("workflow definition: workflow-1");
-    expect(result.stdout).toContain("cctl workflow start workflow-1");
-    expect(result.stdout).toContain("acts next: agent");
-  });
-
-  it("names the human as the next actor when execution_start is a Gate", async () => {
-    const host = makeHost({
-      approved: true,
-      files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
-    });
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("acts next: human");
-    expect(result.stdout).toContain("cctl workflow start workflow-1");
-    expect(result.stdout).not.toContain("acts next: agent");
-  });
-
-  it("carries the launch facts into the --json envelope", async () => {
-    const host = makeHost({
-      approved: true,
-      preset: "exploratory",
-      files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
-    });
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE, "--json"],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      ok: true,
-      workflowDefinitionId: "workflow-1",
-      workflowLaunched: false,
-      executionState: "definition_review",
-      actsNext: "agent",
-      instruction: expect.stringContaining("cctl workflow start workflow-1"),
-    });
-  });
-
-  it("rejects an invalid scope file with exit 2 before network", async () => {
-    const host = makeHost({
-      files: {
-        [SCOPE_FILE]: JSON.stringify({
-          selectedTaskIds: ["task-id-1"],
-          selectedCriterionIds: ["criterion-id-1"],
-        }),
-      },
-    });
-    const result = await runCli(
-      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-      baseEnv,
-      host,
-    );
-
-    expect(result.exitCode).toBe(2);
-    expect(host.requests).toHaveLength(0);
   });
 
   it("reports what create changed, the tokens it assigned, and the next command", async () => {
@@ -2045,6 +2354,88 @@ describe("cctl spec write verbs", () => {
       "instruction: Ask a human to approve R1 at the requirements gate in Spec Studio, or request it with gate requirements and subject R1.",
     );
     expect(result.stdout).not.toContain("plan gate");
+  });
+
+  /**
+   * The disposition document is a file rather than a flag value: it is
+   * markdown with headings and lists, which no shell argument survives
+   * intact, and the same file is what the author edits between rounds.
+   */
+  it("sends the notes document the propose was given", async () => {
+    const notes = "## Disposition\n\nClosed F3 by rebinding the loop exit.\n";
+    const host = makeHost({ files: { [NOTES_FILE]: notes } });
+
+    const result = await runCli(
+      ["spec", "propose", "native-sdd", "--notes", NOTES_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const propose = actionRequests(host).find((request) =>
+      request.url.endsWith("/propose"),
+    );
+    expect(JSON.parse(String(propose?.init.body))).toEqual({
+      revisionId: "revision-draft",
+      notes,
+    });
+  });
+
+  it("omits notes entirely when the propose was given none", async () => {
+    const host = makeHost();
+
+    await runCli(["spec", "propose", "native-sdd"], baseEnv, host);
+
+    const propose = actionRequests(host).find((request) =>
+      request.url.endsWith("/propose"),
+    );
+    expect(JSON.parse(String(propose?.init.body))).toEqual({
+      revisionId: "revision-draft",
+    });
+  });
+
+  /** An unreadable file proposes nothing: the round would lose its record. */
+  it("refuses an unreadable notes file without proposing", async () => {
+    const host = makeHost();
+
+    const result = await runCli(
+      ["spec", "propose", "native-sdd", "--notes", NOTES_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(NOTES_FILE);
+    expect(actionRequests(host)).toEqual([]);
+  });
+
+  it("refuses an empty notes file rather than sending a blank document", async () => {
+    const host = makeHost({ files: { [NOTES_FILE]: "   \n" } });
+
+    const result = await runCli(
+      ["spec", "propose", "native-sdd", "--notes", NOTES_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(NOTES_FILE);
+    expect(actionRequests(host)).toEqual([]);
+  });
+
+  it("prints the server's cap refusal for an over-cap notes document", async () => {
+    const result = await runCli(
+      ["spec", "propose", "native-sdd", "--notes", NOTES_FILE],
+      baseEnv,
+      makeHost({
+        files: { [NOTES_FILE]: "x".repeat(64) },
+        refusal: "propose-notes-cap",
+      }),
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("20000");
+    expect(result.stderr).toContain("--notes");
   });
 
   it("hands the next draft back to the agent when the propose absorbed the sign-off", async () => {
@@ -2315,20 +2706,12 @@ describe("cctl spec write verbs", () => {
     );
   });
 
-  it("16.9 captures discovered work as a scope amendment without touching the run", async () => {
+  it("16.9 records a discovery and states the three post-launch paths", async () => {
     const host = makeHost({
       files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
     });
     const result = await runCli(
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--execution",
-        "execution-1",
-        "--file",
-        TASK_FILE,
-      ],
+      ["spec", "capture", "native-sdd", "--file", TASK_FILE],
       baseEnv,
       host,
     );
@@ -2341,17 +2724,53 @@ describe("cctl spec write verbs", () => {
     expect(request?.init.headers["x-cc-conversation-id"]).toBe(
       "conversation-1",
     );
-    // No blockingReason key at all — its mere presence abandons the run.
+    // No executionId and no blockingReason key at all — the live attempt names
+    // the run, and blockingReason's mere presence abandons it.
     expect(JSON.parse(request?.init.body ?? "{}")).toEqual({
-      executionId: "execution-1",
       discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
     });
-    expect(result.stdout).toContain("T2");
-    expect(result.stdout).toContain("revision 2");
-    expect(result.stdout).not.toContain("abandoned");
+    expect(result.stdout).toContain("discovery-1");
+    expect(result.stdout).toContain("keeps its pinned scope");
+    // Exactly the three post-launch paths, side by side.
+    expect(result.stdout).toContain("cctl spec capture native-sdd");
+    expect(result.stdout).toContain("--blocking-reason <why>");
+    expect(result.stdout).toContain("cctl workflow live amend");
+    expect(result.stdout).toContain("cctl spec plan open native-sdd");
   });
 
-  it("16.9 passes --blocking-reason through and reports the abandoned run", async () => {
+  it("16.9 passes --blocking-reason through and reports both ids", async () => {
+    const host = makeHost({
+      files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
+    });
+    const result = await runCli(
+      [
+        "spec",
+        "capture",
+        "native-sdd",
+        "--file",
+        TASK_FILE,
+        "--blocking-reason",
+        "Discovered work blocks the run",
+      ],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
+      discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
+      blockingReason: "Discovered work blocks the run",
+    });
+    expect(result.stdout).toContain("abandoned execution execution-1");
+    expect(result.stdout).toContain("replacement attempt attempt-2");
+    // Still bounded to the enumerated three, and truthful about the other two:
+    // the run they addressed is retired, so neither remains available for it.
+    expect(result.stdout).toContain("second of the three post-launch paths");
+    expect(result.stdout).toContain("cctl workflow live amend");
+    expect(result.stdout).toContain("neither remains available for it");
+  });
+
+  it("forwards an explicit --execution for a legacy run with no attempt", async () => {
     const host = makeHost({
       files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
     });
@@ -2364,8 +2783,6 @@ describe("cctl spec write verbs", () => {
         "execution-1",
         "--file",
         TASK_FILE,
-        "--blocking-reason",
-        "Discovered work blocks the run",
       ],
       baseEnv,
       host,
@@ -2375,9 +2792,7 @@ describe("cctl spec write verbs", () => {
     expect(JSON.parse(actionRequests(host)[0]?.init.body ?? "{}")).toEqual({
       executionId: "execution-1",
       discoveredTask: JSON.parse(DISCOVERED_TASK_FILE_CONTENT),
-      blockingReason: "Discovered work blocks the run",
     });
-    expect(result.stdout).toContain("abandoned");
   });
 
   it("rejects an invalid discovered-task file with exit 2 before network", async () => {
@@ -2387,15 +2802,7 @@ describe("cctl spec write verbs", () => {
       },
     });
     const result = await runCli(
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--execution",
-        "execution-1",
-        "--file",
-        TASK_FILE,
-      ],
+      ["spec", "capture", "native-sdd", "--file", TASK_FILE],
       baseEnv,
       host,
     );
@@ -2404,17 +2811,15 @@ describe("cctl spec write verbs", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("requires --execution and --file for spec capture before any network request", async () => {
+  it("requires --file for spec capture before any network request", async () => {
     const host = makeHost();
     for (const argv of [
-      ["spec", "capture", "native-sdd", "--file", TASK_FILE],
+      ["spec", "capture", "native-sdd"],
       ["spec", "capture", "native-sdd", "--execution", "execution-1"],
       [
         "spec",
         "capture",
         "native-sdd",
-        "--execution",
-        "execution-1",
         "--file",
         TASK_FILE,
         "--blocking-reason",
@@ -2427,29 +2832,21 @@ describe("cctl spec write verbs", () => {
     expect(host.requests).toHaveLength(0);
   });
 
-  it("surfaces the typed refusal when capture targets a non-running execution", async () => {
+  it("surfaces the prelaunch redirect naming the plan verb", async () => {
     const host = makeHost({
       files: { [TASK_FILE]: DISCOVERED_TASK_FILE_CONTENT },
       refusal: "capture-scope-amendment",
     });
     const result = await runCli(
-      [
-        "spec",
-        "capture",
-        "native-sdd",
-        "--execution",
-        "execution-1",
-        "--file",
-        TASK_FILE,
-      ],
+      ["spec", "capture", "native-sdd", "--file", TASK_FILE],
       baseEnv,
       host,
     );
 
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("only while the execution is running");
+    expect(result.stderr).toContain("has launched no execution");
     expect(result.stderr).toContain(
-      "Start the linked workflow or create a normal amendment outside execution.",
+      "cctl spec plan edit native-sdd --file <plan.json>",
     );
   });
 
@@ -2463,52 +2860,181 @@ describe("cctl spec write verbs", () => {
   });
 });
 
-describe("the actor cctl spec start hands the parked run to", () => {
-  /**
-   * Keyed by the dial type, so a dial added to the schema fails to compile
-   * here instead of silently falling through to "agent" in the CLI.
-   */
-  const EXPECTED_ACTOR: Record<ResolvedGateDial, "agent" | "human"> = {
-    gate: "human",
-    [COMBINED_APPROVAL_DIAL]: "human",
-    notify: "agent",
-    off: "agent",
+describe("cctl spec start against a delivery plan", () => {
+  const CANDIDATE = {
+    attemptId: "attempt-1",
+    candidateId: "candidate-1",
+    planHash: "sha256:plan",
+    compiledDefinitionHash: "sha256:compiled",
   };
 
-  it("names the human for every dial the server treats as a human act", () => {
-    for (const [key, expected] of Object.entries(EXPECTED_ACTOR)) {
-      const dial = resolvedGateDialSchema.parse(key);
-      expect(executionStartActor(dial)).toBe(expected);
-      // The CLI's notion of "a human acts next" must be the server's, not a
-      // second reading of the dial: disagreement here is a false handoff.
-      expect(executionStartActor(dial)).toBe(
-        dialRequiresHumanApproval(dial) ? "human" : "agent",
-      );
-    }
+  it("rejects the retired scope file before reading it or contacting the server", async () => {
+    const host = makeHost({
+      approved: true,
+      files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
+    });
+
+    const result = await runCli(
+      ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain(
+      "cctl spec plan open native-sdd --seed-from last",
+    );
+    expect(host.requests).toHaveLength(0);
+
+    const structured = await runCli(
+      ["spec", "start", "native-sdd", "--file", SCOPE_FILE, "--json"],
+      baseEnv,
+      host,
+    );
+    expect(structured.exitCode).toBe(2);
+    expect(JSON.parse(structured.stdout)).toMatchObject({
+      ok: false,
+      instruction: expect.stringContaining(
+        "cctl spec plan open native-sdd --seed-from last",
+      ),
+    });
+    expect(host.requests).toHaveLength(0);
   });
 
-  it.each<SpecGatePreset>(["contract-bearing", "exploratory", "fast-path"])(
-    "prints the actor the canonical predicate names under the %s preset",
-    async (preset) => {
-      const host = makeHost({
-        approved: true,
-        preset,
-        files: { [SCOPE_FILE]: JSON.stringify(SPEC_SCOPE) },
-      });
-      const result = await runCli(
-        ["spec", "start", "native-sdd", "--file", SCOPE_FILE],
-        baseEnv,
-        host,
-      );
+  it("sends no scope document and reports the approved candidate it launched", async () => {
+    const host = makeHost({
+      approved: true,
+      startBody: {
+        body: {
+          execution: {
+            id: "execution-1",
+            specId: spec.id,
+            revisionId: "revision-approved",
+            revisionNumber: 1,
+            scope: null,
+            state: "definition_review",
+            workflowDefinitionId: "workflow-1",
+            workflowDefinitionRevision: 1,
+            workflowExecutionId: null,
+            definitionApprovalRequired: false,
+            sessionName: "feature-session",
+            deliveredAt: null,
+            abandonedReason: null,
+            createdAt: CREATED_AT,
+            updatedAt: CREATED_AT,
+          },
+          definition: { id: "workflow-1" },
+          deliveryPlan: CANDIDATE,
+        },
+      },
+    });
 
-      const dial = resolveDial({ preset }, "execution_start");
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain(
-        `acts next: ${dialRequiresHumanApproval(dial) ? "human" : "agent"}`,
-      );
-      // The prose names the dial that was resolved, so it cannot keep claiming
-      // one dial while the handoff is decided by another.
-      expect(result.stdout).toContain(`execution_start dial is ${dial}`);
-    },
-  );
+    const result = await runCli(["spec", "start", "native-sdd"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    const started = host.requests.find((request) =>
+      request.url.includes("/actions/start-execution"),
+    );
+    expect(JSON.parse(String(started?.init.body))).toEqual({
+      revisionId: "revision-approved",
+      sessionName: "feature-session",
+    });
+    expect(result.stdout).toContain("sha256:compiled");
+    expect(result.stdout).toContain("ran unchanged");
+    expect(result.stdout).toContain("acts next: agent");
+  });
+
+  it("reports a park as holding the candidate with no execution and no slot", async () => {
+    const host = makeHost({
+      approved: true,
+      startBody: {
+        body: {
+          parked: {
+            ...CANDIDATE,
+            nextAct: {
+              actor: "agent",
+              command: "cctl spec start native-sdd",
+              reason: "The approved parked candidate is ready to launch.",
+            },
+          },
+        },
+      },
+    });
+
+    const result = await runCli(
+      ["spec", "start", "native-sdd", "--park"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    const started = host.requests.find((request) =>
+      request.url.includes("/actions/start-execution"),
+    );
+    expect(JSON.parse(String(started?.init.body))).toMatchObject({
+      park: true,
+    });
+    expect(result.stdout).toContain("parked plan attempt attempt-1");
+    expect(result.stdout).toContain("no session slot taken");
+    expect(result.stdout).toContain("acts next: agent");
+    expect(result.stdout).toContain("cctl spec start native-sdd");
+    expect(result.stdout).toContain(
+      "The approved parked candidate is ready to launch.",
+    );
+  });
+
+  it("prints the plan's sign-off act when an unapproved candidate is parked", async () => {
+    const host = makeHost({
+      approved: true,
+      startBody: {
+        body: {
+          parked: {
+            ...CANDIDATE,
+            nextAct: {
+              actor: "human",
+              command: "cctl spec plan sign-off native-sdd",
+              reason:
+                "The parked candidate carries no approval, so a launch would refuse.",
+            },
+          },
+        },
+      },
+    });
+
+    const result = await runCli(
+      ["spec", "start", "native-sdd", "--park"],
+      baseEnv,
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("acts next: human");
+    expect(result.stdout).toContain("cctl spec plan sign-off native-sdd");
+    expect(result.stdout).toContain(
+      "The parked candidate carries no approval, so a launch would refuse.",
+    );
+  });
+
+  it("carries the server's premature-start refusal through with its named next act", async () => {
+    const host = makeHost({
+      approved: true,
+      startBody: {
+        status: 409,
+        body: {
+          error:
+            "Delivery plan attempt attempt-1 is proposed and carries no approval.",
+          code: "gate_blocked",
+          instruction:
+            "Nothing was started. Sign candidate candidate-1 (compiled sha256:compiled) off with `cctl spec plan sign-off native-sdd`.",
+        },
+      },
+    });
+
+    const result = await runCli(["spec", "start", "native-sdd"], baseEnv, host);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "cctl spec plan sign-off native-sdd",
+    );
+  });
 });

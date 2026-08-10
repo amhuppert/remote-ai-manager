@@ -41,6 +41,9 @@ const result = await runCli(process.argv.slice(2), process.env, {
     }
   },
   async writeTextFile(filePath, content) {
+    // Commands derive output paths (e.g. `spec export` into .cc/temp/), so the
+    // parent directory is not guaranteed to exist yet.
+    await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, content, "utf-8");
   },
   async writePrivateTextFile(filePath, content) {

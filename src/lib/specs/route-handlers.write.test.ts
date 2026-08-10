@@ -784,7 +784,7 @@ describe("spec write route handlers", () => {
     expect(disposedBody).not.toHaveProperty("disposed_at");
   });
 
-  it("returns the started execution in the domain shape with its parsed scope", async () => {
+  it("returns the launched approved candidate with the execution's parsed plan scope", async () => {
     const services = createServices();
     vi.mocked(services.execution.start).mockResolvedValueOnce({
       ok: true as const,
@@ -805,6 +805,10 @@ describe("spec write route handlers", () => {
         session_name: "feature-session",
         delivered_at: null,
         abandoned_reason: null,
+        cleanup_phase: null,
+        linked_workflow_execution_id: null,
+        cleanup_last_error: null,
+        cleanup_last_error_at: null,
         created_at: "2026-07-18T00:00:00.000Z",
         updated_at: "2026-07-18T00:00:00.000Z",
       },
@@ -812,17 +816,18 @@ describe("spec write route handlers", () => {
         id: "workflow-definition-1",
       }),
       revisionNumber: 4,
+      deliveryPlan: {
+        attemptId: "attempt-approved",
+        candidateId: "candidate-approved",
+        planHash: "sha256:plan",
+        compiledDefinitionHash: "sha256:definition",
+      },
     });
     const handlers = createSpecWriteRouteHandlers(createDeps(services));
 
     const response = await handlers.specActionPOST(
       postRequest({
         revisionId: "revision-1",
-        scope: {
-          selectedTaskIds: ["task-1"],
-          selectedCriterionIds: ["criterion-1"],
-          exclusionDispositions: [],
-        },
         sessionName: "feature-session",
       }),
       routeContext("start-execution"),
@@ -847,6 +852,12 @@ describe("spec write route handlers", () => {
         sessionName: "feature-session",
       },
       definition: { id: "workflow-definition-1" },
+      deliveryPlan: {
+        attemptId: "attempt-approved",
+        candidateId: "candidate-approved",
+        planHash: "sha256:plan",
+        compiledDefinitionHash: "sha256:definition",
+      },
     });
     expect(body.execution).not.toHaveProperty("scope_json");
     expect(body.execution).not.toHaveProperty("spec_id");
@@ -1313,6 +1324,7 @@ describe("spec write route handlers", () => {
       ok: true,
       checkedRevisionIds: ["revision-1"],
       mismatches: [],
+      consistencyFindings: [],
     });
     const handlers = createSpecWriteRouteHandlers(createDeps(services));
 
@@ -1326,6 +1338,7 @@ describe("spec write route handlers", () => {
       ok: true,
       checkedRevisionIds: ["revision-1"],
       mismatches: [],
+      consistencyFindings: [],
     });
   });
 

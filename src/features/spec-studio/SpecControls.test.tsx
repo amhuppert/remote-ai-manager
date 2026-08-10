@@ -90,6 +90,12 @@ describe("PolicyDialog", () => {
     expect(
       screen.queryByRole("button", { name: "Change policy" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radiogroup", { name: "Plan gate mode" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("radiogroup", { name: "Execution start gate mode" }),
+    ).toBeVisible();
   });
 
   it("raises selected preset helper text above tinted-background contrast", () => {
@@ -103,7 +109,7 @@ describe("PolicyDialog", () => {
     );
 
     const description = screen.getByText(
-      "Every authoring and delivery transition requires a human gate.",
+      "Evergreen authoring, delivery-plan launch, and delivery require human gates.",
     );
     expect(description.closest('[data-selected="true"]')).toHaveClass(
       "[&_span[id]]:text-text-primary",
@@ -366,7 +372,6 @@ describe("PolicyDialog", () => {
     ).toEqual([
       "Requirements · Notify → Gate",
       "Design · Notify → Gate",
-      "Plan · Notify → Gate",
       "Execution start · Notify → Gate",
     ]);
     expect(
@@ -379,12 +384,7 @@ describe("PolicyDialog", () => {
     expect(within(impact).getByText(/Draft rev 4 stays valid/i)).toBeVisible();
     expect(
       listLabels(within(impact).getByRole("list", { name: LIFECYCLE_LIST })),
-    ).toEqual([
-      "Design · Gate",
-      "Plan · Gate",
-      "Execution start · Gate",
-      "Delivery · Gate",
-    ]);
+    ).toEqual(["Design · Gate", "Execution start · Gate", "Delivery · Gate"]);
 
     expect(onChangePolicy).not.toHaveBeenCalled();
     await user.click(
@@ -398,7 +398,7 @@ describe("PolicyDialog", () => {
     });
   });
 
-  it("previews a loosening as an agent advance that consults only the pinned stage", async () => {
+  it("previews a loosening as an agent proposal that consults only the pinned stage", async () => {
     const user = userEvent.setup();
     render(
       <PolicyDialog
@@ -418,17 +418,16 @@ describe("PolicyDialog", () => {
 
     expect(within(impact).getByText("Design → Design")).toBeVisible();
     expect(
-      within(impact).getByText(/Advance the Design stage/i),
+      within(impact).getByText(/Propose the Design stage/i),
     ).toHaveTextContent("the agent may proceed");
     expect(
       listLabels(within(impact).getByRole("list", { name: CONSULTED_LIST })),
-    ).toEqual(["Design · Notify"]);
+    ).toEqual(["Requirements · Notify", "Design · Notify"]);
     expect(
       listLabels(within(impact).getByRole("list", { name: REMOVED_LIST })),
     ).toEqual([
       "Requirements · Gate → Notify",
       "Design · Gate → Notify",
-      "Plan · Gate → Notify",
       "Execution start · Gate → Notify",
     ]);
     expect(
@@ -438,7 +437,6 @@ describe("PolicyDialog", () => {
       listLabels(within(impact).getByRole("list", { name: LIFECYCLE_LIST })),
     ).toEqual([
       "Design · Notify",
-      "Plan · Notify",
       "Execution start · Notify",
       "Delivery · Gate",
     ]);
@@ -556,7 +554,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -579,7 +576,7 @@ describe("ExecutionPanel", () => {
     ).toBeVisible();
   });
 
-  it("keeps execution locked until the approved revision reaches Plan", () => {
+  it("routes a legacy requirements-only revision to DeliveryPlanAttempt authoring", () => {
     const detail = detailFixture();
     const approved = detail.currentApprovedRevision;
     if (approved === null) throw new Error("Approved fixture missing");
@@ -601,7 +598,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -612,25 +608,25 @@ describe("ExecutionPanel", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Start execution — locked" }),
+      screen.getByRole("heading", { name: "Launch from Delivery plan" }),
     ).toBeVisible();
-    expect(screen.getByText(/requires an approved plan/i)).toBeVisible();
+    expect(screen.getByText(/approved DeliveryPlanAttempt/i)).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Open Delivery plan" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=plan");
     expect(
       screen.queryByRole("button", { name: "Start execution" }),
     ).toBeNull();
   });
 
-  it("renders the prototype workflow header and validates explicit scope exclusions", async () => {
+  it("routes an unlaunched spec to its delivery plan instead of offering evergreen scope selection", () => {
     const detail = denseExecutionFixture("none");
-    const onStart = vi.fn();
-    const user = userEvent.setup();
     render(
       <ExecutionPanel
         detail={detail}
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={onStart}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -651,84 +647,21 @@ describe("ExecutionPanel", () => {
     ).toBeInTheDocument();
     expect(
       within(surface).getByRole("heading", {
-        name: "Start execution — scope selection",
+        name: "Launch from Delivery plan",
       }),
     ).toBeInTheDocument();
     expect(
-      within(surface).getByText(/partial task selection is rejected/i),
-    ).toBeInTheDocument();
-
-    const validation = within(surface).getByTestId(
-      "execution-scope-validation",
-    );
-    expect(validation).toHaveTextContent(
-      "2 tasks selected · 2 criteria in scope · 0 exclusions",
-    );
-
-    const sessionName = within(surface).getByRole("textbox", {
-      name: "Session name",
-    });
-    expect(sessionName.parentElement).not.toHaveClass("mb-lg");
-    expect(sessionName.parentElement).toHaveClass("w-[220px]");
-    expect(sessionName.parentElement?.parentElement).toHaveClass(
-      "items-end",
-      "gap-md",
-    );
-
-    await user.click(within(surface).getByRole("checkbox", { name: /R1\.2/ }));
+      within(surface).getByRole("link", { name: "Open Delivery plan" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=plan");
     expect(
-      within(surface).getByRole("button", { name: "Start execution" }),
-    ).toBeDisabled();
-    const exclusion = within(surface).getByRole("radiogroup", {
-      name: "Exclusion disposition for R1.2",
-    });
-    await user.click(
-      within(exclusion).getByRole("radio", { name: "Deferred" }),
-    );
+      within(surface).queryByRole("textbox", { name: "Session name" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(surface).getByRole("button", { name: "Start execution" }),
-    ).toBeEnabled();
-
-    await user.click(
-      within(surface).getByRole("button", { name: "Start execution" }),
-    );
-    expect(onStart).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scope: expect.objectContaining({
-          selectedCriterionIds: ["criterion-1"],
-          exclusionDispositions: [
-            { criterionId: "criterion-2", disposition: "deferred" },
-          ],
-        }),
-      }),
-    );
-  });
-
-  it("blocks a scope whose selected tasks are not dependency closed", async () => {
-    const user = userEvent.setup();
-    render(
-      <ExecutionPanel
-        detail={denseExecutionFixture("none")}
-        projectName="command-center"
-        pendingAction={null}
-        error={null}
-        onStart={vi.fn()}
-        onGrantWaiver={vi.fn()}
-        onSetDisposition={vi.fn()}
-        onGrantGateApproval={vi.fn()}
-        onApproveExecutionStart={vi.fn()}
-        onCaptureScopeAmendment={vi.fn()}
-        onAbandonExecution={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByRole("checkbox", { name: /T1 / }));
-    expect(screen.getByTestId("execution-scope-validation")).toHaveTextContent(
-      "T2 requires T1",
-    );
+      within(surface).queryByRole("button", { name: "Start execution" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Start execution" }),
-    ).toBeDisabled();
+      within(surface).queryByTestId("execution-scope-validation"),
+    ).not.toBeInTheDocument();
   });
 
   it("presents definition review as a provenance-locked workflow approval", async () => {
@@ -742,7 +675,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -795,7 +727,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={onGrantGateApproval}
@@ -867,7 +798,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -888,7 +818,7 @@ describe("ExecutionPanel", () => {
       screen.getByRole("link", { name: "Open session to merge" }),
     ).toHaveAttribute("href", "/projects/command-center/native-sdd-run");
     expect(
-      screen.queryByRole("heading", { name: "Capture discovered work" }),
+      screen.queryByRole("region", { name: "Post-launch capture" }),
     ).toBeNull();
     expect(
       screen.queryByText(
@@ -904,7 +834,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -948,7 +877,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -978,7 +906,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={onGrantWaiver}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1004,92 +931,6 @@ describe("ExecutionPanel", () => {
       revisionId: "revision-1",
       reason: "The equivalent trace was reviewed by Alex.",
     });
-  });
-
-  it("starts an approved revision with the selected task and criterion scope", async () => {
-    const onStart = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <ExecutionPanel
-        detail={detailFixture()}
-        projectName="command-center"
-        pendingAction={null}
-        error={null}
-        onStart={onStart}
-        onGrantWaiver={vi.fn()}
-        onSetDisposition={vi.fn()}
-        onGrantGateApproval={vi.fn()}
-        onApproveExecutionStart={vi.fn()}
-        onCaptureScopeAmendment={vi.fn()}
-        onAbandonExecution={vi.fn()}
-      />,
-    );
-
-    await user.type(
-      screen.getByRole("textbox", { name: "Session name" }),
-      "native-sdd-run",
-    );
-    await user.click(screen.getByRole("button", { name: "Start execution" }));
-
-    expect(onStart).toHaveBeenCalledWith({
-      revisionId: "revision-1",
-      sessionName: "native-sdd-run",
-      scope: {
-        selectedTaskIds: ["task-1"],
-        selectedCriterionIds: ["criterion-1"],
-        exclusionDispositions: [],
-      },
-    });
-  });
-
-  it("starts the retained approved revision after newer review history advances", async () => {
-    const detail = detailFixture();
-    const approved = detail.currentApprovedRevision;
-    if (approved === null) throw new Error("Approved fixture missing");
-    const withdrawn = snapshotForTest(
-      approved,
-      "revision-2",
-      2,
-      "withdrawn",
-      approved.revision.id,
-    );
-    const draft = snapshotForTest(
-      approved,
-      "revision-3",
-      3,
-      "draft",
-      withdrawn.revision.id,
-    );
-    const advancedDetail: SpecDetailView = {
-      ...detail,
-      revisions: [approved.revision, withdrawn.revision, draft.revision],
-      baseRevision: withdrawn,
-      currentRevision: draft,
-      currentApprovedRevision: approved,
-    };
-    const onStart = vi.fn();
-    const user = userEvent.setup();
-
-    render(
-      <ExecutionPanel
-        detail={advancedDetail}
-        projectName="command-center"
-        pendingAction={null}
-        error={null}
-        onStart={onStart}
-        onGrantWaiver={vi.fn()}
-        onSetDisposition={vi.fn()}
-        onGrantGateApproval={vi.fn()}
-        onApproveExecutionStart={vi.fn()}
-        onCaptureScopeAmendment={vi.fn()}
-        onAbandonExecution={vi.fn()}
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: "Start execution" }));
-
-    expect(onStart).toHaveBeenCalledWith(
-      expect.objectContaining({ revisionId: approved.revision.id }),
-    );
   });
 
   it("renders controls from an older execution-pinned snapshot", () => {
@@ -1137,7 +978,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1162,7 +1002,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={onGrantWaiver}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1254,7 +1093,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1280,7 +1118,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1319,7 +1156,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1354,7 +1190,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1376,6 +1211,35 @@ describe("ExecutionPanel", () => {
     });
   });
 
+  it("redirects an incomplete legacy launch target to a seeded delivery plan", () => {
+    const detail = detailFixture("definition_review");
+    const execution = detail.executions[0];
+    if (execution === undefined) throw new Error("Execution fixture missing");
+    Object.assign(execution, {
+      definitionApprovalRequired: false,
+      workflowDefinitionRevision: null,
+    });
+
+    render(
+      <ExecutionPanel
+        detail={detail}
+        projectName="command-center"
+        pendingAction={null}
+        error={null}
+        onGrantWaiver={vi.fn()}
+        onSetDisposition={vi.fn()}
+        onGrantGateApproval={vi.fn()}
+        onApproveExecutionStart={vi.fn()}
+        onCaptureScopeAmendment={vi.fn()}
+        onAbandonExecution={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /cctl spec plan open native-sdd --seed-from last.*cctl spec start native-sdd/i,
+    );
+  });
+
   it("renders the recorded execution-start approval without claiming the run started", () => {
     const detail = detailFixture("definition_review");
     detail.gateAdmissions = [
@@ -1395,7 +1259,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1424,7 +1287,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1451,7 +1313,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={onGrantGateApproval}
@@ -1490,7 +1351,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1525,7 +1385,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1549,7 +1408,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1559,21 +1417,25 @@ describe("ExecutionPanel", () => {
       />,
     );
 
-    const capture = screen.getByRole("button", {
-      name: "Capture discovered work",
+    const discovery = screen.getByRole("region", {
+      name: "Non-blocking discovery",
+    });
+    const capture = within(discovery).getByRole("button", {
+      name: "Record discovery",
     });
     expect(capture).toBeDisabled();
     await user.type(
-      screen.getByRole("textbox", { name: "Discovered task title" }),
+      within(discovery).getByRole("textbox", { name: "Discovery title" }),
       "Handle the discovered migration",
     );
     expect(capture).toBeDisabled();
     await user.type(
-      screen.getByRole("textbox", { name: "Discovered task instructions" }),
+      within(discovery).getByRole("textbox", {
+        name: "Discovery instructions",
+      }),
       "Write the follow-up migration.",
     );
-    // The pinned scope stays untouched — the copy must say so.
-    expect(screen.getByText(/pinned scope never changes/)).toBeInTheDocument();
+    expect(within(discovery).getByText(/keeps its pinned scope/)).toBeVisible();
     await user.click(capture);
 
     expect(onCaptureScopeAmendment).toHaveBeenCalledWith({
@@ -1598,7 +1460,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1608,25 +1469,32 @@ describe("ExecutionPanel", () => {
       />,
     );
 
+    const replan = screen.getByRole("region", { name: "Blocking replan" });
     await user.type(
-      screen.getByRole("textbox", { name: "Discovered task title" }),
+      within(replan).getByRole("textbox", { name: "Replan task title" }),
       "Handle the discovered migration",
     );
     await user.type(
-      screen.getByRole("textbox", { name: "Discovered task instructions" }),
+      within(replan).getByRole("textbox", {
+        name: "Replan task instructions",
+      }),
       "Write the follow-up migration.",
     );
-    await user.click(screen.getByRole("checkbox", { name: /Blocks this run/ }));
 
-    const capture = screen.getByRole("button", {
-      name: "Capture discovered work",
+    const capture = within(replan).getByRole("button", {
+      name: "Replan execution",
     });
     expect(capture).toBeDisabled();
     await user.type(
-      screen.getByRole("textbox", { name: "Blocking reason" }),
+      within(replan).getByRole("textbox", { name: "Blocking reason" }),
       "The migration must land before this run can proceed.",
     );
     await user.click(capture);
+    await user.click(
+      screen.getByRole("button", {
+        name: "Abandon execution-1 and open seeded plan",
+      }),
+    );
 
     expect(onCaptureScopeAmendment).toHaveBeenCalledWith({
       executionId: "execution-1",
@@ -1642,37 +1510,28 @@ describe("ExecutionPanel", () => {
     });
   });
 
-  it("abandons the running execution only after a durable reason is provided", async () => {
-    const onAbandonExecution = vi.fn();
-    const user = userEvent.setup();
+  it("uses the blocking replan coordinator instead of a standalone running-execution abandon form", () => {
     render(
       <ExecutionPanel
         detail={detailFixture("running")}
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
         onApproveExecutionStart={vi.fn()}
         onCaptureScopeAmendment={vi.fn()}
-        onAbandonExecution={onAbandonExecution}
+        onAbandonExecution={vi.fn()}
       />,
     );
 
-    const abandon = screen.getByRole("button", { name: "Abandon execution" });
-    expect(abandon).toBeDisabled();
-    await user.type(
-      screen.getByRole("textbox", { name: "Abandonment reason" }),
-      "The plan needs revision before this run can deliver.",
-    );
-    await user.click(abandon);
-
-    expect(onAbandonExecution).toHaveBeenCalledWith({
-      executionId: "execution-1",
-      reason: "The plan needs revision before this run can deliver.",
-    });
+    expect(
+      screen.queryByRole("textbox", { name: "Abandonment reason" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("region", { name: "Blocking replan" }),
+    ).toBeVisible();
   });
 
   it("offers abandonment during definition review so a stuck run can always be stopped", async () => {
@@ -1684,7 +1543,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1713,7 +1571,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={vi.fn()}
         onGrantGateApproval={vi.fn()}
@@ -1724,7 +1581,7 @@ describe("ExecutionPanel", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: "Capture discovered work" }),
+      screen.queryByRole("region", { name: "Post-launch capture" }),
     ).toBeNull();
   });
 
@@ -1749,7 +1606,6 @@ describe("ExecutionPanel", () => {
         projectName="command-center"
         pendingAction={null}
         error={null}
-        onStart={vi.fn()}
         onGrantWaiver={vi.fn()}
         onSetDisposition={onSetDisposition}
         onGrantGateApproval={vi.fn()}
@@ -1870,6 +1726,7 @@ describe("IntegrityBanner", () => {
           ok: true,
           checkedRevisionIds: ["revision-1"],
           mismatches: [],
+          consistencyFindings: [],
         }}
         isPending={false}
         error={null}
@@ -1896,6 +1753,7 @@ describe("IntegrityBanner", () => {
               mismatchedElementIds: ["requirement-1"],
             },
           ],
+          consistencyFindings: [],
         }}
         isPending={false}
         error={null}
@@ -1941,6 +1799,7 @@ describe("SpecIntegrityPanel", () => {
             ok: true,
             checkedRevisionIds: ["revision-1"],
             mismatches: [],
+            consistencyFindings: [],
           },
         };
       },
@@ -2128,7 +1987,7 @@ describe("SpecControlsPanel policy impact", () => {
   // The panel is where the open draft is read from, and the preview must
   // resolve the *proposed* dials: the stored sequence for this contract-bearing
   // spec says the design stage is concluded by a human propose, while the
-  // exploratory posture being confirmed turns it into an agent advance.
+  // exploratory posture being confirmed turns it into an agent proposal.
   it("previews the confirmed policy against the spec's open draft, not the stored sequence", async () => {
     const detail = draftingDetailFixture("design");
     api.pending(
@@ -2156,13 +2015,12 @@ describe("SpecControlsPanel policy impact", () => {
       within(impact).getByText(/rev 2 keeps its Design stage/i),
     ).toBeVisible();
     expect(
-      within(impact).getByText(/Advance the Design stage/i),
+      within(impact).getByText(/Propose the Design stage/i),
     ).toHaveTextContent("the agent may proceed");
     expect(
       listLabels(within(impact).getByRole("list", { name: LIFECYCLE_LIST })),
     ).toEqual([
       "Design · Notify",
-      "Plan · Notify",
       "Execution start · Notify",
       "Delivery · Gate",
     ]);
@@ -2342,6 +2200,341 @@ describe("SpecControlsPanel execution-start refusal", () => {
       tier: "project",
     });
     expect(await screen.findByText("Workflow started")).toBeVisible();
+  });
+});
+
+describe("SpecControlsPanel post-launch capture routes", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+  });
+
+  afterEach(() => {
+    api.restore();
+  });
+
+  function runningDpaDetail(): SpecDetailView {
+    const detail = detailFixture("running");
+    const execution = detail.executions[0];
+    const statusExecution = detail.status.executions[0];
+    if (execution === undefined || statusExecution === undefined) {
+      throw new Error("Running execution fixture missing");
+    }
+    execution.workflowExecutionId = "workflow-execution-1";
+    detail.status.executions = [
+      {
+        ...statusExecution,
+        workflowExecutionId: "workflow-execution-1",
+        workflowStatus: "running",
+      },
+    ];
+    return detail;
+  }
+
+  it("posts a blocking discovery through the coordinator route and shows its durable replacement receipt", async () => {
+    const detail = runningDpaDetail();
+    const capturePath = `/api/specs/command-center/${detail.spec.slug}/actions/capture-scope-amendment`;
+    api.json(
+      "GET",
+      "/api/projects/command-center/sessions/native-sdd-run/graph-workflow/events",
+      { events: [] },
+    );
+    api.json("POST", capturePath, {
+      discovery: {
+        id: "discovery-8",
+        executionId: "execution-1",
+        attemptId: "attempt-3",
+        title: "Replace the migration order",
+      },
+      restartRequired: true,
+      replacement: {
+        abandonedExecutionId: "execution-1",
+        replacementAttemptId: "attempt-4",
+      },
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="execution"
+      />,
+    );
+
+    const replan = screen.getByRole("region", { name: "Blocking replan" });
+    await user.type(
+      within(replan).getByRole("textbox", { name: "Replan task title" }),
+      "Replace the migration order",
+    );
+    await user.type(
+      within(replan).getByRole("textbox", {
+        name: "Replan task instructions",
+      }),
+      "Seed the corrected order.",
+    );
+    await user.type(
+      within(replan).getByRole("textbox", { name: "Blocking reason" }),
+      "The current dependency order cannot complete.",
+    );
+    await user.click(
+      within(replan).getByRole("button", { name: "Replan execution" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Abandon execution-1 and open seeded plan",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(api.requestsTo("POST", capturePath)).toHaveLength(1);
+    });
+    expect(api.requestsTo("POST", capturePath)[0]?.jsonBody).toEqual({
+      executionId: "execution-1",
+      discoveredTask: {
+        title: "Replace the migration order",
+        instructions: "Seed the corrected order.",
+        tracedRequirementElementIds: [],
+        tracedDecisionElementIds: [],
+        coveredCriterionElementIds: [],
+        dependsOnTaskElementIds: [],
+      },
+      blockingReason: "The current dependency order cannot complete.",
+    });
+    expect(
+      await within(replan).findByText("Seeded replacement opened"),
+    ).toBeVisible();
+    expect(within(replan).getByText(/abandoned execution-1/)).toBeVisible();
+    expect(within(replan).getByText(/new attempt-4/)).toBeVisible();
+  });
+
+  it("posts the canonical amendment without caller attribution and renders the durable event", async () => {
+    const detail = runningDpaDetail();
+    const eventsPath =
+      "/api/projects/command-center/sessions/native-sdd-run/graph-workflow/events";
+    const amendPath =
+      "/api/projects/command-center/sessions/native-sdd-run/graph-workflow/amend";
+    const amendmentEvent = {
+      type: "graph-workflow-execution-amended",
+      projectName: "command-center",
+      sessionName: "native-sdd-run",
+      executionId: "workflow-execution-1",
+      liveRevision: 3,
+      reason: "Add live verification.",
+      actor: "human",
+      policyBasis: "human_operator",
+      previousWorkingDefinitionHash: "sha256:old",
+      workingDefinitionHash: "sha256:new",
+      addedContextIds: [],
+      addedTaskIds: ["verify-added-path"],
+      addedEdgeIds: [],
+    };
+    api.reply("GET", eventsPath, () => ({
+      json: {
+        events:
+          api.requestsTo("POST", amendPath).length === 0
+            ? []
+            : [
+                {
+                  occurredAt: NOW,
+                  event: amendmentEvent,
+                  preReset: false,
+                },
+              ],
+      },
+    }));
+    api.json("POST", amendPath, {
+      amended: 1,
+      liveRevision: 3,
+      policyBasis: "human_operator",
+      addedContextIds: [],
+      addedTaskIds: ["verify-added-path"],
+      addedEdgeIds: [],
+      previousWorkingDefinitionHash: "sha256:old",
+      workingDefinitionHash: "sha256:new",
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <SpecControlsPanel
+        detail={detail}
+        projectName="command-center"
+        surface="execution"
+      />,
+    );
+    await waitFor(() => {
+      expect(api.requestsTo("GET", eventsPath)).toHaveLength(1);
+    });
+
+    const amend = screen.getByRole("region", { name: "Amend current run" });
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Amendment rationale" }),
+      "Add live verification.",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Task id" }),
+      "verify-added-path",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Target context id" }),
+      "capture-studio",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Task title" }),
+      "Verify the added path",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Task instructions" }),
+      "Exercise the production route.",
+    );
+    await user.click(
+      within(amend).getByRole("button", { name: "Queue task addition" }),
+    );
+    const eventRequestCountBeforeAmend = api.requestsTo(
+      "GET",
+      eventsPath,
+    ).length;
+    await user.click(
+      within(amend).getByRole("button", { name: "Apply amendment" }),
+    );
+
+    await waitFor(() => {
+      expect(api.requestsTo("POST", amendPath)).toHaveLength(1);
+    });
+    expect(api.requestsTo("POST", amendPath)[0]?.jsonBody).toEqual({
+      reason: "Add live verification.",
+      operations: [
+        {
+          type: "add-task",
+          id: "verify-added-path",
+          contextId: "capture-studio",
+          title: "Verify the added path",
+          instructions: "Exercise the production route.",
+        },
+      ],
+    });
+    await waitFor(() => {
+      expect(api.requestsTo("GET", eventsPath).length).toBeGreaterThan(
+        eventRequestCountBeforeAmend,
+      );
+    });
+    expect(
+      await within(amend).findByText("Durable amendment event"),
+    ).toBeVisible();
+    expect(
+      await within(amend).findByText(/human · Add live verification/),
+    ).toBeVisible();
+    expect(within(amend).getByText(/sha256:old/)).toBeVisible();
+    expect(within(amend).getByText(/sha256:new/)).toBeVisible();
+  });
+
+  it("renders the production unlaunched redirect and non-running amendment remedy inline", async () => {
+    const unlaunched = detailFixture();
+    const capturePath = `/api/specs/command-center/${unlaunched.spec.slug}/actions/capture-scope-amendment`;
+    api.reply("POST", capturePath, {
+      status: 409,
+      json: {
+        code: "gate_blocked",
+        unmetConditions: [
+          "Delivery plan attempt attempt-3 is approved and has launched no execution.",
+        ],
+        instruction:
+          "Nothing was captured. Add the discovered work to the plan itself with `cctl spec plan reopen native-sdd --reason <why>`.",
+      },
+    });
+    const user = userEvent.setup();
+    const rendered = renderWithQuery(
+      <SpecControlsPanel
+        detail={unlaunched}
+        projectName="command-center"
+        surface="execution"
+      />,
+    );
+    const discovery = screen.getByRole("region", {
+      name: "Non-blocking discovery",
+    });
+    await user.type(
+      within(discovery).getByRole("textbox", { name: "Discovery title" }),
+      "Document the migration edge",
+    );
+    await user.type(
+      within(discovery).getByRole("textbox", {
+        name: "Discovery instructions",
+      }),
+      "Carry the edge into the plan.",
+    );
+    await user.click(
+      within(discovery).getByRole("button", { name: "Record discovery" }),
+    );
+
+    expect(await within(discovery).findByRole("alert")).toHaveTextContent(
+      "cctl spec plan reopen native-sdd",
+    );
+    expect(api.requestsTo("POST", capturePath)[0]?.jsonBody).not.toHaveProperty(
+      "executionId",
+    );
+    expect(
+      within(discovery).getByRole("link", { name: "Open delivery plan" }),
+    ).toHaveAttribute("href", "/specs/command-center/native-sdd?view=plan");
+
+    rendered.unmount();
+    api.restore();
+    api = installFetchFixture();
+    const running = runningDpaDetail();
+    const eventsPath =
+      "/api/projects/command-center/sessions/native-sdd-run/graph-workflow/events";
+    const amendPath =
+      "/api/projects/command-center/sessions/native-sdd-run/graph-workflow/amend";
+    api.json("GET", eventsPath, { events: [] });
+    api.reply("POST", amendPath, {
+      status: 409,
+      json: {
+        code: "not_running",
+        error:
+          'Execution "workflow-execution-1" is paused; only a running execution can be amended. Nothing was applied.',
+        instruction:
+          "Resume the run with `cctl workflow live resume` and re-run the amendment, or plan the work into the next attempt with `cctl spec plan open --seed-from last`.",
+      },
+    });
+    renderWithQuery(
+      <SpecControlsPanel
+        detail={running}
+        projectName="command-center"
+        surface="execution"
+      />,
+    );
+    const amend = screen.getByRole("region", { name: "Amend current run" });
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Amendment rationale" }),
+      "Add live verification.",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Task id" }),
+      "verify-added-path",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Target context id" }),
+      "capture-studio",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Task title" }),
+      "Verify the added path",
+    );
+    await user.type(
+      within(amend).getByRole("textbox", { name: "Task instructions" }),
+      "Exercise the production route.",
+    );
+    await user.click(
+      within(amend).getByRole("button", { name: "Queue task addition" }),
+    );
+    await user.click(
+      within(amend).getByRole("button", { name: "Apply amendment" }),
+    );
+
+    expect(await within(amend).findByRole("alert")).toHaveTextContent(
+      "cctl workflow live resume",
+    );
   });
 });
 

@@ -18,7 +18,6 @@ import { getStateDb } from "@/lib/state-store/store";
 import { getSharedWriteQueue } from "@/lib/state-store/write-queue";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
-import { readCompiledOriginMap } from "./compiler";
 import { createDeliveryGate } from "./delivery-gate";
 import { createEvidenceIngestService } from "./evidence-ingest";
 import { createSpecEventsPublisher } from "./events";
@@ -39,6 +38,8 @@ import { createMergeAssociationResolver } from "./merge-association";
 import type { SpecWorkflowComposition } from "./workflow-composition";
 import { registerSpecWorkflowComposition } from "./workflow-composition";
 import { createSpecExecutionContract } from "./execution-contract";
+import { createProductionSpecWorkflowCleanupPort } from "./workflow-cleanup-port";
+import { readSpecExecutionOriginMap } from "./execution-origin-map";
 
 const logger = createLogger("specs.production-workflow-composition");
 
@@ -117,7 +118,11 @@ export function createProductionSpecWorkflowComposition(
         scopeForTier("project", spec.projectPath),
         workflowDefinitionId,
       );
-      return record === null ? [] : readCompiledOriginMap(record.definition);
+      return record === null
+        ? []
+        : readSpecExecutionOriginMap(record.definition, (revisionId) =>
+            specsRepo.getRevisionSnapshot(revisionId),
+          );
     },
     getWorkflowExecutionStatus(workflowExecutionId) {
       for (const workflow of workflowExecutions.listActive().values()) {
@@ -345,6 +350,11 @@ export function createProductionSpecWorkflowComposition(
       },
       policyNotifier: notifier,
       attentionNotifier: notifier,
+      // The reverse hook (`executionAborted`) runs the same coordinator, so
+      // this composition needs the forward seams too: an aborted run still
+      // holding the session's slot is released here rather than left for an
+      // operator to clear by hand (ticket #47 note 9e5ba960).
+      workflowCleanup: createProductionSpecWorkflowCleanupPort(),
       lifecycleGate: {
         async requestApproval(input) {
           const result = await reviewService.requestApproval({

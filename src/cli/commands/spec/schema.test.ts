@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   createSpecInitialElementSchema,
+  draftElementBatchDocumentSchema,
   draftElementDocumentSchema,
 } from "@/lib/specs/authoring-service";
 import {
@@ -12,7 +13,7 @@ import {
   touchedPathSchema,
   validationStrategySchema,
 } from "@/lib/specs/schemas";
-import { executionScopeSchema } from "@/lib/specs/scope-validation";
+import { NATIVE_SDD_GUIDANCE } from "@/lib/specs/native-sdd-guidance";
 import { runCli } from "../../core";
 import type { CliEnv, CliHost } from "../../shared";
 
@@ -71,16 +72,110 @@ async function readDocuments() {
 }
 
 describe("cctl spec schema", () => {
-  it("publishes one document per element kind plus the batch, create, scope, and capture inputs", async () => {
+  it("publishes active authoring, capture, and delivery-plan inputs", async () => {
     const documents = await readDocuments();
 
     expect(documents.map((document) => document.id)).toEqual([
       ...specElementKindSchema.options,
       "element-batch",
+      "element-batch-removals",
       "create-element",
-      "scope",
       "discovered-task",
+      "plan-edit",
+      "guidance",
     ]);
+  });
+
+  it("publishes the materializer, lint, and evidence registries as one offline guidance document", async () => {
+    const documents = await readDocuments();
+    const guidance = documents.find(({ id }) => id === "guidance");
+    const reference = z
+      .object({
+        materializerFieldMappings: z.array(
+          z.object({
+            source: z.string(),
+            target: z.string(),
+            transformation: z.string(),
+          }),
+        ),
+        lintTaxonomy: z.object({
+          evergreen: z.array(
+            z.object({ ruleId: z.string(), severity: z.string() }),
+          ),
+          deliveryPlan: z.array(
+            z.object({ ruleId: z.string(), severity: z.string() }),
+          ),
+        }),
+        evidenceProducers: z.array(
+          z.object({
+            kind: z.string(),
+            sourceEvent: z.string(),
+            requiresStrategyDeclaration: z.boolean(),
+            detail: z.string(),
+          }),
+        ),
+      })
+      .parse(guidance?.example);
+
+    expect(reference).toEqual(NATIVE_SDD_GUIDANCE);
+
+    expect(reference.materializerFieldMappings).toContainEqual({
+      source: "contexts[].contextId",
+      target: "executionContexts[].id",
+      transformation: "copy",
+    });
+    expect(reference.lintTaxonomy.evergreen).toContainEqual({
+      ruleId: "9.7.claim-without-evidence",
+      severity: "blocks_claim",
+    });
+    expect(reference.lintTaxonomy.deliveryPlan).toContainEqual({
+      ruleId: "plan/selected-multi-owned",
+      severity: "blocks_propose",
+    });
+    const validatorVerdict = reference.evidenceProducers.find(
+      ({ kind }) => kind === "validator_verdict",
+    );
+    const testRun = reference.evidenceProducers.find(
+      ({ kind }) => kind === "test_run",
+    );
+    expect(testRun).toMatchObject({
+      sourceEvent: "graph-workflow-validation-result",
+      requiresStrategyDeclaration: true,
+    });
+    expect(validatorVerdict?.sourceEvent).toBe(testRun?.sourceEvent);
+    expect(testRun?.detail).toContain("same validation event");
+  });
+
+  /**
+   * Removal existed server-side and was invisible from every published shape,
+   * which is exactly why nothing reached it. The document is what makes it
+   * discoverable without reading `src/lib/specs`.
+   */
+  it("publishes the removal batch as a keyed document the server itself parses", async () => {
+    const documents = await readDocuments();
+    const batch = documents.find(({ id }) => id === "element-batch-removals");
+
+    expect(batch?.jsonSchema).toMatchObject({
+      type: "object",
+      properties: {
+        removals: {
+          type: "array",
+          items: {
+            type: "object",
+            required: ["elementId", "baseElementVersion"],
+          },
+        },
+      },
+    });
+    // The worked example must be authorable as-is against the accepting
+    // schema, removals included.
+    const parsed = draftElementBatchDocumentSchema.safeParse(batch?.example);
+    expect(parsed.success ? null : parsed.error.issues).toBeNull();
+    expect(batch?.usedBy).toEqual([
+      "cctl spec draft <slug> --file <batch.json>",
+      "cctl spec remove <slug> <handle...>",
+    ]);
+    expect(batch?.notes.join(" ")).toContain("ONE transaction");
   });
 
   /**
@@ -292,9 +387,6 @@ describe("cctl spec schema", () => {
     expect(
       enumsFor("criterion").get("payload.validationStrategy.kinds[]"),
     ).toEqual(["commit", "test_run", "validator_verdict"]);
-    expect(
-      enumsFor("scope").get("exclusionDispositions[].disposition"),
-    ).toEqual(["deferred", "waived", "delivered_elsewhere"]);
   });
 
   it("publishes the machine-kind invariant the server's criterion schema enforces", async () => {
@@ -400,11 +492,6 @@ describe("cctl spec schema", () => {
       ).toBeNull();
     }
     expect(
-      executionScopeSchema.safeParse(
-        documents.find(({ id }) => id === "scope")?.example,
-      ).success,
-    ).toBe(true);
-    expect(
       taskElementPayloadSchema
         .omit({ kind: true })
         .safeParse(
@@ -422,6 +509,9 @@ describe("cctl spec schema", () => {
     expect(stageOf("criterion")).toBe("requirements");
     expect(stageOf("decision")).toBe("design");
     expect(stageOf("task")).toBe("plan");
+    expect(
+      documents.find((document) => document.id === "task")?.notes.join(" "),
+    ).toMatch(/legacy-only.*spec schema plan-edit/i);
     // A section's stage depends on its role, so the per-role answer is what a
     // caller can act on; a single stage would be a lie for design_narrative.
     expect(stageOf("section")).toBe("requirements");
@@ -487,7 +577,6 @@ describe("cctl spec schema", () => {
     for (const id of [
       ...specElementKindSchema.options,
       "element-batch",
-      "scope",
       "discovered-task",
     ]) {
       expect(result.stdout).toContain(`cctl spec schema ${id}`);
@@ -505,6 +594,19 @@ describe("cctl spec schema", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("requirements");
     expect(result.stderr).toContain("requirement");
-    expect(result.stderr).toContain("scope");
+    expect(result.stderr).not.toContain("cctl spec schema scope");
+  });
+
+  it("refuses the retired execution-scope document and points at plan editing", async () => {
+    const result = await runCli(
+      ["spec", "schema", "scope"],
+      env,
+      offlineHost(),
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('unknown schema document "scope"');
+    expect(result.stderr).toContain("cctl spec schema plan-edit");
+    expect(result.stderr).not.toContain("spec start <slug> --file");
   });
 });

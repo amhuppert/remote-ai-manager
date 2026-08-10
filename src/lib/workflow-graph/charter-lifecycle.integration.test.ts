@@ -300,7 +300,11 @@ function setupObservability() {
     async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
       const key = `${projectPath}:${sessionName}`;
       const session = sessions.get(key);
+      const archived = session?.graphWorkflowExecution ?? null;
       if (session) session.graphWorkflowExecution = null;
+      return archived === null
+        ? { archived: false as const, reason: "no_active" as const }
+        : { archived: true as const, execution: archived };
     },
     async markGraphWorkflowContextEventsPreReset() {
       return 0;
@@ -329,6 +333,7 @@ describe("charter lifecycle integration — Observability", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     // 7.3: broadcast in real time to connected clients.

@@ -95,14 +95,13 @@ export const PolicyImpactOnOpenDraft: Story = {
   },
 };
 
-export const ScopeSelection: Story = {
+export const DeliveryPlanLaunchHandoff: Story = {
   render: () => (
     <ExecutionPanel
       detail={denseSpecControlsDetailFixture("none")}
       projectName="command-center"
       pendingAction={null}
       error={null}
-      onStart={fn()}
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
@@ -120,7 +119,6 @@ export const DefinitionReview: Story = {
       projectName="command-center"
       pendingAction={null}
       error={null}
-      onStart={fn()}
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
@@ -140,7 +138,6 @@ export const RunningExecution: Story = {
       projectName="command-center"
       pendingAction={null}
       error={null}
-      onStart={fn()}
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
@@ -160,7 +157,6 @@ export const ReadyToMerge: Story = {
       projectName="command-center"
       pendingAction={null}
       error={null}
-      onStart={fn()}
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
@@ -180,7 +176,6 @@ export const MergeGateApprovalPending: Story = {
       projectName="command-center"
       pendingAction={null}
       error={null}
-      onStart={fn()}
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
@@ -200,7 +195,6 @@ export const MergeGateApprovedAwaitingProof: Story = {
       projectName="command-center"
       pendingAction={null}
       error={null}
-      onStart={fn()}
       onGrantWaiver={fn()}
       onSetDisposition={fn()}
       onGrantGateApproval={fn()}
@@ -252,6 +246,7 @@ export const IntegrityMismatch: Story = {
             mismatchedElementIds: ["requirement-1"],
           },
         ],
+        consistencyFindings: [],
       }}
       isPending={false}
       error={null}

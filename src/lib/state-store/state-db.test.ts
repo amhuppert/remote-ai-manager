@@ -802,8 +802,8 @@ describe("state-db forward-only schema_migrations conflict policy", () => {
 });
 
 describe("state-db breaking-cutover versions", () => {
-  it("this build understands schema version 4 (the validation-status widening, after the workflow agent-assignment cutover at 3, evidence-kind narrowing at 2, and the AgentSessionRef cutover at 1)", () => {
-    expect(KNOWN_SCHEMA_VERSION).toBe(4);
+  it("this build understands schema version 5 (the spec-execution abandoning widening, after the validation-status widening at 4, the workflow agent-assignment cutover at 3, evidence-kind narrowing at 2, and the AgentSessionRef cutover at 1)", () => {
+    expect(KNOWN_SCHEMA_VERSION).toBe(5);
   });
 
   it("opens a DB stamped at this build's version but refuses one stamped above it (an older build's DB advanced past this)", () => {

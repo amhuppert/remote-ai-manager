@@ -19,6 +19,11 @@ import {
   stopConversationActor,
 } from "@/lib/workflows/conversation/manager";
 import { createLogger, withTracing } from "@/lib/logging";
+import {
+  autoReleasesSlot,
+  explicitArchiveEligibility,
+  isTerminalStatus,
+} from "@/lib/workflow-graph/lifecycle-classifier";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
@@ -57,6 +62,7 @@ import type {
   GraphWorkflowHaltReason,
 } from "@/lib/workflow-graph/schemas";
 import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import {
   createAgentAuth,
@@ -743,7 +749,23 @@ export interface GraphWorkflowExecutionRouteDeps {
     contextId: string,
     assignmentId: string,
   ): Promise<GraphWorkflowExecution>;
-  archiveExecution(projectPath: string, sessionName: string): Promise<void>;
+  /**
+   * `audit` is present for the explicit, audited archive act (`live release`,
+   * the spec abandon coordinator); absent for internal auto-release, which is
+   * not a human act and has nothing to attribute.
+   */
+  archiveExecution(
+    projectPath: string,
+    sessionName: string,
+    audit?: { reason: string; actor: string | null },
+    /**
+     * Re-applied inside the archive's own critical section against the row as
+     * it is at that moment, so an eligibility or expected-id decision made out
+     * here cannot be invalidated by a concurrent resume or slot turnover.
+     * Must be pure.
+     */
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+  ): Promise<GraphWorkflowArchiveOutcome>;
   kickOffExecutionLoop(input: {
     projectPath: string;
     projectName: string;
@@ -858,8 +880,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
       contextId,
       assignmentId,
     ),
-  archiveExecution: (projectPath, sessionName) =>
-    executionRepository.archiveActive(projectPath, sessionName),
+  archiveExecution: (projectPath, sessionName, audit, guard) =>
+    executionRepository.archiveActive(projectPath, sessionName, audit, guard),
   async kickOffExecutionLoop(input) {
     await runExecutionLoopWithPlanRepair(input);
   },
@@ -880,8 +902,65 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     defaultStopExecutionLaneDevServers(input),
 };
 
-function isTerminalStatus(status: GraphWorkflowStatus): boolean {
-  return status === "completed" || status === "halted" || status === "aborted";
+/**
+ * Header the token-gated CLI/agent surfaces already use to name the calling
+ * conversation (`cctl` sends it from `CC_CONVERSATION_ID`). The START handler
+ * treats it as a CLAIM: it becomes the execution's owner only after the server
+ * confirms the id belongs to this session's conversations. The request body is
+ * never consulted, so a forged `ownerConversationId` in the payload has no path
+ * to the seed.
+ */
+export const OWNER_CONVERSATION_HEADER = "x-cc-conversation-id";
+
+/**
+ * Message for a clear/archive the lifecycle contract refuses. Names the remedy
+ * rather than only the refusal: a live run has to be paused or aborted before
+ * its slot can be released.
+ */
+/**
+ * `live release`'s body. `expectedExecutionId` is the caller's guard against
+ * releasing a slot that changed hands since they read it.
+ */
+/** `live abort`'s optional body: the reason is carried onto the release audit row. */
+const abortExecutionSchema = z.object({
+  reason: z.string().trim().min(1).optional(),
+  actor: z.string().min(1).nullable().optional(),
+});
+
+const releaseExecutionSchema = z.object({
+  reason: z.string().trim().min(1),
+  expectedExecutionId: z.string().min(1).optional(),
+  actor: z.string().min(1).nullable().optional(),
+});
+
+function archiveRefusalMessage(status: GraphWorkflowStatus): string {
+  return `A ${status} graph workflow execution cannot be cleared. Pause it (or abort it) first, then clear.`;
+}
+
+/**
+ * Server-side owner capture for a start request. Returns the claimed
+ * conversation only when the session actually owns it; every other case
+ * (no header, unknown id, another session's conversation) is an unowned
+ * launch rather than an error — a human start from the browser is legitimate
+ * and carries no conversation.
+ */
+function captureOwnerConversationId(
+  request: Request,
+  session: SessionState,
+): string | null {
+  const claimed = request.headers.get(OWNER_CONVERSATION_HEADER)?.trim();
+  if (!claimed) return null;
+  const owned = session.conversations.some(
+    (conversation) => conversation.id === claimed,
+  );
+  if (!owned) {
+    logger.warn("graph-workflow.start.owner_capture_rejected", {
+      sessionName: session.sessionName,
+      claimedConversationId: claimed,
+    });
+    return null;
+  }
+  return claimed;
 }
 
 function summarizeExecution(
@@ -1220,6 +1299,71 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
   }
 
+  /**
+   * Auto-release (lifecycle contract, design §10): a run that reached
+   * `completed` or `aborted` no longer owns the session's execution slot, so it
+   * is archived the moment it settles rather than waiting for an operator to
+   * clear it. A resumable `halted`/`paused` run is deliberately left holding
+   * the slot — releasing it would admit unrelated validation and race a resume.
+   *
+   * Best-effort by design: a failed archive must not turn a successful abort or
+   * a finished run into an error. `CLEAR` remains the explicit recovery alias
+   * for whatever this misses.
+   */
+  async function autoReleaseSettledExecution(
+    projectPath: string,
+    sessionName: string,
+    audit?: { reason: string; actor: string | null },
+  ): Promise<void> {
+    try {
+      const active = await deps.getActiveExecution(projectPath, sessionName);
+      if (!active || !autoReleasesSlot(active.status)) return;
+      // CLEAR used to be the only backstop that stopped lane dev servers that
+      // survived earlier cleanup, and completion is the one terminal transition
+      // the manager runs no cleanup for. Auto-release takes CLEAR out of the
+      // operator's hands, so the release carries the backstop itself.
+      await deps.stopExecutionLaneDevServers?.({
+        execution: active,
+        projectPath,
+      });
+      // An operator-initiated abort carries its reason here: `aborted`
+      // auto-releases, so this IS the release that ends the run's ownership,
+      // and the reason belongs on its durable audit row rather than nowhere.
+      await deps.archiveExecution(projectPath, sessionName, audit);
+      logger.info("graph-workflow.execution.archived", {
+        projectPath,
+        sessionName,
+        executionId: active.id,
+        status: active.status,
+        reason: "auto_release",
+      });
+    } catch (error) {
+      logger.warn("graph-workflow.execution.auto_release_failed", {
+        projectPath,
+        sessionName,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * Kick off the execution loop and release the slot once it settles. Every
+   * loop start goes through here so the completion transition auto-releases
+   * identically no matter which surface launched or resumed the run.
+   */
+  async function kickOffAndAutoRelease(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    execution: GraphWorkflowExecution;
+  }): Promise<void> {
+    try {
+      await deps.kickOffExecutionLoop(input);
+    } finally {
+      await autoReleaseSettledExecution(input.projectPath, input.sessionName);
+    }
+  }
+
   async function reportExecutionLoopFailure(input: {
     projectPath: string;
     sessionName: string;
@@ -1333,6 +1477,14 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
+    // Owner identity is produced here, not read off the payload: the claim
+    // arrives in the token-gated caller header and only survives if this
+    // session owns the conversation.
+    const ownerConversationId = captureOwnerConversationId(
+      request,
+      resolved.session,
+    );
+
     let execution: GraphWorkflowExecution;
     try {
       // The active-execution and uncommitted-changes guards plus start-input
@@ -1351,6 +1503,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
         ...(parsed.data.parameters !== undefined
           ? { parameters: parsed.data.parameters }
           : {}),
+        ...(ownerConversationId !== null ? { ownerConversationId } : {}),
       });
     } catch (error) {
       if (error instanceof WorkflowDefinitionApprovalRequiredError) {
@@ -1416,7 +1569,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       await markExecutionRunning({ projectPath, sessionName }, execution);
       void Promise.resolve()
         .then(() =>
-          deps.kickOffExecutionLoop({
+          kickOffAndAutoRelease({
             projectPath,
             projectName: resolved.projectName,
             sessionName,
@@ -1471,6 +1624,13 @@ export function createGraphWorkflowExecutionRouteHandlers(
     expectedDefinitionRevision?: number;
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
+    /**
+     * The launching conversation, resolved by the in-process caller (the spec
+     * execution-start gate, the MCP start tool). `null` is an explicit "this
+     * seam has no conversation identity" — a Studio-driven spec grant, for
+     * instance — and leaves the run unowned.
+     */
+    ownerConversationId?: string | null;
   }): Promise<GraphWorkflowExecution> {
     let execution: GraphWorkflowExecution;
     try {
@@ -1484,6 +1644,10 @@ export function createGraphWorkflowExecutionRouteHandlers(
         ...(input.tier !== undefined ? { tier: input.tier } : {}),
         ...(input.parameters !== undefined
           ? { parameters: input.parameters }
+          : {}),
+        ...(input.ownerConversationId !== undefined &&
+        input.ownerConversationId !== null
+          ? { ownerConversationId: input.ownerConversationId }
           : {}),
       });
     } catch (error) {
@@ -1508,7 +1672,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
 
     void Promise.resolve()
       .then(() =>
-        deps.kickOffExecutionLoop({
+        kickOffAndAutoRelease({
           projectPath: input.projectPath,
           projectName: input.projectName,
           sessionName: input.sessionName,
@@ -1728,7 +1892,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
       void Promise.resolve()
         .then(() =>
-          deps.kickOffExecutionLoop({
+          kickOffAndAutoRelease({
             projectPath: resolved.projectPath,
             projectName: resolved.projectName,
             sessionName: resolved.sessionName,
@@ -1758,13 +1922,17 @@ export function createGraphWorkflowExecutionRouteHandlers(
   }
 
   async function ABORT(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const resolved = await resolveSession(context, deps);
     if ("error" in resolved) {
       return resolved.error;
     }
+    const abortBody = abortExecutionSchema.safeParse(
+      await request.json().catch(() => ({})),
+    );
+    const abortReason = abortBody.success ? abortBody.data.reason : undefined;
 
     try {
       const execution = await deps.abortExecution(
@@ -1782,8 +1950,23 @@ export function createGraphWorkflowExecutionRouteHandlers(
           });
         }
       }
+      // `aborted` auto-releases: the slot is free the moment this route
+      // returns, with no separate clear step. Runs after the abort's own
+      // cleanup (question withdrawal, lane dev servers), which needs the
+      // execution still active.
+      await autoReleaseSettledExecution(
+        resolved.projectPath,
+        resolved.sessionName,
+        abortReason === undefined
+          ? undefined
+          : {
+              reason: abortReason,
+              actor: abortBody.success ? (abortBody.data.actor ?? null) : null,
+            },
+      );
       return NextResponse.json({
         execution: summarizeExecution(execution, false),
+        released: true,
       });
     } catch (error) {
       return respondToManagerError(error);
@@ -2130,7 +2313,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     );
     void Promise.resolve()
       .then(() =>
-        deps.kickOffExecutionLoop({
+        kickOffAndAutoRelease({
           projectPath: input.projectPath,
           projectName: input.projectName,
           sessionName: input.sessionName,
@@ -2278,24 +2461,129 @@ export function createGraphWorkflowExecutionRouteHandlers(
       resolved.projectPath,
       resolved.sessionName,
     );
-    if (!activeExecution || !isTerminalStatus(activeExecution.status)) {
+    // CLEAR is the explicit, audited archive act of the lifecycle contract —
+    // the operator's recovery alias for "release this slot". With auto-release
+    // in place, a completed/aborted run is normally already archived, so a
+    // missing active execution is the success case, not a conflict: reporting
+    // 409 there would be a dead end for exactly the state the operator wants.
+    if (!activeExecution) {
+      return NextResponse.json({ cleared: true });
+    }
+    const eligibility = explicitArchiveEligibility(activeExecution.status);
+    if (eligibility === "refused") {
       return NextResponse.json(
         {
-          error:
-            "Only completed, halted, or aborted graph workflow executions can be cleared",
+          error: archiveRefusalMessage(activeExecution.status),
         } satisfies ApiError,
         { status: 409 },
       );
     }
 
     // Backstop: stop any lane dev servers that survived prior cleanup before
-    // the terminal execution (and its lane references) is archived away.
+    // the execution (and its lane references) is archived away.
     await deps.stopExecutionLaneDevServers?.({
       execution: activeExecution,
       projectPath: resolved.projectPath,
     });
     await deps.archiveExecution(resolved.projectPath, resolved.sessionName);
     return NextResponse.json({ cleared: true });
+  }
+
+  /**
+   * `cctl workflow live release` — the explicit, audited archive act, named
+   * for what an operator wants ("release this session's slot") rather than for
+   * the storage move. Eligibility is the lifecycle contract's, never a local
+   * copy. A run the contract refuses is reported with the verb that unblocks
+   * it instead of being forced.
+   */
+  async function RELEASE(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) return resolved.error;
+
+    const rawBody: unknown = await request.json().catch(() => ({}));
+    const parsed = releaseExecutionSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "reason must be a non-empty string" } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const active = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+    // With auto-release in place a completed/aborted run is normally already
+    // archived, so "nothing active" is the success the operator asked for, not
+    // a conflict — reporting 409 here would dead-end exactly the state they
+    // wanted. Idempotent by design: releasing twice is not an error.
+    if (!active) {
+      // A caller that named an execution asked about THAT run. Reporting a
+      // generic "already released" would let a stale id read as confirmation
+      // that its own target was cleaned up, which it is not.
+      return parsed.data.expectedExecutionId === undefined
+        ? NextResponse.json({ released: true, alreadyReleased: true })
+        : NextResponse.json(
+            {
+              error: `This session owns no execution slot, so execution ${parsed.data.expectedExecutionId} could not be released. Re-check with 'cctl workflow status'.`,
+            } satisfies ApiError,
+            { status: 409 },
+          );
+    }
+    if (
+      parsed.data.expectedExecutionId !== undefined &&
+      parsed.data.expectedExecutionId !== active.id
+    ) {
+      return NextResponse.json(
+        {
+          error: `Execution ${parsed.data.expectedExecutionId} does not own this session's slot; ${active.id} (${active.status}) does. Re-check with 'cctl workflow status', then release the run you mean.`,
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+    if (explicitArchiveEligibility(active.status) === "refused") {
+      return NextResponse.json(
+        {
+          error: `A ${active.status} graph workflow execution still owns this session's slot and cannot be released. Abort it first with 'cctl workflow live abort --reason <reason>', then release.`,
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    await deps.stopExecutionLaneDevServers?.({
+      execution: active,
+      projectPath: resolved.projectPath,
+    });
+    const expectedId = parsed.data.expectedExecutionId;
+    const outcome = await deps.archiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+      { reason: parsed.data.reason, actor: parsed.data.actor ?? null },
+      (current) =>
+        (expectedId === undefined || current.id === expectedId) &&
+        explicitArchiveEligibility(current.status) !== "refused",
+    );
+    if (!outcome.archived) {
+      // The slot turned over between the checks above and the archive itself.
+      return NextResponse.json(
+        {
+          error:
+            outcome.reason === "no_active"
+              ? "This session's execution slot was released by someone else before this request completed; nothing was archived."
+              : `The session's execution slot changed to ${outcome.execution.id} (${outcome.execution.status}) before this request completed. Re-check with 'cctl workflow status', then release the run you mean.`,
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({
+      released: true,
+      alreadyReleased: false,
+      executionId: outcome.execution.id,
+      status: outcome.execution.status,
+    });
   }
 
   return {
@@ -2308,6 +2596,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     PAUSE,
     RESUME,
     ABORT,
+    RELEASE,
     RESET_CONTEXT,
     RESET_ASSIGNMENT,
     RESOLVE_APPROVAL,
@@ -2334,6 +2623,8 @@ export async function launchGraphWorkflowExecution(
     expectedDefinitionRevision?: number;
     tier?: "project" | "global";
     parameters?: Record<string, unknown>;
+    /** Owner conversation resolved by the calling seam; `null` when it has none. */
+    ownerConversationId?: string | null;
   },
   deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
 ): Promise<GraphWorkflowExecution> {
@@ -2397,6 +2688,127 @@ export async function sessionHasPendingWorkflowDefinitionApproval(input: {
   });
 }
 
+/**
+ * Where the named run stands relative to the session's execution slot. Callers
+ * that must clean a specific run up — the spec abandon coordinator, the
+ * `cctl workflow live` verbs — need "aborted but still holding the slot"
+ * separated from "already released", which a bare status cannot express.
+ */
+export type GraphWorkflowExecutionPlacement =
+  | { kind: "missing" }
+  | { kind: "archived"; status: GraphWorkflowStatus }
+  | { kind: "active"; status: GraphWorkflowStatus };
+
+/**
+ * Locate a named execution without HTTP transport. Resolves against the
+ * session's live slot first, then the archive — a cleared run keeps its
+ * terminal status there, so only a truly deleted execution reports `missing`.
+ */
+export async function locateGraphWorkflowExecution(
+  input: {
+    projectPath: string;
+    sessionName: string;
+    workflowExecutionId: string;
+  },
+  deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
+): Promise<GraphWorkflowExecutionPlacement> {
+  const active = await deps.getActiveExecution(
+    input.projectPath,
+    input.sessionName,
+  );
+  if (active !== null && active.id === input.workflowExecutionId) {
+    return { kind: "active", status: active.status };
+  }
+  const listArchived =
+    deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
+  const archived = (
+    await listArchived(input.projectPath, input.sessionName)
+  ).find((execution) => execution.id === input.workflowExecutionId);
+  return archived === undefined
+    ? { kind: "missing" }
+    : { kind: "archived", status: archived.status };
+}
+
+/**
+ * Abort the session's active run when — and only when — it is still the named
+ * execution. The id guard matters for server-side callers that pinned a target
+ * earlier: without it a slot re-taken in between would be aborted instead.
+ */
+export async function abortGraphWorkflowExecutionForSession(
+  input: {
+    projectPath: string;
+    sessionName: string;
+    workflowExecutionId: string;
+  },
+  deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
+): Promise<GraphWorkflowExecution | null> {
+  const active = await deps.getActiveExecution(
+    input.projectPath,
+    input.sessionName,
+  );
+  if (active === null || active.id !== input.workflowExecutionId) return null;
+  const aborted = await deps.abortExecution(
+    input.projectPath,
+    input.sessionName,
+  );
+  await deps.executionAborted?.(input.workflowExecutionId);
+  return aborted;
+}
+
+/**
+ * The explicit, audited archive act of the lifecycle contract, applied to a
+ * named run: release the session's slot. Eligibility is the contract's, never
+ * a local copy — a status it refuses is reported back rather than forced.
+ */
+export async function releaseGraphWorkflowExecutionForSession(
+  input: {
+    projectPath: string;
+    sessionName: string;
+    workflowExecutionId: string;
+    reason?: string;
+    actor?: string | null;
+  },
+  deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
+): Promise<
+  | { released: true }
+  | { released: false; reason: "not_active" }
+  | { released: false; reason: "refused"; status: GraphWorkflowStatus }
+> {
+  const active = await deps.getActiveExecution(
+    input.projectPath,
+    input.sessionName,
+  );
+  if (active === null || active.id !== input.workflowExecutionId) {
+    return { released: false, reason: "not_active" };
+  }
+  if (explicitArchiveEligibility(active.status) === "refused") {
+    return { released: false, reason: "refused", status: active.status };
+  }
+  await deps.stopExecutionLaneDevServers?.({
+    execution: active,
+    projectPath: input.projectPath,
+  });
+  const outcome = await deps.archiveExecution(
+    input.projectPath,
+    input.sessionName,
+    {
+      reason: input.reason ?? "Released by an explicit archive act.",
+      actor: input.actor ?? null,
+    },
+    (current) =>
+      current.id === input.workflowExecutionId &&
+      explicitArchiveEligibility(current.status) !== "refused",
+  );
+  if (outcome.archived) return { released: true };
+  return outcome.reason === "no_active"
+    ? { released: false, reason: "not_active" }
+    : {
+        released: false,
+        reason: "refused",
+        status: outcome.execution.status,
+      };
+}
+
 export const startGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.START,
 );
@@ -2420,6 +2832,9 @@ export const resumeGraphWorkflowExecution = withTracing(
 );
 export const abortGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.ABORT,
+);
+export const releaseGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.RELEASE,
 );
 export const resetGraphWorkflowExecutionContext = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESET_CONTEXT,

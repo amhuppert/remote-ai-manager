@@ -1,7 +1,7 @@
 /**
  * `cctl spec schema` — the agent surface describing its own input documents
- * (R24.4). Off this repository the element write document, the execution scope
- * document, and the discovered-task document are otherwise knowable only by
+ * (R24.4). Off this repository the element write, delivery-plan edit, and
+ * discovered-task documents are otherwise knowable only by
  * reading `src/lib/specs/**`, so every shape here is DERIVED from the schemas
  * the server parses with: the JSON Schema, the enumerated values, and the
  * admitting authoring stage all come from those sources, and the worked
@@ -18,6 +18,7 @@ import { z } from "zod";
 
 import {
   createSpecInitialElementSchema,
+  draftElementBatchDocumentSchema,
   draftElementDocumentSchema,
   type CreateSpecInitialElement,
   type DraftElementInput,
@@ -35,14 +36,16 @@ import {
   type TaskElementPayload,
 } from "@/lib/specs/schemas";
 import {
-  executionScopeSchema,
-  type ExecutionScope,
-} from "@/lib/specs/scope-validation";
-import {
   admitDraftWrite,
   authoringStages,
   resolveAuthoringDials,
 } from "@/lib/specs/transitions";
+import type { DeliveryPlanDocument } from "@/lib/specs/delivery-plan";
+import { deliveryPlanEditRequestSchema } from "@/lib/specs/delivery-plan-views";
+import {
+  NATIVE_SDD_GUIDANCE,
+  nativeSddGuidanceSchema,
+} from "@/lib/specs/native-sdd-guidance";
 import { flagNamesFor } from "../../help-registry";
 import {
   EXIT_OK,
@@ -76,6 +79,8 @@ interface SchemaDocument {
 
 const DRAFT_USAGE = "cctl spec draft <slug> --file <element.json>";
 const BATCH_USAGE = "cctl spec draft <slug> --file <elements.json>";
+const REMOVAL_BATCH_USAGE = "cctl spec draft <slug> --file <batch.json>";
+const REMOVE_USAGE = "cctl spec remove <slug> <handle...>";
 const CREATE_USAGE =
   "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>";
 
@@ -83,6 +88,7 @@ const TOUCHED_PATH_DESCRIPTION =
   "normalized repo-relative POSIX paths; directories without a trailing slash";
 
 const CREATE_DOCUMENT_ID = "create-element";
+const REMOVAL_BATCH_DOCUMENT_ID = "element-batch-removals";
 
 /**
  * What the compare-and-swap version is, and the trap in reading one: element
@@ -244,8 +250,9 @@ const KIND_NOTES: Record<SpecElementKind, readonly string[]> = {
     "tracedRequirementElementIds holds requirement elementIds, not R<n> handles.",
   ],
   task: [
-    "All four id arrays hold elementIds, not handles; dependsOnTaskElementIds is the execution ordering the compiler reads.",
-    "Size each task for one agent lane, and declare touchedPaths where they communicate a parallelism claim.",
+    "Legacy-only: this document describes task elements on an already-open evergreen Plan revision. Current delivery tasks use `cctl spec schema plan-edit` and `cctl spec plan edit <slug> --file <plan.json>`.",
+    "All four id arrays hold elementIds, not handles; dependsOnTaskElementIds is the ordering consumed only by the legacy compiler.",
+    "Legacy task touchedPaths describe review surfaces. DeliveryPlanAttempt documents declare touchedSurfaces once for the authored graph.",
   ],
 };
 
@@ -344,18 +351,107 @@ const BATCH_EXAMPLE: DraftElementInput[] = [
   draftExample("criterion"),
 ];
 
-const SCOPE_EXAMPLE: ExecutionScope = {
-  selectedTaskIds: ["task-publish-input-schemas"],
-  selectedCriterionIds: ["crit-schema-per-kind"],
-  exclusionDispositions: [
-    { criterionId: "crit-cross-spec-search", disposition: "deferred" },
+/**
+ * A worked removal batch: an unrelated requirement is updated while the task
+ * and the criterion it covered leave together. Removing either of those two
+ * alone would leave the other pointing at content the revision no longer
+ * carries, which is the whole reason one document holds both.
+ */
+const REMOVAL_BATCH_EXAMPLE = {
+  elements: [{ ...ELEMENT_EXAMPLES.requirement, baseElementVersion: 3 }],
+  removals: [
+    { elementId: "task-publish-input-schemas", baseElementVersion: 2 },
+    { elementId: "crit-schema-per-kind", baseElementVersion: 4 },
   ],
 };
 
+/**
+ * A one-context plan: the smallest document that is legal under the whole
+ * disposition and ownership law, so an author can copy it and grow it rather
+ * than assemble the shape from the JSON Schema.
+ */
+const PLAN_EDIT_EXAMPLE: DeliveryPlanDocument = {
+  dispositions: [
+    {
+      criterionElementId: "crit-schema-per-kind",
+      disposition: "selected",
+      deliveredByExecutionId: null,
+      reaffirmation: null,
+      note: null,
+    },
+  ],
+  contexts: [
+    {
+      contextId: "publish-input-schemas",
+      title: "Publish every --file document",
+      contextType: "delivery",
+      criterionElementIds: ["crit-schema-per-kind"],
+      acceptanceContract: [
+        "`cctl spec schema` prints a JSON Schema and a worked example for every --file document the family accepts.",
+      ],
+      proofPlan: [
+        {
+          criterionElementId: "crit-schema-per-kind",
+          evidenceKinds: ["validator_verdict"],
+          note: "The schema contract test asserts one document per accepted file shape.",
+        },
+      ],
+    },
+  ],
+  tasks: [
+    {
+      taskId: "publish-plan-edit",
+      contextId: "publish-input-schemas",
+      title: "Publish the plan edit document",
+      instructions:
+        "Add the plan edit document to the schema registry with its example and notes.",
+      order: 0,
+      contributesToCriterionElementIds: ["crit-schema-per-kind"],
+    },
+  ],
+  edges: [],
+  wiring: [
+    {
+      capabilityId: "spec-schema-registry",
+      criterionElementIds: ["crit-schema-per-kind"],
+      owner: {
+        kind: "call_site",
+        contextId: "publish-input-schemas",
+        locator: "src/cli/commands/spec/schema.ts allDocuments()",
+      },
+    },
+  ],
+  policyOverrides: [],
+  touchedSurfaces: ["src/cli/commands/spec/"],
+  governance: {
+    mission: "Publish every plan input document from the schema registry.",
+    charterInvariants: [
+      {
+        id: "portable-guidance",
+        statement:
+          "Agent-facing guidance ships through the CC skill and generated CLI help, never .kiro/steering.",
+      },
+    ],
+    sourcesOfTruth: [
+      {
+        rank: 1,
+        id: "final-design",
+        label: "Final agreed design",
+        type: "document",
+        locator: "command-center#47 attachment f7b542c4",
+        description: "Section 4 owns the plan document shape.",
+        appliesTo: "every context",
+        accessPolicy: "external-readonly",
+      },
+    ],
+    validationCommandNames: ["typecheck", "test"],
+  },
+};
+
 const DISCOVERED_TASK_EXAMPLE: Omit<TaskElementPayload, "kind"> = {
-  title: "Publish the execution scope document too",
+  title: "Publish the delivery-plan migration guidance too",
   instructions:
-    "The scope document was undocumented as well; capture it as plan work on the amended revision.",
+    "The retired scope-file path needs an exact migration act; capture that documentation as plan work on the next delivery attempt.",
   tracedRequirementElementIds: ["req-self-describing-surface"],
   tracedDecisionElementIds: [],
   coveredCriterionElementIds: [],
@@ -382,7 +478,10 @@ function elementDocuments(): SchemaDocument[] {
     );
     return {
       id: kind,
-      title: `draft element write document (kind: ${kind})`,
+      title:
+        kind === "task"
+          ? "legacy draft element write document (kind: task)"
+          : `draft element write document (kind: ${kind})`,
       usedBy: [DRAFT_USAGE, BATCH_USAGE],
       jsonSchema,
       enums: collectEnums(jsonSchema, ""),
@@ -444,6 +543,33 @@ function batchDocument(): SchemaDocument {
 }
 
 /**
+ * The keyed batch document: the array form plus the removals that can only
+ * travel with it. Published separately from `element-batch` because the two
+ * are different shapes, and an author reading an array schema has no way to
+ * learn that a removal is expressible at all — the exact invisibility that
+ * left the server's removal path unreachable.
+ */
+function removalBatchDocument(): SchemaDocument {
+  const jsonSchema = jsonSchemaOf(draftElementBatchDocumentSchema);
+  return {
+    id: REMOVAL_BATCH_DOCUMENT_ID,
+    title: "batch document with removals",
+    usedBy: [REMOVAL_BATCH_USAGE, REMOVE_USAGE],
+    jsonSchema,
+    enums: collectEnums(jsonSchema, ""),
+    example: REMOVAL_BATCH_EXAMPLE,
+    notes: [
+      "Writes and removals land in ONE transaction. That is why they share a document: a reference and the element it points at can only leave together, so removing them in two files has no legal order.",
+      "A removal states the element id and the version it takes out — there is no handle form here, because the server parses ids. `cctl spec remove <slug> <handle...>` is the same document with the handles already resolved.",
+      "Either array may be empty, but not both. Writing and removing the same element id in one document is refused as the contradiction it is.",
+      "A removal that would leave a surviving element pointing at content the revision no longer carries is refused whole, naming both ends of the dangling reference; rewrite or remove the referring element in the same document.",
+      DRAFT_REINTRODUCTION_NOTE,
+      ...BASE_VERSION_NOTES,
+    ],
+  };
+}
+
+/**
  * The create document: the same element without a compare-and-swap version,
  * because the revision it opens holds nothing to compare against. Published as
  * one kind-correlated document rather than five, since a spec is created once
@@ -484,23 +610,10 @@ function createDocument(): SchemaDocument {
 }
 
 function otherDocuments(): SchemaDocument[] {
-  const scopeSchema = jsonSchemaOf(executionScopeSchema);
   const discoveredTaskSchema = jsonSchemaOf(
     taskElementPayloadSchema.omit({ kind: true }),
   );
   return [
-    {
-      id: "scope",
-      title: "execution scope document",
-      usedBy: ["cctl spec start <slug> --file <scope.json>"],
-      jsonSchema: scopeSchema,
-      enums: collectEnums(scopeSchema, ""),
-      example: SCOPE_EXAMPLE,
-      notes: [
-        "Tasks and criteria are addressed by element id, not by handle — read the ids from `cctl spec show <slug> --json`.",
-        "Every criterion of the approved plan that is not selected needs an exclusion disposition; a selected criterion needs a selected task that covers it, and a selected task needs its declared dependencies selected too.",
-      ],
-    },
     {
       id: "discovered-task",
       title: "discovered-task document",
@@ -513,13 +626,53 @@ function otherDocuments(): SchemaDocument[] {
         "Capture amends the spec from inside a running execution; to continue authoring an approved spec outside one, use `cctl spec amend <slug>` and `cctl spec draft`.",
       ],
     },
+    planEditDocument(),
+    guidanceDocument(),
   ];
+}
+
+function planEditDocument(): SchemaDocument {
+  const schema = jsonSchemaOf(deliveryPlanEditRequestSchema);
+  return {
+    id: "plan-edit",
+    title: "delivery plan edit document",
+    usedBy: ["cctl spec plan edit <slug> --file <plan.json>"],
+    jsonSchema: schema,
+    enums: collectEnums(schema, ""),
+    example: {
+      expectedDraftRevision: 1,
+      document: PLAN_EDIT_EXAMPLE,
+    },
+    notes: [
+      "`expectedDraftRevision` is the plan's compare-and-swap token, the way `baseElementVersion` is an element's: read it from `cctl spec plan get <slug> --json` and send back the revision you edited.",
+      "Every criterion of the pinned revision carries exactly one disposition; exactly one context owns each `selected` criterion, and every other disposition has zero owners.",
+      "A context owning no criterion must be typed `integration` or `closeout` and carry its own acceptance contract — that contract is the only thing its validator is held to.",
+      "Task `order` is per context and contiguous from 0; `contributesToCriterionElementIds` is provenance only and never manufactures a validator contract.",
+    ],
+  };
+}
+
+function guidanceDocument(): SchemaDocument {
+  const schema = jsonSchemaOf(nativeSddGuidanceSchema);
+  return {
+    id: "guidance",
+    title: "native SDD compile, lint, and evidence reference",
+    usedBy: ["cctl spec schema guidance"],
+    jsonSchema: schema,
+    enums: collectEnums(schema, ""),
+    example: NATIVE_SDD_GUIDANCE,
+    notes: [
+      "Materializer mappings come from the field registry the delivery-plan materializer reads; lint rule ids and severities come from the registries that construct findings; evidence producers come from the registry evidence ingestion and plan preview share.",
+      "test_run is minted only when the criterion's own strategy declares it, alongside validator_verdict from the same graph-workflow-validation-result event; no test runner mints independent test_run evidence.",
+    ],
+  };
 }
 
 function allDocuments(): SchemaDocument[] {
   return [
     ...elementDocuments(),
     batchDocument(),
+    removalBatchDocument(),
     createDocument(),
     ...otherDocuments(),
   ];
@@ -559,7 +712,7 @@ function documentText(document: SchemaDocument): string {
 
 function indexText(documents: readonly SchemaDocument[]): string {
   return [
-    "schema-backed input documents:",
+    "offline spec documents:",
     ...documents.map(
       (document) => `  cctl spec schema ${document.id}\t${document.title}`,
     ),
@@ -585,15 +738,19 @@ export function runSpecSchema(
       stdout: render(json, `${indexText(documents)}\n`, {
         ok: true,
         documents,
-        hint: "run `cctl spec schema <document>` for its JSON Schema, enumerated values, and a worked example",
+        hint: "run `cctl spec schema <document>` for its generated schema or mechanical reference",
       }),
       stderr: "",
     };
   }
   const selected = documents.find((document) => document.id === requested);
   if (selected === undefined) {
+    const migration =
+      requested === "scope"
+        ? "; execution-scope documents are retired — inspect the authored graph with `cctl spec schema plan-edit`"
+        : "";
     return usageFailure(
-      `spec schema: unknown document ${JSON.stringify(requested)}; known documents: ${documents
+      `spec schema: unknown schema document ${JSON.stringify(requested)}${migration}; known documents: ${documents
         .map((document) => document.id)
         .join(", ")}`,
       json,
@@ -604,7 +761,10 @@ export function runSpecSchema(
     stdout: render(json, `${documentText(selected)}\n`, {
       ok: true,
       documents: [selected],
-      hint: `write this document to a file, then run: ${selected.usedBy[0]}`,
+      hint:
+        selected.id === "guidance"
+          ? "consult the relevant `cctl spec <command> --help` leaf for the same generated reference at the point of use"
+          : `write this document to a file, then run: ${selected.usedBy[0]}`,
     }),
     stderr: "",
   };

@@ -13,6 +13,7 @@ import {
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
 import { createClientLogger } from "@/lib/logging/client-logger";
 import { cn } from "@/lib/ui/cn";
+import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
 import type { LintFinding } from "@/lib/specs/lint";
 import type {
   SpecCriterionDispositionRow,
@@ -129,13 +130,6 @@ const severityTone: Record<LintFinding["severity"], StatusChipTone> = {
   blocks_claim: "red",
   blocks_signoff: "red",
   advisory: "amber",
-};
-
-const severityLabel: Record<LintFinding["severity"], string> = {
-  blocks_propose: "Blocks propose",
-  blocks_claim: "Blocks claim",
-  blocks_signoff: "Blocks sign-off",
-  advisory: "Advisory",
 };
 
 export function SpecEvidencePanel({
@@ -644,6 +638,10 @@ export function SpecLintPanel({
   isPending: boolean;
   error: string | null;
 }): React.JSX.Element {
+  // The same projection `cctl spec lint`, the status tier, and the propose
+  // refusal read: grouping, ranking, and what counts as blocking are decided
+  // once, so this tab cannot rank or count a draft differently from the CLI.
+  const health = draftHealth(findings);
   return (
     <section aria-labelledby="spec-lint-heading" className="grid gap-md">
       <div className="flex flex-wrap items-start justify-between gap-md">
@@ -677,42 +675,60 @@ export function SpecLintPanel({
         >
           {error}
         </p>
-      ) : findings.length === 0 ? (
+      ) : health.total === 0 ? (
         <p className="m-0 rounded-lg border border-solid border-green-dim bg-green-glow p-md font-mono text-[0.72rem] text-green">
           No lint findings for this draft.
         </p>
       ) : (
-        <ol className="m-0 grid list-none gap-sm p-0">
-          {findings.map((finding, index) => (
-            <li
-              key={`${finding.ruleId}-${finding.elementHandle}-${index}`}
-              className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-md"
+        <>
+          <p className="m-0 font-mono text-[0.7rem] text-text-tertiary">
+            {`${health.blocking} of ${health.total} would block propose`}
+          </p>
+          {health.groups.map((group) => (
+            <section
+              key={group.severity}
+              role="group"
+              aria-label={`${LINT_SEVERITY_LABEL[group.severity]} (${group.findings.length})`}
+              className="grid gap-sm"
             >
-              <div className="flex flex-wrap items-center gap-sm">
-                <StatusChip tone={severityTone[finding.severity]}>
-                  {severityLabel[finding.severity]}
-                </StatusChip>
-                <span className="font-mono text-[0.64rem] text-text-tertiary">
-                  {finding.ruleId}
-                </span>
-                {finding.elementHandle.length > 0 && (
-                  <Link
-                    href={elementHref(projectName, slug, finding.elementHandle)}
-                    className="ml-auto font-mono text-[0.7rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+              <ol className="m-0 grid list-none gap-sm p-0">
+                {group.findings.map((finding, index) => (
+                  <li
+                    key={`${finding.ruleId}-${finding.elementHandle}-${index}`}
+                    className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-md"
                   >
-                    {finding.elementHandle} · Open element
-                  </Link>
-                )}
-              </div>
-              <p
-                data-testid="lint-finding-message"
-                className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-primary"
-              >
-                {finding.message}
-              </p>
-            </li>
+                    <div className="flex flex-wrap items-center gap-sm">
+                      <StatusChip tone={severityTone[finding.severity]}>
+                        {LINT_SEVERITY_LABEL[finding.severity]}
+                      </StatusChip>
+                      <span className="font-mono text-[0.64rem] text-text-tertiary">
+                        {finding.ruleId}
+                      </span>
+                      {finding.elementHandle.length > 0 && (
+                        <Link
+                          href={elementHref(
+                            projectName,
+                            slug,
+                            finding.elementHandle,
+                          )}
+                          className="ml-auto font-mono text-[0.7rem] font-semibold text-cyan no-underline hover:text-cyan-dim focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+                        >
+                          {finding.elementHandle} · Open element
+                        </Link>
+                      )}
+                    </div>
+                    <p
+                      data-testid="lint-finding-message"
+                      className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-primary"
+                    >
+                      {finding.message}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            </section>
           ))}
-        </ol>
+        </>
       )}
     </section>
   );

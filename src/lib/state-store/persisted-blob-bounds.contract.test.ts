@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { compactionEnvelopeSchema } from "@/lib/context-artifacts/schemas";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { deliveryPlanDocumentSchema } from "@/lib/specs/delivery-plan";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { graphWorkflowExecutionSchema } from "@/lib/workflow-graph/schemas";
 import { graphWorkflowExecutionEventSchema } from "@/lib/workflow-graph/event-schemas";
@@ -296,12 +297,14 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: the contexts one accepted live-edit batch touched; a batch is bounded by its own operation payload, not by edit history.",
       "event.documents":
         "tracked: a whole-registry snapshot of the execution's shared documents at that update — the registry itself grows one entry per workflow-produced document with no eviction (registered as such on graph_workflow_executions.runtime_json.sharedDocuments).",
-      // Deliberately three entries rather than one `event.**` subtree: an
-      // expansion receipt that grows a FOURTH id array still has to answer here.
+      // Deliberately individual entries rather than one `event.**` subtree: an
+      // event that grows another id array still has to answer here.
       "event.addedContextIds":
-        "bounded: the contexts one accepted expansion batch created, capped by the per-request and cumulative expansion caps (D4 decision D5); a refused batch adds none.",
+        "bounded: the contexts one accepted expansion batch or additive execution-amendment operand created; expansion is capped by the per-request and cumulative expansion caps (D4 decision D5), and amendment records at most one id per operation in its single accepted request.",
       "event.addedTaskIds":
-        "bounded: the tasks one accepted expansion batch created, each belonging to a context in addedContextIds and bounded by the same caps.",
+        "bounded: the tasks one accepted expansion batch or additive execution-amendment operand created; expansion tasks are bounded by the same caps as addedContextIds, and amendment records at most one id per operation in its single accepted request.",
+      "event.addedEdgeIds":
+        "bounded: the edges one accepted additive execution-amendment operand created, with at most one id recorded per operation in that single request.",
       "event.rejoinContextIds":
         "bounded: the pre-declared rejoin targets of one expansion batch, a deduplicated subset of the contexts downstream of the invoker.",
     },
@@ -361,6 +364,11 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       "extras.*":
         "tracked: opaque ungraduated envelope field values (z.unknown), capped by the same generation output guards as the typed fields; unschema'd until a field graduates to a typed top-level field.",
     },
+  },
+  {
+    label: "spec_delivery_plan_attempts content_json",
+    schema: deliveryPlanDocumentSchema,
+    discharges: {},
   },
 ];
 

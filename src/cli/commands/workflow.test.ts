@@ -298,6 +298,48 @@ describe("cctl workflow start", () => {
     ).toBe(true);
   });
 
+  it("names the calling conversation so the server can capture it as the run's owner", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        { execution: { executionId: "exec-9", status: "running" } },
+        202,
+      ),
+    );
+    const result = await runCli(
+      ["workflow", "start", "wf-1"],
+      {
+        ...baseEnv,
+        CC_CONVERSATION_ID: "conv-planner",
+      },
+      host,
+    );
+
+    expect(result.exitCode).toBe(0);
+    // A header claim, never a body field: the server verifies it against the
+    // session's conversations, and a body-supplied owner is ignored outright.
+    expect(host.requests[0]?.init.headers["x-cc-conversation-id"]).toBe(
+      "conv-planner",
+    );
+    expect(JSON.parse(host.requests[0]?.init.body ?? "{}")).not.toHaveProperty(
+      "ownerConversationId",
+    );
+  });
+
+  it("omits the caller header when the CLI runs outside a conversation", async () => {
+    const host = makeHost(() =>
+      jsonResponse(
+        { execution: { executionId: "exec-9", status: "running" } },
+        202,
+      ),
+    );
+    const result = await runCli(["workflow", "start", "wf-1"], baseEnv, host);
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      host.requests[0]?.init.headers["x-cc-conversation-id"],
+    ).toBeUndefined();
+  });
+
   it("reads parameters from --file and forwards them", async () => {
     const host = makeHost(
       (req) => {

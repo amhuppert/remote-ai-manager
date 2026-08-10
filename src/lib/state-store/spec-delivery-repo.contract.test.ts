@@ -249,7 +249,7 @@ function maximalExecution(): SpecExecutionRow {
         [CRITERION_ID]: "in_scope",
       },
     }),
-    state: "abandoned",
+    state: "abandoning",
     execution_start_dial: "notify",
     workflow_definition_id: "workflow-definition-delivery-maximal",
     workflow_definition_revision: 4,
@@ -257,6 +257,11 @@ function maximalExecution(): SpecExecutionRow {
     session_name: "native-sdd-delivery-maximal",
     delivered_at: "2026-07-18T11:07:00.000Z",
     abandoned_reason: "The pinned execution was superseded by human choice.",
+    cleanup_phase: "release_slot",
+    linked_workflow_execution_id: "workflow-execution-delivery-maximal",
+    cleanup_last_error:
+      "Graph workflow execution workflow-execution-delivery-maximal is still live (running).",
+    cleanup_last_error_at: "2026-07-18T11:07:30.000Z",
     created_at: "2026-07-18T10:30:00.000Z",
     updated_at: "2026-07-18T11:08:00.000Z",
   });
@@ -371,6 +376,109 @@ describe("spec-delivery-repo durability contract", () => {
     expect(
       repo.findWaiverForCriterionRevision(CRITERION_ID, REVISION_ID),
     ).toEqual(maximalWaiver());
+  });
+
+  it("keeps every abandon-coordinator phase durable across a reload", () => {
+    const execution = {
+      ...maximalExecution(),
+      id: "execution-abandon-coordinator",
+      state: "running",
+      cleanup_phase: null,
+      linked_workflow_execution_id: null,
+      cleanup_last_error: null,
+      cleanup_last_error_at: null,
+      workflow_execution_id: "workflow-execution-abandon-coordinator",
+      delivered_at: null,
+      abandoned_reason: null,
+    } as SpecExecutionRow;
+    repo.insertExecution(execution);
+
+    const entered = repo.saveExecutionCleanupState({
+      executionId: execution.id,
+      state: "abandoning",
+      cleanupPhase: "abort_workflow",
+      linkedWorkflowExecutionId: "workflow-execution-abandon-coordinator",
+      cleanupLastError: null,
+      cleanupLastErrorAt: null,
+      abandonedReason: "superseded by a replanned run",
+      updatedAt: "2026-07-18T12:00:00.000Z",
+    });
+    expect(repo.findExecutionById(execution.id)).toEqual(entered);
+    expect(entered).toMatchObject({
+      state: "abandoning",
+      cleanup_phase: "abort_workflow",
+      linked_workflow_execution_id: "workflow-execution-abandon-coordinator",
+      abandoned_reason: "superseded by a replanned run",
+    });
+
+    const blocked = repo.saveExecutionCleanupState({
+      executionId: execution.id,
+      state: "abandoning",
+      cleanupPhase: "release_slot",
+      linkedWorkflowExecutionId: "workflow-execution-abandon-coordinator",
+      cleanupLastError: "the linked run is still live (running)",
+      cleanupLastErrorAt: "2026-07-18T12:01:00.000Z",
+      abandonedReason: "superseded by a replanned run",
+      updatedAt: "2026-07-18T12:01:00.000Z",
+    });
+    expect(repo.findExecutionById(execution.id)).toEqual(blocked);
+    expect(blocked).toMatchObject({
+      cleanup_phase: "release_slot",
+      cleanup_last_error: "the linked run is still live (running)",
+      cleanup_last_error_at: "2026-07-18T12:01:00.000Z",
+    });
+
+    const finalized = repo.saveExecutionCleanupState({
+      executionId: execution.id,
+      state: "abandoned",
+      cleanupPhase: null,
+      linkedWorkflowExecutionId: "workflow-execution-abandon-coordinator",
+      cleanupLastError: null,
+      cleanupLastErrorAt: null,
+      abandonedReason: "superseded by a replanned run",
+      updatedAt: "2026-07-18T12:02:00.000Z",
+    });
+    expect(repo.findExecutionById(execution.id)).toEqual(finalized);
+    expect(finalized).toMatchObject({
+      state: "abandoned",
+      cleanup_phase: null,
+      cleanup_last_error: null,
+      cleanup_last_error_at: null,
+    });
+  });
+
+  it("leaves an abandoning execution out of the session's active set", () => {
+    const session = "session-abandoning-active-set";
+    repo.insertExecution({
+      ...maximalExecution(),
+      id: "execution-abandoning-not-active",
+      state: "abandoning",
+      cleanup_phase: "abort_workflow",
+      workflow_execution_id: "workflow-execution-abandoning-not-active",
+      session_name: session,
+      delivered_at: null,
+    } as SpecExecutionRow);
+    repo.insertExecution({
+      ...maximalExecution(),
+      id: "execution-running-in-session",
+      state: "running",
+      cleanup_phase: null,
+      linked_workflow_execution_id: null,
+      cleanup_last_error: null,
+      cleanup_last_error_at: null,
+      workflow_execution_id: "workflow-execution-running-in-session",
+      session_name: session,
+      delivered_at: null,
+    } as SpecExecutionRow);
+
+    // A run committed to termination is not "active": leaving it in would keep
+    // Needs You and the session's execution reads pointing at work nobody is
+    // going to finish.
+    expect(
+      repo
+        .findActiveExecutionsBySessionName("/repos/delivery-contract", session)
+        .map((row) => row.id),
+    ).toEqual(["execution-running-in-session"]);
   });
 
   it("round-trips the immutable workflow launch contract", () => {

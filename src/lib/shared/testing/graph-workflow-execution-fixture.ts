@@ -267,6 +267,7 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
       notes: "first line\nsecond line",
     },
     launchedTier: "global",
+    ownerConversationId: "conv-owner-maximal",
     definitionApproval: {
       requestedAt: "2026-01-01T00:00:00.000Z",
       approvedAt: "2026-01-01T00:00:05.000Z",
@@ -283,6 +284,8 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
           paths: ["/tasks/task-1/instructions"],
           sourceUri: "workflow-source:maximal/revision/3",
           reason: "Task instructions come from the source workflow",
+          instruction:
+            "Amend workflow-source:maximal/revision/3 and recompile the definition.",
         },
       ],
       // Workflow-scope lane-merge selection snapshot — non-default on every

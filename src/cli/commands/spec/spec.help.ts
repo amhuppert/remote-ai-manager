@@ -1,4 +1,5 @@
 import type { CommandHelpEntry } from "../../help-types";
+import { NATIVE_SDD_GUIDANCE_SECTIONS } from "@/lib/specs/native-sdd-guidance";
 
 export const specHelpEntries: CommandHelpEntry[] = [
   {
@@ -11,23 +12,35 @@ export const specHelpEntries: CommandHelpEntry[] = [
       "cctl spec measures",
       "cctl spec show <slug>",
       "cctl spec status <slug>",
+      "cctl spec lint <slug>",
       "cctl spec get <slug>/<handle>",
       "cctl spec search <slug> <query>",
       "cctl spec search --all <query>",
+      "cctl spec diff <slug> [--from <revisionId>] [--to <revisionId>] [--baseline governance]",
       "cctl spec schema [<document>]",
-      "cctl spec export <slug> [--out <bundle.json>]",
+      "cctl spec delta <slug> [--since <executionId>] [--out <delta.json>]",
+      "cctl spec export <slug> [--out <bundle.json>] [--stdout]",
       "cctl spec verify <slug> [--against <bundle.json>]",
       "cctl spec create --slug <slug> --name <name> --preset <preset> --file <element.json>",
       "cctl spec amend <slug>",
       "cctl spec draft <slug> --file <element.json>",
+      "cctl spec remove <slug> <handle...>",
       "cctl spec propose <slug>",
-      "cctl spec advance <slug> --from <requirements|design>",
+      "cctl spec advance <slug> --from <requirements>",
       "cctl spec question <slug> --text <text> [--element <handle>]",
       "cctl spec answer <slug>/Q2 --answer <text>",
       "cctl spec assume <slug> --text <text> [--element <handle>]",
       "cctl spec task complete <slug>/T7 --execution <id> --evidence <id>",
-      "cctl spec start <slug> --file <scope.json>",
-      "cctl spec capture <slug> --execution <id> --file <task.json>",
+      "cctl spec plan open <slug> [--seed-from last]",
+      "cctl spec plan edit <slug> --file <plan.json>",
+      "cctl spec plan propose <slug>",
+      "cctl spec plan reopen <slug> --reason <why>",
+      "cctl spec plan get <slug>",
+      "cctl spec plan status <slug>",
+      "cctl spec plan preview <slug> --stage draft|proposed",
+      "cctl spec plan sign-off <slug>",
+      "cctl spec start <slug> [--park]",
+      "cctl spec capture <slug> --file <task.json>",
     ],
     flags: [],
     examples: [],
@@ -38,6 +51,10 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec status",
         oneLiner: "inspect lifecycle gates, approvals, questions, and coverage",
+      },
+      {
+        command: "spec lint",
+        oneLiner: "read what would refuse propose before attempting it",
       },
       {
         command: "spec create",
@@ -52,8 +69,20 @@ export const specHelpEntries: CommandHelpEntry[] = [
         oneLiner: "save an element at the version it replaces",
       },
       {
+        command: "spec remove",
+        oneLiner: "take draft elements out by the handle you address them by",
+      },
+      {
         command: "spec measures",
         oneLiner: "inspect pilot measures and reviewer navigation chains",
+      },
+      {
+        command: "spec delta",
+        oneLiner: "see what changed since the last delivery",
+      },
+      {
+        command: "spec plan",
+        oneLiner: "author the delivery plan that becomes the executed graph",
       },
     ],
   },
@@ -127,7 +156,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "status"],
     summary: "inspect a spec's phase and gate readiness",
     description:
-      "Show phase, current authoring stage and its concluding gate, the authoring stages the open draft still has to walk, every gate state with why it is or is not consulted for the current revision, the subject approvals still outstanding, whether a proposed revision still owes an explicit human sign-off, open questions, criterion coverage, and the task execution graph for one spec. Each active execution is reported with its lane position: running, parked with no workflow lane launched, or parked awaiting human approval of the compiled definition.",
+      "Show phase, current authoring stage and its concluding gate, the authoring stages the open draft still has to walk, every gate state with why it is or is not consulted for the current revision, the subject approvals still outstanding, whether a proposed revision still owes an explicit human sign-off, a lint findings tier, open questions, criterion coverage, and the task execution graph for one spec. Each active execution is reported with its lane position: running, parked with no workflow lane launched, or parked awaiting human approval of the compiled definition.",
     usage: ["cctl spec status <slug>"],
     flags: [],
     examples: [
@@ -137,10 +166,14 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose. Gate applicability is measured against the nearest APPROVED ancestor, so a gate stays consulted for content that entered through an attempt a human withdrew, and an earlier admission is reported as history rather than as current satisfaction.",
+      "The remaining-stage sequence is pinned to the open draft, not derived from the current preset: a policy change never moves an open draft's stage, so a draft opened under one preset keeps walking its own sequence under the new dials. Each remaining stage names the gate that concludes it and whether that concluding step is an advance or a propose. Gate applicability is measured against the nearest APPROVED ancestor, so a gate stays consulted for content that entered through an attempt a human withdrew, and an earlier admission is reported as history rather than as current satisfaction. The findings tier names counts per severity and the first few findings; the enumerated sections — executions, pending subject approvals, open questions, assumptions, plan tasks — are bounded to ten items each in the text rendering and state what they left out, while --json carries every row.",
     related: [
       { command: "spec show", oneLiner: "read the full current spec" },
       { command: "spec get", oneLiner: "inspect one pending element" },
+      {
+        command: "spec lint",
+        oneLiner: "read the full finding panel behind the tier",
+      },
       { command: "spec verify", oneLiner: "recompute revision integrity" },
       {
         command: "spec propose",
@@ -153,6 +186,43 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         command: "spec amend",
         oneLiner: "open the next draft once a stage's gate is approved",
+      },
+    ],
+  },
+  {
+    path: ["spec", "lint"],
+    summary: "read every deterministic lint finding on the open draft",
+    description:
+      "Print the whole finding panel for the editable revision, grouped by severity, with the subset that would refuse propose flagged as such. This is the same deterministic lint the propose refusal runs and Spec Studio's lint tab renders — reading it here is how an author learns what the draft owes BEFORE attempting the transition, rather than discovering it as a refusal. Findings name the element they are about by handle and carry the rule that produced them. A draft with no findings says so; a draft whose only findings are advisory can be proposed.",
+    usage: ["cctl spec lint <slug>"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl spec lint native-sdd",
+        explanation:
+          "read every finding grouped by severity before proposing the draft",
+      },
+      {
+        invocation: "cctl spec lint native-sdd --json",
+        explanation:
+          "take the counts, the per-severity groups, and the linted revision id as data",
+      },
+    ],
+    generatedReference: [NATIVE_SDD_GUIDANCE_SECTIONS.evergreenLint],
+    domainContext:
+      "Severities say which act a finding refuses: blocks_propose refuses propose outright, blocks_claim refuses a task completion claim, blocks_signoff refuses the revision sign-off, and advisory refuses nothing. The linted revision is the open draft when one exists and the current revision otherwise, so the verb answers for the same content propose would judge. `cctl spec status` carries a counts-and-top-findings tier over this same panel.",
+    related: [
+      {
+        command: "spec propose",
+        oneLiner: "the transition the blocking findings refuse",
+      },
+      {
+        command: "spec status",
+        oneLiner: "the findings tier and the rest of readiness",
+      },
+      {
+        command: "spec draft",
+        oneLiner: "fix a finding by re-saving the element it names",
       },
     ],
   },
@@ -219,10 +289,68 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
+    path: ["spec", "diff"],
+    summary: "read the semantic changelog between two revisions",
+    description:
+      "Classify every element of one revision against a base as added, modified, removed, or unchanged, with a one-line summary of each change. Without flags it compares the current proposal (or open draft) against its immediate review base — the same pair Spec Studio's review cards diff, so the CLI classes and the surface a human signs off on cannot disagree. A modified acceptance criterion also marks its requirement modified, reported as an indirect change.",
+    usage: [
+      "cctl spec diff <slug>",
+      "cctl spec diff <slug> --baseline governance",
+      "cctl spec diff <slug> --from <revisionId> --to <revisionId>",
+    ],
+    flags: [
+      {
+        name: "from",
+        kind: "value",
+        valuePlaceholder: "<revisionId>",
+        description: "compare against this revision instead of the review base",
+      },
+      {
+        name: "to",
+        kind: "value",
+        valuePlaceholder: "<revisionId>",
+        description:
+          "compare this revision instead of the current one; draft, proposed, and approved revisions all work",
+      },
+      {
+        name: "baseline",
+        kind: "value",
+        valuePlaceholder: "governance",
+        description:
+          "compare against the governance base (nearest approved ancestor) instead of the immediate review base; names a base, so it cannot be combined with --from",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec diff native-sdd",
+        explanation:
+          "read what this proposal changed before hunting through the full revision",
+      },
+      {
+        invocation: "cctl spec diff native-sdd --baseline governance --json",
+        explanation:
+          "see everything still unadmitted by a human, including content that entered through a withdrawn attempt",
+      },
+    ],
+    domainContext:
+      "The immediate review base is `basedOnRevisionId`; the governance base is the nearest APPROVED ancestor, which gate applicability is measured against. They differ whenever an attempt was withdrawn or is still under review, so the base is never swapped silently — --baseline governance is the explicit way to ask for the other one.",
+    related: [
+      {
+        command: "spec show",
+        oneLiner: "list the revision ids --from/--to take",
+      },
+      { command: "spec status", oneLiner: "inspect gate and sign-off state" },
+      {
+        command: "spec get",
+        oneLiner: "read one changed element in full",
+      },
+    ],
+  },
+  {
     path: ["spec", "schema"],
     summary: "print the schema of every input document this family accepts",
     description:
-      "Print the JSON Schema, enumerated values, field constraints, and a worked example for each schema-backed --file document: the draft element write document per element kind, the batch form of it, the create-element document `cctl spec create` takes, the execution scope document, and the discovered-task document. The draft and create documents are published separately because they are different shapes — only a draft element states the baseElementVersion it replaces. Everything is generated from the schemas the server parses input with, so it cannot drift. Runs entirely offline — no server, no project.",
+      "Print the JSON Schema, enumerated values, field constraints, and a worked example for each schema-backed --file document, or run `cctl spec schema guidance` for the registry-generated materializer, lint, and evidence reference. The draft and create documents are published separately because they are different shapes — only a draft element states the baseElementVersion it replaces. Everything is generated from the schemas and typed registries production uses, so it cannot drift. Runs entirely offline — no server, no project.",
     usage: ["cctl spec schema", "cctl spec schema <document>"],
     flags: [],
     examples: [
@@ -241,6 +369,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
         explanation:
           "return every input document at once for a machine that is about to author",
       },
+      {
+        invocation: "cctl spec schema guidance",
+        explanation:
+          "read compile mappings, both lint taxonomies, and evidence producers from the registries production uses",
+      },
     ],
     domainContext:
       "Element position is one global order per revision, sorted by position then elementId; omit position on create to append and on update to keep the current slot. Nesting comes from parentElementId alone, never from position, and duplicate positions are accepted and resolved by the elementId tiebreak.",
@@ -253,7 +386,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
         command: "spec create",
         oneLiner: "create a spec from a first element of this shape",
       },
-      { command: "spec start", oneLiner: "pass the execution scope document" },
+      {
+        command: "spec start",
+        oneLiner:
+          "launch only after authoring and approving a delivery-plan attempt",
+      },
       {
         command: "spec capture",
         oneLiner: "pass the discovered-task document",
@@ -261,27 +398,104 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
-    path: ["spec", "export"],
-    summary: "produce a canonical portable spec bundle",
+    path: ["spec", "delta"],
+    summary: "compare the approved spec against a delivered execution",
     description:
-      "Export canonical revision markdown plus the manifest. Without --out the bundle prints to stdout; --out writes one JSON bundle file.",
-    usage: ["cctl spec export <slug> [--out <bundle.json>]"],
+      "Report what changed since a delivery and what that costs the next plan. Elements are classified added/amended/unchanged/removed by stable element id and immutable payload hash; criteria are classified delivered-and-fresh, soft-stale, hard-stale, never-delivered, deferred, or waived against the compared execution's pinned revision. This is the authoring input for the next execution's delivery plan: the criterion classes are the dispositions that plan owes, and the advisories name the ones a delivered_elsewhere disposition cannot legally carry. Nothing is written or persisted. Per-class listings are capped at 30 rows with total/shown/omitted counts and ordered by handle; --out writes the complete projection JSON.",
+    usage: [
+      "cctl spec delta <slug> [--since <executionId>] [--out <delta.json>]",
+    ],
+    flags: [
+      {
+        name: "since",
+        kind: "value",
+        valuePlaceholder: "<executionId>",
+        description:
+          "compare against this execution instead of the last delivered one",
+      },
+      {
+        name: "out",
+        kind: "value",
+        valuePlaceholder: "<delta.json>",
+        description:
+          "write the complete projection to this UTF-8 JSON file, uncapped",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec delta native-sdd",
+        explanation:
+          "see what the last delivery no longer covers before authoring the next plan",
+      },
+      {
+        invocation:
+          "cctl spec delta native-sdd --since exec-4f2a --out .cc/temp/delta.json",
+        explanation:
+          "compare against a specific run and keep the full classification for the plan author",
+      },
+    ],
+    domainContext:
+      "Classification never reads elementVersion, which resets each revision; it compares immutable payload hashes at the two pinned revisions. Hard-stale means the criterion's own text or validation strategy changed, so its old proof proved different words and it must be re-proved. Soft-stale means the criterion is unchanged but its parent requirement or a decision that governed that requirement at the pinned revision changed, which one reaffirmation clears.",
+    related: [
+      {
+        command: "spec status",
+        oneLiner: "list this spec's executions to pick a --since id",
+      },
+      {
+        command: "spec start",
+        oneLiner: "launch the execution this delta is authoring toward",
+      },
+      {
+        command: "spec show",
+        oneLiner: "read the current approved content the delta compares",
+      },
+    ],
+  },
+  {
+    path: ["spec", "export"],
+    summary: "write a canonical portable spec bundle",
+    description:
+      "Export canonical revision markdown plus the manifest. Without flags the bundle is WRITTEN to .cc/temp/<slug>-spec-bundle.json and stdout carries only its manifest: revision count, element count, content hash, and the written path. --out writes the same bundle to a path you name. Inlining the bundle into stdout now requires --stdout. This default changed on 2026-08-07 (approved compatibility break); a script that read the bundle from stdout has to pass --stdout.",
+    usage: [
+      "cctl spec export <slug>",
+      "cctl spec export <slug> --out <bundle.json>",
+      "cctl spec export <slug> --stdout",
+    ],
     flags: [
       {
         name: "out",
         kind: "value",
         valuePlaceholder: "<bundle.json>",
-        description: "write the canonical bundle to this UTF-8 JSON file",
+        description:
+          "write the canonical bundle to this UTF-8 JSON file instead of the derived path",
+      },
+      {
+        name: "stdout",
+        kind: "boolean",
+        description:
+          "print the bundle itself to stdout and write no file (the pre-2026-08-07 default)",
       },
     ],
     examples: [
+      {
+        invocation: "cctl spec export native-sdd",
+        explanation:
+          "write the bundle to .cc/temp/native-sdd-spec-bundle.json and read back its revision count, element count, content hash, and path",
+      },
       {
         invocation:
           "cctl spec export native-sdd --out .cc/temp/native-sdd.json",
         explanation:
           "write a portable representation suitable for later verification",
       },
+      {
+        invocation: "cctl spec export native-sdd --stdout --json",
+        explanation:
+          "inline the bundle for a caller that pipes it instead of storing it",
+      },
     ],
+    domainContext:
+      "The bundle format did not change with the default: a file this command writes is the same bytes `cctl spec verify --against` already accepts. The content hash covers those exact bytes, so two exports of unchanged content report the same hash.",
     related: [
       {
         command: "spec verify",
@@ -292,9 +506,9 @@ export const specHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["spec", "verify"],
-    summary: "recompute spec integrity",
+    summary: "recompute spec integrity and report consistency findings",
     description:
-      "Recompute immutable revision hashes. With --against, validate the bundle locally before network and compare it with the current canonical export.",
+      "Recompute immutable revision hashes, and report the consistency findings hashes cannot see: an abandonment whose cleanup never finished, a run still holding the session's execution slot after its spec execution was abandoned, and live proposals an approved revision forked past. A hash mismatch exits with integrity_mismatch; clean hashes with outstanding findings exit with spec_inconsistent, and each finding names the exact act that disposes of it. With --against, validate the bundle locally before network and compare it with the current canonical export.",
     usage: ["cctl spec verify <slug> [--against <bundle.json>]"],
     flags: [
       {
@@ -385,11 +599,11 @@ export const specHelpEntries: CommandHelpEntry[] = [
       {
         invocation: "cctl spec amend audit-log --json",
         explanation:
-          "reopen authoring after the plan gate was approved, then read the returned revision number and authoring stage",
+          "reopen evergreen authoring after a revision was approved, then read the returned revision number and authoring stage",
       },
     ],
     domainContext:
-      "The amendment draft opens at the stage after the approved revision's stage, and stays at plan once the approved revision was already at plan. Draft-write admissibility is stage-only, so save elements the reopened stage admits. A revision a human ended with Request Changes is terminal: its content is not carried into the new draft, and the response names those revisions in `skippedWithdrawnRevisions` so anything from them that still applies can be re-authored. Element ids, numbers and handles carry across, but element VERSIONS do not: the copied elements restart at 1 in the new revision, so re-read an element before writing it rather than reusing the version you read on the approved revision.",
+      "The active evergreen sequence ends at design. An amendment after approved requirements opens at design; an amendment after approved design or a legacy approved plan revision also opens at design. Legacy task elements remain readable in immutable history, while delivery work is authored with `cctl spec plan open <slug>` and `cctl spec plan edit <slug> --file <plan.json>`. A revision a human ended with Request Changes is terminal: its content is not carried into the new draft, and the response names those revisions in `skippedWithdrawnRevisions` so anything from them that still applies can be re-authored. Element ids, numbers and handles carry across, but element VERSIONS do not: the copied elements restart at 1 in the new revision, so re-read an element before writing it rather than reusing the version you read on the approved revision.",
     related: [
       {
         command: "spec draft",
@@ -427,14 +641,15 @@ export const specHelpEntries: CommandHelpEntry[] = [
     usage: [
       "cctl spec draft <slug> --file <element.json>",
       "cctl spec draft <slug> --file <elements.json>",
+      "cctl spec draft <slug> --file <batch.json>",
     ],
     flags: [
       {
         name: "file",
         kind: "value",
-        valuePlaceholder: "<element.json|elements.json>",
+        valuePlaceholder: "<element.json|elements.json|batch.json>",
         description:
-          "one schema-backed draft element write document, or a JSON array of them for a batch — every element states its own baseElementVersion either way; run `cctl spec schema <kind>` or `cctl spec schema element-batch` for the shapes, enums, and worked examples",
+          'one schema-backed draft element write document, a JSON array of them for a batch, or the keyed batch {"elements": [...], "removals": [{"elementId","baseElementVersion"}]} — every element states its own baseElementVersion in each form; run `cctl spec schema <kind>` or `cctl spec schema element-batch` for the shapes, enums, and worked examples',
       },
     ],
     examples: [
@@ -451,7 +666,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     domainContext:
-      "Requirements stage admits intent/context prose, requirements, and criteria; design additionally admits decisions and design narrative; plan additionally admits tasks. Plan each task for one agent lane, treat dependencies as ordering truth and missing paths as parallelism claims, split oversized work before saving, and declare laneGroup/touchedPaths where they communicate reviewed execution intent.",
+      "Requirements stage admits intent/context prose, requirements, and criteria; design additionally admits decisions and design narrative and is the final evergreen stage. Task elements remain readable on legacy plan revisions but are not the active planning surface. Open or edit the per-delivery graph with `cctl spec plan open <slug>` and `cctl spec plan edit <slug> --file <plan.json>`.",
     related: [
       {
         command: "spec schema",
@@ -474,20 +689,75 @@ export const specHelpEntries: CommandHelpEntry[] = [
         command: "spec withdraw-proposal",
         oneLiner: "reopen a draft after a revision_in_review refusal",
       },
+      {
+        command: "spec remove",
+        oneLiner: "take an element out of the same draft",
+      },
+    ],
+  },
+  {
+    path: ["spec", "remove"],
+    summary: "take evergreen draft elements out in one transaction",
+    description:
+      'Remove one or more elements from the editable evergreen revision. Each handle is resolved to its element id and its current version before anything is submitted, and every removal then travels in ONE batch — the same transaction `cctl spec draft --file` submits for {"elements": [...], "removals": [...]}. That atomicity is the point: a reference and the element it points at can only leave together, so removing them one command at a time has no legal order. Nothing is removed unless every named handle resolves in the open draft. A removal that would leave a surviving element pointing at content the revision no longer carries is refused whole, naming both ends of the dangling reference by handle; the way out is to rewrite or remove the referring element in the same act. Removal is not deletion: the element id stays the spec\'s, so re-saving it with "reintroduceHistorical": true and a null base version brings it back with its original number and handle. Removal lands only in a draft — an approved or withdrawn revision returns amendment_required and a proposed one revision_in_review, exactly as a draft write does. Task handles are legacy-only and apply only to an already-open evergreen Plan draft; remove a current delivery task by editing the authored graph with `cctl spec plan edit <slug> --file <plan.json>`.',
+    usage: ["cctl spec remove <slug> <handle...>"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl spec remove audit-log R2.3 --json",
+        explanation:
+          "take one criterion out of the open draft; the receipt names the reintroduction recovery",
+      },
+      {
+        invocation: "cctl spec remove legacy-plan T4 R2.3",
+        explanation:
+          "remove a task and criterion together from an already-open legacy Plan draft; current delivery tasks use spec plan edit",
+      },
+    ],
+    domainContext:
+      "Handles are resolved client-side, so the file contract stays the server's own removal schema — {elementId, baseElementVersion} — and a removal never depends on the server parsing handle grammar. Questions and assumptions are spec-scoped records rather than draft elements: answer or dispose of those instead of removing them.",
+    related: [
+      {
+        command: "spec draft",
+        oneLiner:
+          "reintroduce a removed element, or remove alongside writes in one file",
+      },
+      { command: "spec show", oneLiner: "read the handles the draft carries" },
+      {
+        command: "spec schema",
+        oneLiner: "print the batch document, removals included",
+      },
     ],
   },
   {
     path: ["spec", "propose"],
     summary: "propose the current authoring stage for review",
     description:
-      "Freeze the editable revision and enter review for its current authoring stage. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending. The receipt carries the server's pending block — every gate the transition consults, the subjects each still needs, all unmet sign-off conditions, and the exact next command — so read that rather than inferring a gate from the revision's authoring stage.",
-    usage: ["cctl spec propose <slug>"],
-    flags: [],
+      "Freeze the editable requirements or design revision and enter review for its current authoring stage. Delivery-plan attempts use `cctl spec plan propose <slug>` instead; legacy evergreen Plan revisions remain readable but are not the active graph-authoring surface. Blocking lint findings are returned as structured issues with an immediate instruction; do not pre-author the next stage while review is pending. The receipt carries the server's pending block — every gate the transition consults, the subjects each still needs, all unmet sign-off conditions, and the exact next command — so read that rather than inferring a gate from the revision's authoring stage.",
+    usage: [
+      "cctl spec propose <slug>",
+      "cctl spec propose <slug> --notes <notes.md>",
+    ],
+    flags: [
+      {
+        name: "notes",
+        kind: "value",
+        valuePlaceholder: "<notes.md>",
+        description:
+          "a markdown disposition/changelog document for this review round — what changed, which prior findings it closes, and what it deliberately left alone. Persisted on the propose event itself and shown above the change list in Spec Studio, so the reviewer reads the author's account before re-deriving it from the diff. The server caps it (20000 characters) and refuses an over-cap document without proposing anything.",
+      },
+    ],
     examples: [
       {
         invocation: "cctl spec propose audit-log --json",
         explanation:
           "propose the current draft or receive its blocking findings",
+      },
+      {
+        invocation:
+          "cctl spec propose audit-log --notes .cc/temp/round-3.md --json",
+        explanation:
+          "propose with the round's disposition attached — the reviewer opens Studio to the notes, not to an unexplained diff",
       },
     ],
     domainContext:
@@ -554,18 +824,67 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
+    path: ["spec", "dismiss-superseded"],
+    summary: "the human act that ends a proposal an approval forked past",
+    description:
+      "End a proposed revision that a later APPROVED revision was created without — the stranded state ticket #50 reports, where the proposal is numbered below an approval whose lineage never carried it. The act is human-only: an agent call returns human_act_required naming the Spec Studio Review surface, because disposing of work a human was reviewing is the operator's decision. Eligibility is the same ancestry test every surface reads: a proposal whose content IS carried forward (the later approval descends from it) is not superseded and refuses with gate_blocked, as does the lineage's live proposal with nothing approved above it. On success the revision becomes withdrawn with a durable marker naming the superseding revision, the operator, and their reason, and NO draft is opened — reopening the stale content would make it the spec's only editable revision and block amending the newer approved content.",
+    usage: [
+      "cctl spec dismiss-superseded <slug> --revision <revision-id> --reason <text>",
+    ],
+    flags: [
+      {
+        name: "revision",
+        kind: "value",
+        valuePlaceholder: "<revision-id>",
+        description:
+          "the stranded proposed revision to dismiss, as `cctl spec status` and the Studio Review tab report it",
+      },
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<text>",
+        description:
+          "why the proposal is being disposed of — recorded on the durable marker, since a bare withdrawal cannot explain itself later",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          "cctl spec dismiss-superseded audit-log --revision revision-8f21 --reason 'revision 6 was approved from an earlier base' --json",
+        explanation:
+          "attempt the dismissal and read the human_act_required refusal naming the Studio surface the operator acts on",
+      },
+    ],
+    domainContext:
+      "There are three ways a proposal ends and they are not interchangeable. Request Changes (human, Studio) reopens the content as a draft. `spec withdraw-proposal` (the proposing agent, before a human engages) also reopens a draft. This act opens none: it exists only for a proposal an approved revision already forked past, where the reopened draft would be stale content blocking the approved line. The guard at propose means new lineages cannot reach this state — the act is for lineages that already did.",
+    related: [
+      {
+        command: "spec withdraw-proposal",
+        oneLiner: "the agent's own exit, which reopens a draft instead",
+      },
+      {
+        command: "spec status",
+        oneLiner: "read which revisions are proposed and which is approved",
+      },
+      {
+        command: "spec verify",
+        oneLiner: "report the stranded proposal until it is disposed of",
+      },
+    ],
+  },
+  {
     path: ["spec", "advance"],
     summary: "conclude a Notify/Off authoring stage explicitly",
     description:
-      "Advance the current draft from the expected requirements or design stage when that stage's concluding dial is Notify or Off. Gate requires human review and sign-off instead; stale revision or stage expectations are refused without changing content.",
-    usage: ["cctl spec advance <slug> --from <requirements|design>"],
+      "Advance the current draft from requirements to design when the requirements dial is Notify or Off. Design is the final evergreen stage: propose it for review, then open delivery planning with `cctl spec plan open <slug>` after sign-off. Gate requires human review and sign-off instead; stale revision or stage expectations are refused without changing content.",
+    usage: ["cctl spec advance <slug> --from <requirements>"],
     flags: [
       {
         name: "from",
         kind: "value",
-        valuePlaceholder: "<requirements|design>",
+        valuePlaceholder: "<requirements>",
         description:
-          "authoring stage observed on the current draft and expected to conclude",
+          "requirements stage observed on the current draft and expected to conclude; --from design is retired because delivery planning uses cctl spec plan open",
       },
     ],
     examples: [
@@ -679,16 +998,323 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
+    path: ["spec", "plan"],
+    summary: "author the delivery plan attempt that becomes the executed graph",
+    description:
+      "A delivery plan attempt is the per-delivery scope AND the graph that delivers it: explicit contexts, ordered tasks, explicit dependency edges, with criterion ownership bound in. It pins one approved revision, so the spec can move on without moving the plan, and it is proposed as an immutable snapshot a human approves by hash. Every criterion of the pinned revision carries exactly one disposition — selected, deferred, waived, delivered_elsewhere, reaffirmed, or pending_reaffirmation — so nothing leaves scope silently.",
+    usage: [
+      "cctl spec plan open <slug> [--seed-from last]",
+      "cctl spec plan edit <slug> --file <plan.json>",
+      "cctl spec plan propose <slug>",
+      "cctl spec plan reopen <slug> --reason <why>",
+      "cctl spec plan get <slug>",
+      "cctl spec plan status <slug>",
+      "cctl spec plan preview <slug> --stage draft|proposed",
+    ],
+    flags: [],
+    examples: [],
+    domainContext:
+      "Dispositions are selected, deferred, waived, delivered_elsewhere, reaffirmed, and pending_reaffirmation. Exactly one context owns each selected criterion; every other disposition has zero owners. Judgments are made against the PINNED revision, never the evergreen head. The attempt is addressed by spec slug: a spec has at most one live attempt, so no verb takes an attempt id.",
+    related: [
+      {
+        command: "spec plan open",
+        oneLiner: "open an attempt, optionally seeded from the last delivery",
+      },
+      {
+        command: "spec plan status",
+        oneLiner: "read what the attempt still owes and who acts next",
+      },
+      {
+        command: "spec plan preview",
+        oneLiner:
+          "render the contexts, edges, and charter this plan compiles to",
+      },
+      {
+        command: "spec delta",
+        oneLiner: "see the delivery classes the seed is computed from",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "open"],
+    summary: "open a delivery plan attempt against the approved revision",
+    description:
+      "Open the attempt this delivery is planned in. It pins the spec's current approved revision, so a later amendment never forks or blocks it. With --seed-from last the attempt starts from the last delivery instead of an empty document: EVERY criterion of the pinned revision gets exactly one disposition, and the prior plan's contexts, tasks, edges, and wiring come forward wherever the work is still selected.",
+    usage: ["cctl spec plan open <slug> [--seed-from last]"],
+    flags: [
+      {
+        name: "seed-from",
+        kind: "value",
+        valuePlaceholder: "last",
+        description:
+          "seed the attempt from the last delivery instead of an empty plan",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec plan open native-sdd --seed-from last --json",
+        explanation:
+          "carry the last delivery forward with a disposition on every pinned criterion",
+      },
+      {
+        invocation: "cctl spec plan open native-sdd",
+        explanation:
+          "author the first plan for a spec that has never delivered",
+      },
+    ],
+    domainContext:
+      "Seeding is total-disposition-preserving and derived from the delivery delta: a criterion delivered and still fresh auto-proposes delivered_elsewhere against the execution that delivered it; a soft-stale one seeds as pending_reaffirmation, which a draft may carry and a proposal may not; undelivered, hard-stale, and previously deferred criteria become selected; a waived one stays waived. Discovered work the last execution captured lands as tasks in the new plan. When the spec has no earlier plan attempt but HAS delivered through the legacy compiled path, the seed imports that plan: each laneGroup becomes one context, each ungrouped task becomes a singleton context, task dependencies become context edges, and covered criteria become context ownership. A criterion the legacy plan reached from more than one of those contexts is never duplicated — it is listed on the receipt for a human to split, and stays unowned (and therefore blocking) until one is chosen. A second attempt is refused while one is still live.",
+    related: [
+      {
+        command: "spec plan edit",
+        oneLiner: "write the seeded document back with your changes",
+      },
+      {
+        command: "spec plan status",
+        oneLiner: "read what the seeded plan still owes",
+      },
+      {
+        command: "spec delta",
+        oneLiner: "read the delivery classes the seed was derived from",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "edit"],
+    summary: "write the whole plan document at the draft revision you read",
+    description:
+      "Replace the attempt's plan document. The file carries the draftRevision it was read at, and an edit against a revision the attempt has moved past is refused with the current one rather than silently applied — the same compare-and-swap discipline `cctl spec draft` applies per element. The receipt reports what the write did to the blocking finding count.",
+    usage: ["cctl spec plan edit <slug> --file <plan.json>"],
+    flags: [
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<path>",
+        description:
+          "JSON document: { expectedDraftRevision, document } (write it under .cc/temp/)",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec plan edit native-sdd --file .cc/temp/plan.json",
+        explanation:
+          "send the edited document back at the draft revision it was read at",
+      },
+    ],
+    domainContext:
+      "Read the current document with `cctl spec plan get <slug> --json`, edit the `plan.document` it returns, and send `{ expectedDraftRevision, document }`. Run `cctl spec schema plan-edit` for the exact shape. Every edit bumps the draft revision, so a second write must re-read first.",
+    related: [
+      {
+        command: "spec plan get",
+        oneLiner: "read the document and the draft revision to send back",
+      },
+      {
+        command: "spec plan status",
+        oneLiner: "read every finding the edit did not resolve",
+      },
+      {
+        command: "spec plan propose",
+        oneLiner: "freeze the document once nothing blocks",
+      },
+      { command: "spec schema", oneLiner: "read the plan-edit document shape" },
+    ],
+  },
+  {
+    path: ["spec", "plan", "propose"],
+    summary: "freeze the plan as an immutable snapshot with a plan hash",
+    description:
+      "Freeze the draft as a proposal a human approves by hash. The transition runs the same deterministic plan lint the edit receipts and `spec plan status` report, so a refusal here is never a surprise: it names every blocking finding and the act that resolves it. The frozen snapshot is immutable — a reopen invalidates its approval but never rewrites it.",
+    usage: ["cctl spec plan propose <slug>"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl spec plan propose native-sdd --json",
+        explanation:
+          "freeze the plan and take its snapshot id and plan hash as data",
+      },
+    ],
+    domainContext:
+      "The plan hash covers the document, the pinned revision, and the attempt's draft revision — so a re-propose after a reopen yields a new hash requiring a new approval even when the content is byte-identical. A criterion left at pending_reaffirmation blocks propose until a human reaffirms it or it is selected for re-delivery.",
+    related: [
+      {
+        command: "spec plan status",
+        oneLiner: "read the findings that would refuse this",
+      },
+      {
+        command: "spec plan sign-off",
+        oneLiner: "approve the exact compiled candidate this proposal froze",
+      },
+      {
+        command: "spec plan reopen",
+        oneLiner: "take the proposal back to draft",
+      },
+      {
+        command: "spec plan edit",
+        oneLiner: "resolve a blocking finding in the document",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "sign-off"],
+    summary: "approve the stored candidate and admit the execution_start gate",
+    description:
+      "Sign off the compiled candidate a proposal froze. This is the ONE default approval between propose and launch: it records the approval bound to the candidate's identity (candidate id + plan hash + compiled definition hash) and admits the execution_start gate in the same act, so nothing else stands between an approved plan and `cctl spec start`. Under a Gate execution_start dial it is a human-only act and an agent is refused, naming the request-approval verb; under Notify or Off the same act records a policy-basis admission instead of a human approval. Omitting the identity flags reads the stored candidate first and signs off exactly what it names; a re-propose landing in between refuses rather than approving different bytes.",
+    usage: [
+      "cctl spec plan sign-off <slug> [--candidate <id> --plan-hash <hash> --compiled-hash <hash>]",
+    ],
+    flags: [
+      {
+        name: "candidate",
+        kind: "value",
+        valuePlaceholder: "<id>",
+        description:
+          "the stored candidate this approval binds — from `spec plan preview --stage proposed`",
+      },
+      {
+        name: "plan-hash",
+        kind: "value",
+        valuePlaceholder: "<hash>",
+        description: "the frozen proposal's plan hash",
+      },
+      {
+        name: "compiled-hash",
+        kind: "value",
+        valuePlaceholder: "<hash>",
+        description: "the compiled definition hash a launch must run unchanged",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec plan sign-off native-sdd --json",
+        explanation:
+          "sign off the stored candidate and take the admission basis as data",
+      },
+    ],
+    domainContext:
+      "The three identity parts are checked together: an approval that bound only the plan hash would still stand over a candidate compiled from different inherited defaults. A reopen invalidates the approval structurally, and a parked attempt tuned after its sign-off refuses launch until the new candidate is signed off — the refusal prints both hashes.",
+    related: [
+      {
+        command: "spec plan preview",
+        oneLiner: "read the exact bytes this approval binds",
+      },
+      { command: "spec start", oneLiner: "launch the approved candidate" },
+      {
+        command: "spec plan reopen",
+        oneLiner: "take the approval back and return to draft",
+      },
+      {
+        command: "spec request-approval",
+        oneLiner: "ask a human for the sign-off under a Gate dial",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "reopen"],
+    summary: "return an unlaunched attempt to draft, invalidating its approval",
+    description:
+      "Return a proposed, approved, or parked attempt to draft at a fresh draft revision. Any approval it carried no longer stands, and the re-propose that follows requires a new one. Prior snapshots stay readable exactly as proposed. A LAUNCHED attempt is refused, naming its three post-launch paths and the execution id they address.",
+    usage: ["cctl spec plan reopen <slug> --reason <why>"],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<why>",
+        description: "durable reason recorded beside the invalidated approval",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          'cctl spec plan reopen native-sdd --reason "the closeout context is missing"',
+        explanation:
+          "take an approved plan back to draft with the reason on the audit row",
+      },
+    ],
+    domainContext:
+      "Reopen is the exit every unlaunched plan state has. Once a plan launches, its scope is pinned and the three paths are: capture a discovery for the next plan, abandon the run and open a seeded replacement, or amend the running definition with `cctl workflow live amend`.",
+    related: [
+      {
+        command: "spec plan propose",
+        oneLiner: "re-freeze once the document is fixed",
+      },
+      {
+        command: "spec capture",
+        oneLiner: "the post-launch path for discovered work",
+      },
+      {
+        command: "spec plan status",
+        oneLiner: "read the attempt's status and its exits",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "get"],
+    summary: "read the plan document the attempt carries",
+    description:
+      "Print the attempt's dispositions, contexts, tasks, edges, and resolved production wiring. This is the document `cctl spec plan edit` takes back: read it with --json, edit `plan.document`, and send it with the draftRevision it reports.",
+    usage: ["cctl spec plan get <slug>"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl spec plan get native-sdd --json",
+        explanation:
+          "take the whole plan document plus its draft revision as data before editing",
+      },
+    ],
+    domainContext:
+      "The enumerated sections — dispositions, contexts, tasks, edges, wiring — are bounded to ten items each in the text rendering and state their total, shown, and omitted counts; --json carries every row. Each context prints the production wiring it owns, which is the same resolved list that renders into its validator pack.",
+    related: [
+      { command: "spec plan edit", oneLiner: "write the document back" },
+      {
+        command: "spec plan status",
+        oneLiner: "read what the plan owes rather than what it says",
+      },
+    ],
+  },
+  {
+    path: ["spec", "plan", "status"],
+    summary: "read the attempt's state, findings, and the act it owes next",
+    description:
+      "Show the attempt's status, its pinned revision and draft revision, the delta basis it was seeded against, the plan lint findings that would refuse a proposal, the dispositions still awaiting a human act, every proposal snapshot, and the exact next act with the party who performs it.",
+    usage: ["cctl spec plan status <slug>"],
+    flags: [],
+    examples: [
+      {
+        invocation: "cctl spec plan status native-sdd --json",
+        explanation:
+          "read blocking findings, unresolved dispositions, and the next act as data",
+      },
+    ],
+    generatedReference: [NATIVE_SDD_GUIDANCE_SECTIONS.deliveryPlanLint],
+    domainContext:
+      "The findings here are the SAME projection the propose refusal applies and an edit receipt counts, so a status reporting zero blocking and a propose that refuses cannot coexist. Enumerated sections are bounded to ten items each with total, shown, and omitted counts in the text rendering; --json carries every row.",
+    related: [
+      {
+        command: "spec plan edit",
+        oneLiner: "resolve a finding by rewriting the document",
+      },
+      {
+        command: "spec plan propose",
+        oneLiner: "the transition the blocking findings refuse",
+      },
+      {
+        command: "spec plan get",
+        oneLiner: "read the document behind the findings",
+      },
+    ],
+  },
+  {
     path: ["spec", "task"],
-    summary: "act on an approved spec task",
-    description: "Task mutations operate on qualified T handles.",
+    summary: "act on a task from a legacy approved spec plan",
+    description:
+      "Task mutations operate on qualified T handles only for executions pinned to legacy evergreen plan revisions. Author current delivery work with `cctl spec plan open <slug>` and `cctl spec plan edit <slug> --file <plan.json>`.",
     usage: [
       "cctl spec task complete <slug>/T7 --execution <id> --evidence <id>",
     ],
     flags: [],
     examples: [],
     domainContext:
-      "Author each plan-stage task for one agent lane and split work that cannot be completed or reviewed independently. Treat dependencies as ordering truth and independent tasks as explicit parallelism claims. Declare normalized touchedPaths so conflicting surfaces are visible, and use laneGroup only when several small tasks intentionally share one execution context.",
+      "Legacy T elements remain readable and their historical completion claims remain addressable. DeliveryPlanAttempt contexts and ordered tasks are the active graph-authoring surface; inspect them with `cctl spec plan get <slug>` and change them with `cctl spec plan edit <slug> --file <plan.json>`.",
     related: [
       {
         command: "spec task complete",
@@ -734,10 +1360,79 @@ export const specHelpEntries: CommandHelpEntry[] = [
     ],
   },
   {
+    path: ["spec", "plan", "preview"],
+    summary: "render a delivery-plan attempt's materialized graph",
+    description:
+      "Show the exact execution contexts, acceptance contracts, dependency edges, and charter materialized from a DeliveryPlanAttempt without launching it. `--stage draft` compiles the current editable attempt for inspection and never represents approvable bytes. `--stage proposed` reads only the frozen compiled candidate, so its compiledDefinitionHash is exactly what candidate-bound approval accepts and `spec start` launches. Evergreen Plan compiler inference and its --scope, --context, and --revision flags are retired; seed legacy content with `cctl spec plan open <slug> --seed-from last` and preview the resulting attempt instead.",
+    usage: [
+      "cctl spec plan preview <slug> --stage draft|proposed [--expected-draft-revision <n>]",
+    ],
+    flags: [
+      {
+        name: "scope",
+        kind: "value",
+        valuePlaceholder: "<scope.json>",
+        description:
+          "Retired legacy-preview compatibility input. Open or seed a DeliveryPlanAttempt with `cctl spec plan open <slug> --seed-from last`, then preview it with --stage draft|proposed.",
+      },
+      {
+        name: "context",
+        kind: "value",
+        valuePlaceholder: "<context-id>",
+        description:
+          "Retired legacy-preview filter. DeliveryPlanAttempt contexts are authored explicitly; inspect the attempt with --stage draft|proposed.",
+      },
+      {
+        name: "revision",
+        kind: "value",
+        valuePlaceholder: "<revision-id>",
+        description:
+          "Retired legacy-preview pin. A DeliveryPlanAttempt pins its approved revision at open; inspect that attempt with --stage draft|proposed.",
+      },
+      {
+        name: "stage",
+        kind: "value",
+        valuePlaceholder: "draft|proposed",
+        description:
+          "preview the delivery plan ATTEMPT instead of the revision. `draft` materializes the attempt's current draft document and is never approvable; `proposed` reads the frozen compiled candidate and nothing else, so its compiledDefinitionHash is exactly what an approval binds to and what a launch runs",
+      },
+      {
+        name: "expected-draft-revision",
+        kind: "value",
+        valuePlaceholder: "<n>",
+        description:
+          "compare-and-swap token for --stage draft: refuses if the attempt has moved past this draft revision, so the bytes you read are the bytes you thought you read",
+      },
+    ],
+    examples: [
+      {
+        invocation: "cctl spec plan preview native-sdd --stage draft",
+        explanation:
+          "inspect the graph materialized from the editable attempt before proposing it",
+      },
+      {
+        invocation: "cctl spec plan preview native-sdd --stage proposed",
+        explanation:
+          "read the frozen candidate whose hash approval and launch are bound to",
+      },
+    ],
+    generatedReference: [
+      NATIVE_SDD_GUIDANCE_SECTIONS.materializer,
+      NATIVE_SDD_GUIDANCE_SECTIONS.evidenceProducers,
+    ],
+    related: [
+      {
+        command: "spec start",
+        oneLiner: "compile and launch the previewed plan",
+      },
+      { command: "spec status", oneLiner: "inspect gates before launching" },
+    ],
+  },
+  {
     path: ["spec", "request-approval"],
     summary: "route a spec gate to the user",
     description:
-      "Create durable attention for a human-controlled gate. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
+      "Create durable attention for a human-controlled gate. Agents can request approval but cannot approve, sign off, or change policy. Omitting --subject asks for the gate as a whole — one entry for a gate with a dozen outstanding subjects, still the same entry once they are all approved and only the revision sign-off remains, and cleared by the act that admits the gate. Naming --subject asks for that item alone, and only that item's approval clears it. The evergreen plan gate is legacy-only; approve the compiled delivery candidate with `cctl spec plan sign-off <slug>`. The ask is validated against the same gate projection `cctl spec status` reports, so it is refused rather than filed when it would open an entry no human act could clear: stale_revision (the gate is no longer evaluated against that revision), gate_not_applicable (this policy does not gate on it, the draft has not reached it, or the revision is still a draft and no human act can land on it until it is proposed), invalid_subject (nothing outstanding under that subject — the refusal lists the valid ones), and already_satisfied (the approval is already granted or admitted). Repeating an ask that is still open is safe: the receipt returns the existing attention id with alreadyRequested true, and no second Needs You entry is created.",
     usage: [
       "cctl spec request-approval <slug> --gate <gate> [--subject <handle-or-label>]",
     ],
@@ -746,7 +1441,8 @@ export const specHelpEntries: CommandHelpEntry[] = [
         name: "gate",
         kind: "value",
         valuePlaceholder: "<gate>",
-        description: "requirements, design, plan, execution_start, or delivery",
+        description:
+          "requirements, design, execution_start, or delivery; plan is accepted only for legacy evergreen revisions — use cctl spec plan sign-off for DeliveryPlanAttempt approval",
       },
       {
         name: "subject",
@@ -789,37 +1485,49 @@ export const specHelpEntries: CommandHelpEntry[] = [
   },
   {
     path: ["spec", "start"],
-    summary:
-      "compile an approved revision and scope into an execution workflow",
+    summary: "launch the approved delivery-plan candidate, exactly as approved",
     description:
-      "Validate a scope document locally, then compile the approved revision and selected tasks and criteria into an execution workflow. This is step one of two: the execution parks at definition_review with no workflow lane running, and `cctl workflow start <definitionId>` is what launches one. Under a Notify or Off execution_start dial the agent runs that next; under Gate it parks again until a human approves the compiled definition.",
-    usage: ["cctl spec start <slug> --file <scope.json>"],
+      "Launch the compiled candidate the plan sign-off approved. The launched workflow definition hashes to the approved compiledDefinitionHash — nothing is recompiled at start — and the graph-workflow execution is created here, at launch: before this command the spec owns no workflow execution and no session slot. A spec with no approved attempt is refused, naming the exact next act in the open/propose/sign-off chain. `--park` holds a proposed or approved candidate for spec-side prelaunch review instead of launching it, still without creating any execution or taking the slot; its receipt reports the plan's projected next act, so an unapproved park points to sign-off while an approved park points to launch. Scope-file compilation is retired; import legacy content into an authored attempt with `cctl spec plan open <slug> --seed-from last`.",
+    usage: ["cctl spec start <slug> [--park]"],
     flags: [
+      {
+        name: "park",
+        kind: "boolean",
+        description:
+          "hold a proposed or approved candidate for prelaunch review — no execution is created and no session slot is taken",
+      },
       {
         name: "file",
         kind: "value",
         valuePlaceholder: "<scope.json>",
         description:
-          "task/criterion selections and all exclusion dispositions — run `cctl spec schema scope` for its shape",
+          "Retired compatibility flag: scope files are refused and never compiled. Migrate with `cctl spec plan open <slug> --seed-from last`, then propose and sign off that attempt before starting.",
       },
     ],
     examples: [
       {
-        invocation:
-          "cctl spec start audit-log --file .cc/temp/audit-scope.json --json",
-        explanation: "validate the complete scope before any server request",
+        invocation: "cctl spec start native-sdd --json",
+        explanation:
+          "launch the approved candidate and take its compiled hash as data",
+      },
+      {
+        invocation: "cctl spec start native-sdd --park",
+        explanation:
+          "hold a proposed or approved candidate for prelaunch review; the receipt names sign-off or launch as the next act",
       },
     ],
+    domainContext:
+      "A parked attempt tuned afterwards (reopen + re-propose) changes the candidate hash, and the launch refuses until the new candidate is signed off — the refusal and the plan receipt both print the parked hash beside the current one.",
     related: [
       {
-        command: "workflow start",
-        oneLiner: "launch the lane for the compiled definition",
+        command: "spec plan sign-off",
+        oneLiner: "the one approval a launch requires",
+      },
+      {
+        command: "spec plan preview",
+        oneLiner: "read the exact bytes this launch will run",
       },
       { command: "spec status", oneLiner: "verify execution-start readiness" },
-      {
-        command: "spec schema",
-        oneLiner: "print the execution scope document's schema",
-      },
       { command: "spec abandon", oneLiner: "abandon an execution with reason" },
       {
         command: "spec capture",
@@ -830,18 +1538,19 @@ export const specHelpEntries: CommandHelpEntry[] = [
   {
     path: ["spec", "capture"],
     summary:
-      "record work discovered during a running execution as a scope amendment",
+      "record work discovered during a running execution as a durable discovery",
     description:
-      "Record work discovered during a running execution as a task on a draft amendment revision based on the run's pinned revision. This is the execution-time scope amendment; to continue authoring after a gate is approved, outside any run, use `cctl spec amend`. The run's pinned scope never changes; the amendment queues for a future execution. With --blocking-reason the running execution is abandoned in the same operation (abandon-and-restart). The task's four trace id arrays may be empty at capture time, but any id they do name must resolve in the pinned revision to an element of the expected kind: otherwise the capture returns dangling_reference and leaves no amendment draft, no task, and no event behind.",
+      "Record work a running execution found and deliberately did not do. There are exactly three post-launch paths and this command owns two of them: without --blocking-reason it records a durable discovery that the next `cctl spec plan open --seed-from last` places as planned work, and the run keeps its pinned scope; with --blocking-reason it abandons the run through the abandon coordinator and opens the seeded replacement attempt in the same operation, with the discovery already placed. The third path is `cctl workflow live amend` — the audited amendment is the only operation that may change a launched definition, and capture never mutates the running plan under any form. Before launch there is no run to capture against: the command creates nothing and names the plan verb instead (`cctl spec plan edit` for a draft attempt, `cctl spec plan reopen` for a proposed, approved, or parked one). The task's four trace id arrays may be empty at capture time, but any id they do name must resolve in the run's pinned revision to an element of the expected kind: otherwise the capture returns dangling_reference and leaves no discovery and no event behind. Capture records delivery work, never spec content: to continue authoring the evergreen spec after a gate is approved, outside any run, use `cctl spec amend`.",
     usage: [
-      "cctl spec capture <slug> --execution <id> --file <task.json> [--blocking-reason <reason>]",
+      "cctl spec capture <slug> --file <task.json> [--execution <id>] [--blocking-reason <reason>]",
     ],
     flags: [
       {
         name: "execution",
         kind: "value",
         valuePlaceholder: "<id>",
-        description: "running execution the work was discovered in",
+        description:
+          "the run to capture against — needed only for a legacy run with no delivery plan attempt behind it",
       },
       {
         name: "file",
@@ -861,29 +1570,40 @@ export const specHelpEntries: CommandHelpEntry[] = [
     examples: [
       {
         invocation:
-          "cctl spec capture audit-log --execution exec-1 --file .cc/temp/discovered-task.json --json",
+          "cctl spec capture audit-log --file .cc/temp/discovered-task.json --json",
         explanation:
           'task.json shape: {"title": "...", "instructions": "...", "tracedRequirementElementIds": [], "tracedDecisionElementIds": [], "coveredCriterionElementIds": [], "dependsOnTaskElementIds": [], "laneGroup": "optional", "touchedPaths": ["src/lib"]} — the id arrays may be empty at capture time',
       },
+      {
+        invocation:
+          'cctl spec capture audit-log --file .cc/temp/discovered-task.json --blocking-reason "the pinned scope cannot absorb it" --json',
+        explanation:
+          "abandons the run and opens the seeded replacement attempt in one act; the receipt names both the abandoned execution and the new attempt",
+      },
     ],
     domainContext:
-      "Capture is refused unless the execution is running. Populate coveredCriterionElementIds before proposing the amendment, or criterion-coverage lint will block propose.",
+      "Capture is refused unless the execution is running. The three post-launch paths — non-blocking capture, blocking capture (abandon and replan), and `cctl workflow live amend` — are printed side by side on every capture receipt. Populate coveredCriterionElementIds so the seeded plan lands the discovery on the context that owns the criterion instead of an unowned discovered-work context.",
     related: [
       {
-        command: "spec amend",
-        oneLiner: "continue authoring after approval, not during a run",
+        command: "spec plan open",
+        oneLiner: "seed the next plan — it places the captured discoveries",
       },
       {
-        command: "spec start",
-        oneLiner: "start a future execution from the amended revision",
+        command: "spec amend",
+        oneLiner:
+          "continue authoring the spec itself, not a run's delivery work",
+      },
+      {
+        command: "spec plan edit",
+        oneLiner: "the prelaunch path for a draft attempt",
+      },
+      {
+        command: "spec plan reopen",
+        oneLiner: "the prelaunch path for a proposed, approved, or parked one",
       },
       {
         command: "spec abandon",
         oneLiner: "abandon the execution without capturing work",
-      },
-      {
-        command: "spec status",
-        oneLiner: "inspect the draft amendment revision",
       },
       {
         command: "spec schema",
@@ -927,7 +1647,7 @@ export const specHelpEntries: CommandHelpEntry[] = [
     path: ["spec", "abandon"],
     summary: "abandon one execution, or retire the whole spec as a human",
     description:
-      "Record a required durable reason while abandoning the whole spec, or target one execution with --execution. Abandoning one execution is ordinary agent work. Retiring the whole spec is the least reversible act on this surface and is human-only: agent transports receive a typed human_act_required refusal, so ask the operator to retire the spec from Spec Studio.",
+      "Record a required durable reason while abandoning the whole spec, or target one execution with --execution. Execution-targeted abandon coordinates the linked workflow abort and execution-slot release before finalizing the spec execution; a partial cleanup refusal names the exact `cctl workflow live abort` or `cctl workflow live release` recovery and tells you to retry this command. Abandoning one execution is ordinary agent work. Retiring the whole spec is the least reversible act on this surface and is human-only: agent transports receive a typed human_act_required refusal, so ask the operator to retire the spec from Spec Studio.",
     usage: [
       "cctl spec abandon <slug> --reason <reason>",
       "cctl spec abandon <slug> --execution <id> --reason <reason>",
@@ -954,11 +1674,19 @@ export const specHelpEntries: CommandHelpEntry[] = [
       },
     ],
     related: [
-      { command: "spec start", oneLiner: "start an approved scoped execution" },
+      {
+        command: "spec start",
+        oneLiner: "launch an approved delivery-plan candidate",
+      },
       { command: "spec status", oneLiner: "inspect current lifecycle state" },
       {
         command: "spec capture",
         oneLiner: "capture blocking discovered work, then abandon and restart",
+      },
+      {
+        command: "workflow live release",
+        oneLiner:
+          "the exact backstop a partial abandon receipt names if the slot remains owned",
       },
     ],
   },

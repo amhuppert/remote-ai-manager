@@ -1,6 +1,7 @@
 import { COMBINED_APPROVAL_DIAL } from "./schemas";
 import type {
   ResolvedGateDial,
+  SpecAuthoringStage,
   SpecGate,
   SpecGatePolicy,
   SpecGatePreset,
@@ -64,8 +65,9 @@ export function dialRequiresHumanApproval(dial: ResolvedGateDial): boolean {
 
 /**
  * Whether the policy collapses every per-element authoring approval into the
- * one sign-off act (R11.5). It takes the combined dial on all three authoring
- * gates: a mixed policy still asks per element at the gates that require it.
+ * one sign-off act (R11.5). Active authoring ends at design, so its decision
+ * reads only requirements and design. A persisted legacy Plan revision also
+ * reads the durable Plan dial so its existing review can keep its semantics.
  *
  * The sign-off preconditions, the status projection, and the review surface
  * all read it here. A second copy is what let the projection list subjects the
@@ -74,8 +76,13 @@ export function dialRequiresHumanApproval(dial: ResolvedGateDial): boolean {
  */
 export function authoringApprovalsCollapseIntoSignOff(
   policy: SpecGatePolicy,
+  revisionStage: SpecAuthoringStage = "design",
 ): boolean {
-  return (["requirements", "design", "plan"] as const).every(
+  const gates: readonly SpecAuthoringStage[] =
+    revisionStage === "plan"
+      ? ["requirements", "design", "plan"]
+      : ["requirements", "design"];
+  return gates.every(
     (gate) => resolveDial(policy, gate) === COMBINED_APPROVAL_DIAL,
   );
 }

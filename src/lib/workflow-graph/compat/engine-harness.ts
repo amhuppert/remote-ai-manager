@@ -434,6 +434,7 @@ export async function runEngineScenario<T>(
       startedAt: now(),
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const running = await repository.mutateActive(

@@ -212,6 +212,10 @@ function execution(
     session_name: "session-1",
     delivered_at: revision.createdAt,
     abandoned_reason: null,
+    cleanup_phase: null,
+    linked_workflow_execution_id: null,
+    cleanup_last_error: null,
+    cleanup_last_error_at: null,
     created_at: revision.createdAt,
     updated_at: revision.createdAt,
     ...overrides,
@@ -245,6 +249,7 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
     ],
     findApprovalsBySpecId: () => [] as SpecApprovalRow[],
     findCommentsByRevision: () => [],
+    findEventsBySpecId: () => [],
     findGateAdmissionsBySpecId: () => [] as SpecGateAdmissionRow[],
     findLinksBySpecId: () => [] as SpecLinkRow[],
     getLinkedTickets: async () => [],
@@ -269,6 +274,7 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
       ok: true,
       checkedRevisionIds: [],
       mismatches: [],
+      consistencyFindings: [],
     }),
     measureProject: async () => ({
       definitionsVersion: "native-sdd-measures-v1",
@@ -304,6 +310,41 @@ function createDeps(overrides: Partial<SpecRouteDeps> = {}): SpecRouteDeps {
 }
 
 describe("spec read route handlers", () => {
+  it("keeps an approved legacy plan revision and its task readable", async () => {
+    const approvedPlan = {
+      ...revision,
+      state: "approved" as const,
+      contentHash: "legacy-plan-hash",
+      approvedAt: revision.createdAt,
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedPlan],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === approvedPlan.id
+            ? { ...snapshot, revision: approvedPlan }
+            : null,
+      }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.revisions).toContainEqual(approvedPlan);
+    expect(detail.currentApprovedRevision?.revision.authoringStage).toBe(
+      "plan",
+    );
+    expect(
+      detail.currentApprovedRevision?.elements.find(
+        (element) => element.element.kind === "task",
+      )?.version.payload,
+    ).toMatchObject({ kind: "task", title: "Build read routes" });
+  });
+
   it("resolves an alias and returns the current full view", async () => {
     const approval: SpecApprovalRow = {
       id: "approval-1",
@@ -854,6 +895,232 @@ describe("spec read route handlers", () => {
         ],
       ),
     ).toEqual([["criterion-1", "awaiting_proof"]]);
+  });
+
+  it("projects every live proposal with its supersession verdict and the snapshots its diff needs", async () => {
+    // Ticket #50's shape: revision 3 was approved from revision 1's content,
+    // forking past the still-proposed revision 2. The lineage head is
+    // approved, so a surface keyed off the newest revision alone reports
+    // nothing awaiting review while revision 2 sits stranded.
+    const approvedBase: SpecRevision = {
+      ...revision,
+      state: "approved",
+      contentHash: "revision-1-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const stranded: SpecRevision = {
+      ...revision,
+      id: "revision-2",
+      number: 2,
+      state: "proposed",
+      basedOnRevisionId: approvedBase.id,
+      contentHash: "revision-2-hash",
+      proposedAt: "2026-07-18T02:00:00.000Z",
+    };
+    const forkedPast: SpecRevision = {
+      ...revision,
+      id: "revision-3",
+      number: 3,
+      state: "approved",
+      basedOnRevisionId: approvedBase.id,
+      contentHash: "revision-3-hash",
+      proposedAt: "2026-07-18T03:00:00.000Z",
+      approvedAt: "2026-07-18T03:30:00.000Z",
+    };
+    const snapshotFor = (target: SpecRevision): SpecRevisionSnapshot => ({
+      revision: target,
+      elements: snapshot.elements.map((entry) => ({
+        ...entry,
+        version: { ...entry.version, revisionId: target.id },
+      })),
+    });
+    const snapshotsById = new Map(
+      [approvedBase, stranded, forkedPast].map((target) => [
+        target.id,
+        snapshotFor(target),
+      ]),
+    );
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedBase, stranded, forkedPast],
+        getRevisionSnapshot: async (revisionId) =>
+          snapshotsById.get(revisionId) ?? null,
+      }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    expect(response.status).toBe(200);
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.currentRevision?.revision.id).toBe(forkedPast.id);
+    expect(
+      detail.liveProposals.map((entry) => [
+        entry.revision.id,
+        entry.supersededBy?.id ?? null,
+        entry.snapshot.revision.id,
+        entry.baseSnapshot?.revision.id ?? null,
+      ]),
+    ).toEqual([[stranded.id, forkedPast.id, stranded.id, approvedBase.id]]);
+  });
+
+  it("reports a proposal nothing has forked past as the live, non-superseded one", async () => {
+    const approvedBase: SpecRevision = {
+      ...revision,
+      state: "approved",
+      contentHash: "revision-1-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const current: SpecRevision = {
+      ...revision,
+      id: "revision-2",
+      number: 2,
+      state: "proposed",
+      basedOnRevisionId: approvedBase.id,
+      contentHash: "revision-2-hash",
+      proposedAt: "2026-07-18T02:00:00.000Z",
+    };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedBase, current],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === current.id
+            ? { revision: current, elements: snapshot.elements }
+            : revisionId === approvedBase.id
+              ? { revision: approvedBase, elements: snapshot.elements }
+              : null,
+      }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.liveProposals).toHaveLength(1);
+    expect(detail.liveProposals[0]?.revision.id).toBe(current.id);
+    expect(detail.liveProposals[0]?.supersededBy).toBeNull();
+  });
+
+  /**
+   * The review surface exposes each proposal's disposition document read-only,
+   * on the same projection entry that carries its supersession verdict — a
+   * stranded proposal's notes are exactly what a human needs to decide whether
+   * to dismiss it, so they cannot be reachable only for the current one.
+   */
+  it("exposes each live proposal's notes from its own propose event", async () => {
+    const approvedBase: SpecRevision = {
+      ...revision,
+      state: "approved",
+      contentHash: "revision-1-hash",
+      proposedAt: revision.createdAt,
+      approvedAt: revision.createdAt,
+    };
+    const stranded: SpecRevision = {
+      ...revision,
+      id: "revision-2",
+      number: 2,
+      state: "proposed",
+      basedOnRevisionId: approvedBase.id,
+      contentHash: "revision-2-hash",
+      proposedAt: "2026-07-18T02:00:00.000Z",
+    };
+    const forkedPast: SpecRevision = {
+      ...revision,
+      id: "revision-3",
+      number: 3,
+      state: "approved",
+      basedOnRevisionId: approvedBase.id,
+      contentHash: "revision-3-hash",
+      proposedAt: "2026-07-18T03:00:00.000Z",
+      approvedAt: "2026-07-18T03:30:00.000Z",
+    };
+    const snapshotsById = new Map(
+      [approvedBase, stranded, forkedPast].map((target) => [
+        target.id,
+        {
+          revision: target,
+          elements: snapshot.elements.map((entry) => ({
+            ...entry,
+            version: { ...entry.version, revisionId: target.id },
+          })),
+        } satisfies SpecRevisionSnapshot,
+      ]),
+    );
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [approvedBase, stranded, forkedPast],
+        getRevisionSnapshot: async (revisionId) =>
+          snapshotsById.get(revisionId) ?? null,
+        findEventsBySpecId: () => [
+          {
+            id: 1,
+            spec_id: spec.id,
+            occurred_at: "2026-07-18T02:00:00.000Z",
+            event_type: "spec-revision-changed",
+            actor_json: JSON.stringify({
+              kind: "agent",
+              conversationId: "conversation-1",
+            }),
+            payload_json: JSON.stringify({
+              kind: "proposed",
+              revisionId: stranded.id,
+              notes: "## Disposition\n\nRewrote R1 after the reviewer's F3.",
+            }),
+          },
+        ],
+      }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.liveProposals.map((entry) => entry.notes)).toEqual([
+      "## Disposition\n\nRewrote R1 after the reviewer's F3.",
+    ]);
+  });
+
+  it("reports no notes for a proposal whose author supplied none", async () => {
+    const proposed: SpecRevision = { ...revision, state: "proposed" };
+    const handlers = createSpecRouteHandlers(
+      createDeps({
+        listRevisions: async () => [proposed],
+        getRevisionSnapshot: async (revisionId) =>
+          revisionId === proposed.id
+            ? { revision: proposed, elements: snapshot.elements }
+            : null,
+        // The payload every propose wrote before notes existed.
+        findEventsBySpecId: () => [
+          {
+            id: 1,
+            spec_id: spec.id,
+            occurred_at: "2026-07-18T02:00:00.000Z",
+            event_type: "spec-revision-changed",
+            actor_json: JSON.stringify({ kind: "human" }),
+            payload_json: JSON.stringify({
+              kind: "proposed",
+              revisionId: proposed.id,
+            }),
+          },
+        ],
+      }),
+    );
+
+    const response = await handlers.getSpecGET(
+      new Request("http://cc.test/api/specs/demo/current-slug"),
+      routeContext({ name: "demo", slug: spec.slug }),
+    );
+
+    const detail = specDetailViewSchema.parse(await response.json());
+    expect(detail.liveProposals[0]?.notes).toBeNull();
   });
 
   it("carries question and assumption projections on the detail view", async () => {
@@ -2180,6 +2447,22 @@ describe("spec read route handlers", () => {
           unresolvedCriterionElementIds: [],
         },
       ],
+      // The tier over the same lint the sign-off projection already read —
+      // status runs lint once and reports both readings of it.
+      draftHealth: {
+        revisionId: revision.id,
+        total: 1,
+        blocking: 1,
+        counts: [{ severity: "blocks_propose", count: 1 }],
+        top: [
+          {
+            ruleId: "uncovered_criterion",
+            severity: "blocks_propose",
+            elementHandle: "R1.1",
+            message: "R1.1 must be covered",
+          },
+        ],
+      },
       coverage: {
         coveredCriteria: 1,
         totalCriteria: 1,

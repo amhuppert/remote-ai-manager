@@ -129,21 +129,6 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
           validationStrategy: { kinds: ["test_run" as const] },
         },
       },
-      {
-        elementId: "task-1",
-        kind: "task" as const,
-        parentElementId: null,
-        position: 2,
-        payload: {
-          kind: "task" as const,
-          title: "Implement the notice",
-          instructions: "Implement and test.",
-          tracedRequirementElementIds: ["requirement-1"],
-          tracedDecisionElementIds: [],
-          coveredCriterionElementIds: ["criterion-1"],
-          dependsOnTaskElementIds: [],
-        },
-      },
     ]) {
       await authoring.upsertDraftElement({
         specId: created.spec.id,
@@ -171,7 +156,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
       .findGateAdmissionsByRevision(created.draft.id)
       .filter((admission) => admission.basis === "notify_policy");
     expect(admissions.map((admission) => admission.gate).sort()).toEqual([
-      "plan",
+      "design",
       "requirements",
     ]);
 
@@ -184,7 +169,7 @@ describe("R11.2 Notify-dial authoring admissions notify the human post hoc (runt
         .map((row) => ({ type: row.type, gate: row.gate }))
         .sort((a, b) => a.gate.localeCompare(b.gate)),
     ).toEqual([
-      { type: "spec-policy-admitted", gate: "plan" },
+      { type: "spec-policy-admitted", gate: "design" },
       { type: "spec-policy-admitted", gate: "requirements" },
     ]);
     // Each notification correlates to its admission row.

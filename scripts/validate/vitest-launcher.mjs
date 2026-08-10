@@ -1,13 +1,14 @@
+import os from "node:os";
 import { startVitest } from "vitest/node";
 
 const [scope, projectSelection, ...scopeArgs] = process.argv.slice(2);
-const testWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
+const requestedWorkers = Number.parseInt(process.env.CC_TEST_WORKERS ?? "", 10);
 const testHeapMb = Number.parseInt(process.env.CC_TEST_HEAP_MB ?? "", 10);
 // 0 disables bail. Scoped runs keep the low threshold so a broken branch fails
 // fast; the full-suite command raises it to report every failure at once.
 const testBail = Number.parseInt(process.env.CC_TEST_BAIL ?? "3", 10);
 
-if (!Number.isInteger(testWorkers) || testWorkers < 1) {
+if (!Number.isInteger(requestedWorkers) || requestedWorkers < 1) {
   throw new Error("CC_TEST_WORKERS must be a positive integer");
 }
 if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
@@ -16,6 +17,34 @@ if (!Number.isInteger(testHeapMb) || testHeapMb < 1) {
 if (!Number.isInteger(testBail) || testBail < 0) {
   throw new Error("CC_TEST_BAIL must be a non-negative integer");
 }
+
+/**
+ * `CC_TEST_WORKERS` is a CEILING, not an override.
+ *
+ * vitest.config.ts derives its fork count from RAM (~55% of total, budgeted
+ * against the same per-worker heap) precisely so a full-suite run cannot
+ * exhaust memory and swap. Passing the requested count straight through
+ * defeated that: on a 16 GB machine the config allows 5 workers but the
+ * launcher forced 8, reserving 12 GB of heap ceiling against an 8.8 GB budget.
+ * Under concurrent lane validations that oversubscription starves the main
+ * process and the run dies on a worker RPC timeout ("Timeout calling
+ * onTaskUpdate") with every test having passed.
+ *
+ * Clamping is monotonic — it only ever lowers the count, so a machine with
+ * enough RAM for the requested workers still gets all of them.
+ */
+const WORKER_HEAP_GB = testHeapMb / 1024;
+const RAM_BUDGET_FRACTION = 0.55;
+const ramBoundedWorkers = Math.max(
+  2,
+  Math.floor(
+    ((os.totalmem() / 1024 ** 3) * RAM_BUDGET_FRACTION) / WORKER_HEAP_GB,
+  ),
+);
+const testWorkers = Math.max(
+  1,
+  Math.min(requestedWorkers, os.availableParallelism(), ramBoundedWorkers),
+);
 
 const projectsBySelection = {
   both: ["unit-node", "unit-jsdom"],

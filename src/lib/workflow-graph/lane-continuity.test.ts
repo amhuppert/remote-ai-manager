@@ -100,6 +100,7 @@ function makeExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    ownerConversationId: null,
     definitionApproval: null,
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,

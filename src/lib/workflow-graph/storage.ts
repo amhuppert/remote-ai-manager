@@ -23,6 +23,7 @@ import {
   findChangedLockedRegion,
   regionLockedInstruction,
   regionLockedMessage,
+  type LockedRegionMatch,
 } from "./locked-regions";
 import {
   WorkflowAssignmentReferenceError,
@@ -43,13 +44,20 @@ export class WorkflowRegionLockedError extends Error {
   readonly instruction: string;
 
   constructor(
-    readonly lockedPath: string,
-    readonly sourceUri: string,
+    readonly locked: LockedRegionMatch,
     message: string,
   ) {
     super(message);
     this.name = "WorkflowRegionLockedError";
-    this.instruction = regionLockedInstruction(sourceUri);
+    this.instruction = regionLockedInstruction(locked);
+  }
+
+  get lockedPath(): string {
+    return this.locked.lockedPath;
+  }
+
+  get sourceUri(): string {
+    return this.locked.sourceUri;
   }
 }
 
@@ -205,11 +213,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       sourceUri: locked.sourceUri,
       scope: scope.kind,
     });
-    throw new WorkflowRegionLockedError(
-      locked.lockedPath,
-      locked.sourceUri,
-      regionLockedMessage(locked),
-    );
+    throw new WorkflowRegionLockedError(locked, regionLockedMessage(locked));
   }
 
   /**

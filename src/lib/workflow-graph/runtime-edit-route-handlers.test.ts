@@ -580,7 +580,7 @@ describe("graph workflow runtime edit route handlers (live edits)", () => {
     await expect(response.json()).resolves.toMatchObject({
       code: "region_locked",
       instruction:
-        "Amend at source contract://criteria/R17.4 and recompile the workflow definition.",
+        'Amend at source contract://criteria/R17.4 and recompile the workflow definition. This refusal applies to active execution "execution-1".',
     });
     expect(
       (await reload())?.workingDefinition.executionContexts.find(

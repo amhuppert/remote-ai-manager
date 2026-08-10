@@ -66,6 +66,7 @@ function specDetail(revisionNumber: number, statement: string): SpecDetailView {
     spec: summary.spec,
     aliases: [],
     revisions: [revision],
+    liveProposals: [],
     baseRevision: null,
     currentRevision: {
       revision,
@@ -134,6 +135,7 @@ function specDetail(revisionNumber: number, statement: string): SpecDetailView {
       openQuestions: [],
       assumptions: [],
       taskPlan: [],
+      draftHealth: null,
       coverage: { coveredCriteria: 0, totalCriteria: 0, percentage: 0 },
       delivery: { allWaived: false, provenCount: 0, totalInScope: 0 },
     },

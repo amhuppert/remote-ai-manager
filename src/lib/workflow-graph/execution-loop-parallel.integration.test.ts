@@ -41,6 +41,7 @@ import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { DEFAULT_LANE_MERGE_VALIDATION_CONFIG } from "./config-schemas";
+import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -59,7 +60,10 @@ interface InMemoryExecutionRepository {
       inputs: Record<string, string>;
     },
   ): Promise<GraphWorkflowExecution>;
-  archiveActive(projectPath: string, sessionName: string): Promise<void>;
+  archiveActive(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowArchiveOutcome>;
   mutateActive(
     projectPath: string,
     sessionName: string,
@@ -365,6 +369,7 @@ function createInitialExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    ownerConversationId: null,
     definitionApproval: null,
     workingDefinition: {
       ...definition,

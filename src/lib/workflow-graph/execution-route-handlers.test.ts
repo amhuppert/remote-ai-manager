@@ -16,14 +16,18 @@ import {
   createGraphWorkflowRouteScriptValidatorService,
   launchGraphWorkflowExecution,
   resolveGraphValidatorTimeoutMs,
+  OWNER_CONVERSATION_HEADER,
   type GraphWorkflowExecutionRouteDeps,
 } from "./execution-route-handlers";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type {
   DefinitionApprovalGateDecision,
   GraphExecutionLifecycleContext,
 } from "./execution-lifecycle-port";
 import {
+  createGraphWorkflowManager,
   GraphWorkflowTransitionConflictError,
   WorkflowDefinitionApprovalRequiredError,
   WorkflowPrerequisitesUnmetError,
@@ -36,12 +40,32 @@ import {
   resetGraphExecutionContractForTesting,
 } from "./execution-contract-port";
 
-function makeRequest(url: string, method: string, body?: unknown): NextRequest {
+function makeRequest(
+  url: string,
+  method: string,
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
+): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
     method,
     body: body === undefined ? undefined : JSON.stringify(body),
-    headers:
-      body === undefined ? undefined : { "content-type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...extraHeaders,
+    },
+  });
+}
+
+function makeConversation(id: string): ConversationState {
+  return conversationStateSchema.parse({
+    id,
+    scope: "session",
+    transcriptPath: null,
+    status: "idle",
+    promptCount: 1,
+    createdAt: "2026-03-27T12:00:00.000Z",
+    lastActivityAt: "2026-03-27T12:00:00.000Z",
+    agentBackend: "claude",
   });
 }
 
@@ -220,6 +244,103 @@ describe("graph workflow execution route handlers", () => {
         status: "running",
         archived: false,
       },
+    });
+  });
+
+  it("captures the caller conversation server-side as the execution owner", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-owned",
+      status: "running",
+    });
+
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ conversations: [makeConversation("conv-owner")] }),
+    );
+    startExecution.mockResolvedValue(startedExecution);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+        { [OWNER_CONVERSATION_HEADER]: "conv-owner" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      tier: "project",
+      ownerConversationId: "conv-owner",
+    });
+  });
+
+  it("ignores an owner id supplied in the request body", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-forged",
+      status: "running",
+    });
+
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ conversations: [makeConversation("conv-owner")] }),
+    );
+    startExecution.mockResolvedValue(startedExecution);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1", ownerConversationId: "conv-forged" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    // No header, so there is no authenticated capture: the body's claim is not
+    // a source of owner identity at all.
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      tier: "project",
+    });
+  });
+
+  it("refuses to capture a conversation that does not belong to the session", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-unowned",
+      status: "running",
+    });
+
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({ conversations: [makeConversation("conv-owner")] }),
+    );
+    startExecution.mockResolvedValue(startedExecution);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+        { [OWNER_CONVERSATION_HEADER]: "conv-from-another-session" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    // The launch still proceeds — it is an ordinary unowned start — but the
+    // unverifiable claim never becomes an owner.
+    expect(response.status).toBe(202);
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      tier: "project",
     });
   });
 
@@ -3268,6 +3389,59 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
     });
   });
 
+  it("threads the caller-supplied owner conversation into the shared start path", async () => {
+    const started = createWorkflowExecution({
+      id: "execution-owned-seam",
+      status: "running",
+    });
+    const startExecution = vi.fn(async () => started);
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    await launchGraphWorkflowExecution(
+      {
+        projectPath: PROJECT_PATH,
+        projectName: PROJECT_NAME,
+        sessionName: SESSION_NAME,
+        definitionId: "wf-1",
+        ownerConversationId: "conv-planner",
+      },
+      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+    );
+
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      definitionId: "wf-1",
+      ownerConversationId: "conv-planner",
+    });
+  });
+
+  it("omits the owner entirely when the calling seam has no conversation identity", async () => {
+    const started = createWorkflowExecution({
+      id: "execution-unowned-seam",
+      status: "running",
+    });
+    const startExecution = vi.fn(async () => started);
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    await launchGraphWorkflowExecution(
+      {
+        projectPath: PROJECT_PATH,
+        projectName: PROJECT_NAME,
+        sessionName: SESSION_NAME,
+        definitionId: "wf-1",
+        ownerConversationId: null,
+      },
+      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+    );
+
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      definitionId: "wf-1",
+    });
+  });
+
   it("marks a linked spec execution running before kicking off the workflow loop", async () => {
     const started = createWorkflowExecution({
       id: "execution-lifecycle",
@@ -3398,6 +3572,461 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
     ).rejects.toThrow('Workflow definition "nope" was not found');
 
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+});
+
+describe("lifecycle contract: production slot auto-release", () => {
+  const PROJECT_PATH = "/repo";
+  const PROJECT_NAME = "repo";
+  const SESSION_NAME = "session-1";
+  const NOW = "2026-06-10T10:00:00.000Z";
+  const ABORT_URL =
+    "/api/projects/repo/sessions/session-1/graph-workflow/abort";
+  const START_URL = "/api/projects/repo/sessions/session-1/graph-workflow";
+
+  let fixture: PersistenceFixture;
+
+  beforeEach(() => {
+    fixture = createPersistenceFixture();
+    fixture.seedProject(PROJECT_PATH);
+    fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+  });
+
+  afterEach(() => {
+    fixture.close();
+  });
+
+  function unusedDep(name: string) {
+    return async (): Promise<never> => {
+      throw new Error(`${name} should not be called by this flow`);
+    };
+  }
+
+  /**
+   * Real repository + real manager over the real (in-memory SQLite) store, with
+   * the production route handlers on top. The slot is the persisted
+   * `graph_workflow_executions` active row, so "the slot is free" can only be
+   * proven by reading the store back — a JS fake would prove nothing about
+   * durability.
+   */
+  function buildStack(
+    overrides: Partial<GraphWorkflowExecutionRouteDeps> = {},
+  ) {
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast: () => {},
+      dispatchPush: () => {},
+      now: () => NOW,
+    });
+    const repository = createGraphWorkflowExecutionRepository({
+      getSession: fixture.store.getSession,
+      getActiveGraphWorkflowExecution:
+        fixture.store.getActiveGraphWorkflowExecution,
+      mutateActiveGraphWorkflowExecution:
+        fixture.store.mutateActiveGraphWorkflowExecution,
+      archiveActiveGraphWorkflowExecution:
+        fixture.store.archiveActiveGraphWorkflowExecution,
+      markGraphWorkflowContextEventsPreReset:
+        fixture.store.markGraphWorkflowContextEventsPreReset,
+      eventPublisher,
+    });
+    // Two distinct spies on purpose. The manager already stops lane dev servers
+    // inside its abort/halt transitions, so a shared spy could not tell the
+    // release's own cleanup apart from the manager's — and completion, the one
+    // transition with no manager-side cleanup, is exactly where the gap is.
+    const managerStopLaneDevServers = vi.fn(async () => {});
+    const releaseStopLaneDevServers = vi.fn(async () => {});
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      now: () => NOW,
+      stopExecutionLaneDevServers: managerStopLaneDevServers,
+    });
+    const handlers = createGraphWorkflowExecutionRouteHandlers({
+      resolveProjectPath: async (name) =>
+        name === PROJECT_NAME ? PROJECT_PATH : null,
+      getSession: fixture.store.getSession,
+      normalizeExecutionAfterRestart: unusedDep(
+        "normalizeExecutionAfterRestart",
+      ),
+      startExecution: unusedDep("startExecution"),
+      pauseExecution: unusedDep("pauseExecution"),
+      resumeExecution: unusedDep("resumeExecution"),
+      abortExecution: (projectPath, sessionName) =>
+        manager.send(projectPath, sessionName, { type: "abort" }),
+      resetExecutionContext: unusedDep("resetExecutionContext"),
+      resetExecutionContextAssignment: unusedDep(
+        "resetExecutionContextAssignment",
+      ),
+      archiveExecution: repository.archiveActive,
+      kickOffExecutionLoop: unusedDep("kickOffExecutionLoop"),
+      getActiveExecution: repository.getActive,
+      recordPendingHaltReason: unusedDep("recordPendingHaltReason"),
+      drainAndHalt: unusedDep("drainAndHalt"),
+      recordApprovalDecision: unusedDep("recordApprovalDecision"),
+      executionAborted: async () => {},
+      stopExecutionLaneDevServers: releaseStopLaneDevServers,
+      ...overrides,
+    });
+    return {
+      handlers,
+      manager,
+      repository,
+      managerStopLaneDevServers,
+      releaseStopLaneDevServers,
+    };
+  }
+
+  async function seedActive(execution: GraphWorkflowExecution): Promise<void> {
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.seedActive",
+      () => ({ execution, events: [] }),
+    );
+  }
+
+  function readActive(): Promise<GraphWorkflowExecution | null> {
+    return fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+  }
+
+  /**
+   * The kickoff is fire-and-forget on every launch surface, so the completion
+   * auto-release lands after the route has already answered. Poll the store
+   * rather than the handler's response.
+   */
+  async function waitForFreeSlot(): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if ((await readActive()) === null) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error("slot was still held after the execution settled");
+  }
+
+  function runningExecution(
+    overrides: Partial<GraphWorkflowExecution> = {},
+  ): GraphWorkflowExecution {
+    return createWorkflowExecution({
+      id: "execution-live",
+      status: "running",
+      activeContextIds: ["context-plan"],
+      ...overrides,
+    });
+  }
+
+  it("frees the slot after the production abort route, archiving the run", async () => {
+    const { handlers } = buildStack();
+    await seedActive(runningExecution());
+
+    const response = await handlers.ABORT(
+      makeRequest(ABORT_URL, "POST"),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      execution: { executionId: "execution-live", status: "aborted" },
+    });
+    // The whole point of auto-release: no separate clear act is needed.
+    expect(await readActive()).toBeNull();
+    const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(archived.map((entry) => entry.id)).toEqual(["execution-live"]);
+  });
+
+  it("frees the slot identically when a run reaches completed", async () => {
+    const seeded = runningExecution({ id: "execution-finishing" });
+    const stack = buildStack({
+      startExecution: async () => seeded,
+      // Stands in for the execution loop: the graph runs out of work and the
+      // manager records the terminal `completed` transition.
+      kickOffExecutionLoop: async () => {
+        await stack.manager.send(PROJECT_PATH, SESSION_NAME, {
+          type: "complete",
+        });
+      },
+    });
+    await seedActive(seeded);
+
+    const response = await stack.handlers.START(
+      makeRequest(START_URL, "POST", { definitionId: "workflow-1" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(202);
+    await waitForFreeSlot();
+    const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(archived.map((entry) => entry.status)).toEqual(["completed"]);
+  });
+
+  it("leaves a halted run holding the slot for resume", async () => {
+    const stack = buildStack({
+      startExecution: async () => runningExecution({ id: "execution-halting" }),
+      kickOffExecutionLoop: async () => {
+        await stack.manager.send(PROJECT_PATH, SESSION_NAME, {
+          type: "halt",
+          reason: {
+            type: "max_iterations",
+            contextId: "context-plan",
+            iterationCount: 1,
+            summary: null,
+          },
+        });
+      },
+    });
+    await seedActive(runningExecution({ id: "execution-halting" }));
+
+    const response = await stack.handlers.START(
+      makeRequest(START_URL, "POST", { definitionId: "workflow-1" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+    expect(response.status).toBe(202);
+
+    // `halted` retains ownership: it is resumable, so releasing the slot would
+    // admit unrelated work and race the resume.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const active = await readActive();
+      if (active?.status === "halted") break;
+    }
+    const active = await readActive();
+    expect(active?.status).toBe("halted");
+    expect(active?.id).toBe("execution-halting");
+  });
+
+  it("stops lane dev servers when a completed run releases the slot", async () => {
+    const laneExecution = runningExecution({ id: "execution-laned" });
+    const planState = laneExecution.contextStates["context-plan"];
+    if (!planState) throw new Error("fixture missing context-plan");
+    planState.isolation = "worktree";
+    planState.worktreePath = "/repo/.worktrees/session-1--lane-plan";
+
+    const stack = buildStack({
+      startExecution: async () => laneExecution,
+      kickOffExecutionLoop: async () => {
+        await stack.manager.send(PROJECT_PATH, SESSION_NAME, {
+          type: "complete",
+        });
+      },
+    });
+    await seedActive(laneExecution);
+
+    await stack.handlers.START(
+      makeRequest(START_URL, "POST", { definitionId: "workflow-1" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+    await waitForFreeSlot();
+
+    // Completion is the one terminal transition the manager runs no dev-server
+    // cleanup for — CLEAR was the backstop that caught it. Auto-release takes
+    // CLEAR out of the operator's hands, so the release has to carry the
+    // backstop or a finished run leaks its lane servers.
+    expect(stack.managerStopLaneDevServers).not.toHaveBeenCalled();
+    expect(stack.releaseStopLaneDevServers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: PROJECT_PATH,
+        execution: expect.objectContaining({ id: "execution-laned" }),
+      }),
+    );
+  });
+
+  it("reports a clear of an already auto-released slot as success, not a conflict", async () => {
+    const { handlers } = buildStack();
+
+    const response = await handlers.CLEAR(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/clear",
+        "POST",
+      ),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    // CLEAR is the explicit recovery alias for "release this slot". Auto-release
+    // normally got there first, and answering 409 for the state the operator
+    // asked for would be the dead end this contract exists to remove.
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ cleared: true });
+  });
+
+  it("names the remedy when refusing to clear a live run", async () => {
+    const { handlers } = buildStack();
+    await seedActive(runningExecution());
+
+    const response = await handlers.CLEAR(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/clear",
+        "POST",
+      ),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/Pause it \(or abort it\) first, then clear\./);
+    expect(await readActive()).not.toBeNull();
+  });
+
+  /**
+   * `live release` over the real repository and store — the explicit audited
+   * archive act, including the slot-turnover race the pre-archive eligibility
+   * read alone cannot close.
+   */
+  const RELEASE_URL =
+    "/api/projects/repo/sessions/session-1/graph-workflow/release";
+
+  function releaseRequest(body: unknown): Request {
+    return makeRequest(RELEASE_URL, "POST", body);
+  }
+
+  it("releases a paused run and records the reason on a durable audit event", async () => {
+    const { handlers } = buildStack();
+    await seedActive(
+      runningExecution({
+        id: "execution-paused",
+        status: "paused",
+        activeContextIds: [],
+      }),
+    );
+
+    const response = await handlers.RELEASE(
+      releaseRequest({ reason: "abandoned by the operator" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      released: true,
+      alreadyReleased: false,
+      executionId: "execution-paused",
+      status: "paused",
+    });
+    expect(await readActive()).toBeNull();
+
+    const released = (
+      await fixture.store.getGraphWorkflowEventsTail("execution-paused", 50)
+    ).map((entry) => entry.event);
+    expect(released).toContainEqual(
+      expect.objectContaining({
+        type: "graph-workflow-execution-released",
+        executionId: "execution-paused",
+        reason: "abandoned by the operator",
+      }),
+    );
+  });
+
+  it("refuses to release a running run, naming abort first", async () => {
+    const { handlers } = buildStack();
+    await seedActive(runningExecution());
+
+    const response = await handlers.RELEASE(
+      releaseRequest({ reason: "abandoned" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/cctl workflow live abort/);
+    expect(await readActive()).not.toBeNull();
+  });
+
+  it("reports an already-released session as success", async () => {
+    const { handlers } = buildStack();
+
+    const response = await handlers.RELEASE(
+      releaseRequest({ reason: "tidy up" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      released: true,
+      alreadyReleased: true,
+    });
+  });
+
+  it("refuses an expected execution id that does not own the slot", async () => {
+    const { handlers } = buildStack();
+    await seedActive(
+      runningExecution({
+        id: "execution-live",
+        status: "paused",
+        activeContextIds: [],
+      }),
+    );
+
+    const response = await handlers.RELEASE(
+      releaseRequest({ reason: "abandoned", expectedExecutionId: "other" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("execution-live");
+    expect(await readActive()).not.toBeNull();
+  });
+
+  it("refuses an expected execution id when the session owns no slot", async () => {
+    const { handlers } = buildStack();
+
+    const response = await handlers.RELEASE(
+      releaseRequest({ reason: "abandoned", expectedExecutionId: "stale" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    // A caller that named a run asked about THAT run; a generic
+    // already-released receipt would read as confirmation it was cleaned up.
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("stale");
+  });
+
+  it("does not archive a run that became ineligible after the eligibility read", async () => {
+    // The turnover race: the handler sees `paused` and decides to release, but
+    // a concurrent resume lands before the archive. The guard re-runs inside
+    // the archive's critical section, so the now-`running` run survives.
+    const { handlers, repository } = buildStack({
+      async stopExecutionLaneDevServers() {
+        await fixture.store.mutateActiveGraphWorkflowExecution(
+          PROJECT_PATH,
+          SESSION_NAME,
+          "test.concurrent-resume",
+          (execution) => {
+            if (execution === null) {
+              throw new Error("no active execution to resume");
+            }
+            return {
+              execution: { ...execution, status: "running" as const },
+              events: [],
+            };
+          },
+        );
+      },
+    });
+    await seedActive(
+      runningExecution({
+        id: "execution-raced",
+        status: "paused",
+        activeContextIds: [],
+      }),
+    );
+
+    const response = await handlers.RELEASE(
+      releaseRequest({ reason: "abandoned" }),
+      makeContext({ name: PROJECT_NAME, session: SESSION_NAME }),
+    );
+
+    expect(response.status).toBe(409);
+    const active = await repository.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(active).toMatchObject({ id: "execution-raced", status: "running" });
   });
 });
 

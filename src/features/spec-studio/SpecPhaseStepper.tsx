@@ -1,8 +1,14 @@
 import type { SpecDetailView } from "@/lib/specs/queries";
+import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import type { SpecAuthoringStage, SpecRevision } from "@/lib/specs/schemas";
+import type { LiveProposalView } from "@/lib/specs/view-schemas";
 import { cn } from "@/lib/ui/cn";
 
-const AUTHORING_STAGES = ["requirements", "design", "plan"] as const;
+import { strandedProposals } from "./live-proposals";
+
+const ACTIVE_AUTHORING_STAGES = ["requirements", "design"] as const;
+const DURABLE_AUTHORING_STAGES = ["requirements", "design", "plan"] as const;
+type ActiveAuthoringStage = (typeof ACTIVE_AUTHORING_STAGES)[number];
 
 type PhaseStepState =
   | "done"
@@ -16,7 +22,7 @@ type PhaseStepState =
   | "abandoned";
 
 type PhaseStep = {
-  label: "Requirements" | "Design" | "Plan" | "Execute" | "Deliver";
+  label: "Requirements" | "Design" | "Delivery plan" | "Execute" | "Deliver";
   state: PhaseStepState;
   sublabel: string;
 };
@@ -84,7 +90,13 @@ const contentPaddingClass = {
 } as const;
 
 function stageIndex(stage: SpecAuthoringStage): number {
-  return AUTHORING_STAGES.indexOf(stage);
+  return DURABLE_AUTHORING_STAGES.indexOf(stage);
+}
+
+function lifecycleIndex(stage: SpecAuthoringStage): number {
+  if (stage === "requirements") return 0;
+  if (stage === "design") return 1;
+  return 2;
 }
 
 function latestRevision(
@@ -167,7 +179,10 @@ function workflowCompleted(
   );
 }
 
-function executionSublabel(detail: SpecDetailView): string {
+function executionSublabel(
+  detail: SpecDetailView,
+  deliveryPlan: DeliveryPlanReviewView | null | undefined,
+): string {
   const execution = activeExecution(detail);
   if (execution === undefined) return "ready — scope selection";
 
@@ -183,12 +198,19 @@ function executionSublabel(detail: SpecDetailView): string {
     ({ id }) => id === execution.id,
   );
   const workflowStatus = statusExecution?.workflowStatus ?? "running";
-  const taskCount = planTaskCount(detail);
+  const taskCount =
+    deliveryPlan === null || deliveryPlan === undefined
+      ? planTaskCount(detail)
+      : deliveryPlan.attempt.launchedExecutionId === execution.id
+        ? deliveryPlan.document.tasks.length
+        : null;
   const workflowLabel =
     workflowStatus === "completed"
       ? "workflow complete"
       : workflowStatus.replaceAll("_", " ");
-  if (taskCount === 0) return `${workflowLabel} · ${revision}`;
+  if (taskCount === null || taskCount === 0) {
+    return `${workflowLabel} · ${revision}`;
+  }
 
   const completed = completedTaskCount(detail);
   return `${workflowLabel} · ${completed}/${taskCount} ${
@@ -200,14 +222,9 @@ function authoringStep(
   detail: SpecDetailView,
   revisions: readonly SpecRevision[],
   openRevision: SpecRevision | undefined,
-  stage: SpecAuthoringStage,
+  stage: ActiveAuthoringStage,
 ): PhaseStep {
-  const label =
-    stage === "requirements"
-      ? "Requirements"
-      : stage === "design"
-        ? "Design"
-        : "Plan";
+  const label = stage === "requirements" ? "Requirements" : "Design";
   if (openRevision?.authoringStage === stage) {
     return {
       label,
@@ -229,15 +246,10 @@ function authoringStep(
 
   const approvedRevision = stageApprovalRevision(revisions, stage);
   if (approvedRevision !== undefined) {
-    const taskCount = stage === "plan" ? planTaskCount(detail) : 0;
-    const taskSuffix =
-      stage === "plan" && taskCount > 0
-        ? ` · ${pluralizedCount(taskCount, "task")}`
-        : "";
     return {
       label,
       state: "done",
-      sublabel: `approved rev ${approvedRevision.number}${taskSuffix}`,
+      sublabel: `approved rev ${approvedRevision.number}`,
     };
   }
 
@@ -247,27 +259,138 @@ function authoringStep(
     sublabel:
       stage === "requirements"
         ? "agent drafts first"
-        : stage === "design"
-          ? "starts after requirements"
-          : "starts after design",
+        : "starts after requirements",
   };
+}
+
+function deliveryPlanTaskSublabel(
+  deliveryPlan: DeliveryPlanReviewView,
+  state: string,
+): string {
+  const count = deliveryPlan.document.tasks.length;
+  return `${pluralizedCount(count, "task")} · ${state}`;
+}
+
+function deliveryPlanIsApproved(
+  deliveryPlan: DeliveryPlanReviewView | null | undefined,
+): boolean {
+  if (
+    deliveryPlan === null ||
+    deliveryPlan === undefined ||
+    deliveryPlan.approval === null
+  ) {
+    return false;
+  }
+  return (
+    deliveryPlan.attempt.status === "approved" ||
+    deliveryPlan.attempt.status === "parked" ||
+    deliveryPlan.attempt.status === "launched"
+  );
+}
+
+function deliveryPlanStep(
+  deliveryPlan: DeliveryPlanReviewView | null | undefined,
+  designApproved: boolean,
+  execution: ReturnType<typeof activeExecution>,
+): PhaseStep {
+  if (
+    execution !== undefined &&
+    (deliveryPlan === null ||
+      deliveryPlan === undefined ||
+      deliveryPlan.attempt.launchedExecutionId === execution.id)
+  ) {
+    return {
+      label: "Delivery plan",
+      state: "done",
+      sublabel:
+        deliveryPlan === null || deliveryPlan === undefined
+          ? "legacy plan launched"
+          : deliveryPlanTaskSublabel(deliveryPlan, "candidate launched"),
+    };
+  }
+
+  if (deliveryPlan === undefined) {
+    return {
+      label: "Delivery plan",
+      state: designApproved ? "next" : "locked",
+      sublabel: designApproved ? "checking attempt" : "starts after design",
+    };
+  }
+
+  if (deliveryPlan === null) {
+    return {
+      label: "Delivery plan",
+      state: designApproved ? "next" : "locked",
+      sublabel: designApproved ? "open an attempt" : "starts after design",
+    };
+  }
+
+  switch (deliveryPlan.attempt.status) {
+    case "draft":
+      return {
+        label: "Delivery plan",
+        state: "draft",
+        sublabel: deliveryPlanTaskSublabel(deliveryPlan, "drafting"),
+      };
+    case "proposed":
+      return {
+        label: "Delivery plan",
+        state: "review",
+        sublabel: deliveryPlanTaskSublabel(deliveryPlan, "candidate in review"),
+      };
+    case "approved":
+      return {
+        label: "Delivery plan",
+        state: "done",
+        sublabel: `candidate approved · ${pluralizedCount(
+          deliveryPlan.document.tasks.length,
+          "task",
+        )}`,
+      };
+    case "parked":
+      return {
+        label: "Delivery plan",
+        state: deliveryPlan.approval === null ? "review" : "ready",
+        sublabel: deliveryPlanTaskSublabel(
+          deliveryPlan,
+          deliveryPlan.approval === null
+            ? "parked · approval required"
+            : "parked · candidate approved",
+        ),
+      };
+    case "launched":
+      return {
+        label: "Delivery plan",
+        state: "done",
+        sublabel: deliveryPlanTaskSublabel(deliveryPlan, "candidate launched"),
+      };
+    case "abandoned":
+      return {
+        label: "Delivery plan",
+        state: "abandoned",
+        sublabel: "attempt abandoned",
+      };
+  }
 }
 
 function abandonedStepIndex(
   detail: SpecDetailView,
   revisions: readonly SpecRevision[],
   openRevision: SpecRevision | undefined,
+  deliveryPlan: DeliveryPlanReviewView | null | undefined,
 ): number {
   if (detail.executions.length > 0) return 3;
-  if (openRevision !== undefined)
-    return stageIndex(openRevision.authoringStage);
+  if (deliveryPlan !== null && deliveryPlan !== undefined) return 2;
+  if (openRevision !== undefined) {
+    return lifecycleIndex(openRevision.authoringStage);
+  }
 
   const latestApproved = latestRevision(
     revisions,
     ({ state }) => state === "approved",
   );
   if (latestApproved === undefined) return 0;
-  return Math.min(stageIndex(latestApproved.authoringStage) + 1, 3);
+  return Math.min(lifecycleIndex(latestApproved.authoringStage) + 1, 2);
 }
 
 function executionRevisionNumber(detail: SpecDetailView): number | null {
@@ -278,7 +401,7 @@ function executionRevisionNumber(detail: SpecDetailView): number | null {
 function contextSentence(
   detail: SpecDetailView,
   openRevision: SpecRevision | undefined,
-  hasApprovedPlan: boolean,
+  deliveryPlan: DeliveryPlanReviewView | null | undefined,
 ): string {
   if (detail.status.phase.primary === "abandoned") {
     return `Abandoned: ${detail.spec.abandonedReason ?? "work stopped."}`;
@@ -309,7 +432,7 @@ function contextSentence(
               ? "Requirements"
               : openRevision.authoringStage === "design"
                 ? "Design"
-                : "Plan"
+                : "Legacy Plan"
           } rev ${openRevision.number} also ${
             openRevision.state === "proposed"
               ? "awaits review"
@@ -331,12 +454,13 @@ function contextSentence(
   }
 
   if (openRevision !== undefined) {
+    if (openRevision.authoringStage === "plan") {
+      return `Legacy Plan rev ${openRevision.number} remains readable. Delivery changes belong in a delivery plan attempt.`;
+    }
     const label =
       openRevision.authoringStage === "requirements"
         ? "Requirements"
-        : openRevision.authoringStage === "design"
-          ? "Design"
-          : "Plan";
+        : "Design";
     if (openRevision.state === "proposed") {
       return `${label} rev ${openRevision.number} awaits review. The next lifecycle stage stays locked until sign-off.`;
     }
@@ -344,47 +468,83 @@ function contextSentence(
   }
 
   if (detail.revisions.length === 0) {
-    return "Spec initialized. The agent drafts the requirements contract first — design and plan stay locked until it is approved.";
-  }
-
-  if (hasApprovedPlan) {
-    const planRevision = stageApprovalRevision(detail.revisions, "plan");
-    return `All authoring stages are approved. Start execution against revision ${planRevision?.number ?? "unknown"} after selecting scope.`;
+    return "Spec initialized. The agent drafts the requirements contract first — design and delivery planning stay locked until it is approved.";
   }
 
   const latestApproved = latestRevision(
     detail.revisions,
     ({ state }) => state === "approved",
   );
-  const nextStage =
-    latestApproved?.authoringStage === "requirements" ? "Design" : "Plan";
-  return `${nextStage} is next. The agent can begin drafting after the approved revision is recorded.`;
+  if (deliveryPlan === undefined) {
+    if (latestApproved?.authoringStage === "requirements") {
+      return "Design is next. The agent can begin drafting after the approved revision is recorded.";
+    }
+    return "Evergreen design is approved. Checking for a delivery plan attempt.";
+  }
+
+  if (deliveryPlan !== null) {
+    const attemptId = deliveryPlan.attempt.id;
+    switch (deliveryPlan.attempt.status) {
+      case "draft":
+        return `Delivery plan attempt ${attemptId} is being drafted. Propose its authored graph for review next.`;
+      case "proposed":
+        return `Delivery plan attempt ${attemptId} awaits review of its exact compiled candidate.`;
+      case "approved":
+        return deliveryPlan.approval === null
+          ? `Delivery plan attempt ${attemptId} still needs candidate-bound approval.`
+          : "Delivery plan candidate is approved. Launch that exact candidate when execution should begin.";
+      case "parked":
+        return deliveryPlan.approval === null
+          ? `Delivery plan attempt ${attemptId} is parked and needs candidate-bound approval before launch.`
+          : "Delivery plan candidate is approved and parked. Launch that exact candidate when execution should begin.";
+      case "launched":
+        return `Delivery plan attempt ${attemptId} has launched its approved candidate.`;
+      case "abandoned":
+        return `Delivery plan attempt ${attemptId} was abandoned. Open a replacement attempt to continue delivery planning.`;
+    }
+  }
+
+  if (latestApproved?.authoringStage === "requirements") {
+    return "Design is next. The agent can begin drafting after the approved revision is recorded.";
+  }
+  return "Delivery planning is next. Open a delivery plan attempt against the approved evergreen revision.";
 }
 
-function projectStepper(detail: SpecDetailView): StepperProjection {
+function projectStepper(
+  detail: SpecDetailView,
+  deliveryPlan: DeliveryPlanReviewView | null | undefined,
+): StepperProjection {
   const revisions = [...detail.revisions].sort(
     (left, right) => left.number - right.number,
   );
+  // A proposal an approved revision forked past is not the spec's open
+  // authoring line: it cannot be signed off and it locks no stage. Describing
+  // it as the open revision is what made the strip promise a sign-off that
+  // could never happen (#50), so it is named separately instead.
+  const stranded = strandedProposals(detail);
+  const strandedIds = new Set(stranded.map((entry) => entry.revision.id));
   const openRevision = latestRevision(
     revisions,
-    ({ state }) => state === "draft" || state === "proposed",
+    (revision) =>
+      (revision.state === "draft" || revision.state === "proposed") &&
+      !strandedIds.has(revision.id),
   );
-  const hasApprovedPlan = revisions.some(
-    ({ state, authoringStage }) =>
-      state === "approved" && authoringStage === "plan",
-  );
-  const authoringSteps = AUTHORING_STAGES.map((stage) =>
+  const designApproved =
+    stageApprovalRevision(revisions, "design") !== undefined;
+  const authoringSteps = ACTIVE_AUTHORING_STAGES.map((stage) =>
     authoringStep(detail, revisions, openRevision, stage),
   );
   const execution = activeExecution(detail);
   const executionWorkflowCompleted = workflowCompleted(detail, execution);
+  const planStep = deliveryPlanStep(deliveryPlan, designApproved, execution);
+  const approvedCandidate = deliveryPlanIsApproved(deliveryPlan);
 
   let executeStep: PhaseStep = {
     label: "Execute",
-    state: hasApprovedPlan ? "ready" : "locked",
-    sublabel: hasApprovedPlan
-      ? "ready — scope selection"
-      : "locked until plan approved",
+    state: approvedCandidate ? "ready" : "locked",
+    sublabel: approvedCandidate
+      ? "ready — launch candidate"
+      : "locked until delivery plan approved",
   };
   let deliverStep: PhaseStep = {
     label: "Deliver",
@@ -404,7 +564,7 @@ function projectStepper(detail: SpecDetailView): StepperProjection {
           : executionWorkflowCompleted
             ? "done"
             : "running",
-      sublabel: executionSublabel(detail),
+      sublabel: executionSublabel(detail, deliveryPlan),
     };
     if (executionWorkflowCompleted) {
       deliverStep = {
@@ -432,13 +592,20 @@ function projectStepper(detail: SpecDetailView): StepperProjection {
   if (detail.status.phase.primary === "delivered") {
     currentStep = 4;
   } else if (detail.status.phase.primary === "abandoned") {
-    currentStep = abandonedStepIndex(detail, revisions, openRevision);
+    currentStep = abandonedStepIndex(
+      detail,
+      revisions,
+      openRevision,
+      deliveryPlan,
+    );
   } else if (execution !== undefined) {
     currentStep = executionWorkflowCompleted ? 4 : 3;
   } else if (openRevision !== undefined) {
-    currentStep = stageIndex(openRevision.authoringStage);
-  } else if (hasApprovedPlan) {
+    currentStep = lifecycleIndex(openRevision.authoringStage);
+  } else if (approvedCandidate) {
     currentStep = 3;
+  } else if (deliveryPlan !== null && deliveryPlan !== undefined) {
+    currentStep = 2;
   } else if (revisions.length === 0) {
     currentStep = 0;
   } else {
@@ -449,12 +616,12 @@ function projectStepper(detail: SpecDetailView): StepperProjection {
     currentStep = Math.min(
       latestApproved === undefined
         ? 0
-        : stageIndex(latestApproved.authoringStage) + 1,
+        : lifecycleIndex(latestApproved.authoringStage) + 1,
       2,
     );
   }
 
-  const steps = [...authoringSteps, executeStep, deliverStep];
+  const steps = [...authoringSteps, planStep, executeStep, deliverStep];
   if (detail.status.phase.primary === "abandoned") {
     const interrupted = steps[currentStep];
     if (interrupted !== undefined) {
@@ -468,9 +635,31 @@ function projectStepper(detail: SpecDetailView): StepperProjection {
 
   return {
     currentStep,
-    context: contextSentence(detail, openRevision, hasApprovedPlan),
+    context:
+      contextSentence(detail, openRevision, deliveryPlan) +
+      strandedSentence(detail, stranded),
     steps,
   };
+}
+
+/**
+ * The clause that names a stranded proposal and its only exit. It rides after
+ * whatever the lifecycle sentence says rather than replacing it: the spec's
+ * live line and the reviewed work left behind are both true at once, and #50's
+ * strip reported only the first.
+ */
+function strandedSentence(
+  detail: SpecDetailView,
+  stranded: readonly LiveProposalView[],
+): string {
+  const newest = stranded.at(-1);
+  if (newest === undefined) return "";
+  if (detail.status.phase.primary === "abandoned") return "";
+  const others =
+    stranded.length > 1
+      ? ` ${stranded.length - 1} older ${stranded.length === 2 ? "proposal is" : "proposals are"} stranded the same way.`
+      : "";
+  return ` Revision ${newest.revision.number} is stranded: revision ${newest.supersededBy?.number} was approved past it, so it can no longer be signed off — dismiss it from Review.${others}`;
 }
 
 function StepIcon({ state }: { state: PhaseStepState }): React.JSX.Element {
@@ -542,10 +731,12 @@ function stepShape(index: number): keyof typeof shapeClass {
 
 export default function SpecPhaseStepper({
   detail,
+  deliveryPlan,
 }: {
   detail: SpecDetailView;
+  deliveryPlan?: DeliveryPlanReviewView | null;
 }): React.JSX.Element {
-  const projection = projectStepper(detail);
+  const projection = projectStepper(detail, deliveryPlan);
 
   return (
     <section

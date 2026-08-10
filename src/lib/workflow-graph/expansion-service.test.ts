@@ -192,7 +192,8 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
         delivery: { events: result.events, pushes: result.pushes ?? [] },
       };
     },
-    archiveActiveGraphWorkflowExecution: () => Promise.resolve(),
+    archiveActiveGraphWorkflowExecution: () =>
+      Promise.resolve({ archived: false as const, reason: "no_active" as const }),
     markGraphWorkflowContextEventsPreReset: () => Promise.resolve(0),
     eventPublisher,
   });

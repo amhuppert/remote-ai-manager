@@ -27,6 +27,9 @@ const SPEC_TABLES = [
   "spec_executions",
   "spec_links",
   "spec_events",
+  "spec_delivery_plan_attempts",
+  "spec_delivery_plan_snapshots",
+  "spec_delivery_plan_candidates",
 ] as const;
 
 function tableNames(db: Db): Set<string> {
@@ -77,7 +80,7 @@ describe("native SDD schema floor", () => {
     }
   });
 
-  it("creates all 19 spec tables on a fresh in-memory database", () => {
+  it("creates all 21 spec tables on a fresh in-memory database", () => {
     const db = _createTestDb({ inMemory: true });
     openDbs.push(db);
 
@@ -113,6 +116,48 @@ describe("native SDD schema floor", () => {
       "execution_id",
       "criterion_element_id",
     ]);
+    // One frozen proposal snapshot per attempt draft revision: a second
+    // propose at the same revision would be a second identity for one plan.
+    expect(
+      uniqueIndexColumnSets(db, "spec_delivery_plan_snapshots"),
+    ).toContainEqual(["attempt_id", "draft_revision"]);
+    // Exactly one compiled candidate per proposed snapshot: a second one would
+    // be a second set of bytes an approval could have meant.
+    expect(
+      uniqueIndexColumnSets(db, "spec_delivery_plan_candidates"),
+    ).toContainEqual(["snapshot_id"]);
+  });
+
+  it("refuses a delivery-plan attempt status outside the lifecycle", () => {
+    const db = _createTestDb({ inMemory: true });
+    openDbs.push(db);
+
+    db.exec(`
+      INSERT INTO projects (root_path) VALUES ('/repo');
+      INSERT INTO specs (
+        id, project_path, slug, name, gate_policy_json, created_at, updated_at
+      ) VALUES (
+        'spec-1', '/repo', 'spec', 'Spec', '{"preset":"contract-bearing"}',
+        '2026-08-07T12:00:00.000Z', '2026-08-07T12:00:00.000Z'
+      );
+      INSERT INTO spec_revisions (
+        id, spec_id, number, state, created_at
+      ) VALUES (
+        'revision-1', 'spec-1', 1, 'approved', '2026-08-07T12:00:00.000Z'
+      );
+    `);
+
+    expect(() =>
+      db.exec(`
+        INSERT INTO spec_delivery_plan_attempts (
+          id, spec_id, pinned_revision_id, status, draft_revision,
+          content_json, created_at, updated_at
+        ) VALUES (
+          'attempt-1', 'spec-1', 'revision-1', 'signed_off', 1, '{}',
+          '2026-08-07T12:00:00.000Z', '2026-08-07T12:00:00.000Z'
+        );
+      `),
+    ).toThrow(/check constraint/i);
   });
 
   it("stores revision authoring stage with a plan-only backfill default", () => {

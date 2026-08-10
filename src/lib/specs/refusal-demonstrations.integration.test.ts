@@ -250,9 +250,9 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     await expect(response.json()).resolves.toMatchObject({
       code: "stage_blocked",
       unmetConditions: [
-        "A task cannot be authored during the requirements stage.",
+        "A task is authored in a delivery plan attempt, not an evergreen revision.",
       ],
-      instruction: expect.stringContaining("Propose the requirements stage"),
+      instruction: expect.stringContaining("cctl spec plan open <slug>"),
     });
     expect(
       (
@@ -281,9 +281,6 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
         {
           slug,
           name: "Dangling cover",
-          // Fast-path collapses the authoring gates, so the draft opens at the
-          // plan stage and the task write answers to the reference guard
-          // rather than to stage admissibility.
           gatePolicy: { preset: "fast-path" },
           initialElement: {
             elementId: "requirement-covered",
@@ -301,7 +298,15 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
         "agent",
       ),
     );
-    expect(created.draft.authoringStage).toBe("plan");
+    expect(created.draft.authoringStage).toBe("design");
+    world.db
+      .prepare(
+        "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+      )
+      .run(created.draft.id);
+    expect(
+      (await world.repos.specs.findRevision(created.draft.id))?.authoringStage,
+    ).toBe("plan");
 
     const response = await world.postAction(
       slug,
@@ -664,21 +669,34 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
     expect(
       reloaded.filter((revision) => revision.state === "draft"),
     ).toMatchObject([{ id: receipt.withdrawal.draft.id }]);
-    // The follow-up carries the reviewed content forward, which is the whole
-    // difference between this exit and a plain human Withdraw.
+    // The follow-up carries evergreen reviewed content forward. Legacy task
+    // elements remain readable on the withdrawn Plan revision and are not
+    // copied into the design draft that replaces it.
+    const withdrawnElements = (
+      await world.repos.specs.getRevisionSnapshot(authored.draftRevisionId)
+    )?.elements.map(({ element }) => element.id);
+    const replacementElements = (
+      await world.repos.specs.getRevisionSnapshot(receipt.withdrawal.draft.id)
+    )?.elements.map(({ element }) => element.id);
+    expect(withdrawnElements).toEqual(
+      expect.arrayContaining([authored.taskOneId, authored.taskTwoId]),
+    );
     expect(
-      (
-        await world.repos.specs.getRevisionSnapshot(receipt.withdrawal.draft.id)
-      )?.elements.map(({ element }) => element.id),
-    ).toEqual(
-      (
-        await world.repos.specs.getRevisionSnapshot(authored.draftRevisionId)
-      )?.elements.map(({ element }) => element.id),
+      replacementElements?.some(
+        (elementId) =>
+          elementId === authored.taskOneId || elementId === authored.taskTwoId,
+      ),
+    ).toBe(false);
+    expect(replacementElements).toEqual(
+      withdrawnElements?.filter(
+        (elementId) =>
+          elementId !== authored.taskOneId && elementId !== authored.taskTwoId,
+      ),
     );
     expect(interventionRows(world, authored.specId)).toEqual([]);
   });
 
-  it("refuses execution start for a proposed plan and an approved non-plan revision through route and CLI", async () => {
+  it("rejects the retired execution scope through route and CLI with the importer remedy", async () => {
     const authored = await authorSpineDraft(world, SLUG);
     await proposeSpineRevision(world, SLUG, authored);
     const scope = {
@@ -698,51 +716,39 @@ describe("refusal demonstrations (kiro 19.2): the server refuses each illegal tr
       },
       "agent",
     );
-    expect(routeResponse.status).toBe(409);
+    expect(routeResponse.status).toBe(400);
     const refusal = (await routeResponse.json()) as {
       code: string;
       unmetConditions: string[];
       instruction: string;
     };
-    expect(refusal.code).toBe("revision_not_approved");
+    expect(refusal.code).toBe("validation");
     expect(refusal.unmetConditions).toEqual([
-      "The pinned revision is not approved.",
+      "Execution scope documents are retired; the approved delivery plan is the execution graph.",
     ]);
-    expect(refusal.instruction).toContain("sign-off");
+    expect(refusal.instruction).toContain(
+      `cctl spec plan open ${SLUG} --seed-from last`,
+    );
 
-    // CLI surface: while the plan is proposed, `cctl spec start` falls back to
-    // the latest approved design revision, which the stage gate also refuses.
+    // CLI rejects locally, before reading the retired file or contacting the
+    // route, and returns the same migration act.
     const cliResult = await runCli(
       ["spec", "start", SLUG, "--file", SCOPE_FILE, "--json"],
       cliEnv,
       bridgeHost(world, { [SCOPE_FILE]: JSON.stringify(scope) }),
     );
-    expect(cliResult.exitCode).toBe(1);
+    expect(cliResult.exitCode).toBe(2);
     expect(JSON.parse(cliResult.stdout)).toMatchObject({
       ok: false,
-      code: "gate_blocked",
-      instruction:
-        "Complete plan-stage authoring and sign off that revision before starting execution.",
+      instruction: expect.stringContaining(
+        `cctl spec plan open ${SLUG} --seed-from last`,
+      ),
     });
 
-    // Durable event log: both refused attempts land as intervention rows
-    // with actor provenance (21.4 counts refusals from these rows).
+    // Both transport guards reject before the execution service is entered,
+    // so neither can manufacture a durable transition event.
     const interventions = interventionRows(world, authored.specId);
-    expect(interventions).toHaveLength(2);
-    for (const intervention of interventions) {
-      expect(intervention.actor).toEqual({
-        kind: "agent",
-        conversationId: SPINE_CONVERSATION_ID,
-      });
-      expect(intervention.payload).toMatchObject({
-        kind: "transition-refused",
-        surface: "execution_start",
-      });
-    }
-    expect(interventions.map(({ payload }) => payload.code).sort()).toEqual([
-      "gate_blocked",
-      "revision_not_approved",
-    ]);
+    expect(interventions).toEqual([]);
 
     // The refusal blocked the transition: no execution row exists.
     expect(

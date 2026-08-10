@@ -23,6 +23,8 @@ import {
   type TraceabilityInput,
 } from "./SpecEvidenceLintTrace";
 import SpecControlsPanel, { SpecIntegrityPanel } from "./SpecControls";
+import SpecDeliveryDeltaPanel from "./SpecDeliveryDeltaPanel";
+import SpecDeliveryPlanReview from "./SpecDeliveryPlanReview";
 import { SpecElementReader } from "./SpecElementReader";
 import SpecHistoryPanel from "./SpecHistoryPanel";
 import SpecQuestionsAssumptionsPanel from "./SpecQuestionsAssumptions";
@@ -31,6 +33,7 @@ import SpecReviewMode, { reviewAttentionCount } from "./SpecReviewMode";
 export type DetailView =
   | "overview"
   | "history"
+  | "plan"
   | "evidence"
   | "lint"
   | "traceability"
@@ -66,6 +69,7 @@ type PrimaryView =
   | "overview"
   | "review"
   | "questions"
+  | "plan"
   | "execution"
   | "gate"
   | "history";
@@ -74,6 +78,7 @@ const primaryViews: ReadonlyArray<{ view: PrimaryView; label: string }> = [
   { view: "overview", label: "Overview" },
   { view: "review", label: "Review" },
   { view: "questions", label: "Questions & assumptions" },
+  { view: "plan", label: "Delivery plan" },
   { view: "execution", label: "Execution" },
   { view: "gate", label: "Gate policy" },
   { view: "history", label: "History" },
@@ -124,6 +129,7 @@ export default function SpecDetailViews({
   overviewHeader,
   overviewBanner,
   highlightedChangeId = null,
+  addressedRevisionId = null,
   onReviewComplete,
   children,
 }: {
@@ -140,6 +146,8 @@ export default function SpecDetailViews({
   overviewHeader?: ReactNode;
   overviewBanner?: ReactNode;
   highlightedChangeId?: string | null;
+  /** The proposal a History or lifecycle link addressed (`?revision=`). */
+  addressedRevisionId?: string | null;
   onReviewComplete?(message: string): void;
   children: ReactNode;
 }): React.JSX.Element {
@@ -204,6 +212,7 @@ export default function SpecDetailViews({
             detail={detail}
             projectName={projectName}
             highlightedChangeId={highlightedChangeId}
+            addressedRevisionId={addressedRevisionId}
             onComplete={onReviewComplete}
           />
         </div>
@@ -220,6 +229,18 @@ export default function SpecDetailViews({
           />
         </div>
       )}
+      {view === "plan" && (
+        <div className="mt-lg">
+          <SurfaceIntro
+            title="Delivery plan"
+            description="The attempt that becomes this execution's graph: its contexts, the criteria each one owns, and the exact candidate a sign-off approves."
+          />
+          <SpecDeliveryPlanReview
+            projectName={projectName}
+            slug={detail.spec.slug}
+          />
+        </div>
+      )}
       {view === "execution" && (
         <div className="mt-lg">
           <SpecControlsPanel
@@ -227,6 +248,16 @@ export default function SpecDetailViews({
             projectName={projectName}
             surface="execution"
           />
+          <div className="mt-lg">
+            <SurfaceIntro
+              title="Delivery delta"
+              description="What the last delivery no longer covers: element and criterion classes computed at read time against that execution's pinned revision. This is the authoring input for the next execution's delivery plan."
+            />
+            <SpecDeliveryDeltaPanel
+              projectName={projectName}
+              slug={detail.spec.slug}
+            />
+          </div>
         </div>
       )}
       {view === "gate" && (
@@ -302,7 +333,11 @@ export default function SpecDetailViews({
         view === "decisions" ||
         view === "tasks") && (
         <div className="mt-lg">
-          <SpecElementReader detail={detail} kind={view} />
+          <SpecElementReader
+            detail={detail}
+            kind={view}
+            projectName={projectName}
+          />
         </div>
       )}
     </>

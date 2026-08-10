@@ -9,6 +9,7 @@ import {
   SPEC_CONTROLS_FIXTURE_NOW,
   policyAdmissionViewFixture,
   specControlsDetailFixture,
+  strandedProposalDetailFixture,
 } from "./SpecControls.fixtures";
 import SpecHistoryPanel, { buildSpecHistory } from "./SpecHistoryPanel";
 
@@ -189,6 +190,63 @@ describe("buildSpecHistory", () => {
     );
     expect(screen.getByText(/admitted by notify policy/i)).toBeVisible();
     expect(screen.queryByText(/Execution started/i)).not.toBeInTheDocument();
+  });
+
+  it("links a proposal row to the Review entry that can act on it", () => {
+    const events = buildSpecHistory(
+      strandedProposalDetailFixture(),
+      "command-center",
+    );
+
+    // History is where a reader meets a stranded proposal; a row that reads as
+    // plain text leaves them where #50 left them — informed and stuck.
+    expect(
+      events.find((event) => event.id === "revision-2:proposed")?.href,
+    ).toBe("/specs/command-center/native-sdd?view=review&revision=revision-2");
+  });
+
+  it("drops the link once the proposal is no longer live", () => {
+    const detail = strandedProposalDetailFixture();
+    // The dismissal this context added ends the proposal: the row stays as the
+    // durable record, but Review selects out of liveProposals, so keeping the
+    // link would send a reader to a different proposal or an empty tab.
+    const dismissed = {
+      ...detail,
+      revisions: detail.revisions.map((revision) =>
+        revision.id === "revision-2"
+          ? { ...revision, state: "withdrawn" as const }
+          : revision,
+      ),
+      liveProposals: [],
+    };
+
+    const events = buildSpecHistory(dismissed, "command-center");
+
+    const row = events.find((event) => event.id === "revision-2:proposed");
+    expect(row).toBeDefined();
+    expect(row?.href).toBeNull();
+  });
+
+  it("renders the stranded proposal row as a link a reader can follow", () => {
+    render(
+      <SpecHistoryPanel
+        detail={strandedProposalDetailFixture()}
+        projectName="command-center"
+      />,
+    );
+
+    // The projection carrying an href only helps if the row actually renders
+    // one — the reachability #50 lacked is the rendered anchor, not the field.
+    const row = screen.getByText("Revision 2 proposed").closest("li");
+    if (!(row instanceof HTMLElement)) {
+      throw new Error("the proposal row did not render as a feed item");
+    }
+    expect(
+      within(row).getByRole("link", { name: /Open subject/i }),
+    ).toHaveAttribute(
+      "href",
+      "/specs/command-center/native-sdd?view=review&revision=revision-2",
+    );
   });
 
   it("uses one flat chronological feed instead of a card for every event", () => {

@@ -466,7 +466,9 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
     summary: "act on this session's ACTIVE launched execution",
     description:
       "Read and edit the session's running (or paused/resumably-halted) graph-workflow execution in place — per-context config, task, and safe structural edits — plus pause/resume. Aliases: `workflow execution …` and `workflow exec …` are rewritten to `live`. This edits the LIVE execution's working copy; `workflow edit` edits a SAVED definition and does not touch a running run. The canonical loop is get → pause → edit → resume.",
-    usage: ["cctl workflow live <get|ledger|edit|pause|resume>"],
+    usage: [
+      "cctl workflow live <get|ledger|edit|amend|pause|resume|abort|release>",
+    ],
     flags: [],
     examples: [
       {
@@ -675,6 +677,65 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
       "Live edits mutate only the execution's working copy — the saved definition is untouched, and a saved-definition edit never leaks into a running execution.",
   },
   {
+    path: ["workflow", "live", "amend"],
+    dynamicContext: true,
+    summary: "add contexts, tasks, or edges to a running delivery-plan run",
+    description:
+      'The one authorized way to change a launched delivery-plan definition. A run compiled from a delivery plan owns its charter, its contexts\' acceptance criteria, and its existing tasks and edges as LOCKED regions, so `cctl workflow live edit` into them refuses; this verb is the escape that makes that locking safe. It is ADDITIVE ONLY: --file is a JSON object { "operations": [ … ] } whose entries are `add-context` ({ id, title, acceptanceCriteria, description? }), `add-task` ({ id, contextId, title, instructions, position? }), and `add-edge` ({ id, sourceContextId, targetContextId }) — every id caller-chosen and stable. Any other entry refuses the WHOLE batch with non_additive_operation and applies nothing; to change or drop existing plan content use `cctl spec plan reopen` before launch or `cctl spec capture --blocking-reason` after it. --reason is required and lands in the durable amendment event beside the old and new working-definition hashes, so the drift from the candidate a human approved is readable rather than inferred. The stored approved candidate is never touched. It refuses on a non-running execution (not_running) and on a legacy, non-delivery-plan run (not_a_delivery_plan — edit those directly). The actor is derived from the transport, never from the body; the Spec Studio amend control posts this exact schema to this exact route.',
+    usage: [
+      "cctl workflow live amend --reason <rationale> --file <live-ops.json> [--json]",
+    ],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<rationale>",
+        description:
+          "why the running plan is changing — recorded on the durable amendment event",
+      },
+      {
+        name: "file",
+        kind: "value",
+        valuePlaceholder: "<live-ops.json>",
+        description:
+          'JSON object { "operations": [ … ] } of add-context / add-task / add-edge entries (or - for stdin)',
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          'cctl workflow live amend --reason "the migration needs its own verification context" --file .cc/temp/live-ops.json',
+        explanation:
+          'live-ops.json under .cc/temp/: { "operations": [ { "type": "add-context", "id": "verify-migration", "title": "Verify the migration", "acceptanceCriteria": "The migration round-trips." }, { "type": "add-edge", "id": "edge-impl-verify", "sourceContextId": "impl", "targetContextId": "verify-migration" } ] }',
+      },
+      {
+        invocation:
+          'cctl workflow live amend --reason "one more task in the pending verification context" --file .cc/temp/live-ops.json --json',
+        explanation:
+          'add-task takes a relative position and honors the target context mutability gate: { "type": "add-task", "id": "task-backfill", "contextId": "verify-migration", "title": "Backfill", "instructions": "…", "position": { "after": "task-verify-2" } }',
+      },
+    ],
+    related: [
+      {
+        command: "workflow live get",
+        oneLiner: "read the context and task ids an amendment addresses",
+      },
+      {
+        command: "workflow live edit",
+        oneLiner:
+          "the generic edit — refuses inside a delivery plan's locked regions",
+      },
+      {
+        command: "spec capture",
+        oneLiner:
+          "the other two post-launch paths: record a discovery, or abandon and replan",
+      },
+    ],
+    skills: [GRAPH_PLANNING_SKILL],
+    domainContext:
+      "There are exactly three post-launch paths for work a delivery plan did not anticipate: non-blocking capture (record it for the next plan), blocking capture (abandon and replan), and this audited amendment (add it to the current run). Nothing else may change a launched definition.",
+  },
+  {
     path: ["workflow", "live", "pause"],
     dynamicContext: true,
     summary: "pause the active execution to unlock started contexts",
@@ -725,6 +786,85 @@ export const workflowHelpEntries: CommandHelpEntry[] = [
         oneLiner: "the edits applied between pause and resume",
       },
     ],
+  },
+  {
+    path: ["workflow", "live", "abort"],
+    dynamicContext: true,
+    summary: "abort the active execution",
+    description:
+      "End the ACTIVE execution — interrupts running tasks and drives the run to `aborted`. An aborted run auto-releases the session's execution slot, so this normally frees the session in one step; `cctl workflow live release` is the backstop if a run settled without releasing. The reason is recorded on the run's durable release audit event. No active execution exits 2.",
+    usage: ["cctl workflow live abort --reason <reason> [--json]"],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<reason>",
+        description: "why the run is being aborted — recorded durably",
+      },
+    ],
+    examples: [
+      {
+        invocation:
+          'cctl workflow live abort --reason "superseded by a replanned run"',
+        explanation:
+          "stop a run that should not finish — the slot is auto-released, so `cctl validate` works again in this session right away",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live release",
+        oneLiner:
+          "backstop if a settled run did not auto-release the session's slot",
+      },
+      {
+        command: "workflow live pause",
+        oneLiner: "pause instead when the run should continue later",
+      },
+    ],
+  },
+  {
+    path: ["workflow", "live", "release"],
+    dynamicContext: true,
+    summary: "release the session's execution slot (explicit audited archive)",
+    description:
+      "The explicit, audited archive act: hand this session's execution slot back so validation and a new run are unblocked. Paused and resumably-halted executions release with a durable audit event. A completed/aborted run is normally already auto-released, so releasing again returns an idempotent already-released receipt rather than an error. A running or pending run refuses — abort it first. `--execution` guards against releasing a slot that changed hands since you read it.",
+    usage: [
+      "cctl workflow live release --reason <reason> [--execution <id>] [--json]",
+    ],
+    flags: [
+      {
+        name: "reason",
+        kind: "value",
+        valuePlaceholder: "<reason>",
+        description: "why the slot is being released — recorded durably",
+      },
+      {
+        name: "execution",
+        kind: "value",
+        valuePlaceholder: "<id>",
+        description:
+          "refuse unless this execution still owns the slot (guards against a slot that changed hands)",
+      },
+    ],
+    examples: [
+      {
+        invocation: 'cctl workflow live release --reason "abandoned"',
+        explanation:
+          "free a session pinned by a paused or halted run so `cctl validate` works again; abort first if the run is still running",
+      },
+    ],
+    related: [
+      {
+        command: "workflow live abort",
+        oneLiner: "abort first — a running or pending run refuses release",
+      },
+      {
+        command: "workflow status",
+        oneLiner: "check which execution currently owns the slot",
+      },
+    ],
+    domainContext:
+      "A run that owns the session's execution slot scopes every `cctl validate` call in that session to its lanes. Releasing the slot is what makes the session ordinary again.",
   },
 
   // --- Lane verbs (a separate family) -----------------------------------------

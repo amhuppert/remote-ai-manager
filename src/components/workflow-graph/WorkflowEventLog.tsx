@@ -408,6 +408,50 @@ function normalizeEvent(
       };
     }
 
+    case "graph-workflow-execution-amended": {
+      const added = [
+        ...event.addedContextIds.map((id) => `context ${id}`),
+        ...event.addedTaskIds.map((id) => `task ${id}`),
+        ...event.addedEdgeIds.map((id) => `edge ${id}`),
+      ];
+      return {
+        key,
+        occurredAt,
+        contextId: null,
+        dot: "neutral",
+        title: `Definition amended · ${added.length} addition${added.length === 1 ? "" : "s"} by ${event.actor}`,
+        detail: <p>{event.reason}</p>,
+        expandable: (
+          <ul className={eventIssuesClass}>
+            {added.map((entry) => (
+              <li key={entry} className={eventIssueItemClass}>
+                + {entry}
+              </li>
+            ))}
+            <li className={eventIssueItemClass}>
+              working definition {event.previousWorkingDefinitionHash} →{" "}
+              {event.workingDefinitionHash}
+            </li>
+            <li className={eventIssueItemClass}>
+              admitted by {event.policyBasis}
+            </li>
+          </ul>
+        ),
+      };
+    }
+
+    case "graph-workflow-execution-released": {
+      return {
+        key,
+        occurredAt,
+        contextId: null,
+        dot: "neutral",
+        title: `Slot released · ${event.status}${event.actor === null ? "" : ` by ${event.actor}`}`,
+        detail: <p>{event.reason}</p>,
+        expandable: null,
+      };
+    }
+
     case "graph-workflow-plan-repair": {
       const title = contextLookup.get(event.contextId) ?? event.contextId;
       const dot: EventDotKind =

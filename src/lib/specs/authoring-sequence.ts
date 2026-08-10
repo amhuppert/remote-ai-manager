@@ -6,8 +6,8 @@ import type {
   SpecRevisionSnapshot,
 } from "./schemas";
 import {
+  activeAuthoringStages,
   authoringStageIndex,
-  authoringStages,
   consultedAuthoringGates,
   nextAuthoringStage,
   type AuthoringGate,
@@ -45,22 +45,24 @@ export interface RemainingAuthoringSequenceContext {
 export function remainingAuthoringSequence(
   context: RemainingAuthoringSequenceContext,
 ): RemainingAuthoringSequence {
-  const stages = authoringStages
-    .slice(authoringStageIndex(context.pinnedStage))
-    .map((stage) => {
-      const dial = resolveDial(context.policy, stage);
-      const signOff = dialRequiresHumanApproval(dial);
-      return {
-        stage,
-        gate: stage,
-        dial,
-        concludedBy:
-          !signOff && nextAuthoringStage(stage) !== null
-            ? ("advance" as const)
-            : ("propose" as const),
-        requiresHumanSignOff: signOff,
-      };
-    });
+  const remainingStages =
+    context.pinnedStage === "plan"
+      ? (["plan"] as const)
+      : activeAuthoringStages.slice(authoringStageIndex(context.pinnedStage));
+  const stages = remainingStages.map((stage) => {
+    const dial = resolveDial(context.policy, stage);
+    const signOff = dialRequiresHumanApproval(dial);
+    return {
+      stage,
+      gate: stage,
+      dial,
+      concludedBy:
+        !signOff && nextAuthoringStage(stage) !== null
+          ? ("advance" as const)
+          : ("propose" as const),
+      requiresHumanSignOff: signOff,
+    };
+  });
 
   const current = stages[0];
   if (current === undefined) {

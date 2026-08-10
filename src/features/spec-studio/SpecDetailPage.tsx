@@ -28,11 +28,15 @@ import {
   type SpecMentionAttrs,
   type SpecReferenceType,
 } from "@/lib/prompt-editor/spec-reference-contract";
+import { LINT_SEVERITY_LABEL, draftHealth } from "@/lib/specs/draft-health";
+import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import { parseElementHandle, toDeepLinkElementId } from "@/lib/specs/handles";
+import type { LintFinding } from "@/lib/specs/lint";
 import { useSpecActionMutation } from "@/lib/specs/mutations";
 import {
   useSpecDetailQuery,
   useSpecLintQuery,
+  useSpecPlanReviewQuery,
   type SpecDetailView,
 } from "@/lib/specs/queries";
 import { ticketDetailHref } from "@/lib/tickets/hrefs";
@@ -53,6 +57,7 @@ import type { RequirementStatus, TaskWorkStatus } from "@/lib/specs/phase";
 import type { SpecPhasePrimary } from "@/lib/specs/phase";
 import { cn } from "@/lib/ui/cn";
 
+import { strandedProposals } from "./live-proposals";
 import SpecDetailViews, {
   initialDetailViewForDeepLink,
   type DetailView,
@@ -178,6 +183,7 @@ function SpecDetailPageInner(): React.JSX.Element {
               detail.spec.slug,
             )}
             highlightedChangeId={searchParams.get("change")}
+            addressedRevisionId={searchParams.get("revision")}
             onViewChange={selectView}
           />
         )}
@@ -244,6 +250,7 @@ export function SpecDetailContent({
   requestedSlug,
   view,
   highlightedChangeId = null,
+  addressedRevisionId = null,
   onViewChange,
 }: {
   detail: SpecDetailView;
@@ -251,6 +258,8 @@ export function SpecDetailContent({
   requestedSlug: string;
   view: DetailView;
   highlightedChangeId?: string | null;
+  /** The proposal a History or lifecycle link addressed (`?revision=`). */
+  addressedRevisionId?: string | null;
   onViewChange(view: DetailView): void;
 }): React.JSX.Element {
   const [completionMessage, setCompletionMessage] = useState<string | null>(
@@ -264,17 +273,29 @@ export function SpecDetailContent({
       (entry) => entry.version.payload.kind === "section",
     ) ?? [];
   const railGroups = snapshot === null ? [] : buildRailGroups(detail);
+  const planReviewQuery = useSpecPlanReviewQuery(projectName, detail.spec.slug);
   const statePresentation = detailStatePresentation(
     detail.status.phase.primary,
     detail.status.pendingApprovals,
     detail.status.phase.authoringStage ??
       detail.currentRevision?.revision.authoringStage ??
       detail.currentApprovedRevision?.revision.authoringStage,
+    planReviewQuery.data,
   );
   const detailHref = `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}`;
   const gateHref = `${detailHref}?view=gate`;
   const reviewHref = `${detailHref}?view=review`;
-  const primaryActionHref =
+  // A proposal an approved revision forked past owes a human act nothing else
+  // on this page offers, and the phase it projects into ("approved", say) has
+  // a CTA that points somewhere else entirely. It takes the primary action for
+  // the same reason a parked delivery gate does: the state is unreachable
+  // until a human ends it (#50).
+  const strandedProposal = strandedProposals(detail).at(-1) ?? null;
+  const strandedActionHref =
+    strandedProposal === null
+      ? null
+      : `${reviewHref}&revision=${encodeURIComponent(strandedProposal.revision.id)}`;
+  const stateActionHref =
     statePresentation.view === null
       ? null
       : statePresentation.el !== undefined
@@ -282,6 +303,13 @@ export function SpecDetailContent({
         : statePresentation.view === "review"
           ? reviewHref
           : `${detailHref}?view=${statePresentation.view}`;
+  const primaryActionHref = strandedActionHref ?? stateActionHref;
+  const primaryActionLabel =
+    strandedProposal === null
+      ? statePresentation.action
+      : `Dismiss stranded revision ${strandedProposal.revision.number}`;
+  const primaryActionTone =
+    strandedProposal === null ? statePresentation.tone : "amber";
   // An execution running over a proposed revision projects as `executing` with
   // an `in_review` authoring facet, so the state-driven primary action points at
   // evidence and would otherwise leave review mode with no entry point at all.
@@ -299,7 +327,7 @@ export function SpecDetailContent({
 
   return (
     <>
-      <SpecPhaseStepper detail={detail} />
+      <SpecPhaseStepper detail={detail} deliveryPlan={planReviewQuery.data} />
       <div className="px-xl pt-sm pb-3xl max-768:px-md">
         <SpecDetailViews
           detail={detail}
@@ -307,6 +335,7 @@ export function SpecDetailContent({
           view={view}
           onViewChange={onViewChange}
           highlightedChangeId={highlightedChangeId}
+          addressedRevisionId={addressedRevisionId}
           onReviewComplete={(message) => {
             setCompletionMessage(message);
             onViewChange("overview");
@@ -375,19 +404,19 @@ export function SpecDetailContent({
                     Gate policy
                   </Link>
                   {primaryActionHref !== null &&
-                    statePresentation.action !== null && (
+                    primaryActionLabel !== null && (
                       <Link
                         href={primaryActionHref}
                         className={cn(
                           "inline-flex h-[28px] items-center rounded-sm border border-solid px-md font-mono text-[0.72rem] font-semibold no-underline transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2",
-                          statePresentation.tone === "green"
+                          primaryActionTone === "green"
                             ? "border-green-dim bg-green-glow text-green hover:border-green"
-                            : statePresentation.tone === "amber"
+                            : primaryActionTone === "amber"
                               ? "border-amber-dim bg-amber-glow text-amber hover:border-amber"
                               : "border-cyan-dim bg-cyan-glow text-cyan hover:border-cyan",
                         )}
                       >
-                        {statePresentation.action}
+                        {primaryActionLabel}
                       </Link>
                     )}
                 </div>
@@ -479,7 +508,7 @@ export interface DetailStatePresentation {
   banner: string;
   description: string;
   action: string | null;
-  view: "review" | "evidence" | "execution" | "gate" | null;
+  view: "review" | "plan" | "evidence" | "execution" | "gate" | null;
   /**
    * Focused deep-link target. When present the CTA navigates with `?el=` —
    * the retrying contract that lands on the focused control after the page
@@ -620,21 +649,14 @@ function NarrativeSectionHeading({
   );
 }
 
-interface InlineLintFinding {
-  ruleId: string;
-  severity: "blocks_propose" | "blocks_claim" | "blocks_signoff" | "advisory";
-  elementHandle: string;
-  message: string;
-}
-
-const lintDotClass: Record<InlineLintFinding["severity"], string> = {
+const lintDotClass: Record<LintFinding["severity"], string> = {
   blocks_propose: "bg-red",
   blocks_claim: "bg-red",
   blocks_signoff: "bg-red",
   advisory: "bg-amber",
 };
 
-const lintSeverityClass: Record<InlineLintFinding["severity"], string> = {
+const lintSeverityClass: Record<LintFinding["severity"], string> = {
   blocks_propose: "text-red",
   blocks_claim: "text-red",
   blocks_signoff: "text-red",
@@ -647,22 +669,23 @@ function SpecInlineLint({
   error,
   detailHref,
 }: {
-  findings: InlineLintFinding[];
+  findings: LintFinding[];
   isPending: boolean;
   error: string | null;
   detailHref: string;
 }): React.JSX.Element {
-  const blocking = findings.filter(
-    (finding) => finding.severity !== "advisory",
-  ).length;
-  const advisory = findings.length - blocking;
+  // The same projection the lint tab, `cctl spec lint`, the status tier, and
+  // the propose refusal read. Counting every non-advisory finding as blocking
+  // overstated it: only blocks_propose refuses the transition this strip is
+  // read to decide, and sign-off findings are not that.
+  const health = draftHealth(findings);
   const meta = isPending
     ? "checking"
     : error !== null
       ? "unavailable"
-      : findings.length === 0
+      : health.total === 0
         ? "clean"
-        : `${blocking} blocking · ${advisory} advisory`;
+        : `${health.blocking} blocking · ${health.total} total`;
 
   return (
     <section className="border-x-0 border-t border-b-0 border-solid border-border-dim py-lg">
@@ -677,7 +700,7 @@ function SpecInlineLint({
       </div>
       {error !== null ? (
         <p className="mt-sm mb-0 font-mono text-[0.72rem] text-red">{error}</p>
-      ) : findings.length === 0 ? (
+      ) : health.total === 0 ? (
         <p className="mt-sm mb-0 font-mono text-[0.72rem] text-text-tertiary">
           {isPending
             ? "Checking the current revision…"
@@ -685,7 +708,7 @@ function SpecInlineLint({
         </p>
       ) : (
         <div className="mt-sm grid">
-          {findings.map((finding) => {
+          {health.ordered.map((finding) => {
             const href = finding.elementHandle
               ? `${detailHref}?${new URLSearchParams({ el: finding.elementHandle }).toString()}`
               : `${detailHref}?view=lint`;
@@ -708,7 +731,7 @@ function SpecInlineLint({
                     lintSeverityClass[finding.severity],
                   )}
                 >
-                  {lintSeverityLabel(finding.severity)}
+                  {LINT_SEVERITY_LABEL[finding.severity]}
                 </span>
                 <span className="min-w-0 flex-1 text-[0.74rem] leading-relaxed text-text-secondary">
                   {finding.message}
@@ -902,19 +925,6 @@ function ForwardIcon(): React.JSX.Element {
   );
 }
 
-function lintSeverityLabel(severity: InlineLintFinding["severity"]): string {
-  switch (severity) {
-    case "blocks_propose":
-      return "Blocks propose";
-    case "blocks_claim":
-      return "Blocks claim";
-    case "blocks_signoff":
-      return "Blocks sign-off";
-    case "advisory":
-      return "Advisory";
-  }
-}
-
 function revisionLine(detail: SpecDetailView, revision: number): string {
   const snapshot = detail.currentRevision;
   if (snapshot === null) return `rev ${revision} unavailable`;
@@ -942,6 +952,7 @@ export function detailStatePresentation(
   phase: SpecPhasePrimary,
   pendingApprovals: SpecDetailView["status"]["pendingApprovals"],
   authoringStage?: SpecAuthoringStage,
+  deliveryPlan?: DeliveryPlanReviewView | null,
 ): DetailStatePresentation {
   switch (phase) {
     case "draft":
@@ -967,38 +978,97 @@ export function detailStatePresentation(
           tone: "green",
           banner: "Requirements approved",
           description:
-            "The requirements are frozen. Design is next; execution stays locked until the Plan is approved.",
+            "The requirements are frozen. Design is next; delivery planning stays locked until design is approved.",
           action: null,
           view: null,
         };
       }
-      if (authoringStage === "design") {
-        return {
-          tone: "green",
-          banner: "Design approved",
-          description:
-            "The design is frozen. Plan is next; execution stays locked until the Plan is approved.",
-          action: null,
-          view: null,
-        };
-      }
-      if (authoringStage !== "plan") {
+      if (authoringStage !== "design" && authoringStage !== "plan") {
         return {
           tone: "green",
           banner: "Revision approved",
           description:
-            "The approved revision is frozen, but execution requires an approved Plan.",
+            "The approved revision is frozen. Execution requires an approved delivery-plan candidate.",
           action: null,
           view: null,
         };
       }
+      if (deliveryPlan === undefined) {
+        return {
+          tone: "green",
+          banner: "Design approved",
+          description: "The design is frozen. Checking delivery-plan status.",
+          action: null,
+          view: null,
+        };
+      }
+      if (deliveryPlan === null) {
+        return {
+          tone: "green",
+          banner: "Design approved",
+          description:
+            authoringStage === "plan"
+              ? "The legacy Plan revision remains readable as history. Open a delivery plan attempt to author the executable graph."
+              : "The design is frozen. Open a delivery plan attempt to author the executable graph.",
+          action: "Open delivery plan",
+          view: "plan",
+        };
+      }
+      if (
+        deliveryPlan.approval !== null &&
+        (deliveryPlan.attempt.status === "approved" ||
+          deliveryPlan.attempt.status === "parked")
+      ) {
+        return {
+          tone: "green",
+          banner: "Ready to execute",
+          description:
+            "The approved delivery-plan candidate is the exact graph execution will launch.",
+          action: "Start execution",
+          view: "plan",
+        };
+      }
+      if (deliveryPlan.attempt.status === "draft") {
+        return {
+          tone: "amber",
+          banner: "Delivery plan in draft",
+          description:
+            "Review the authored graph and resolve its blocking findings before proposal.",
+          action: "Review delivery plan",
+          view: "plan",
+        };
+      }
+      if (
+        deliveryPlan.attempt.status === "proposed" ||
+        deliveryPlan.attempt.status === "approved" ||
+        deliveryPlan.attempt.status === "parked"
+      ) {
+        return {
+          tone: "amber",
+          banner: "Delivery plan awaits approval",
+          description:
+            "Review and approve the exact compiled candidate before execution.",
+          action: "Review delivery plan",
+          view: "plan",
+        };
+      }
+      if (deliveryPlan.attempt.status === "launched") {
+        return {
+          tone: "cyan",
+          banner: "Delivery plan launched",
+          description:
+            "The approved candidate has launched; open execution for its current state.",
+          action: "Open execution",
+          view: "execution",
+        };
+      }
       return {
-        tone: "green",
-        banner: "Ready to execute",
+        tone: "amber",
+        banner: "Delivery plan attempt abandoned",
         description:
-          "The approved Plan revision can anchor an execution scope.",
-        action: "Start execution",
-        view: "execution",
+          "Open a replacement attempt to continue delivery planning.",
+        action: "Open delivery plan",
+        view: "plan",
       };
     case "executing":
       // A run parked on the delivery gate needs its human, not its evidence:
@@ -1054,6 +1124,7 @@ function resolveRequestedDetailView(
     rawView === "questions" ||
     rawView === "integrity" ||
     rawView === "review" ||
+    rawView === "plan" ||
     rawView === "execution" ||
     rawView === "gate" ||
     rawView === "requirements" ||

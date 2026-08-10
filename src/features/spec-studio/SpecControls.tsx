@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 
 import { CompactMarkdown } from "@/components/markdown/Markdown";
+import { ApiCallError } from "@/lib/api/errors";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,7 +17,6 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/AlertDialog";
 import { Button } from "@/components/ui/Button";
-import { CheckboxField } from "@/components/ui/Checkbox";
 import {
   FormError,
   FormGroup,
@@ -51,7 +51,6 @@ import {
 } from "@/lib/specs/queries";
 import {
   specPolicyChangeResultSchema,
-  specStartedExecutionViewSchema,
   type CriterionDeliveryProjection,
   type IntegrityReport,
   type SpecExecutionView,
@@ -61,11 +60,8 @@ import {
   specAliasSchema,
   specApprovalRowSchema,
   specCriterionDispositionRowSchema,
-  specElementSchema,
-  specElementVersionSchema,
   specExecutionRowSchema,
   specGatePolicySchema,
-  specRevisionSchema,
   specSchema,
   specWaiverRowSchema,
   type SpecCriterionDisposition,
@@ -76,16 +72,26 @@ import {
   type SpecGatePreset,
   type SpecRevisionSnapshot,
   type SpecWaiverRow,
-  type TaskElementPayload,
 } from "@/lib/specs/schemas";
 import { cn } from "@/lib/ui/cn";
-import { workflowDefinitionRecordSchema } from "@/lib/workflow-graph/definition-schemas";
+import type { GraphWorkflowExecutionAmendedEvent } from "@/lib/workflow-graph/event-schemas";
+import type {
+  WorkflowExecutionAmendmentRequest,
+  WorkflowExecutionAmendmentResponse,
+} from "@/lib/workflow-graph/execution-amendment";
+import { useGraphWorkflowEventsQuery } from "@/lib/workflows/queries";
 import {
+  useAmendGraphWorkflowMutation,
   useStartGraphWorkflowMutation,
   type StartGraphWorkflowResult,
 } from "@/lib/workflows/mutations";
 
 import { gateLabels } from "./presentation";
+import PostLaunchCapturePaths, {
+  type CaptureDiscoveredWorkRequest,
+  type CaptureScopeAmendmentReceipt,
+  type PostLaunchFailure,
+} from "./PostLaunchCapturePaths";
 import { formatEvidenceKind } from "./SpecEvidenceLintTrace";
 import {
   openDraftForPolicyImpact,
@@ -102,6 +108,7 @@ const GATES: readonly SpecGate[] = [
   "execution_start",
   "delivery",
 ];
+const ACTIVE_POLICY_GATES = GATES.filter((gate) => gate !== "plan");
 
 const presetLabels: Record<SpecGatePreset, string> = {
   "contract-bearing": "Contract-bearing",
@@ -111,18 +118,17 @@ const presetLabels: Record<SpecGatePreset, string> = {
 
 const presetDescriptions: Record<SpecGatePreset, string> = {
   "contract-bearing":
-    "Every authoring and delivery transition requires a human gate.",
+    "Evergreen authoring, delivery-plan launch, and delivery require human gates.",
   exploratory:
-    "Authoring transitions notify; delivery remains gated and cannot merge.",
-  "fast-path":
-    "Requirements, design, and plan share one combined proposal approval.",
+    "Evergreen authoring transitions notify; delivery remains gated and cannot merge.",
+  "fast-path": "Requirements and design share one combined proposal approval.",
 };
 
 const gateDescriptions: Record<SpecGate, string> = {
   requirements: "Admits the requirements contract.",
   design: "Admits the design narrative and decisions.",
-  plan: "Admits the execution task plan.",
-  execution_start: "Admits the pinned scope and generated definition.",
+  plan: "Admits only a legacy evergreen Plan revision.",
+  execution_start: "Admits the approved delivery-plan candidate for launch.",
   delivery: "Admits delivery claims and merge readiness.",
 };
 
@@ -422,7 +428,7 @@ function PolicyEditor({
         )}
 
         <div className="mt-sm overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface">
-          {GATES.map((gate) => {
+          {ACTIVE_POLICY_GATES.map((gate) => {
             const isOverride = overrides[gate] !== "inherit";
             const resolved = resolveDial(proposedPolicy, gate);
             const isCombined = resolved === COMBINED_APPROVAL_DIAL;
@@ -601,19 +607,6 @@ function PolicyEditor({
   );
 }
 
-export interface StartExecutionInput {
-  revisionId: string;
-  sessionName: string | null;
-  scope: {
-    selectedTaskIds: string[];
-    selectedCriterionIds: string[];
-    exclusionDispositions: Array<{
-      criterionId: string;
-      disposition: Exclude<SpecCriterionDisposition, "in_scope">;
-    }>;
-  };
-}
-
 interface GrantWaiverInput {
   criterionElementId: string;
   revisionId: string;
@@ -643,10 +636,19 @@ interface StartPreparedWorkflowInput {
   definitionRevision: number;
 }
 
-export interface CaptureDiscoveredWorkInput {
-  executionId: string;
-  discoveredTask: Omit<TaskElementPayload, "kind">;
-  blockingReason?: string;
+export type CaptureDiscoveredWorkInput = CaptureDiscoveredWorkRequest;
+
+export interface ExecutionPanelPostLaunchState {
+  captureOutcomePath: "discovery" | "replan" | null;
+  captureReceipt: CaptureScopeAmendmentReceipt | null;
+  captureFailure: PostLaunchFailure | null;
+  amendmentPending: boolean;
+  amendmentReceipt: WorkflowExecutionAmendmentResponse | null;
+  amendmentEvent: GraphWorkflowExecutionAmendedEvent | null;
+  amendmentFailure: PostLaunchFailure | null;
+  canRequestAmendment: boolean;
+  onCaptureIntent(path: "discovery" | "replan"): void;
+  onAmend(request: WorkflowExecutionAmendmentRequest): void;
 }
 
 export interface AbandonExecutionPanelInput {
@@ -663,7 +665,6 @@ export function ExecutionPanel({
   preparedWorkflowStartPending = false,
   preparedWorkflowStartError = null,
   preparedWorkflowStartResult = null,
-  onStart,
   onGrantWaiver,
   onSetDisposition,
   onGrantGateApproval,
@@ -671,6 +672,7 @@ export function ExecutionPanel({
   onStartPreparedWorkflow,
   onCaptureScopeAmendment,
   onAbandonExecution,
+  postLaunch,
 }: {
   detail: SpecDetailView;
   projectName: string;
@@ -680,7 +682,6 @@ export function ExecutionPanel({
   preparedWorkflowStartPending?: boolean;
   preparedWorkflowStartError?: string | null;
   preparedWorkflowStartResult?: StartGraphWorkflowResult | null;
-  onStart(input: StartExecutionInput): void;
   onGrantWaiver(input: GrantWaiverInput): void;
   onSetDisposition(input: SetDispositionInput): void;
   onGrantGateApproval(input: GrantGateApprovalPanelInput): void;
@@ -688,8 +689,8 @@ export function ExecutionPanel({
   onStartPreparedWorkflow?(input: StartPreparedWorkflowInput): void;
   onCaptureScopeAmendment(input: CaptureDiscoveredWorkInput): void;
   onAbandonExecution(input: AbandonExecutionPanelInput): void;
+  postLaunch?: ExecutionPanelPostLaunchState;
 }): React.JSX.Element {
-  const approvedSnapshot = approvedRevisionSnapshot(detail);
   const activeExecution = detail.executions.find(
     (execution) =>
       execution.state === "definition_review" || execution.state === "running",
@@ -791,44 +792,76 @@ export function ExecutionPanel({
             onGrantGateApproval={onGrantGateApproval}
           />
 
-          {/* The service refuses capture for any non-running execution, so the
-              control renders only for the state the server accepts. */}
           {activeExecution.state === "running" && !workflowCompleted && (
-            <CaptureDiscoveredWorkForm
+            <PostLaunchCapturePaths
+              projectName={projectName}
+              slug={detail.spec.slug}
               executionId={activeExecution.id}
-              pending={pendingAction === "capture-scope-amendment"}
-              onCapture={onCaptureScopeAmendment}
+              state="running"
+              canRequestAmendment={postLaunch?.canRequestAmendment === true}
+              capturePending={pendingAction === "capture-scope-amendment"}
+              captureOutcomePath={postLaunch?.captureOutcomePath ?? null}
+              captureReceipt={postLaunch?.captureReceipt ?? null}
+              captureFailure={postLaunch?.captureFailure ?? null}
+              amendmentPending={postLaunch?.amendmentPending ?? false}
+              amendmentReceipt={postLaunch?.amendmentReceipt ?? null}
+              amendmentEvent={postLaunch?.amendmentEvent ?? null}
+              amendmentFailure={postLaunch?.amendmentFailure ?? null}
+              onCapture={(path, input) => {
+                postLaunch?.onCaptureIntent(path);
+                onCaptureScopeAmendment(input);
+              }}
+              onAmend={(request) => postLaunch?.onAmend(request)}
             />
           )}
 
-          {/* The escape hatch stays reachable in every active state: an
-              execution whose workflow stalled, halted, or was compiled from a
-              superseded revision must be stoppable from here so a fresh run
-              can start. */}
-          <AbandonExecutionForm
-            executionId={activeExecution.id}
-            pending={pendingAction === "abandon-execution"}
-            onAbandon={onAbandonExecution}
+          {activeExecution.state === "definition_review" && (
+            <AbandonExecutionForm
+              executionId={activeExecution.id}
+              pending={pendingAction === "abandon-execution"}
+              onAbandon={onAbandonExecution}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <section className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg">
+            <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
+              Launch from Delivery plan
+            </h2>
+            <p className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
+              Execution starts from an approved DeliveryPlanAttempt. Review its
+              materialized candidate, sign it off, and launch those exact bytes
+              from the Delivery plan surface.
+            </p>
+            <Link
+              href={`/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(detail.spec.slug)}?view=plan`}
+              className="mt-sm inline-flex rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[6px] font-mono text-[0.72rem] font-medium text-text-primary no-underline hover:border-border-strong hover:bg-bg-raised focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2"
+            >
+              Open Delivery plan
+            </Link>
+          </section>
+          <PostLaunchCapturePaths
+            projectName={projectName}
+            slug={detail.spec.slug}
+            executionId={null}
+            state="unlaunched"
+            canRequestAmendment={false}
+            capturePending={pendingAction === "capture-scope-amendment"}
+            captureOutcomePath={postLaunch?.captureOutcomePath ?? null}
+            captureReceipt={postLaunch?.captureReceipt ?? null}
+            captureFailure={postLaunch?.captureFailure ?? null}
+            amendmentPending={false}
+            amendmentReceipt={null}
+            amendmentEvent={null}
+            amendmentFailure={postLaunch?.amendmentFailure ?? null}
+            onCapture={(path, input) => {
+              postLaunch?.onCaptureIntent(path);
+              onCaptureScopeAmendment(input);
+            }}
+            onAmend={(request) => postLaunch?.onAmend(request)}
           />
         </>
-      ) : approvedSnapshot === null ? (
-        <section className="rounded-lg border border-solid border-border-subtle bg-bg-surface p-lg">
-          <h2 className="m-0 font-display text-[0.92rem] font-bold text-text-primary">
-            Start execution — locked
-          </h2>
-          <p className="mt-sm mb-0 text-[0.76rem] leading-relaxed text-text-secondary">
-            Execution requires an approved Plan. Complete and approve the Plan
-            stage before selecting an execution scope.
-          </p>
-        </section>
-      ) : (
-        <ExecutionScopeForm
-          snapshot={approvedSnapshot}
-          projectName={projectName}
-          pending={pendingAction === "start-execution"}
-          error={error}
-          onStart={onStart}
-        />
       )}
     </section>
   );
@@ -855,8 +888,8 @@ function ExecutionWorkflowHeader({
             Execution — inside the workflow surface
           </h2>
           <p className="mt-[3px] mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-            The approved plan compiles to a standard graph workflow; scope,
-            provenance, and merge criteria stay visible here.
+            The approved delivery plan is the graph workflow; candidate
+            provenance and merge criteria stay visible here.
           </p>
         </div>
         {execution !== undefined && (
@@ -1143,8 +1176,7 @@ function DefinitionReviewPanel({
           role="alert"
           className="mt-md mb-0 font-mono text-[0.66rem] text-red"
         >
-          This legacy execution has no complete immutable launch target. Abandon
-          it and start a new execution from the approved revision.
+          {`This legacy execution has no complete immutable launch target. Abandon it with cctl spec abandon ${detail.spec.slug} --execution ${execution.id} --reason <reason>, then run cctl spec plan open ${detail.spec.slug} --seed-from last, propose and sign the candidate off, and run cctl spec start ${detail.spec.slug}.`}
         </p>
       )}
       {!requiresApproval &&
@@ -1153,325 +1185,6 @@ function DefinitionReviewPanel({
             {preparedWorkflowStartResult.instruction}
           </p>
         )}
-    </section>
-  );
-}
-
-function ExecutionScopeForm({
-  snapshot,
-  projectName,
-  pending,
-  error,
-  onStart,
-}: {
-  snapshot: SpecRevisionSnapshot;
-  projectName: string;
-  pending: boolean;
-  error: string | null;
-  onStart(input: StartExecutionInput): void;
-}): React.JSX.Element {
-  const tasks = useMemo(
-    () =>
-      snapshot.elements.filter(
-        (entry) => entry.version.payload.kind === "task",
-      ),
-    [snapshot],
-  );
-  const criteria = useMemo(
-    () =>
-      snapshot.elements.filter(
-        (entry) => entry.version.payload.kind === "criterion",
-      ),
-    [snapshot],
-  );
-  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>(() =>
-    tasks.map((entry) => entry.element.id),
-  );
-  const [selectedCriterionIds, setSelectedCriterionIds] = useState<string[]>(
-    () => criteria.map((entry) => entry.element.id),
-  );
-  const [sessionName, setSessionName] = useState("");
-  const [exclusionDispositions, setExclusionDispositions] = useState<
-    Record<string, Exclude<SpecCriterionDisposition, "in_scope"> | undefined>
-  >({});
-
-  function toggleSelection(
-    id: string,
-    selected: boolean,
-    update: React.Dispatch<React.SetStateAction<string[]>>,
-  ): void {
-    update((current) =>
-      selected
-        ? current.includes(id)
-          ? current
-          : [...current, id]
-        : current.filter((candidate) => candidate !== id),
-    );
-  }
-
-  function handleStart(): void {
-    if (validationIssues.length > 0) return;
-    const selectedCriteria = new Set(selectedCriterionIds);
-    const exclusions = criteria.flatMap((entry) => {
-      if (selectedCriteria.has(entry.element.id)) return [];
-      const disposition = exclusionDispositions[entry.element.id];
-      return disposition === undefined
-        ? []
-        : [{ criterionId: entry.element.id, disposition }];
-    });
-    logger.info("spec_studio.execution_scope.start_requested", {
-      revisionId: snapshot.revision.id,
-      selectedTaskCount: selectedTaskIds.length,
-      selectedCriterionCount: selectedCriterionIds.length,
-      exclusionCount: exclusions.length,
-    });
-    onStart({
-      revisionId: snapshot.revision.id,
-      sessionName: sessionName.trim() || null,
-      scope: {
-        selectedTaskIds,
-        selectedCriterionIds,
-        exclusionDispositions: exclusions,
-      },
-    });
-  }
-
-  const selectedTasks = new Set(selectedTaskIds);
-  const selectedCriteria = new Set(selectedCriterionIds);
-  const excludedCriteria = criteria.filter(
-    (entry) => !selectedCriteria.has(entry.element.id),
-  );
-  const validationIssues: string[] = [];
-  if (selectedTaskIds.length === 0) validationIssues.push("Select a task");
-  if (selectedCriterionIds.length === 0) {
-    validationIssues.push("Select a criterion");
-  }
-  for (const entry of tasks) {
-    if (
-      !selectedTasks.has(entry.element.id) ||
-      entry.version.payload.kind !== "task"
-    ) {
-      continue;
-    }
-    for (const dependencyId of entry.version.payload.dependsOnTaskElementIds) {
-      if (selectedTasks.has(dependencyId)) continue;
-      const dependency = tasks.find(
-        (candidate) => candidate.element.id === dependencyId,
-      );
-      validationIssues.push(
-        `T${entry.element.number ?? "?"} requires T${dependency?.element.number ?? "?"}`,
-      );
-    }
-  }
-  for (const criterion of criteria) {
-    if (!selectedCriteria.has(criterion.element.id)) {
-      if (exclusionDispositions[criterion.element.id] === undefined) {
-        validationIssues.push(
-          `${criterionHandle(snapshot, criterion.element.id) ?? "Criterion"} needs an exclusion disposition`,
-        );
-      }
-      continue;
-    }
-    const covered = tasks.some(
-      (task) =>
-        selectedTasks.has(task.element.id) &&
-        task.version.payload.kind === "task" &&
-        task.version.payload.coveredCriterionElementIds.includes(
-          criterion.element.id,
-        ),
-    );
-    if (!covered) {
-      validationIssues.push(
-        `${criterionHandle(snapshot, criterion.element.id) ?? "Criterion"} has no selected task coverage`,
-      );
-    }
-  }
-
-  return (
-    <section aria-labelledby="spec-execution-heading">
-      <h2
-        id="spec-execution-heading"
-        className="m-0 font-display text-[0.92rem] font-bold text-text-primary"
-      >
-        Start execution — scope selection
-      </h2>
-      <p className="mt-xs mb-sm font-mono text-[0.66rem] leading-relaxed text-text-tertiary">
-        Deterministic scope for {projectName}: dependencies must close, selected
-        criteria need task coverage, and partial task selection is rejected.
-      </p>
-      <div className="rounded-lg border border-solid border-border-subtle bg-bg-surface px-md py-[14px]">
-        <fieldset className="m-0 border-0 p-0">
-          <legend className="mb-[6px] font-mono text-[0.64rem] font-bold tracking-[0.08em] text-text-tertiary uppercase">
-            Tasks — dependency-closed selection
-          </legend>
-          <div className="flex flex-wrap gap-[6px]">
-            {tasks.map((entry) => {
-              const checked = selectedTaskIds.includes(entry.element.id);
-              const title =
-                entry.version.payload.kind === "task"
-                  ? entry.version.payload.title
-                  : "";
-              return (
-                <button
-                  key={entry.element.id}
-                  type="button"
-                  role="checkbox"
-                  aria-checked={checked}
-                  aria-label={`T${entry.element.number ?? "?"} ${title}`}
-                  title={title}
-                  className={`inline-flex min-h-[26px] items-center gap-[6px] rounded-md border border-solid px-[9px] font-mono text-[0.68rem] transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px] ${
-                    checked
-                      ? "border-cyan-dim bg-cyan-glow text-cyan"
-                      : "border-border-default bg-bg-base text-text-secondary hover:border-border-strong"
-                  }`}
-                  onClick={() =>
-                    toggleSelection(
-                      entry.element.id,
-                      !checked,
-                      setSelectedTaskIds,
-                    )
-                  }
-                >
-                  <span aria-hidden="true">{checked ? "✓" : "○"}</span>T
-                  {entry.element.number ?? "?"}
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-
-        <fieldset className="mt-md border-0 p-0">
-          <legend className="mb-[6px] font-mono text-[0.64rem] font-bold tracking-[0.08em] text-text-tertiary uppercase">
-            Criteria — exact delivery promise
-          </legend>
-          <div className="flex flex-wrap gap-[6px]">
-            {criteria.map((entry) => {
-              const handle =
-                criterionHandle(snapshot, entry.element.id) ?? "Criterion";
-              const checked = selectedCriterionIds.includes(entry.element.id);
-              const criterionText =
-                entry.version.payload.kind === "criterion"
-                  ? entry.version.payload.text
-                  : "";
-              return (
-                <button
-                  key={entry.element.id}
-                  type="button"
-                  role="checkbox"
-                  aria-checked={checked}
-                  aria-label={`${handle} ${criterionText}`}
-                  title={criterionText}
-                  className={`inline-flex min-h-[26px] items-center gap-[6px] rounded-md border border-solid px-[9px] font-mono text-[0.68rem] transition-colors focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2 max-768:min-h-[44px] ${
-                    checked
-                      ? "border-cyan-dim bg-cyan-glow text-cyan"
-                      : "border-border-default bg-bg-base text-text-secondary hover:border-border-strong"
-                  }`}
-                  onClick={() =>
-                    toggleSelection(
-                      entry.element.id,
-                      !checked,
-                      setSelectedCriterionIds,
-                    )
-                  }
-                >
-                  <span aria-hidden="true">{checked ? "✓" : "○"}</span>
-                  {handle}
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-
-        {excludedCriteria.length > 0 && (
-          <div className="mt-md border-x-0 border-t border-b-0 border-solid border-border-dim pt-md">
-            <p className="m-0 font-mono text-[0.64rem] font-bold tracking-[0.08em] text-text-tertiary uppercase">
-              Explicit exclusion dispositions
-            </p>
-            <div className="mt-[6px] grid gap-[6px]">
-              {excludedCriteria.map((entry) => {
-                const handle =
-                  criterionHandle(snapshot, entry.element.id) ?? "Criterion";
-                return (
-                  <div
-                    key={entry.element.id}
-                    className="flex flex-wrap items-center justify-between gap-sm rounded-md border border-solid border-border-dim bg-bg-base px-sm py-[6px]"
-                  >
-                    <span className="font-mono text-[0.68rem] font-bold text-text-primary">
-                      {handle}
-                    </span>
-                    <SegmentedControl
-                      aria-label={`Exclusion disposition for ${handle}`}
-                      value={exclusionDispositions[entry.element.id] ?? ""}
-                      onValueChange={(value) =>
-                        setExclusionDispositions((current) => ({
-                          ...current,
-                          [entry.element.id]: value as Exclude<
-                            SpecCriterionDisposition,
-                            "in_scope"
-                          >,
-                        }))
-                      }
-                    >
-                      <SegmentedControlItem value="deferred">
-                        Deferred
-                      </SegmentedControlItem>
-                      <SegmentedControlItem value="delivered_elsewhere">
-                        Delivered elsewhere
-                      </SegmentedControlItem>
-                      <SegmentedControlItem value="waived" tone="violet">
-                        Waived
-                      </SegmentedControlItem>
-                    </SegmentedControl>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        <div className="mt-md flex flex-wrap items-end justify-between gap-md border-x-0 border-t border-b-0 border-solid border-border-dim pt-md">
-          <div
-            data-testid="execution-scope-validation"
-            className="min-w-[240px] flex-1"
-          >
-            <p className="m-0 font-mono text-[0.66rem] text-text-secondary">
-              {selectedTaskIds.length} tasks selected ·{" "}
-              {selectedCriterionIds.length} criteria in scope ·{" "}
-              {excludedCriteria.length} exclusions
-            </p>
-            {validationIssues.length > 0 && (
-              <ul className="mt-[6px] mb-0 grid gap-[2px] rounded-md border border-solid border-[var(--cc-red-border)] bg-red-glow px-sm py-[6px] font-mono text-[0.64rem] text-red">
-                {validationIssues.map((issue) => (
-                  <li key={issue}>{issue}</li>
-                ))}
-              </ul>
-            )}
-            {error !== null && <FormError role="alert">{error}</FormError>}
-          </div>
-          <div className="flex flex-wrap items-end gap-md">
-            <div className="w-[220px] max-768:w-full">
-              <FormLabel htmlFor="spec-execution-session-name">
-                Session name
-              </FormLabel>
-              <FormInput
-                id="spec-execution-session-name"
-                aria-label="Session name"
-                value={sessionName}
-                onChange={(event) => setSessionName(event.currentTarget.value)}
-                placeholder="Optional session label"
-              />
-            </div>
-            <Button
-              variant="primary"
-              loading={pending}
-              disabled={validationIssues.length > 0}
-              onClick={handleStart}
-            >
-              Start execution
-            </Button>
-          </div>
-        </div>
-      </div>
     </section>
   );
 }
@@ -1692,106 +1405,6 @@ function MergeGatePanel({
         </p>
       )}
     </section>
-  );
-}
-
-function CaptureDiscoveredWorkForm({
-  executionId,
-  pending,
-  onCapture,
-}: {
-  executionId: string;
-  pending: boolean;
-  onCapture(input: CaptureDiscoveredWorkInput): void;
-}): React.JSX.Element {
-  const [title, setTitle] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [blocking, setBlocking] = useState(false);
-  const [blockingReason, setBlockingReason] = useState("");
-  const canCapture =
-    title.trim().length > 0 &&
-    instructions.trim().length > 0 &&
-    (!blocking || blockingReason.trim().length > 0);
-
-  function handleCapture(): void {
-    onCapture({
-      executionId,
-      discoveredTask: {
-        title: title.trim(),
-        instructions: instructions.trim(),
-        tracedRequirementElementIds: [],
-        tracedDecisionElementIds: [],
-        coveredCriterionElementIds: [],
-        dependsOnTaskElementIds: [],
-      },
-      ...(blocking ? { blockingReason: blockingReason.trim() } : {}),
-    });
-  }
-
-  return (
-    <div className="mt-md rounded-md border border-solid border-border-dim bg-bg-base p-md">
-      <h3 className="m-0 font-display text-[0.8rem] font-bold text-text-primary">
-        Capture discovered work
-      </h3>
-      <p className="mt-xs mb-0 text-[0.72rem] leading-relaxed text-text-secondary">
-        This run&apos;s pinned scope never changes. Captured work becomes a task
-        on a draft amendment revision and queues for a future execution.
-      </p>
-      <FormGroup layoutClassName="mt-md">
-        <FormLabel htmlFor="spec-capture-title">Task title</FormLabel>
-        <FormInput
-          id="spec-capture-title"
-          aria-label="Discovered task title"
-          value={title}
-          onChange={(event) => setTitle(event.currentTarget.value)}
-          autoComplete="off"
-        />
-      </FormGroup>
-      <FormGroup layoutClassName="mt-sm">
-        <FormLabel htmlFor="spec-capture-instructions">Instructions</FormLabel>
-        <FormInput
-          id="spec-capture-instructions"
-          aria-label="Discovered task instructions"
-          value={instructions}
-          onChange={(event) => setInstructions(event.currentTarget.value)}
-          autoComplete="off"
-        />
-      </FormGroup>
-      <div className="mt-sm">
-        <CheckboxField
-          checked={blocking}
-          onCheckedChange={(checked) => setBlocking(checked === true)}
-          label="Blocks this run — abandon and restart"
-        />
-      </div>
-      {blocking && (
-        <FormGroup layoutClassName="mt-sm">
-          <FormLabel htmlFor="spec-capture-blocking-reason">
-            Blocking reason
-          </FormLabel>
-          <FormInput
-            id="spec-capture-blocking-reason"
-            aria-label="Blocking reason"
-            value={blockingReason}
-            onChange={(event) => setBlockingReason(event.currentTarget.value)}
-            placeholder="Required durable abandonment reason"
-          />
-          <FormHint>
-            Capturing with a blocking reason abandons this running execution.
-            Restart from the amended revision once it is approved.
-          </FormHint>
-        </FormGroup>
-      )}
-      <Button
-        size="sm"
-        layoutClassName="mt-md"
-        loading={pending}
-        disabled={!canCapture}
-        onClick={handleCapture}
-      >
-        Capture discovered work
-      </Button>
-    </div>
   );
 }
 
@@ -2320,22 +1933,40 @@ export function SpecIntegrityPanel({
   );
 }
 
-const startExecutionResponseSchema = z
+// The capture receipt: a durable discovery, plus what a blocking capture
+// retired and opened. The Studio controls that present the three post-launch
+// paths side by side are owned downstream by the capture-studio context; this
+// schema only keeps the existing panel honest about what the route returns.
+const captureScopeAmendmentResponseSchema = z
   .object({
-    execution: specStartedExecutionViewSchema,
-    definition: workflowDefinitionRecordSchema,
+    discovery: z
+      .object({
+        id: z.string().min(1),
+        executionId: z.string().min(1),
+        attemptId: z.string().min(1).nullable(),
+        title: z.string().min(1),
+      })
+      .strict(),
+    restartRequired: z.boolean(),
+    replacement: z
+      .object({
+        abandonedExecutionId: z.string().min(1),
+        replacementAttemptId: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
   })
   .strict();
 
-const captureScopeAmendmentResponseSchema = z
-  .object({
-    revision: specRevisionSchema,
-    task: z
-      .object({ element: specElementSchema, version: specElementVersionSchema })
-      .strict(),
-    restartRequired: z.boolean(),
-  })
-  .strict();
+function postLaunchFailure(error: Error | null): PostLaunchFailure | null {
+  if (error === null) return null;
+  const instruction =
+    error instanceof ApiCallError &&
+    typeof error.details?.["instruction"] === "string"
+      ? error.details["instruction"]
+      : null;
+  return { message: error.message, instruction };
+}
 
 export default function SpecControlsPanel({
   detail,
@@ -2351,6 +1982,36 @@ export default function SpecControlsPanel({
     message: string;
     executionId?: string | null;
   } | null>(null);
+  const [captureOutcomePath, setCaptureOutcomePath] = useState<
+    "discovery" | "replan" | null
+  >(null);
+  const postLaunchExecution = detail.executions.find(
+    (execution) => execution.state === "running",
+  );
+  const postLaunchSessionName = postLaunchExecution?.sessionName ?? "";
+  const workflowExecutionId = postLaunchExecution?.workflowExecutionId ?? null;
+  const amendGraphWorkflow = useAmendGraphWorkflowMutation(
+    projectName,
+    postLaunchSessionName,
+    workflowExecutionId,
+  );
+  const workflowEvents = useGraphWorkflowEventsQuery(
+    projectName,
+    postLaunchSessionName,
+    workflowExecutionId,
+  );
+  const latestAmendmentEvent = useMemo(() => {
+    const events = workflowEvents.data ?? [];
+    const entry = [...events]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.event.type === "graph-workflow-execution-amended",
+      );
+    return entry?.event.type === "graph-workflow-execution-amended"
+      ? entry.event
+      : null;
+  }, [workflowEvents.data]);
   const preparedExecution = detail.executions.find(
     (execution) => execution.state === "definition_review",
   );
@@ -2385,15 +2046,6 @@ export default function SpecControlsPanel({
     detail.spec.slug,
     "change-policy",
     specPolicyChangeResultSchema,
-  );
-  const startExecution = useSpecActionMutation<
-    StartExecutionInput,
-    z.infer<typeof startExecutionResponseSchema>
-  >(
-    projectName,
-    detail.spec.slug,
-    "start-execution",
-    startExecutionResponseSchema,
   );
   const grantWaiver = useSpecActionMutation<
     GrantWaiverInput,
@@ -2469,23 +2121,21 @@ export default function SpecControlsPanel({
 
   const pendingAction = changePolicy.isPending
     ? "change-policy"
-    : startExecution.isPending
-      ? "start-execution"
-      : grantWaiver.isPending
-        ? "grant-waiver"
-        : setDisposition.isPending
-          ? "set-disposition"
-          : grantGateApproval.isPending
-            ? "grant-gate-approval"
-            : approveExecutionStart.isPending
-              ? "approve-execution-start"
-              : startPreparedWorkflow.isPending
-                ? "start-prepared-workflow"
-                : captureScopeAmendment.isPending
-                  ? "capture-scope-amendment"
-                  : abandonExecution.isPending
-                    ? "abandon-execution"
-                    : null;
+    : grantWaiver.isPending
+      ? "grant-waiver"
+      : setDisposition.isPending
+        ? "set-disposition"
+        : grantGateApproval.isPending
+          ? "grant-gate-approval"
+          : approveExecutionStart.isPending
+            ? "approve-execution-start"
+            : startPreparedWorkflow.isPending
+              ? "start-prepared-workflow"
+              : captureScopeAmendment.isPending
+                ? "capture-scope-amendment"
+                : abandonExecution.isPending
+                  ? "abandon-execution"
+                  : null;
 
   if (detail.spec.abandonedAt !== null) {
     const context =
@@ -2583,12 +2233,11 @@ export default function SpecControlsPanel({
               actionFailure.action !== "abandon-spec" &&
               actionFailure.action !== "rename" &&
               actionFailure.action !== "approve-execution-start" &&
-              actionFailure.action !== "start-prepared-workflow"
+              actionFailure.action !== "start-prepared-workflow" &&
+              actionFailure.action !== "capture-scope-amendment" &&
+              actionFailure.action !== "amend-graph-workflow"
                 ? actionFailure.message
                 : null
-            }
-            onStart={(input) =>
-              startExecution.mutate(input, mutationCallbacks("start-execution"))
             }
             onGrantWaiver={(input) =>
               grantWaiver.mutate(input, mutationCallbacks("grant-waiver"))
@@ -2671,18 +2320,88 @@ export default function SpecControlsPanel({
                 },
               );
             }}
-            onCaptureScopeAmendment={(input) =>
-              captureScopeAmendment.mutate(
-                input,
-                mutationCallbacks("capture-scope-amendment"),
-              )
-            }
+            onCaptureScopeAmendment={(input) => {
+              logger.info("spec_studio.discovery.capture_requested", {
+                specId: detail.spec.id,
+                executionId: input.executionId ?? null,
+                blocking: input.blockingReason !== undefined,
+              });
+              captureScopeAmendment.mutate(input, {
+                onSuccess: (receipt) => {
+                  setActionFailure(null);
+                  logger.info("spec_studio.discovery.capture_completed", {
+                    specId: detail.spec.id,
+                    executionId: receipt.discovery.executionId,
+                    discoveryId: receipt.discovery.id,
+                    restartRequired: receipt.restartRequired,
+                    replacementAttemptId:
+                      receipt.replacement?.replacementAttemptId ?? null,
+                  });
+                },
+                onError: (mutationError) => {
+                  logger.warn("spec_studio.discovery.capture_failed", {
+                    specId: detail.spec.id,
+                    executionId: input.executionId ?? null,
+                    blocking: input.blockingReason !== undefined,
+                    error: mutationError.message,
+                  });
+                },
+              });
+            }}
             onAbandonExecution={(input) =>
               abandonExecution.mutate(
                 input,
                 mutationCallbacks("abandon-execution"),
               )
             }
+            postLaunch={{
+              captureOutcomePath,
+              captureReceipt: captureScopeAmendment.data ?? null,
+              captureFailure: postLaunchFailure(captureScopeAmendment.error),
+              amendmentPending: amendGraphWorkflow.isPending,
+              amendmentReceipt: amendGraphWorkflow.data ?? null,
+              amendmentEvent: latestAmendmentEvent,
+              amendmentFailure: postLaunchFailure(amendGraphWorkflow.error),
+              canRequestAmendment:
+                postLaunchExecution?.sessionName !== null &&
+                postLaunchExecution?.sessionName !== undefined,
+              onCaptureIntent: (path) => {
+                captureScopeAmendment.reset();
+                setCaptureOutcomePath(path);
+              },
+              onAmend: (request) => {
+                logger.info("spec_studio.execution_amendment.requested", {
+                  specId: detail.spec.id,
+                  executionId: workflowExecutionId,
+                  sessionName: postLaunchSessionName,
+                  operationCount: request.operations.length,
+                });
+                amendGraphWorkflow.mutate(request, {
+                  onSuccess: (receipt) => {
+                    setActionFailure(null);
+                    logger.info("spec_studio.execution_amendment.completed", {
+                      specId: detail.spec.id,
+                      executionId: workflowExecutionId,
+                      sessionName: postLaunchSessionName,
+                      liveRevision: receipt.liveRevision,
+                      amended: receipt.amended,
+                      previousWorkingDefinitionHash:
+                        receipt.previousWorkingDefinitionHash,
+                      workingDefinitionHash: receipt.workingDefinitionHash,
+                    });
+                  },
+                  onError: (mutationError) => {
+                    logger.warn("spec_studio.execution_amendment.failed", {
+                      specId: detail.spec.id,
+                      executionId: workflowExecutionId,
+                      sessionName: postLaunchSessionName,
+                      operationCount: request.operations.length,
+                      error: mutationError.message,
+                    });
+                  },
+                });
+              },
+            }}
           />
           <div className="mx-auto max-w-[1000px]">
             <AbandonSpecPanel
@@ -2753,15 +2472,6 @@ function gateDialStrength(
   }
 }
 
-function approvedRevisionSnapshot(
-  detail: SpecDetailView,
-): SpecRevisionSnapshot | null {
-  return detail.currentApprovedRevision?.revision.state === "approved" &&
-    detail.currentApprovedRevision.revision.authoringStage === "plan"
-    ? detail.currentApprovedRevision
-    : null;
-}
-
 function snapshotForExecution(
   detail: SpecDetailView,
   execution: SpecExecutionView,
@@ -2826,5 +2536,10 @@ function executionStateLabel(state: SpecExecutionView["state"]): string {
       return "Delivered";
     case "abandoned":
       return "Abandoned";
+    case "abandoning":
+      // Named for what it is rather than folded into "Abandoned": the cleanup
+      // can be blocked on a live workflow, and a reader who sees "Abandoned"
+      // would not think to retry the command.
+      return "Abandoning (cleanup in progress)";
   }
 }

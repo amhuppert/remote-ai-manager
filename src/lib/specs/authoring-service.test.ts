@@ -238,23 +238,30 @@ describe("AuthoringService create and draft writes", () => {
     ).toEqual({ count: 0 });
   });
 
-  it("preserves single-pass authoring when every authoring dial is combined", async () => {
+  it("keeps fast-path evergreen authoring at the design stage", async () => {
     const created = await service.createSpec({
       projectPath: PROJECT_PATH,
       slug: "fast-path-spec",
       name: "Fast-path spec",
       gatePolicy: { preset: "fast-path" },
       initialElement: {
-        elementId: "task-fast",
-        kind: "task",
+        elementId: "decision-fast",
+        kind: "decision",
         parentElementId: null,
         position: 0,
-        payload: task("Single-pass task"),
+        payload: {
+          kind: "decision",
+          title: "Single-pass design",
+          chosenApproach: "Author the design in one evergreen pass.",
+          rejectedAlternatives: [],
+          reason: "The delivery graph belongs to a delivery plan attempt.",
+          tracedRequirementElementIds: [],
+        },
       },
       actor: ACTOR,
     });
 
-    expect(created.draft.authoringStage).toBe("plan");
+    expect(created.draft.authoringStage).toBe("design");
   });
 
   it("records a durable intervention and checks stage before element CAS", async () => {
@@ -564,6 +571,70 @@ describe("AuthoringService create and draft writes", () => {
     expect(
       (await service.getRevisionSnapshot(created.draft.id))?.revision.state,
     ).toBe("approved");
+  });
+
+  it("keeps legacy Plan tasks in approved history without copying them into a design amendment", async () => {
+    const created = await createDraft(firstElement("Approved requirement."));
+    await specs.proposeRevision({
+      revisionId: created.draft.id,
+      proposedAt: "2026-07-18T12:10:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: created.draft.id,
+      approvedAt: "2026-07-18T12:11:00.000Z",
+    });
+    const legacyPlan = await specs.createDraftFromBase({
+      id: "legacy-plan-revision",
+      specId: created.spec.id,
+      baseRevisionId: created.draft.id,
+      authoringStage: "plan",
+      createdAt: "2026-07-18T12:12:00.000Z",
+    });
+    await specs.createDraftElement({
+      id: "legacy-task",
+      specId: created.spec.id,
+      revisionId: legacyPlan.id,
+      kind: "task",
+      parentElementId: null,
+      position: 1,
+      payload: task("Legacy delivery work"),
+      createdAt: "2026-07-18T12:13:00.000Z",
+      updatedAt: "2026-07-18T12:13:00.000Z",
+    });
+    await specs.proposeRevision({
+      revisionId: legacyPlan.id,
+      proposedAt: "2026-07-18T12:14:00.000Z",
+    });
+    await specs.approveRevision({
+      revisionId: legacyPlan.id,
+      approvedAt: "2026-07-18T12:15:00.000Z",
+    });
+
+    const { revision: amendment } = await service.openAmendment({
+      specId: created.spec.id,
+      actor: ACTOR,
+    });
+    const legacySnapshot = await service.getRevisionSnapshot(legacyPlan.id);
+    const amendmentSnapshot = await service.getRevisionSnapshot(amendment.id);
+
+    expect(legacySnapshot?.elements).toContainEqual(
+      expect.objectContaining({
+        version: expect.objectContaining({
+          payload: expect.objectContaining({ kind: "task" }),
+        }),
+      }),
+    );
+    expect(amendment.authoringStage).toBe("design");
+    expect(
+      amendmentSnapshot?.elements.some(
+        ({ version }) => version.payload.kind === "task",
+      ),
+    ).toBe(false);
+    expect(
+      amendmentSnapshot?.elements.some(
+        ({ version }) => version.payload.kind === "requirement",
+      ),
+    ).toBe(true);
   });
 });
 

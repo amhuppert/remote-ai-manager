@@ -41,9 +41,11 @@ export const SPEC_ACTIONS = [
   "comment",
   "resolve-thread",
   "request-changes",
+  "dismiss-superseded",
   "approve-item",
   "unapprove-item",
   "sign-off",
+  "approve-remaining-and-sign-off",
   "grant-gate-approval",
   "approve-execution-start",
   "withdraw",
@@ -67,6 +69,12 @@ export const SPEC_ACTIONS = [
   "materialize-tasks",
   "link-ticket",
   "verify",
+  // Delivery-plan attempt acts Studio performs. The CLI reaches the rest of
+  // the `plan-*` family through the same route without this list, which only
+  // exists so a browser call site cannot mistype a path.
+  "plan-comment",
+  "plan-sign-off",
+  "plan-reaffirm",
 ] as const;
 export type SpecAction = (typeof SPEC_ACTIONS)[number];
 

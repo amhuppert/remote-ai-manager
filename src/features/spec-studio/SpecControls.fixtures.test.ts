@@ -135,6 +135,10 @@ function executionRowFromView(view: SpecExecutionView): SpecExecutionRow {
     session_name: view.sessionName,
     delivered_at: view.deliveredAt,
     abandoned_reason: view.abandonedReason,
+    cleanup_phase: null,
+    linked_workflow_execution_id: null,
+    cleanup_last_error: null,
+    cleanup_last_error_at: null,
     created_at: view.createdAt,
     updated_at: view.updatedAt,
   };

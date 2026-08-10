@@ -109,7 +109,7 @@ export const LANE_REMINDER_RULES: LaneReminderRule[] = [
   laneAutonomy,
 ];
 
-const MAX_REMINDERS = 2;
+export const MAX_REMINDERS = 2;
 
 export interface LaneReminderResult {
   /** Rendered reminder texts, in priority order (≤ 2). */

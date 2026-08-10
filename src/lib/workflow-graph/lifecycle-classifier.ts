@@ -1,9 +1,13 @@
 import type {
+  GraphWorkflowArchiveEligibility,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowHaltReason,
+  GraphWorkflowLifecycleDecision,
+  GraphWorkflowReplacementPolicy,
   GraphWorkflowTaskState,
 } from "@/lib/workflow-graph/schemas";
+import type { GraphWorkflowStatus } from "@/lib/workflow-graph/definition-schemas";
 import { assertNever } from "@/lib/shared/assert-never";
 import { deepEqualJson } from "@/lib/shared/deep-equal";
 import {
@@ -18,6 +22,106 @@ import {
  * one pure function is what makes CLI/UI/server parity free. (The design mandates
  * purity here; the consuming edit core/route own the structured logging.)
  */
+
+/**
+ * THE lifecycle contract (design §10): terminality, slot ownership, explicit
+ * archive eligibility, and replacement policy for every execution status,
+ * decided here and nowhere else. Before this table those rules were restated
+ * per call site and had already diverged — the start guard treated `halted` as
+ * freely replaceable while the validation resolver failed closed on it — so any
+ * consumer keeping a local copy is the defect this module exists to prevent.
+ *
+ * The two axes people conflate are deliberately separate columns: `terminal`
+ * says the run has ENDED, `slotOwnership` says whether it still OWNS the
+ * session's execution slot. `halted` is both terminal and slot-owning, because
+ * it can still be resumed.
+ */
+const LIFECYCLE_CONTRACT: Record<
+  GraphWorkflowStatus,
+  GraphWorkflowLifecycleDecision
+> = {
+  pending: {
+    status: "pending",
+    terminal: false,
+    slotOwnership: "retained",
+    explicitArchive: "refused",
+    replacement: "refused",
+  },
+  running: {
+    status: "running",
+    terminal: false,
+    slotOwnership: "retained",
+    explicitArchive: "refused",
+    replacement: "refused",
+  },
+  paused: {
+    status: "paused",
+    terminal: false,
+    slotOwnership: "retained",
+    explicitArchive: "eligible",
+    replacement: "refused",
+  },
+  halted: {
+    status: "halted",
+    terminal: true,
+    slotOwnership: "retained",
+    explicitArchive: "eligible",
+    replacement: "audited-archive",
+  },
+  completed: {
+    status: "completed",
+    terminal: true,
+    slotOwnership: "auto-release",
+    explicitArchive: "idempotent",
+    replacement: "audited-archive",
+  },
+  aborted: {
+    status: "aborted",
+    terminal: true,
+    slotOwnership: "auto-release",
+    explicitArchive: "idempotent",
+    replacement: "audited-archive",
+  },
+};
+
+/** The whole contract row for a status. */
+export function graphWorkflowLifecycleDecision(
+  status: GraphWorkflowStatus,
+): GraphWorkflowLifecycleDecision {
+  return LIFECYCLE_CONTRACT[status];
+}
+
+/** Whether the run has ended. Says nothing about slot ownership. */
+export function isTerminalStatus(status: GraphWorkflowStatus): boolean {
+  return LIFECYCLE_CONTRACT[status].terminal;
+}
+
+/** Whether reaching this status releases the session's slot with no further act. */
+export function autoReleasesSlot(status: GraphWorkflowStatus): boolean {
+  return LIFECYCLE_CONTRACT[status].slotOwnership === "auto-release";
+}
+
+/**
+ * Whether the run keeps the session's execution slot AND its validation
+ * ownership until it is resumed, abandoned, or explicitly archived.
+ */
+export function retainsSlotOwnership(status: GraphWorkflowStatus): boolean {
+  return LIFECYCLE_CONTRACT[status].slotOwnership === "retained";
+}
+
+/** Whether an explicit, audited archive act may release this run. */
+export function explicitArchiveEligibility(
+  status: GraphWorkflowStatus,
+): GraphWorkflowArchiveEligibility {
+  return LIFECYCLE_CONTRACT[status].explicitArchive;
+}
+
+/** How a new execution may take the slot from an incumbent in this status. */
+export function replacementPolicy(
+  status: GraphWorkflowStatus,
+): GraphWorkflowReplacementPolicy {
+  return LIFECYCLE_CONTRACT[status].replacement;
+}
 
 export type ContextLifecycle = "frozen" | "unstarted" | "started";
 

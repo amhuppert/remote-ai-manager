@@ -345,7 +345,9 @@ function launchRepository() {
       const { execution, events, pushes } = await mutate(null);
       return { execution, delivery: { events, pushes: pushes ?? [] } };
     },
-    async archiveActiveGraphWorkflowExecution() {},
+    async archiveActiveGraphWorkflowExecution() {
+      return { archived: false as const, reason: "no_active" as const };
+    },
     async markGraphWorkflowContextEventsPreReset() {
       return 0;
     },
@@ -376,6 +378,7 @@ function launch(definition: WorkflowSemanticDefinition, executionId: string) {
     startedAt: "2026-08-04T00:00:00.000Z",
     inputs: {},
     launchedTier: "project",
+    ownerConversationId: null,
   });
 }
 

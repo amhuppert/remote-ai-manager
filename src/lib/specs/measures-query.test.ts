@@ -12,6 +12,7 @@ import type { CliHost } from "@/cli/shared";
 
 import { MEASURE_DEFINITIONS_VERSION } from "./measures";
 import { createMeasuresQuery } from "./measures-query";
+import type { SpecExecutionOriginMapEntry } from "./execution-origin-map";
 
 const PROJECT_PATH = "/repos/measures";
 const SPEC_ID = "spec-measures";
@@ -73,6 +74,10 @@ describe("MeasuresQuery", () => {
       session_name: "measure-session",
       delivered_at: AT,
       abandoned_reason: null,
+      cleanup_phase: null,
+      linked_workflow_execution_id: null,
+      cleanup_last_error: null,
+      cleanup_last_error_at: null,
       created_at: AT,
       updated_at: AT,
     });
@@ -266,18 +271,34 @@ describe("MeasuresQuery", () => {
       async loadOriginMap(workflowDefinitionId, projectPath) {
         expect(workflowDefinitionId).toBe("workflow-definition-measures");
         expect(projectPath).toBe(PROJECT_PATH);
-        return ["task-1", "task-2"].map((taskElementId) => ({
-          contextId: "context-regrouped",
-          taskElementId,
-          taskHandle: taskElementId === "task-1" ? "T1" : "T2",
-          touchedPaths: [],
-          criterionElementIds: ["criterion-1"],
-          criterionHandles: ["R1.1"],
-          validationStrategies: {
-            "criterion-1": { kinds: ["commit"] as const },
+        return [
+          ...["task-1", "task-2"].map<SpecExecutionOriginMapEntry>(
+            (taskElementId) => ({
+              contextId: "context-regrouped",
+              taskElementId,
+              taskHandle: taskElementId === "task-1" ? "T1" : "T2",
+              touchedPaths: [],
+              criterionElementIds: ["criterion-1"],
+              criterionHandles: ["R1.1"],
+              validationStrategies: {
+                "criterion-1": { kinds: ["commit"] },
+              },
+              criterionBriefs: {
+                "criterion-1": "Run the committed proof.",
+              },
+            }),
+          ),
+          {
+            contextId: "context-regrouped",
+            taskElementId: null,
+            taskHandle: null,
+            touchedPaths: [],
+            criterionElementIds: [],
+            criterionHandles: [],
+            validationStrategies: {},
+            criterionBriefs: {},
           },
-          criterionBriefs: { "criterion-1": "Run the committed proof." },
-        }));
+        ];
       },
       now: () => "2026-07-18T12:01:00.000Z",
     });

@@ -5,7 +5,7 @@ import type { SpecEventsRepo } from "@/lib/state-store/spec-events-repo";
 import { stableStringify } from "@/lib/state-store/serialization";
 import type { SpecsRepo } from "@/lib/state-store/specs-repo";
 
-import type { CompiledOriginMapEntry } from "./compiler";
+import type { SpecExecutionOriginMapEntry } from "./execution-origin-map";
 import {
   MEASURE_DEFINITIONS_VERSION,
   computeSpecMeasuresReport,
@@ -26,7 +26,7 @@ export interface MeasuresQueryDeps {
   loadOriginMap(
     workflowDefinitionId: string,
     projectPath: string,
-  ): Promise<CompiledOriginMapEntry[]>;
+  ): Promise<SpecExecutionOriginMapEntry[]>;
   now(): string;
 }
 
@@ -122,12 +122,14 @@ function mergeEvent(
 }
 
 function taskIdsByContext(
-  origins: readonly CompiledOriginMapEntry[],
+  origins: readonly SpecExecutionOriginMapEntry[],
 ): ReadonlyMap<string, readonly string[]> {
   const grouped = new Map<string, Set<string>>();
   for (const origin of origins) {
     const taskIds = grouped.get(origin.contextId) ?? new Set<string>();
-    taskIds.add(origin.taskElementId);
+    if (origin.taskElementId !== null) {
+      taskIds.add(origin.taskElementId);
+    }
     grouped.set(origin.contextId, taskIds);
   }
   return new Map(

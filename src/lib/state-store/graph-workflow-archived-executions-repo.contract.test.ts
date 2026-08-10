@@ -571,6 +571,10 @@ function buildMaximalExecution(): unknown {
       notes: "first line\nsecond line",
     },
     launchedTier: "global",
+    // The archive keeps the whole execution blob, so the seed-time owner has to
+    // survive archival too: an archived run is still the audit record of who
+    // launched it.
+    ownerConversationId: "conv-owner-archived",
     definitionApproval: {
       requestedAt: "2026-01-01T00:00:05Z",
       approvedAt: "2026-01-01T00:00:10Z",
@@ -587,6 +591,8 @@ function buildMaximalExecution(): unknown {
           paths: ["/tasks/*/instructions"],
           sourceUri: "spec://native-sdd/workflow-definitions/wf-maximal",
           reason: "Task instructions must be amended at the source spec",
+          instruction:
+            "Amend spec://native-sdd/workflow-definitions/wf-maximal and recompile the definition.",
         },
       ],
       // Workflow-scope lane-merge selection snapshot — non-default on every

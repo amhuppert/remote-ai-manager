@@ -23,6 +23,7 @@ import {
   consultedAuthoringGates,
   evaluateDeliveryGate,
   grantWaiver,
+  nextAuthoringStage,
   openDraftAuthoringStage,
   propose,
   signOffRevision,
@@ -367,10 +368,10 @@ describe("transition predicates", () => {
         refusal: {
           code: "stage_blocked",
           unmetConditions: [
-            "A task cannot be authored during the requirements stage.",
+            "A task is authored in a delivery plan attempt, not an evergreen revision.",
           ],
           instruction:
-            "Propose the requirements stage and obtain sign-off before authoring task content.",
+            "Complete evergreen design review, then run `cctl spec plan open <slug>` and author the graph with `cctl spec plan edit <slug> --file <plan.json>`.",
         },
       });
       expect(
@@ -382,7 +383,7 @@ describe("transition predicates", () => {
       ).toMatchObject({
         ok: false,
         refusal: {
-          instruction: expect.stringContaining("Advance"),
+          instruction: expect.stringContaining("cctl spec plan open"),
         },
       });
     });
@@ -392,8 +393,16 @@ describe("transition predicates", () => {
         openDraftAuthoringStage({ policy: { preset: "contract-bearing" } }),
       ).toBe("requirements");
       expect(openDraftAuthoringStage({ policy: { preset: "fast-path" } })).toBe(
-        "plan",
+        "design",
       );
+      expect(
+        openDraftAuthoringStage({
+          policy: {
+            preset: "fast-path",
+            overrides: { plan: "notify" },
+          },
+        }),
+      ).toBe("design");
       expect(
         openDraftAuthoringStage({
           policy: {
@@ -411,9 +420,15 @@ describe("transition predicates", () => {
       expect(
         openDraftAuthoringStage({
           policy: contractPolicy,
+          baseRevision: { state: "approved", authoringStage: "design" },
+        }),
+      ).toBe("design");
+      expect(
+        openDraftAuthoringStage({
+          policy: contractPolicy,
           baseRevision: { state: "approved", authoringStage: "plan" },
         }),
-      ).toBe("plan");
+      ).toBe("design");
       expect(
         openDraftAuthoringStage({
           policy: contractPolicy,
@@ -422,7 +437,11 @@ describe("transition predicates", () => {
       ).toBe("design");
     });
 
-    it("advances only under Notify or Off and refuses advancing past plan", () => {
+    it("ends active authoring at design while retaining plan as a legacy stage", () => {
+      expect(nextAuthoringStage("requirements")).toBe("design");
+      expect(nextAuthoringStage("design")).toBeNull();
+      expect(nextAuthoringStage("plan")).toBeNull();
+
       expect(
         advanceAuthoringStage("requirements", contractPolicy),
       ).toMatchObject({
@@ -433,10 +452,13 @@ describe("transition predicates", () => {
         advanceAuthoringStage("requirements", { preset: "exploratory" }),
       ).toEqual({ ok: true });
       expect(
-        advanceAuthoringStage("plan", { preset: "exploratory" }),
+        advanceAuthoringStage("design", { preset: "exploratory" }),
       ).toMatchObject({
         ok: false,
-        refusal: { code: "gate_blocked" },
+        refusal: {
+          code: "gate_blocked",
+          instruction: expect.stringContaining("cctl spec plan open"),
+        },
       });
     });
 
@@ -496,7 +518,8 @@ describe("transition predicates", () => {
               message: "Empty spec — nothing to review.",
             },
           ],
-          instruction: "Resolve the blocking lint findings and propose again.",
+          instruction:
+            "Nothing was proposed for revision revision-2. Run `cctl spec lint native-sdd`, resolve every blocking finding it reports, then re-run `cctl spec propose native-sdd --notes <notes.md>`.",
         },
       });
     });

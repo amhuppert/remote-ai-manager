@@ -207,10 +207,20 @@ export function findChangedLockedRegion(
   return null;
 }
 
-export function regionLockedInstruction(sourceUri: string): string {
-  return `Amend at source ${sourceUri} and recompile the workflow definition.`;
+/**
+ * The remedy a refusal prints. A region that declared its own escape names it;
+ * everything else falls back to the generic source-amendment and recompile
+ * sentence.
+ */
+export function regionLockedInstruction(match: LockedRegionMatch): string {
+  return (
+    match.instruction ??
+    `Amend at source ${match.sourceUri} and recompile the workflow definition.`
+  );
 }
 
 export function regionLockedMessage(match: LockedRegionMatch): string {
-  return `Path "${match.lockedPath}" is locked because ${match.reason}; amend at source ${match.sourceUri} and recompile the workflow definition.`;
+  return match.instruction === undefined
+    ? `Path "${match.lockedPath}" is locked because ${match.reason}; amend at source ${match.sourceUri} and recompile the workflow definition.`
+    : `Path "${match.lockedPath}" is locked because ${match.reason}. ${match.instruction}`;
 }

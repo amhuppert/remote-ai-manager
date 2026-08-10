@@ -207,7 +207,9 @@ describe("booleanFlagNames() over the real registry", () => {
       "outline",
       "outputs",
       "params",
+      "park",
       "skip-warm",
+      "stdout",
       "summary",
       "wait",
     ]);

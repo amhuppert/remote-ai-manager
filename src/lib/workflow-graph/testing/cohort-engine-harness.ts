@@ -51,6 +51,7 @@ import type {
   ResumeUserInputContext,
   UserInputGateService,
 } from "@/lib/workflow-graph/user-input-gate";
+import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 
 export const NOW = "2026-08-04T12:00:00.000Z";
 export const COHORT = [
@@ -124,7 +125,7 @@ export function createRepository(initial: GraphWorkflowExecution) {
     async create(): Promise<GraphWorkflowExecution> {
       throw new Error("the cohort harness never creates an execution");
     },
-    async archiveActive(): Promise<void> {
+    async archiveActive(): Promise<GraphWorkflowArchiveOutcome> {
       throw new Error("the cohort harness never archives an execution");
     },
     async markContextEventsPreReset(): Promise<number> {

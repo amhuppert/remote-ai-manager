@@ -1,24 +1,60 @@
 // @vitest-environment jsdom
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
 import type { SpecRevisionElement } from "@/lib/specs/schemas";
 import { renderWithQuery } from "@/test/component-mocks";
-import { installFetchFixture } from "@/test/fetch-fixture";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
-import SpecReviewMode, { bulkApprovalSubjects } from "./SpecReviewMode";
+import {
+  liveProposalsFixture,
+  planPreviewRequestRevisionId,
+  planPreviewResponseFixture,
+  specControlsDetailFixture,
+} from "./SpecControls.fixtures";
+import SpecReviewMode, {
+  bulkApprovalSubjects,
+  reviewAttentionCount,
+} from "./SpecReviewMode";
 
 vi.mock(
   "next/link",
   async () => (await import("@/test/component-mocks")).nextLinkMock,
 );
 
-afterEach(cleanup);
-
 const NOW = "2026-07-18T12:00:00.000Z";
+
+const PLAN_PREVIEW_PATH = "/api/specs/command-center/native-sdd/plan-preview";
+
+/**
+ * Review compiles a plan preview for whichever proposal is selected, so every
+ * render in this file reaches the network. The fixture is installed for all of
+ * them — a test that only cares about the diff cards still has to answer the
+ * preview request, or the surface it renders is not the surface production
+ * renders.
+ */
+let api: FetchFixture;
+
+beforeEach(() => {
+  api = installFetchFixture();
+  api.reply("POST", PLAN_PREVIEW_PATH, (request) => ({
+    json: planPreviewResponseFixture(request.jsonBody),
+  }));
+});
+
+afterEach(() => {
+  cleanup();
+  api.restore();
+});
+
+/** The revision ids the panel asked the server to compile, in request order. */
+function previewedRevisionIds(): string[] {
+  return api
+    .requestsTo("POST", PLAN_PREVIEW_PATH)
+    .map((request) => planPreviewRequestRevisionId(request.jsonBody));
+}
 
 function reviewDetailFixture(blocked = true): SpecDetailView {
   const detail = specControlsDetailFixture();
@@ -127,11 +163,24 @@ function reviewDetailFixture(blocked = true): SpecDetailView {
     },
   });
 
+  // One snapshot object, referenced by both the projection entry and
+  // `currentRevision`: the server emits one snapshot per revision, and a
+  // fixture that copied it would let a test edit the review surface reads
+  // diverge from the review surface it renders.
+  const currentSnapshot = {
+    revision: currentRevision,
+    elements: currentElements,
+  };
+
   return {
     ...detail,
     revisions: [baseSnapshot.revision, currentRevision],
+    liveProposals: liveProposalsFixture(
+      [baseSnapshot.revision, currentRevision],
+      [baseSnapshot, currentSnapshot],
+    ),
     baseRevision: baseSnapshot,
-    currentRevision: { revision: currentRevision, elements: currentElements },
+    currentRevision: currentSnapshot,
     currentApprovedRevision: baseSnapshot,
     // The server's projection for this revision, which is the one authority
     // the review surface reads for what a human still owes.
@@ -338,19 +387,37 @@ describe("SpecReviewMode", () => {
         name: /Approve all requirements/i,
       }),
     ).not.toBeInTheDocument();
+    // The header states what is outstanding; approving it is the sign-off act.
     expect(
-      screen.getByRole("button", {
-        name: "Approve all remaining (3)",
-      }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Approve all remaining/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("3 awaiting approval")).toBeInTheDocument();
   });
 
   it("describes an approved revision as having nothing awaiting review", () => {
-    const detail = reviewDetailFixture(false);
-    if (detail.currentRevision === null) {
+    const fixture = reviewDetailFixture(false);
+    if (fixture.currentRevision === null || fixture.baseRevision === null) {
       throw new Error("Fixture requires a revision");
     }
-    detail.currentRevision.revision.state = "approved";
+    const approved = {
+      ...fixture.currentRevision,
+      revision: {
+        ...fixture.currentRevision.revision,
+        state: "approved" as const,
+      },
+    };
+    const revisions = [fixture.baseRevision.revision, approved.revision];
+    const detail: SpecDetailView = {
+      ...fixture,
+      revisions,
+      // Recomputed rather than emptied by hand: nothing is proposed, so the
+      // projection is empty, and the fixture cannot claim otherwise.
+      liveProposals: liveProposalsFixture(revisions, [
+        fixture.baseRevision,
+        approved,
+      ]),
+      currentRevision: approved,
+    };
 
     renderWithQuery(
       <SpecReviewMode
@@ -558,49 +625,42 @@ describe("SpecReviewMode", () => {
   });
 
   it("offers unapprove on a validly approved subject and records the removal", async () => {
-    const api = installFetchFixture();
-    try {
-      api.json(
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/unapprove-item",
+      {
+        id: "approval-1",
+        spec_id: "spec-1",
+        subject_kind: "requirement",
+        element_id: "requirement-1",
+        revision_id: "revision-2",
+        approver: "alex",
+        granted_at: NOW,
+        validity: "valid",
+      },
+    );
+    const user = userEvent.setup();
+    renderReview(false);
+
+    const requirement = screen.getByTestId("review-change-requirement-1");
+    expect(
+      within(requirement).queryByRole("button", { name: "Approve item" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(requirement).getByRole("button", { name: "Unapprove item" }),
+    );
+
+    expect(await screen.findByText("R1 approval removed")).toBeInTheDocument();
+    expect(
+      api.requestsTo(
         "POST",
         "/api/specs/command-center/native-sdd/actions/unapprove-item",
-        {
-          id: "approval-1",
-          spec_id: "spec-1",
-          subject_kind: "requirement",
-          element_id: "requirement-1",
-          revision_id: "revision-2",
-          approver: "alex",
-          granted_at: NOW,
-          validity: "valid",
-        },
-      );
-      const user = userEvent.setup();
-      renderReview(false);
-
-      const requirement = screen.getByTestId("review-change-requirement-1");
-      expect(
-        within(requirement).queryByRole("button", { name: "Approve item" }),
-      ).not.toBeInTheDocument();
-      await user.click(
-        within(requirement).getByRole("button", { name: "Unapprove item" }),
-      );
-
-      expect(
-        await screen.findByText("R1 approval removed"),
-      ).toBeInTheDocument();
-      expect(
-        api.requestsTo(
-          "POST",
-          "/api/specs/command-center/native-sdd/actions/unapprove-item",
-        )[0]?.jsonBody,
-      ).toEqual({
-        revisionId: "revision-2",
-        subjectKind: "requirement",
-        elementId: "requirement-1",
-      });
-    } finally {
-      api.restore();
-    }
+      )[0]?.jsonBody,
+    ).toEqual({
+      revisionId: "revision-2",
+      subjectKind: "requirement",
+      elementId: "requirement-1",
+    });
   });
 
   it("keeps the approve action for subjects without a valid approval", () => {
@@ -841,7 +901,7 @@ describe("SpecReviewMode", () => {
     );
     expect(
       within(readiness).getByRole("button", {
-        name: "Sign off revision 2",
+        name: "Approve 3 remaining and sign off revision 2",
       }),
     ).toBeDisabled();
   });
@@ -986,15 +1046,16 @@ describe("SpecReviewMode", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", { name: "Approve all remaining (1)" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("1 awaiting approval")).toBeInTheDocument();
     const readiness = within(screen.getByTestId("review-readiness"));
     expect(readiness.getByText("2/3 approved")).toBeInTheDocument();
     expect(readiness.getByText("Approvals incomplete")).toBeInTheDocument();
+    // The outstanding subject no longer blocks the act — the act writes it.
     expect(
-      readiness.getByRole("button", { name: "Sign off revision 2" }),
-    ).toBeDisabled();
+      readiness.getByRole("button", {
+        name: "Approve 1 remaining and sign off revision 2",
+      }),
+    ).toBeEnabled();
   });
 
   it("enables sign-off immediately under the fast-path combined policy", async () => {
@@ -1126,24 +1187,658 @@ describe("SpecReviewMode", () => {
   });
 
   it("reports a successful request-changes transition to the parent shell", async () => {
+    const detail = reviewDetailFixture(false);
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/request-changes",
+      {
+        withdrawn: { ...current.revision, state: "withdrawn" },
+        draft: {
+          ...current.revision,
+          id: "revision-3",
+          number: 3,
+          state: "draft",
+          basedOnRevisionId: current.revision.id,
+          proposedAt: null,
+        },
+      },
+    );
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+        onComplete={onComplete}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
+    await user.click(
+      screen.getByRole("button", { name: "End review — open draft" }),
+    );
+
+    await waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith("Draft revision 3 opened"),
+    );
+  });
+
+  it("reports a successful sign-off transition to the parent shell", async () => {
+    const detail = reviewDetailFixture(false);
+    const current = detail.currentRevision;
+    if (current === null) throw new Error("Fixture requires a revision");
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
+      {
+        revision: {
+          ...current.revision,
+          state: "approved",
+          approvedAt: NOW,
+        },
+        approval: null,
+        subjectApprovals: [],
+      },
+    );
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+        onComplete={onComplete}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Sign off revision 2" }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: /I reviewed the semantic change list/i,
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Sign off — freeze revision 2",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith("Revision 2 signed off"),
+    );
+  });
+});
+
+/**
+ * Ticket #50's live case: revision 3 was approved from revision 1's content,
+ * forking past the still-proposed revision 2. The lineage head is approved, so
+ * every surface that keyed off the newest revision reported nothing awaiting
+ * review while revision 2 sat unreachable.
+ */
+function strandedProposalFixture(): SpecDetailView {
+  const detail = reviewDetailFixture(false);
+  const proposal = detail.currentRevision;
+  const base = detail.baseRevision;
+  if (proposal === null || base === null) {
+    throw new Error(
+      "Stranded fixture requires a proposal over an approved base",
+    );
+  }
+  const forkedPast = {
+    ...base.revision,
+    id: "revision-3",
+    number: 3,
+    state: "approved" as const,
+    basedOnRevisionId: base.revision.id,
+    contentHash: "revision-3-hash",
+    proposedAt: NOW,
+    approvedAt: NOW,
+  };
+  const forkedPastSnapshot = {
+    revision: forkedPast,
+    elements: base.elements.map((entry) => ({
+      ...entry,
+      version: { ...entry.version, revisionId: forkedPast.id },
+    })),
+  };
+  const revisions = [base.revision, proposal.revision, forkedPast];
+  return {
+    ...detail,
+    revisions,
+    liveProposals: liveProposalsFixture(revisions, [
+      base,
+      proposal,
+      forkedPastSnapshot,
+    ]),
+    baseRevision: base,
+    currentRevision: forkedPastSnapshot,
+    currentApprovedRevision: forkedPastSnapshot,
+  };
+}
+
+describe("SpecReviewMode stranded proposals", () => {
+  it("lists a proposal an approved revision forked past instead of reporting nothing awaiting review", () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={strandedProposalFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.queryByText("Nothing awaiting review"),
+    ).not.toBeInTheDocument();
+    const superseded = screen.getByTestId("superseded-proposal-review");
+    expect(within(superseded).getByText(/revision 3/i)).toBeInTheDocument();
+    expect(
+      within(superseded).getByRole("button", {
+        name: /Dismiss superseded proposal/i,
+      }),
+    ).toBeInTheDocument();
+    // Read-only: a proposal the lineage forked past cannot be signed off or
+    // approved item by item — dismissal is its only exit.
+    expect(
+      screen.queryByRole("button", { name: /Sign off revision/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Approve all remaining/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the stranded proposal's own diff against its base", async () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={strandedProposalFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const requirement = screen.getByTestId("superseded-change-requirement-1");
+    // The proposal changed R1's statement over revision 1, so the read-only
+    // view must show revision 1 → 2 — its own diff, not the approved head's.
+    expect(within(requirement).getByText("Revision 1 → 2")).toBeVisible();
+    expect(
+      await within(requirement).findByText("the exact selected", {
+        selector: "ins",
+      }),
+    ).toBeVisible();
+    expect(within(requirement).getByText("Modified requirement")).toBeVisible();
+  });
+
+  it("records the dismissal through the production action with the operator's reason", async () => {
+    const detail = strandedProposalFixture();
+    const stranded = detail.liveProposals[0];
+    if (stranded === undefined) throw new Error("Fixture requires a proposal");
+    api.json(
+      "POST",
+      "/api/specs/command-center/native-sdd/actions/dismiss-superseded",
+      {
+        withdrawn: { ...stranded.revision, state: "withdrawn" },
+        supersession: {
+          revisionId: stranded.revision.id,
+          specId: detail.spec.id,
+          supersededByRevisionId: "revision-3",
+          reason: "Revision 3 carries this content already.",
+          actor: { kind: "human" },
+          dismissedAt: NOW,
+        },
+      },
+    );
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={detail}
+        projectName="command-center"
+        highlightedChangeId={null}
+        onComplete={onComplete}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /Dismiss superseded proposal/i }),
+    );
+    await user.type(
+      screen.getByRole("textbox", {
+        name: /Why this proposal is being ended/i,
+      }),
+      "Revision 3 carries this content already.",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /Dismiss revision 2/i }),
+    );
+
+    await waitFor(() =>
+      expect(
+        api.requestsTo(
+          "POST",
+          "/api/specs/command-center/native-sdd/actions/dismiss-superseded",
+        )[0]?.jsonBody,
+      ).toEqual({
+        revisionId: stranded.revision.id,
+        reason: "Revision 3 carries this content already.",
+      }),
+    );
+    await waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith(
+        "Revision 2 dismissed as superseded",
+      ),
+    );
+  });
+
+  it("requires a reason before the dismissal can be confirmed", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={strandedProposalFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /Dismiss superseded proposal/i }),
+    );
+    // The reason is the durable marker's only account of why reviewed work was
+    // disposed of, so the act cannot commit without one.
+    expect(
+      screen.getByRole("button", { name: /Dismiss revision 2/i }),
+    ).toBeDisabled();
+  });
+
+  it("counts a stranded proposal as review attention", () => {
+    expect(reviewAttentionCount(strandedProposalFixture())).toBeGreaterThan(0);
+    // A spec whose head is approved with nothing proposed owes no review.
+    expect(reviewAttentionCount(specControlsDetailFixture())).toBe(0);
+  });
+
+  it("keeps the current proposal's full actions while the stranded one stays reachable", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={strandedAndCurrentProposalFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    // The current proposal is what a reviewer lands on; today's full actions
+    // are unchanged for it.
+    expect(
+      screen.getByRole("button", { name: "Sign off revision 4" }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("radio", { name: /Revision 2 — superseded/i }),
+    );
+    expect(
+      screen.getByTestId("superseded-proposal-review"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Sign off revision/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The stranded revision 2 alongside a revision 4 still on the live line, so
+ * the surface carries a real choice of proposal to view.
+ */
+function strandedAndCurrentProposalFixture(): SpecDetailView {
+  const stranded = strandedProposalFixture();
+  const forkedPast = stranded.currentRevision;
+  if (forkedPast === null) throw new Error("Fixture requires an approved head");
+  const currentProposal = {
+    revision: {
+      ...forkedPast.revision,
+      id: "revision-4",
+      number: 4,
+      state: "proposed" as const,
+      basedOnRevisionId: forkedPast.revision.id,
+      contentHash: "revision-4-hash",
+      approvedAt: null,
+    },
+    elements: forkedPast.elements,
+  };
+  const revisions = [...stranded.revisions, currentProposal.revision];
+  return {
+    ...stranded,
+    revisions,
+    liveProposals: liveProposalsFixture(revisions, [
+      ...(stranded.baseRevision === null ? [] : [stranded.baseRevision]),
+      ...stranded.liveProposals.map((entry) => entry.snapshot),
+      forkedPast,
+      currentProposal,
+    ]),
+    currentRevision: currentProposal,
+    status: {
+      ...stranded.status,
+      revisionSignOff: {
+        revisionId: currentProposal.revision.id,
+        revisionNumber: currentProposal.revision.number,
+        state: "ready" as const,
+        outstandingSubjectCount: 0,
+        unmetConditions: [],
+        approval: null,
+      },
+    },
+  };
+}
+
+/**
+ * The plan preview is the compiled shape a launch would produce — lane-group
+ * collapse, the criterion briefs unioned into each context's contract, and the
+ * edges derived from task dependencies. None of it is derivable from the spec
+ * content the review surface already holds, which is why these assertions are
+ * about the server's answer arriving on the proposal being viewed rather than
+ * about anything Studio could compute.
+ */
+describe("SpecReviewMode plan preview", () => {
+  it("embeds the server's compiled preview for the plan-stage proposal under review", async () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={reviewDetailFixture(false)}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const panel = await screen.findByTestId("plan-preview-panel");
+    // Lane-group collapse and the brief union happen inside the compiler, so a
+    // client-side recomputation over the fixture's own elements could not
+    // produce this context, its two task handles, or its brief.
+    const context = await within(panel).findByTestId(
+      "plan-preview-context-persistence",
+    );
+    expect(within(context).getByText("Persistence lane group")).toBeVisible();
+    expect(within(context).getByText(/T1, T2/)).toBeVisible();
+    expect(within(context).getByText("R1.1")).toBeVisible();
+    expect(
+      within(context).getByText(
+        "Prove R1.1 with a test_run over the reloaded repository.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByText(/persistence → surface/)).toBeVisible();
+    // An unproducible evidence kind is the preview's headline finding: the
+    // criterion demanding it can never reach a proof.
+    expect(
+      within(panel).getByTestId("plan-preview-evidence-gaps"),
+    ).toHaveTextContent(/Evidence gaps: screenshot/);
+
+    expect(previewedRevisionIds()).toEqual(["revision-2"]);
+  });
+
+  it("renders the preview on a stranded plan-stage proposal, not on the lineage head", async () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={strandedProposalFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const panel = await screen.findByTestId("plan-preview-panel");
+    expect(
+      await within(panel).findByTestId("plan-preview-context-persistence"),
+    ).toBeVisible();
+    expect(
+      screen.getByTestId("superseded-proposal-review"),
+    ).toBeInTheDocument();
+    // Revision 3 is the approved lineage head; the preview belongs to the
+    // proposal being viewed, which is the stranded revision 2 (#50).
+    expect(previewedRevisionIds()).toEqual(["revision-2"]);
+  });
+
+  it("follows the one selection model that drives the diff cards", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={strandedAndCurrentProposalFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    await screen.findByTestId("plan-preview-context-persistence");
+    expect(previewedRevisionIds()).toEqual(["revision-4"]);
+    // The scope hash is the one rendered fact that comes from the RESPONSE
+    // rather than from the revision prop, so it is what distinguishes a
+    // re-rendered heading over a stale body from a body the server recompiled.
+    expect(screen.getByText(/scope scope-revision-4/)).toBeVisible();
+
+    await user.click(
+      screen.getByRole("radio", { name: /Revision 2 — superseded/i }),
+    );
+
+    // One pick moves the diff cards and the preview together: a second
+    // selection model would leave the preview compiled against revision 4
+    // while the cards show revision 2's changes.
+    expect(
+      screen.getByTestId("superseded-proposal-review"),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(previewedRevisionIds()).toEqual(["revision-4", "revision-2"]),
+    );
+    const panel = await screen.findByTestId("plan-preview-panel");
+    expect(
+      await within(panel).findByTestId("plan-preview-context-persistence"),
+    ).toBeVisible();
+    expect(within(panel).getByText(/Revision 2 as the compiler/)).toBeVisible();
+    expect(
+      await within(panel).findByText(/scope scope-revision-2/),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByText(/scope scope-revision-4/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the server's refusal, with its remedy, when the plan does not compile", async () => {
+    api.reply("POST", PLAN_PREVIEW_PATH, {
+      status: 422,
+      json: {
+        error:
+          "Cannot compile lane-group cycle: persistence -> surface -> persistence. Repair the plan elements or the selection in --scope, then re-run cctl spec plan preview native-sdd.",
+        code: "plan_preview_uncompilable",
+      },
+    });
+    renderWithQuery(
+      <SpecReviewMode
+        detail={reviewDetailFixture(false)}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/Cannot compile lane-group cycle/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Repair the plan elements or the selection/),
+    ).toBeVisible();
+  });
+});
+
+const CURRENT_NOTES = "Round 4 disposition: closed F3 by rebinding the exit.";
+const STRANDED_NOTES = "Round 2 disposition: split R1 into R1 and R4.";
+
+/**
+ * A lineage carrying both a current proposal and one an approval forked past,
+ * each proposed with its own disposition document. The notes must follow the
+ * selection rather than the lineage head: the stranded proposal's account of
+ * itself is exactly what a human reads before deciding to dismiss it.
+ */
+function twoProposalsWithNotesFixture(): SpecDetailView {
+  const stranded = strandedProposalFixture();
+  const forkedPast = stranded.currentRevision;
+  const base = stranded.baseRevision;
+  if (forkedPast === null || base === null) {
+    throw new Error("Fixture requires an approved head over a base");
+  }
+  const strandedProposal = stranded.liveProposals[0];
+  if (strandedProposal === undefined) {
+    throw new Error("Fixture requires a stranded proposal");
+  }
+  // Based on the same revision the approved head was, so it is the lineage's
+  // live proposal, and carrying the stranded attempt's content so its own
+  // change list is non-empty.
+  const currentProposal = {
+    revision: {
+      ...forkedPast.revision,
+      id: "revision-4",
+      number: 4,
+      state: "proposed" as const,
+      basedOnRevisionId: base.revision.id,
+      contentHash: "revision-4-hash",
+      approvedAt: null,
+    },
+    elements: strandedProposal.snapshot.elements,
+  };
+  const revisions = [...stranded.revisions, currentProposal.revision];
+  return {
+    ...stranded,
+    revisions,
+    liveProposals: liveProposalsFixture(
+      revisions,
+      [
+        ...(stranded.baseRevision === null ? [] : [stranded.baseRevision]),
+        ...stranded.liveProposals.map((entry) => entry.snapshot),
+        forkedPast,
+        currentProposal,
+      ],
+      {
+        [strandedProposal.revision.id]: STRANDED_NOTES,
+        [currentProposal.revision.id]: CURRENT_NOTES,
+      },
+    ),
+    currentRevision: currentProposal,
+  };
+}
+
+describe("SpecReviewMode proposal notes", () => {
+  it("renders the selected proposal's notes above the change cards", () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={twoProposalsWithNotesFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    const notes = screen.getByTestId("proposal-notes");
+    expect(within(notes).getByText(CURRENT_NOTES)).toBeInTheDocument();
+    const firstChange = screen.getAllByTestId(/^review-change-/)[0];
+    if (firstChange === undefined) {
+      throw new Error("Fixture requires at least one change card");
+    }
+    // Bitwise: the change card FOLLOWS the notes in document order.
+    expect(
+      notes.compareDocumentPosition(firstChange) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("follows the selection to a stranded proposal's own notes", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <SpecReviewMode
+        detail={twoProposalsWithNotesFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("radio", { name: /Revision 2 — superseded/i }),
+    );
+
+    const superseded = screen.getByTestId("superseded-proposal-review");
+    const notes = within(superseded).getByTestId("proposal-notes");
+    expect(within(notes).getByText(STRANDED_NOTES)).toBeInTheDocument();
+    expect(screen.queryByText(CURRENT_NOTES)).not.toBeInTheDocument();
+    const firstChange =
+      within(superseded).getAllByTestId(/^superseded-change-/)[0];
+    if (firstChange === undefined) {
+      throw new Error("Fixture requires at least one change card");
+    }
+    expect(
+      notes.compareDocumentPosition(firstChange) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows no notes block for a proposal whose author supplied none", () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={reviewDetailFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(screen.queryByTestId("proposal-notes")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The convergence case: threads, questions, and assumptions are all resolved,
+ * so the only thing between the reviewer and a signed-off revision is the set
+ * of subject approvals the one act writes with the sign-off.
+ */
+function outstandingApprovalsFixture(): SpecDetailView {
+  const detail = reviewDetailFixture(false);
+  const signOff = detail.status.revisionSignOff;
+  if (signOff === null) throw new Error("Fixture requires a sign-off block");
+  return {
+    ...detail,
+    status: {
+      ...detail.status,
+      pendingApprovals: [
+        {
+          gate: "requirements" as const,
+          subject: "R1",
+          elementId: "requirement-1",
+        },
+        { gate: "design" as const, subject: "D1", elementId: "decision-1" },
+        { gate: "plan" as const, subject: "plan", elementId: null },
+      ],
+      revisionSignOff: {
+        ...signOff,
+        state: "blocked" as const,
+        outstandingSubjectCount: 3,
+      },
+    },
+    approvals: [],
+  };
+}
+
+describe("SpecReviewMode combined approve-and-sign-off", () => {
+  it("replaces the two-step flow with one act naming the subjects it approves", async () => {
     const api = installFetchFixture();
+    // This local fixture shadows the shared one, so it has to answer the
+    // preview request too: Review compiles a plan preview for the proposal it
+    // shows, and an unanswered one renders a second `role="alert"` beside the
+    // refusal this test is about.
+    api.reply("POST", PLAN_PREVIEW_PATH, (request) => ({
+      json: planPreviewResponseFixture(request.jsonBody),
+    }));
     try {
-      const detail = reviewDetailFixture(false);
+      const detail = outstandingApprovalsFixture();
       const current = detail.currentRevision;
       if (current === null) throw new Error("Fixture requires a revision");
       api.json(
         "POST",
-        "/api/specs/command-center/native-sdd/actions/request-changes",
+        "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
         {
-          withdrawn: { ...current.revision, state: "withdrawn" },
-          draft: {
-            ...current.revision,
-            id: "revision-3",
-            number: 3,
-            state: "draft",
-            basedOnRevisionId: current.revision.id,
-            proposedAt: null,
-          },
+          revision: { ...current.revision, state: "approved", approvedAt: NOW },
+          approval: null,
+          subjectApprovals: [],
         },
       );
       const onComplete = vi.fn();
@@ -1157,50 +1852,99 @@ describe("SpecReviewMode", () => {
         />,
       );
 
-      await user.click(screen.getByRole("button", { name: "Request changes" }));
+      // The separate "approve everything, then sign off" step is gone.
+      expect(
+        screen.queryByRole("button", { name: /Approve all remaining/i }),
+      ).not.toBeInTheDocument();
+
       await user.click(
-        screen.getByRole("button", { name: "End review — open draft" }),
+        screen.getByRole("button", {
+          name: "Approve 3 remaining and sign off revision 2",
+        }),
+      );
+
+      const subjects = screen.getByTestId("combined-sign-off-subjects");
+      expect(subjects).toHaveTextContent("requirementsR1");
+      expect(subjects).toHaveTextContent("designD1");
+      expect(subjects).toHaveTextContent("planplan");
+
+      await user.click(
+        screen.getByRole("checkbox", {
+          name: /I reviewed the semantic change list/i,
+        }),
+      );
+      await user.click(
+        screen.getByRole("button", {
+          name: "Approve 3 and sign off — freeze revision 2",
+        }),
       );
 
       await waitFor(() =>
-        expect(onComplete).toHaveBeenCalledWith("Draft revision 3 opened"),
+        expect(onComplete).toHaveBeenCalledWith("Revision 2 signed off"),
       );
+      const posted = api.requestsTo(
+        "POST",
+        "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
+      );
+      expect(posted).toHaveLength(1);
+      expect(posted[0]?.jsonBody).toEqual({ revisionId: "revision-2" });
     } finally {
       api.restore();
     }
   });
 
-  it("reports a successful sign-off transition to the parent shell", async () => {
+  it("keeps the per-item approve action for a targeted re-consult", () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={outstandingApprovalsFixture()}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getAllByRole("button", { name: "Approve item" }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("surfaces the live-sibling refusal inline with the stranded revision and its remedy", async () => {
     const api = installFetchFixture();
+    // This local fixture shadows the shared one, so it has to answer the
+    // preview request too: Review compiles a plan preview for the proposal it
+    // shows, and an unanswered one renders a second `role="alert"` beside the
+    // refusal this test is about.
+    api.reply("POST", PLAN_PREVIEW_PATH, (request) => ({
+      json: planPreviewResponseFixture(request.jsonBody),
+    }));
     try {
-      const detail = reviewDetailFixture(false);
-      const current = detail.currentRevision;
-      if (current === null) throw new Error("Fixture requires a revision");
-      api.json(
+      api.reply(
         "POST",
-        "/api/specs/command-center/native-sdd/actions/sign-off",
+        "/api/specs/command-center/native-sdd/actions/approve-remaining-and-sign-off",
         {
-          revision: {
-            ...current.revision,
-            state: "approved",
-            approvedAt: NOW,
+          status: 409,
+          json: {
+            code: "revision_in_review",
+            unmetConditions: [
+              "Signing off revision 2 would fork past revision 4 (revision-stranded), which is still proposed and would be left unactionable.",
+            ],
+            instruction:
+              'Dispose of revision 4 first: dismiss it from Spec Studio → Review, using "Dismiss superseded proposal" on revision revision-stranded, or have its author run `cctl spec withdraw-proposal native-sdd --revision revision-stranded`. Then sign off revision 2 again.',
           },
-          approval: null,
         },
       );
-      const onComplete = vi.fn();
       const user = userEvent.setup();
       renderWithQuery(
         <SpecReviewMode
-          detail={detail}
+          detail={outstandingApprovalsFixture()}
           projectName="command-center"
           highlightedChangeId={null}
-          onComplete={onComplete}
         />,
       );
 
       await user.click(
-        screen.getByRole("button", { name: "Sign off revision 2" }),
+        screen.getByRole("button", {
+          name: "Approve 3 remaining and sign off revision 2",
+        }),
       );
       await user.click(
         screen.getByRole("checkbox", {
@@ -1209,15 +1953,29 @@ describe("SpecReviewMode", () => {
       );
       await user.click(
         screen.getByRole("button", {
-          name: "Sign off — freeze revision 2",
+          name: "Approve 3 and sign off — freeze revision 2",
         }),
       );
 
-      await waitFor(() =>
-        expect(onComplete).toHaveBeenCalledWith("Revision 2 signed off"),
-      );
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("revision-stranded");
+      expect(alert).toHaveTextContent("Dismiss superseded proposal");
     } finally {
       api.restore();
     }
+  });
+
+  it("names the act plainly when the policy leaves nothing outstanding", () => {
+    renderWithQuery(
+      <SpecReviewMode
+        detail={reviewDetailFixture(false)}
+        projectName="command-center"
+        highlightedChangeId={null}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Sign off revision 2" }),
+    ).toBeInTheDocument();
   });
 });

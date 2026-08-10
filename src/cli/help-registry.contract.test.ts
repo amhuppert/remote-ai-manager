@@ -53,31 +53,55 @@ const ENTRIES = allHelpEntries();
 const KEYS = new Set(ENTRIES.map((entry) => pathKey(entry.path)));
 
 describe("help registry contract", () => {
-  it("teaches plan-stage execution-graph discipline in draft and task help", () => {
-    for (const command of ["spec draft", "spec task"]) {
+  it("redirects retired evergreen plan authoring to the delivery-plan family", () => {
+    for (const command of [
+      "spec draft",
+      "spec task",
+      "spec propose",
+      "spec advance",
+      "spec request-approval",
+    ]) {
       const entry = ENTRIES.find(
         (candidate) => pathKey(candidate.path) === command,
       );
       expect(entry, `${command}: missing help entry`).toBeDefined();
 
       const guidance = `${entry?.description ?? ""} ${entry?.domainContext ?? ""}`;
-      expect(guidance, `${command}: missing one-agent lane sizing`).toMatch(
-        /one agent lane/i,
-      );
-      expect(
-        guidance,
-        `${command}: missing dependency ordering guidance`,
-      ).toMatch(/dependencies.*ordering/i);
-      expect(guidance, `${command}: missing parallelism guidance`).toMatch(
-        /parallel/i,
-      );
-      expect(guidance, `${command}: missing touched-surface guidance`).toMatch(
-        /touched paths|touchedPaths/i,
-      );
-      expect(guidance, `${command}: missing task-splitting guidance`).toMatch(
-        /split/i,
+      expect(guidance, `${command}: missing delivery-plan redirect`).toMatch(
+        command === "spec request-approval"
+          ? /spec plan sign-off/i
+          : command === "spec propose"
+            ? /spec plan propose/i
+            : /spec plan (open|edit)/i,
       );
     }
+
+    for (const command of ["spec", "spec plan"]) {
+      const entry = ENTRIES.find(
+        (candidate) => pathKey(candidate.path) === command,
+      );
+      expect(entry, `${command}: missing help entry`).toBeDefined();
+      expect(entry?.usage).toContain(
+        "cctl spec plan preview <slug> --stage draft|proposed",
+      );
+      expect(entry?.usage).not.toContain(
+        "cctl spec plan preview <slug> [--scope <scope.json>]",
+      );
+    }
+  });
+
+  it("keeps start --file as a retired parser flag, not an advertised usage", () => {
+    const entry = ENTRIES.find(
+      (candidate) => pathKey(candidate.path) === "spec start",
+    );
+    expect(entry).toBeDefined();
+    expect(entry?.usage).toEqual(["cctl spec start <slug> [--park]"]);
+
+    const fileFlag = entry?.flags.find((flag) => flag.name === "file");
+    expect(fileFlag?.description).toMatch(/retired/i);
+    expect(fileFlag?.description).toContain(
+      "cctl spec plan open <slug> --seed-from last",
+    );
   });
 
   describe("every entry has non-empty summary/description/usage", () => {

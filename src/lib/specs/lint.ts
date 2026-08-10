@@ -97,32 +97,63 @@ export interface SpecRecords {
   materializedTasks?: MaterializedTaskRecord[];
 }
 
-const RULE_ORDER = [
-  "9.2.empty-spec",
-  "9.3.uncovered-criterion",
-  "9.3.task-without-criterion",
-  "9.4.untraced-task",
-  "9.5.dependency-cycle",
-  "9.5.removed-task-dependency",
-  "9.6.dangling-handle",
-  "9.7.claim-without-evidence",
-  "9.8.rejected-cited-assumption",
-  "9.9.approval-freshness",
-  "9.9.cited-element-change",
-  "9.9.open-question",
-  "9.9.materialized-task-change",
-  "9.11.lane-group-cycle",
-  "9.12.serialized-plan",
-  "9.12.overloaded-task",
-  "9.12.conflicting-parallel-surfaces",
-] as const;
+export interface EvergreenLintRuleDefinition {
+  readonly ruleId: string;
+  readonly severity: LintSeverity;
+}
+
+export const EVERGREEN_LINT_RULES = [
+  { ruleId: "9.2.empty-spec", severity: "blocks_propose" },
+  { ruleId: "9.3.uncovered-criterion", severity: "blocks_propose" },
+  { ruleId: "9.3.task-without-criterion", severity: "blocks_propose" },
+  { ruleId: "9.4.untraced-task", severity: "blocks_propose" },
+  { ruleId: "9.5.dependency-cycle", severity: "blocks_propose" },
+  { ruleId: "9.5.removed-task-dependency", severity: "blocks_propose" },
+  { ruleId: "9.6.dangling-handle", severity: "blocks_propose" },
+  { ruleId: "9.7.claim-without-evidence", severity: "blocks_claim" },
+  { ruleId: "9.8.rejected-cited-assumption", severity: "blocks_signoff" },
+  { ruleId: "9.9.approval-freshness", severity: "advisory" },
+  { ruleId: "9.9.cited-element-change", severity: "advisory" },
+  { ruleId: "9.9.open-question", severity: "advisory" },
+  { ruleId: "9.9.materialized-task-change", severity: "advisory" },
+  { ruleId: "9.11.lane-group-cycle", severity: "blocks_propose" },
+  { ruleId: "9.12.serialized-plan", severity: "advisory" },
+  { ruleId: "9.12.overloaded-task", severity: "advisory" },
+  {
+    ruleId: "9.12.conflicting-parallel-surfaces",
+    severity: "advisory",
+  },
+] as const satisfies readonly EvergreenLintRuleDefinition[];
+
+export type EvergreenLintRuleId =
+  (typeof EVERGREEN_LINT_RULES)[number]["ruleId"];
 
 export const GRAPH_SHAPE_MINIMUM_TASKS = 3;
 export const OVERLOADED_TASK_CRITERION_SHARE = 0.5;
 
 const ruleOrder = new Map<string, number>(
-  RULE_ORDER.map((ruleId, index) => [ruleId, index]),
+  EVERGREEN_LINT_RULES.map(({ ruleId }, index) => [ruleId, index]),
 );
+const evergreenLintRulesById = new Map(
+  EVERGREEN_LINT_RULES.map((definition) => [definition.ruleId, definition]),
+);
+
+function finding(
+  ruleId: EvergreenLintRuleId,
+  elementHandle: string,
+  message: string,
+): LintFinding {
+  const definition = evergreenLintRulesById.get(ruleId);
+  if (definition === undefined) {
+    throw new Error(`Unknown evergreen lint rule ${ruleId}.`);
+  }
+  return {
+    ruleId,
+    severity: definition.severity,
+    elementHandle,
+    message,
+  };
+}
 
 function compareText(left: string, right: string): number {
   if (left < right) {
@@ -244,12 +275,13 @@ function dependencyCycleFindings(tasks: RevisionElement[]): LintFinding[] {
         const cycle = canonicalCycle(stack.slice(cycleStart));
         if (!emittedCycles.has(cycle.signature)) {
           emittedCycles.add(cycle.signature);
-          findings.push({
-            ruleId: "9.5.dependency-cycle",
-            severity: "blocks_propose",
-            elementHandle: cycle.anchor,
-            message: `Task dependency cycle: ${cycle.handles.join(" → ")}.`,
-          });
+          findings.push(
+            finding(
+              "9.5.dependency-cycle",
+              cycle.anchor,
+              `Task dependency cycle: ${cycle.handles.join(" → ")}.`,
+            ),
+          );
         }
         continue;
       }
@@ -308,14 +340,15 @@ function graphShapeFindings(
       anchor === undefined
         ? undefined
         : tasksById.get(anchor.memberTaskIds[0] ?? "");
-    findings.push({
-      ruleId: "9.11.lane-group-cycle",
-      severity: "blocks_propose",
-      elementHandle: anchorTask?.handle ?? tasks[0]?.handle ?? "unknown",
-      message: `Lane-group cycle: ${cyclicGroups
-        .map((group) => groupDisplayName(group, tasksById))
-        .join(" → ")}.`,
-    });
+    findings.push(
+      finding(
+        "9.11.lane-group-cycle",
+        anchorTask?.handle ?? tasks[0]?.handle ?? "unknown",
+        `Lane-group cycle: ${cyclicGroups
+          .map((group) => groupDisplayName(group, tasksById))
+          .join(" → ")}.`,
+      ),
+    );
   }
 
   return graphShapeAdvisoryFindings(findings, tasks, criteria, contraction);
@@ -334,12 +367,13 @@ function graphShapeAdvisoryFindings(
     contraction.intraGroupCycleTaskIds === undefined &&
     contractedGraphIsSerialized(contraction)
   ) {
-    findings.push({
-      ruleId: "9.12.serialized-plan",
-      severity: "advisory",
-      elementHandle: tasks[0]?.handle ?? "unknown",
-      message: `The ${tasks.length}-task plan contracts to ${contraction.groups.length} ${contraction.groups.length === 1 ? "context" : "contexts"} with no parallel execution path.`,
-    });
+    findings.push(
+      finding(
+        "9.12.serialized-plan",
+        tasks[0]?.handle ?? "unknown",
+        `The ${tasks.length}-task plan contracts to ${contraction.groups.length} ${contraction.groups.length === 1 ? "context" : "contexts"} with no parallel execution path.`,
+      ),
+    );
   }
 
   const criterionIds = new Set(criteria.map((criterion) => criterion.id));
@@ -353,12 +387,13 @@ function graphShapeAdvisoryFindings(
     if (coveredCount / criteria.length <= OVERLOADED_TASK_CRITERION_SHARE) {
       continue;
     }
-    findings.push({
-      ruleId: "9.12.overloaded-task",
-      severity: "advisory",
-      elementHandle: task.handle,
-      message: `${task.handle} covers ${coveredCount} of ${criteria.length} criteria, more than half of the draft.`,
-    });
+    findings.push(
+      finding(
+        "9.12.overloaded-task",
+        task.handle,
+        `${task.handle} covers ${coveredCount} of ${criteria.length} criteria, more than half of the draft.`,
+      ),
+    );
   }
 
   if (contraction.groupCycle !== undefined) return findings;
@@ -388,12 +423,13 @@ function graphShapeAdvisoryFindings(
         right.payload.touchedPaths ?? [],
       );
       if (overlap === undefined) continue;
-      findings.push({
-        ruleId: "9.12.conflicting-parallel-surfaces",
-        severity: "advisory",
-        elementHandle: left.handle,
-        message: `Independent tasks ${left.handle} and ${right.handle} declare overlapping touched paths ${overlap[0]} and ${overlap[1]}.`,
-      });
+      findings.push(
+        finding(
+          "9.12.conflicting-parallel-surfaces",
+          left.handle,
+          `Independent tasks ${left.handle} and ${right.handle} declare overlapping touched paths ${overlap[0]} and ${overlap[1]}.`,
+        ),
+      );
     }
   }
 
@@ -469,12 +505,11 @@ function danglingTypedReferenceFinding(
     return undefined;
   }
   if (currentTarget) {
-    return {
-      ruleId: "9.6.dangling-handle",
-      severity: "blocks_propose",
-      elementHandle: sourceElement.handle,
-      message: `${sourceElement.handle} ${relation} ${currentTarget.handle}, which is not a ${expectedKind}.`,
-    };
+    return finding(
+      "9.6.dangling-handle",
+      sourceElement.handle,
+      `${sourceElement.handle} ${relation} ${currentTarget.handle}, which is not a ${expectedKind}.`,
+    );
   }
 
   const knownTarget = knownElementsById.get(targetId);
@@ -482,28 +517,25 @@ function danglingTypedReferenceFinding(
     return undefined;
   }
   if (knownTarget?.kind === expectedKind) {
-    return {
-      ruleId: "9.6.dangling-handle",
-      severity: "blocks_propose",
-      elementHandle: sourceElement.handle,
-      message: `${sourceElement.handle} ${relation} removed ${expectedKind} ${knownTarget.handle}.`,
-    };
+    return finding(
+      "9.6.dangling-handle",
+      sourceElement.handle,
+      `${sourceElement.handle} ${relation} removed ${expectedKind} ${knownTarget.handle}.`,
+    );
   }
   if (knownTarget) {
-    return {
-      ruleId: "9.6.dangling-handle",
-      severity: "blocks_propose",
-      elementHandle: sourceElement.handle,
-      message: `${sourceElement.handle} ${relation} ${knownTarget.handle}, which is not a ${expectedKind}.`,
-    };
+    return finding(
+      "9.6.dangling-handle",
+      sourceElement.handle,
+      `${sourceElement.handle} ${relation} ${knownTarget.handle}, which is not a ${expectedKind}.`,
+    );
   }
 
-  return {
-    ruleId: "9.6.dangling-handle",
-    severity: "blocks_propose",
-    elementHandle: sourceElement.handle,
-    message: `${sourceElement.handle} ${relation} unknown ${expectedKind} element ${targetId}.`,
-  };
+  return finding(
+    "9.6.dangling-handle",
+    sourceElement.handle,
+    `${sourceElement.handle} ${relation} unknown ${expectedKind} element ${targetId}.`,
+  );
 }
 
 export function lint(
@@ -532,12 +564,13 @@ export function lint(
     ),
   );
   if (!hasReviewableRequirement) {
-    findings.push({
-      ruleId: "9.2.empty-spec",
-      severity: "blocks_propose",
-      elementHandle: draft.specHandle,
-      message: "Empty spec — nothing to review.",
-    });
+    findings.push(
+      finding(
+        "9.2.empty-spec",
+        draft.specHandle,
+        "Empty spec — nothing to review.",
+      ),
+    );
   }
 
   if (draft.authoringStage === "plan") {
@@ -548,12 +581,13 @@ export function lint(
         ),
       );
       if (!isCovered) {
-        findings.push({
-          ruleId: "9.3.uncovered-criterion",
-          severity: "blocks_propose",
-          elementHandle: criterionElement.handle,
-          message: `${criterionElement.handle} has no covering task.`,
-        });
+        findings.push(
+          finding(
+            "9.3.uncovered-criterion",
+            criterionElement.handle,
+            `${criterionElement.handle} has no covering task.`,
+          ),
+        );
       }
     }
 
@@ -563,12 +597,13 @@ export function lint(
       if (coveredCriterionElementIds.length > 0) {
         continue;
       }
-      findings.push({
-        ruleId: "9.3.task-without-criterion",
-        severity: "blocks_propose",
-        elementHandle: taskElement.handle,
-        message: `${taskElement.handle} covers no acceptance criterion.`,
-      });
+      findings.push(
+        finding(
+          "9.3.task-without-criterion",
+          taskElement.handle,
+          `${taskElement.handle} covers no acceptance criterion.`,
+        ),
+      );
     }
   }
 
@@ -579,12 +614,13 @@ export function lint(
       requirementIds.has(elementId),
     );
     if (!tracesCurrentRequirement) {
-      findings.push({
-        ruleId: "9.4.untraced-task",
-        severity: "blocks_propose",
-        elementHandle: taskElement.handle,
-        message: `${taskElement.handle} traces to no requirement — possible scope creep.`,
-      });
+      findings.push(
+        finding(
+          "9.4.untraced-task",
+          taskElement.handle,
+          `${taskElement.handle} traces to no requirement — possible scope creep.`,
+        ),
+      );
     }
   }
 
@@ -607,12 +643,13 @@ export function lint(
       if (knownDependency?.kind !== "task") {
         continue;
       }
-      findings.push({
-        ruleId: "9.5.removed-task-dependency",
-        severity: "blocks_propose",
-        elementHandle: taskElement.handle,
-        message: `${taskElement.handle} depends on removed task ${knownDependency.handle}.`,
-      });
+      findings.push(
+        finding(
+          "9.5.removed-task-dependency",
+          taskElement.handle,
+          `${taskElement.handle} depends on removed task ${knownDependency.handle}.`,
+        ),
+      );
     }
   }
 
@@ -632,18 +669,19 @@ export function lint(
         if (targetExists) {
           continue;
         }
-        findings.push({
-          ruleId: "9.6.dangling-handle",
-          severity: "blocks_propose",
-          elementHandle: sourceElement.handle,
-          message: `${sourceElement.handle} cites ${
-            knownElementsById.has(reference.targetId) ? "removed" : "unknown"
-          } element ${reference.targetHandle ?? reference.targetId}.`,
-        });
+        findings.push(
+          finding(
+            "9.6.dangling-handle",
+            sourceElement.handle,
+            `${sourceElement.handle} cites ${
+              knownElementsById.has(reference.targetId) ? "removed" : "unknown"
+            } element ${reference.targetHandle ?? reference.targetId}.`,
+          ),
+        );
         continue;
       }
 
-      const finding = danglingTypedReferenceFinding(
+      const referenceFinding = danglingTypedReferenceFinding(
         sourceElement,
         reference.targetId,
         reference.expectedKind,
@@ -652,8 +690,8 @@ export function lint(
         knownElementsById,
         reference.field === "dependsOnTaskElementIds",
       );
-      if (finding) {
-        findings.push(finding);
+      if (referenceFinding) {
+        findings.push(referenceFinding);
       }
     }
   }
@@ -673,12 +711,13 @@ export function lint(
       }
       const criterionElement = elementsById.get(criterionId);
       const criterionHandle = criterionElement?.handle ?? criterionId;
-      findings.push({
-        ruleId: "9.7.claim-without-evidence",
-        severity: "blocks_claim",
-        elementHandle: criterionHandle,
-        message: `${taskElement.handle} cannot be claimed complete because ${criterionHandle} has no evidence.`,
-      });
+      findings.push(
+        finding(
+          "9.7.claim-without-evidence",
+          criterionHandle,
+          `${taskElement.handle} cannot be claimed complete because ${criterionHandle} has no evidence.`,
+        ),
+      );
     }
   }
 
@@ -691,12 +730,13 @@ export function lint(
       if (assumption?.disposition !== "rejected") {
         continue;
       }
-      findings.push({
-        ruleId: "9.8.rejected-cited-assumption",
-        severity: "blocks_signoff",
-        elementHandle: sourceElement.handle,
-        message: `${assumption.handle} was rejected but ${sourceElement.handle} still cites it.`,
-      });
+      findings.push(
+        finding(
+          "9.8.rejected-cited-assumption",
+          sourceElement.handle,
+          `${assumption.handle} was rejected but ${sourceElement.handle} still cites it.`,
+        ),
+      );
     }
   }
 
@@ -712,12 +752,13 @@ export function lint(
       currentElement &&
       currentElement.payloadHash !== approval.approvedPayloadHash
     ) {
-      findings.push({
-        ruleId: "9.9.approval-freshness",
-        severity: "advisory",
-        elementHandle: currentElement.handle,
-        message: `${currentElement.handle} changed since its approval.`,
-      });
+      findings.push(
+        finding(
+          "9.9.approval-freshness",
+          currentElement.handle,
+          `${currentElement.handle} changed since its approval.`,
+        ),
+      );
     }
   }
 
@@ -747,12 +788,13 @@ export function lint(
       ) {
         continue;
       }
-      findings.push({
-        ruleId: "9.9.cited-element-change",
-        severity: "advisory",
-        elementHandle: sourceElement.handle,
-        message: `${sourceElement.handle} cites ${currentTarget.handle}, which changed in this draft.`,
-      });
+      findings.push(
+        finding(
+          "9.9.cited-element-change",
+          sourceElement.handle,
+          `${sourceElement.handle} cites ${currentTarget.handle}, which changed in this draft.`,
+        ),
+      );
     }
   }
 
@@ -760,34 +802,37 @@ export function lint(
     if (question.status !== "open") {
       continue;
     }
-    findings.push({
-      ruleId: "9.9.open-question",
-      severity: "advisory",
-      elementHandle: question.handle,
-      message: `${question.handle} remains unresolved at propose.`,
-    });
+    findings.push(
+      finding(
+        "9.9.open-question",
+        question.handle,
+        `${question.handle} remains unresolved at propose.`,
+      ),
+    );
   }
 
   for (const materializedTask of records.materializedTasks ?? []) {
     const currentTask = tasksById.get(materializedTask.taskElementId);
     if (!currentTask) {
-      findings.push({
-        ruleId: "9.9.materialized-task-change",
-        severity: "advisory",
-        elementHandle: materializedTask.handle,
-        message: `Materialized task ${materializedTask.handle} was removed from this draft.`,
-      });
+      findings.push(
+        finding(
+          "9.9.materialized-task-change",
+          materializedTask.handle,
+          `Materialized task ${materializedTask.handle} was removed from this draft.`,
+        ),
+      );
       continue;
     }
 
     const currentScope = taskScope(currentTask);
     if (currentScope && !hasSameScope(currentScope, materializedTask.scope)) {
-      findings.push({
-        ruleId: "9.9.materialized-task-change",
-        severity: "advisory",
-        elementHandle: currentTask.handle,
-        message: `Materialized task ${currentTask.handle} was re-scoped in this draft.`,
-      });
+      findings.push(
+        finding(
+          "9.9.materialized-task-change",
+          currentTask.handle,
+          `Materialized task ${currentTask.handle} was re-scoped in this draft.`,
+        ),
+      );
     }
   }
 

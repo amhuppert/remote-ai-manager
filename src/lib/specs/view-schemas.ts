@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { graphWorkflowStatusSchema } from "@/lib/workflow-graph/definition-schemas";
+import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import { revisionDiffResultSchema } from "./revision-diff";
 import { executionScopeSchema } from "./scope-validation";
 import {
@@ -20,6 +22,7 @@ import {
   specCriterionDispositionRowSchema,
   specElementKindSchema,
   specEvidenceRowSchema,
+  specExecutionCleanupPhaseSchema,
   specExecutionStateSchema,
   specWorkflowLaneStatusSchema,
   specGateAdmissionRowSchema,
@@ -31,6 +34,7 @@ import {
   specRevisionElementSchema,
   specRevisionSchema,
   specRevisionSnapshotSchema,
+  specRevisionStateSchema,
   specSchema,
   specWaiverRowSchema,
 } from "./schemas";
@@ -235,6 +239,43 @@ const specTaskPlanStatusSchema = z
      * a payload from a server without the field still satisfies the strict parse.
      */
     unresolvedCriterionElementIds: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+
+export const lintFindingSchema = z
+  .object({
+    ruleId: z.string().min(1),
+    severity: z.enum([
+      "blocks_propose",
+      "blocks_claim",
+      "blocks_signoff",
+      "advisory",
+    ]),
+    elementHandle: z.string(),
+    message: z.string(),
+  })
+  .strict();
+
+/**
+ * The status-sized reading of the draft's lint: how much there is, how much of
+ * it refuses propose, and the first few findings by severity. It is the same
+ * `draftHealth` projection the lint verb prints in full, cut to a tier — so a
+ * status that says zero blocking and a propose that refuses cannot coexist.
+ */
+const draftHealthTierSchema = z
+  .object({
+    revisionId: z.string().min(1),
+    total: z.number().int().nonnegative(),
+    blocking: z.number().int().nonnegative(),
+    counts: z.array(
+      z
+        .object({
+          severity: lintFindingSchema.shape.severity,
+          count: z.number().int().positive(),
+        })
+        .strict(),
+    ),
+    top: z.array(lintFindingSchema),
   })
   .strict();
 
@@ -568,6 +609,9 @@ export const specStatusViewSchema = z
     openQuestions: z.array(openQuestionSchema),
     assumptions: z.array(statusAssumptionSchema).default([]),
     taskPlan: z.array(specTaskPlanStatusSchema).default([]),
+    // Null exactly when the spec carries no revision to lint. Defaulted so a
+    // payload written before this field still satisfies the strict parse.
+    draftHealth: draftHealthTierSchema.nullable().default(null),
     coverage: specCoverageSchema,
     delivery: deliveryDisplaySchema,
   })
@@ -648,11 +692,48 @@ export const specSummaryViewSchema = z
   .strict();
 export type SpecSummaryView = z.infer<typeof specSummaryViewSchema>;
 
+/**
+ * One revision currently under review, with the verdict the shared
+ * supersession predicate reached about it and the snapshots its diff needs.
+ *
+ * The snapshots ride the entry rather than being looked up by id against the
+ * detail's other snapshot fields: a stranded proposal is by definition not the
+ * lineage head, so no existing field carries it, and a surface that had to
+ * assemble the pair itself is exactly the second projection ticket #50's dead
+ * end came from.
+ */
+export const liveProposalViewSchema = z
+  .object({
+    revision: specRevisionSchema,
+    /** The approved revision that forked past it; null while it is current. */
+    supersededBy: specRevisionSchema.nullable(),
+    snapshot: specRevisionSnapshotViewSchema,
+    /** Its lineage parent — the content its diff is read against. */
+    baseSnapshot: specRevisionSnapshotViewSchema.nullable(),
+    /**
+     * The author's disposition document, read-only, as it was recorded on this
+     * proposal's own propose event. It rides the projection entry so a
+     * stranded proposal's notes are as reachable as the current one's — the
+     * asymmetry is what #50's dead end was made of. Defaulted so a client
+     * newer than its server still parses the entry.
+     */
+    notes: z.string().nullable().default(null),
+  })
+  .strict();
+export type LiveProposalView = z.infer<typeof liveProposalViewSchema>;
+
 export const specDetailViewSchema = z
   .object({
     spec: specSchema,
     aliases: z.array(specAliasSchema),
     revisions: z.array(specRevisionSchema),
+    /**
+     * Every proposed revision, oldest first — not just the lineage head. The
+     * Review tab, the attention badge, the lifecycle strip, the Overview
+     * action, and History all read this one list, so a proposal cannot be
+     * actionable on one surface and invisible on another (#50).
+     */
+    liveProposals: z.array(liveProposalViewSchema).default([]),
     baseRevision: specRevisionSnapshotViewSchema.nullable(),
     currentRevision: specRevisionSnapshotViewSchema.nullable(),
     currentApprovedRevision: specRevisionSnapshotViewSchema.nullable(),
@@ -692,6 +773,61 @@ export const specDetailViewSchema = z
   })
   .strict();
 export type SpecDetailView = z.infer<typeof specDetailViewSchema>;
+
+/**
+ * Which revision the comparison is measured from. `review` is the immediate
+ * parent (`basedOnRevisionId`) — the pair Spec Studio's review cards diff, and
+ * therefore the pair a reviewer signs off on. `governance` is the nearest
+ * approved ancestor, which is what gate applicability is measured against and
+ * can differ whenever an attempt was withdrawn or is still under review.
+ * `explicit` means the caller named the base itself.
+ */
+export const specDiffBaselineSchema = z.enum([
+  "review",
+  "governance",
+  "explicit",
+]);
+export type SpecDiffBaseline = z.infer<typeof specDiffBaselineSchema>;
+
+const specDiffRevisionRefSchema = z
+  .object({
+    revisionId: z.string().min(1),
+    number: z.number().int().positive(),
+    state: specRevisionStateSchema,
+  })
+  .strict();
+
+/**
+ * One element's class in the comparison. The diff engine reports "added" only
+ * on its change list and "unchanged" only on its classifications; this joins
+ * both into the single four-value class every reader (CLI, Studio card) shows,
+ * so neither surface has to re-derive it. `summary` is null exactly when the
+ * element is unchanged, and `directlyChanged` is false for a requirement that
+ * moved only because one of its criteria did.
+ */
+const specDiffElementSchema = z
+  .object({
+    elementId: z.string().min(1),
+    handle: z.string().min(1).nullable(),
+    kind: specElementKindSchema,
+    classification: z.enum(["added", "modified", "removed", "unchanged"]),
+    directlyChanged: z.boolean(),
+    summary: z.string().min(1).nullable(),
+  })
+  .strict();
+
+export const specDiffViewSchema = z
+  .object({
+    slug: z.string().min(1),
+    baseline: specDiffBaselineSchema,
+    /** Null when the compared revision is the root of its lineage. */
+    from: specDiffRevisionRefSchema.nullable(),
+    to: specDiffRevisionRefSchema,
+    elements: z.array(specDiffElementSchema),
+    planStale: z.boolean(),
+  })
+  .strict();
+export type SpecDiffView = z.infer<typeof specDiffViewSchema>;
 
 const evidenceStateSchema = z
   .object({
@@ -767,20 +903,6 @@ export type SpecElementGetResponse = z.infer<
   typeof specElementGetResponseSchema
 >;
 
-export const lintFindingSchema = z
-  .object({
-    ruleId: z.string().min(1),
-    severity: z.enum([
-      "blocks_propose",
-      "blocks_claim",
-      "blocks_signoff",
-      "advisory",
-    ]),
-    elementHandle: z.string(),
-    message: z.string(),
-  })
-  .strict();
-
 export const specLintViewSchema = z
   .object({
     revisionId: z.string().min(1),
@@ -828,11 +950,156 @@ const integrityMismatchSchema = z
   })
   .strict();
 
+/**
+ * The one consistency-finding shape `cctl spec verify` reports (design §9).
+ *
+ * Content hashes answer "was this spec's approved text tampered with"; they
+ * cannot answer "did an act this spec started ever finish". Both unfinished-act
+ * classes — a cleanup the abandon coordinator never completed, and a proposal
+ * an approval forked past — land in this ONE discriminated union so a reader,
+ * the CLI renderer, and Studio consume a single report rather than a second
+ * parallel section per family.
+ *
+ * Every member carries `remedy`: the exact act that disposes of the finding,
+ * with its target id, so a report never states a problem without its exit.
+ */
+const executionLifecycleFindingSchema = z
+  .object({
+    family: z.literal("execution-lifecycle"),
+    code: z.enum([
+      /** A durable `abandoning` row: the coordinator stopped mid-cleanup. */
+      "abandon_cleanup_unfinished",
+      /**
+       * `abandoned`, yet the linked run is still live or still owns the
+       * session's slot — the pre-coordinator orphan shape. No coordinator
+       * re-entry exists from `abandoned`, so its remedy is workflow-side.
+       */
+      "abandoned_execution_workflow_unreleased",
+    ]),
+    specExecutionId: z.string().min(1),
+    /** The coordinator's reached phase; null outside `abandoning`. */
+    cleanupPhase: specExecutionCleanupPhaseSchema.nullable(),
+    workflowExecutionId: z.string().min(1).nullable(),
+    workflowStatus: graphWorkflowStatusSchema.nullable(),
+    /** Whether the linked run still holds the session's execution slot. */
+    ownsExecutionSlot: z.boolean(),
+    detail: z.string().min(1),
+    remedy: z.string().min(1),
+  })
+  .strict();
+
+const proposalIntegrityFindingSchema = z
+  .object({
+    family: z.literal("proposal-integrity"),
+    code: z.enum([
+      /** An approved revision forked past this live proposal (#50). */
+      "superseded_proposal",
+      /** Live alongside another proposal, but nothing forked past it. */
+      "competing_live_proposal",
+    ]),
+    revisionId: z.string().min(1),
+    revisionNumber: z.number().int().positive(),
+    /** Non-null exactly for `superseded_proposal`. */
+    supersededByRevisionId: z.string().min(1).nullable(),
+    detail: z.string().min(1),
+    remedy: z.string().min(1),
+  })
+  .strict();
+
+export const specConsistencyFindingSchema = z.discriminatedUnion("family", [
+  executionLifecycleFindingSchema,
+  proposalIntegrityFindingSchema,
+]);
+export type SpecConsistencyFinding = z.infer<
+  typeof specConsistencyFindingSchema
+>;
+
 export const integrityReportSchema = z
   .object({
     ok: z.boolean(),
     checkedRevisionIds: z.array(z.string().min(1)),
     mismatches: z.array(integrityMismatchSchema),
+    consistencyFindings: z.array(specConsistencyFindingSchema),
   })
   .strict();
 export type IntegrityReport = z.infer<typeof integrityReportSchema>;
+
+const evidenceProducerRowSchema = z
+  .object({
+    kind: z.string().min(1),
+    /** Null names a gap: nothing in the ingest path mints this kind. */
+    producer: z.string().min(1).nullable(),
+    detail: z.string().min(1),
+  })
+  .strict();
+
+const specPlanPreviewCriterionBriefSchema = z
+  .object({
+    criterionElementId: z.string().min(1),
+    criterionHandle: z.string().min(1),
+    text: z.string(),
+    brief: z.string(),
+    strategyNote: z.string().nullable(),
+    evidence: z.array(evidenceProducerRowSchema),
+  })
+  .strict();
+
+const specPlanPreviewContextSchema = z
+  .object({
+    contextId: z.string().min(1),
+    title: z.string(),
+    description: z.string().nullable(),
+    acceptanceCriteria: z.string(),
+    taskHandles: z.array(z.string().min(1)),
+    criterionBriefs: z.array(specPlanPreviewCriterionBriefSchema),
+    totalBriefCount: z.number().int().nonnegative(),
+    shownBriefCount: z.number().int().nonnegative(),
+    omittedBriefCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const specPlanPreviewEdgeSchema = z
+  .object({
+    id: z.string().min(1),
+    sourceContextId: z.string().min(1),
+    targetContextId: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * The bounded plan preview the CLI and Studio read. The unbounded projection
+ * (including the full compiled definition the parity contract is stated
+ * against) stays server-side in `plan-preview.ts`; what crosses the wire is
+ * already capped, which is what keeps a wide plan's preview readable.
+ */
+export const specPlanPreviewViewSchema = z
+  .object({
+    spec: z
+      .object({
+        id: z.string().min(1),
+        slug: z.string().min(1),
+        name: z.string().min(1),
+      })
+      .strict(),
+    revision: z
+      .object({
+        id: z.string().min(1),
+        number: z.number().int().positive(),
+        state: specRevisionStateSchema,
+        authoringStage: specAuthoringStageSchema,
+      })
+      .strict(),
+    scopeHash: z.string().min(1),
+    approvalRequired: z.boolean(),
+    charter: workflowCharterSchema,
+    totalContextCount: z.number().int().nonnegative(),
+    shownContextCount: z.number().int().nonnegative(),
+    taskCount: z.number().int().nonnegative(),
+    criterionCount: z.number().int().nonnegative(),
+    contexts: z.array(specPlanPreviewContextSchema),
+    edges: z.array(specPlanPreviewEdgeSchema),
+    evidenceGaps: z.array(z.string().min(1)),
+    briefLimit: z.number().int().positive(),
+  })
+  .strict();
+export type SpecPlanPreviewView = z.infer<typeof specPlanPreviewViewSchema>;

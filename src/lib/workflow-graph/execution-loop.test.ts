@@ -127,6 +127,7 @@ function createRunningExecution(
     loopEpoch: 0,
     boundInputs: {},
     launchedTier: "project",
+    ownerConversationId: null,
     definitionApproval: null,
     workingDefinition: {
       ...definition,

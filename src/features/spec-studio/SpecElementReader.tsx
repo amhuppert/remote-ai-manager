@@ -1,12 +1,18 @@
-import { useId, type ReactNode } from "react";
+"use client";
+
+import { useId, useState, type ReactNode } from "react";
+import { z } from "zod";
 
 import { CompactMarkdown } from "@/components/markdown/Markdown";
+import { Button } from "@/components/ui/Button";
 import {
   EmptyState,
   EmptyStateDesc,
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
 import { StatusChip, type StatusChipTone } from "@/components/ui/StatusChip";
+import { ApiCallError } from "@/lib/api/errors";
+import { useSpecActionMutation } from "@/lib/specs/mutations";
 import type { SpecDetailView } from "@/lib/specs/queries";
 
 export type SpecElementReaderKind = "requirements" | "decisions" | "tasks";
@@ -14,6 +20,8 @@ export type SpecElementReaderKind = "requirements" | "decisions" | "tasks";
 export interface SpecElementReaderProps {
   detail: SpecDetailView;
   kind: SpecElementReaderKind;
+  /** Route segment the draft-removal action is addressed through. */
+  projectName: string;
 }
 
 type Snapshot = NonNullable<SpecDetailView["currentRevision"]>;
@@ -71,11 +79,24 @@ const APPROVAL_PRESENTATION: Record<
 export function SpecElementReader({
   detail,
   kind,
+  projectName,
 }: SpecElementReaderProps): React.JSX.Element {
   const readerId = useId();
   const copy = KIND_COPY[kind];
   const titleId = `${readerId}-${kind}-title`;
   const snapshot = detail.currentRevision ?? detail.currentApprovedRevision;
+  // Only the current revision is editable, and only while it is a draft: a
+  // removal against an approved or proposed revision is refused server-side,
+  // so offering the control there would be a button that only ever fails.
+  const removal = useDraftElementRemoval({
+    projectName,
+    slug: detail.spec.slug,
+    revision:
+      detail.currentRevision !== null &&
+      detail.currentRevision.revision.state === "draft"
+        ? detail.currentRevision
+        : null,
+  });
 
   if (snapshot === null) {
     return (
@@ -105,6 +126,7 @@ export function SpecElementReader({
           <StatusChip tone={revision.tone}>{revision.label}</StatusChip>
         </>
       }
+      notice={<ReintroductionNotice removal={removal} />}
     >
       {elements.length === 0 ? (
         <EmptyState>
@@ -121,6 +143,7 @@ export function SpecElementReader({
           snapshot={snapshot}
           requirements={elements}
           readerId={readerId}
+          removal={removal}
         />
       ) : kind === "decisions" ? (
         <DecisionDocument
@@ -128,6 +151,7 @@ export function SpecElementReader({
           snapshot={snapshot}
           decisions={elements}
           readerId={readerId}
+          removal={removal}
         />
       ) : (
         <TaskDocument
@@ -135,6 +159,7 @@ export function SpecElementReader({
           snapshot={snapshot}
           tasks={elements}
           readerId={readerId}
+          removal={removal}
         />
       )}
     </ReaderFrame>
@@ -145,11 +170,13 @@ function ReaderFrame({
   title,
   titleId,
   metadata,
+  notice,
   children,
 }: {
   title: string;
   titleId: string;
   metadata?: ReactNode;
+  notice?: ReactNode;
   children: ReactNode;
 }): React.JSX.Element {
   return (
@@ -173,8 +200,278 @@ function ReaderFrame({
           <div className="flex flex-wrap items-center gap-sm">{metadata}</div>
         )}
       </div>
+      {notice}
       {children}
     </section>
+  );
+}
+
+/** The draft-remove action answers with nothing but its own success. */
+const removeDraftElementResponseSchema = z
+  .object({ ok: z.literal(true) })
+  .strict();
+
+/**
+ * The structural half of a dangling-reference refusal. Parsed leniently — an
+ * older server sends no references at all, and the message alone is still a
+ * usable refusal.
+ */
+const danglingReferencesSchema = z.object({
+  references: z.array(
+    z
+      .object({
+        sourceElementId: z.string().min(1),
+        targetId: z.string().min(1),
+        relation: z.string().min(1),
+      })
+      .passthrough(),
+  ),
+});
+
+interface RemovalTarget {
+  readonly elementId: string;
+  readonly handle: string;
+  readonly baseElementVersion: number;
+}
+
+/**
+ * A refused removal, told apart by whether this surface can diagnose it. A
+ * dangling reference is the one refusal the reader can name in the document's
+ * own vocabulary and prescribe the fix for; every other refusal — a stale
+ * version, a stage boundary, a write that could not be persisted — carries the
+ * server's own account, and restating it as "still referenced" would print a
+ * false diagnosis and a remedy that does not apply.
+ */
+type RemovalRefusalCause =
+  | { readonly kind: "dangling"; readonly references: string[] }
+  | { readonly kind: "refused"; readonly message: string };
+
+type RemovalRefusal = RemovalRefusalCause & { readonly elementId: string };
+
+interface DraftRemoval {
+  /** Null when the rendered revision cannot be edited. */
+  readonly revisionId: string | null;
+  readonly confirmingElementId: string | null;
+  readonly pendingElementId: string | null;
+  readonly refusal: RemovalRefusal | null;
+  readonly removedHandle: string | null;
+  readonly slug: string;
+  ask(elementId: string): void;
+  cancel(): void;
+  remove(target: RemovalTarget): void;
+}
+
+/**
+ * The one draft-element removal path Spec Studio has: the same production
+ * `draft-remove` action `cctl spec remove` reaches, addressed by the element's
+ * own compare-and-swap version. Refusals are whole — nothing is removed — so
+ * the failure is reported against the element that was asked for rather than
+ * as a page-level error.
+ */
+function useDraftElementRemoval({
+  projectName,
+  slug,
+  revision,
+}: {
+  projectName: string;
+  slug: string;
+  revision: Snapshot | null;
+}): DraftRemoval {
+  const [confirmingElementId, setConfirming] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<DraftRemoval["refusal"]>(null);
+  const [removedHandle, setRemovedHandle] = useState<string | null>(null);
+  const mutation = useSpecActionMutation<
+    { revisionId: string; elementId: string; baseElementVersion: number },
+    z.infer<typeof removeDraftElementResponseSchema>
+  >(projectName, slug, "draft-remove", removeDraftElementResponseSchema);
+  const revisionId = revision?.revision.id ?? null;
+
+  return {
+    revisionId,
+    slug,
+    confirmingElementId,
+    pendingElementId: mutation.isPending ? confirmingElementId : null,
+    refusal,
+    removedHandle,
+    ask(elementId) {
+      setRefusal(null);
+      setRemovedHandle(null);
+      setConfirming(elementId);
+    },
+    cancel() {
+      setConfirming(null);
+      setRefusal(null);
+    },
+    remove(target) {
+      if (revisionId === null || revision === null) return;
+      mutation.mutate(
+        {
+          revisionId,
+          elementId: target.elementId,
+          baseElementVersion: target.baseElementVersion,
+        },
+        {
+          onSuccess: () => {
+            setConfirming(null);
+            setRefusal(null);
+            setRemovedHandle(target.handle);
+          },
+          onError: (error) => {
+            setConfirming(null);
+            setRefusal({
+              elementId: target.elementId,
+              ...classifyRefusal(error, revision),
+            });
+          },
+        },
+      );
+    },
+  };
+}
+
+/**
+ * Why the removal was refused. A dangling reference is restated in the
+ * vocabulary the document is written in — it names both of its ends by handle,
+ * because the ids the server reports address storage and a reviewer reading
+ * `R1.1` on the page cannot act on `criterion-1`. Any other refusal is passed
+ * through as the server worded it, which is where its own recovery lives.
+ */
+function classifyRefusal(
+  error: Error,
+  snapshot: Snapshot,
+): RemovalRefusalCause {
+  const parsed =
+    error instanceof ApiCallError
+      ? danglingReferencesSchema.safeParse(error.details)
+      : null;
+  if (
+    parsed === null ||
+    !parsed.success ||
+    parsed.data.references.length === 0
+  ) {
+    return { kind: "refused", message: error.message };
+  }
+  return {
+    kind: "dangling",
+    references: parsed.data.references.map((reference) => {
+      const source = handleOfElementId(snapshot, reference.sourceElementId);
+      const target = handleOfElementId(snapshot, reference.targetId);
+      return `${source} ${reference.relation} ${target}`;
+    }),
+  };
+}
+
+function handleOfElementId(snapshot: Snapshot, elementId: string): string {
+  const entry = snapshot.elements.find(
+    (candidate) => candidate.element.id === elementId,
+  );
+  return entry === undefined ? elementId : handleFor(entry, snapshot);
+}
+
+/**
+ * Removal's inverse, shown once the element itself is gone from the document.
+ * Naming it anywhere on the removed element would put the recovery on the one
+ * surface a successful removal deletes.
+ */
+function ReintroductionNotice({
+  removal,
+}: {
+  removal: DraftRemoval;
+}): React.JSX.Element | null {
+  if (removal.removedHandle === null) return null;
+  return (
+    <p
+      role="status"
+      className="m-0 rounded-md border border-solid border-border-subtle bg-bg-surface p-md text-[0.72rem] leading-[1.6] text-text-secondary"
+    >
+      Removed {removal.slug}/{removal.removedHandle}. Removal is not deletion —
+      the element id is still this spec&rsquo;s, so saving it again with{" "}
+      <code>&quot;reintroduceHistorical&quot;: true</code> and a null base
+      version brings it back with its original number and handle.
+    </p>
+  );
+}
+
+/**
+ * The per-element removal control. Two steps, because the first click is the
+ * one an operator makes by accident; both steps stay visible controls rather
+ * than a hover affordance, so keyboard and touch reach them identically.
+ */
+function RemoveElementAction({
+  removal,
+  target,
+  kindLabel,
+}: {
+  removal: DraftRemoval;
+  target: RemovalTarget;
+  kindLabel: string;
+}): React.JSX.Element | null {
+  if (removal.revisionId === null) return null;
+  const confirming = removal.confirmingElementId === target.elementId;
+  const refusal =
+    removal.refusal?.elementId === target.elementId ? removal.refusal : null;
+
+  return (
+    <div className="flex flex-col gap-xs">
+      <div className="flex flex-wrap items-center gap-xs">
+        {confirming ? (
+          <>
+            <Button
+              variant="danger"
+              size="sm"
+              loading={removal.pendingElementId === target.elementId}
+              onClick={() => removal.remove(target)}
+            >
+              Confirm remove {target.handle}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => removal.cancel()}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => removal.ask(target.elementId)}
+          >
+            Remove {target.handle}
+          </Button>
+        )}
+      </div>
+      {refusal === null ? null : (
+        <div
+          role="alert"
+          className="flex flex-col gap-xs rounded-md border border-solid border-[var(--cc-red-border)] bg-red-glow p-md text-[0.72rem] leading-[1.6] text-text-secondary"
+        >
+          {refusal.kind === "dangling" ? (
+            <>
+              <p className="m-0 text-text-primary">
+                Nothing was removed — this {kindLabel} is still referenced.
+              </p>
+              <ul className="m-0 flex list-none flex-col gap-2xs p-0">
+                {refusal.references.map((reference) => (
+                  <li key={reference}>{reference}</li>
+                ))}
+              </ul>
+              <p className="m-0">
+                Rewrite the referring element, or remove it alongside this one
+                in a single act — <code>cctl spec remove {removal.slug} …</code>{" "}
+                takes both out in one transaction.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="m-0 text-text-primary">
+                Nothing was removed — {target.handle} is unchanged.
+              </p>
+              {/* The server's own words: its refusal carries the recovery that
+                  actually applies, which this surface cannot infer. */}
+              <p className="m-0">{refusal.message}</p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -183,11 +480,13 @@ function RequirementDocument({
   snapshot,
   requirements,
   readerId,
+  removal,
 }: {
   detail: SpecDetailView;
   snapshot: Snapshot;
   requirements: SnapshotElement[];
   readerId: string;
+  removal: DraftRemoval;
 }): React.JSX.Element {
   const criteriaByRequirement = new Map<string, SnapshotElement[]>();
   for (const entry of orderedElements(snapshot.elements)) {
@@ -251,11 +550,21 @@ function RequirementDocument({
                   {sentenceCase(payload.risk)} risk
                 </StatusChip>
               </div>
+              <RemoveElementAction
+                removal={removal}
+                kindLabel="requirement"
+                target={{
+                  elementId: entry.element.id,
+                  handle,
+                  baseElementVersion: entry.version.elementVersion,
+                }}
+              />
             </div>
             <CriteriaList
               criteria={criteria}
               snapshot={snapshot}
               headingId={`${headingId}-criteria`}
+              removal={removal}
             />
           </article>
         );
@@ -268,10 +577,12 @@ function CriteriaList({
   criteria,
   snapshot,
   headingId,
+  removal,
 }: {
   criteria: SnapshotElement[];
   snapshot: Snapshot;
   headingId: string;
+  removal: DraftRemoval;
 }): React.JSX.Element {
   return (
     <section
@@ -297,6 +608,7 @@ function CriteriaList({
                 key={criterion.element.id}
                 id={handleFor(criterion, snapshot)}
                 tabIndex={-1}
+                aria-label={`${handleFor(criterion, snapshot)} criterion`}
                 data-spec-element={handleFor(criterion, snapshot)}
                 className="flex items-start gap-sm rounded-md border border-solid border-border-dim bg-bg-base p-md max-768:flex-col"
               >
@@ -331,6 +643,15 @@ function CriteriaList({
                       />
                     </div>
                   )}
+                  <RemoveElementAction
+                    removal={removal}
+                    kindLabel="criterion"
+                    target={{
+                      elementId: criterion.element.id,
+                      handle: handleFor(criterion, snapshot),
+                      baseElementVersion: criterion.version.elementVersion,
+                    }}
+                  />
                 </div>
               </li>
             );
@@ -346,11 +667,13 @@ function DecisionDocument({
   snapshot,
   decisions,
   readerId,
+  removal,
 }: {
   detail: SpecDetailView;
   snapshot: Snapshot;
   decisions: SnapshotElement[];
   readerId: string;
+  removal: DraftRemoval;
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-lg">
@@ -392,6 +715,15 @@ function DecisionDocument({
               <div className="flex flex-wrap items-center gap-sm">
                 <StatusChip tone={status.tone}>{status.label}</StatusChip>
               </div>
+              <RemoveElementAction
+                removal={removal}
+                kindLabel="decision"
+                target={{
+                  elementId: entry.element.id,
+                  handle,
+                  baseElementVersion: entry.version.elementVersion,
+                }}
+              />
             </div>
             <DocumentSection title="Chosen approach">
               <DocumentText content={textOrDash(payload.chosenApproach)} />
@@ -444,11 +776,13 @@ function TaskDocument({
   snapshot,
   tasks,
   readerId,
+  removal,
 }: {
   detail: SpecDetailView;
   snapshot: Snapshot;
   tasks: SnapshotElement[];
   readerId: string;
+  removal: DraftRemoval;
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-lg">
@@ -534,6 +868,15 @@ function TaskDocument({
               <div className="flex flex-wrap items-center gap-sm">
                 <StatusChip tone={status.tone}>{status.label}</StatusChip>
               </div>
+              <RemoveElementAction
+                removal={removal}
+                kindLabel="task"
+                target={{
+                  elementId: entry.element.id,
+                  handle,
+                  baseElementVersion: entry.version.elementVersion,
+                }}
+              />
             </div>
             <DocumentSection title="Instructions">
               <DocumentText content={textOrDash(payload.instructions)} />

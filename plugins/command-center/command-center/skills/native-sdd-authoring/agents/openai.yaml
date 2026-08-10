@@ -1,0 +1,4 @@
+interface:
+  display_name: "Native SDD Authoring"
+  short_description: "Author and review portable native SDD specs"
+  default_prompt: "Use $native-sdd-authoring to author and review this Command Center native spec."

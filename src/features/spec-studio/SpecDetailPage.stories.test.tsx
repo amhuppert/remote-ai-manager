@@ -29,10 +29,10 @@ describe("Spec detail story fixtures", () => {
       const current = detail.currentRevision?.revision;
       const approved = detail.currentApprovedRevision?.revision;
 
-      expect(current?.authoringStage).toBe("plan");
+      expect(current?.authoringStage).toBe("design");
       expect(["draft", "proposed"]).toContain(current?.state);
       expect(approved).toMatchObject({
-        authoringStage: "design",
+        authoringStage: "requirements",
         state: "approved",
       });
       expect(detail.revisions).not.toContainEqual(

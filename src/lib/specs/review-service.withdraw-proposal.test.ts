@@ -128,7 +128,7 @@ function queueEntryIds(): string[] {
 }
 
 /**
- * A plan-stage revision under review, proposed by `proposer`. Every guard here
+ * A design-stage revision under review, proposed by `proposer`. Every guard here
  * is measured against a real propose, so the durable propose event carries the
  * provenance the withdrawal has to match.
  */
@@ -141,7 +141,7 @@ async function proposeSpec(
     projectPath: PROJECT_PATH,
     slug,
     name: `Withdraw ${slug}`,
-    // Fast-path opens the first draft directly at plan stage; the durable
+    // Fast-path opens the first draft directly at design stage; the durable
     // policy under review is installed before the propose.
     gatePolicy: { preset: "fast-path" },
     initialElement: {
@@ -182,21 +182,6 @@ async function proposeSpec(
         rejectedAlternatives: [],
         reason: "A successor conversation is not the author.",
         tracedRequirementElementIds: [`${slug}-r1`],
-      },
-    },
-    {
-      elementId: `${slug}-t1`,
-      kind: "task" as const,
-      parentElementId: null,
-      position: 3,
-      payload: {
-        kind: "task" as const,
-        title: "Implement the withdrawal verb",
-        instructions: "Implement and test the agent-side proposal exit.",
-        tracedRequirementElementIds: [`${slug}-r1`],
-        tracedDecisionElementIds: [`${slug}-d1`],
-        coveredCriterionElementIds: [`${slug}-c1`],
-        dependsOnTaskElementIds: [],
       },
     },
   ]) {
@@ -291,7 +276,7 @@ describe("withdrawProposal", () => {
     const requested = await reviewing.requestApproval({
       specId,
       revisionId,
-      gate: "plan",
+      gate: "design",
       actor: PROPOSER,
     });
     // A second spec under review at the same gate: the withdrawal resolves the
@@ -300,7 +285,7 @@ describe("withdrawProposal", () => {
     const bystanderRequest = await reviewing.requestApproval({
       specId: bystander.specId,
       revisionId: bystander.revisionId,
-      gate: "plan",
+      gate: "design",
       actor: PROPOSER,
     });
     if (!requested.ok || !bystanderRequest.ok) {
@@ -516,23 +501,19 @@ describe("withdrawProposal", () => {
       PROPOSER,
       {
         preset: "contract-bearing",
-        overrides: { requirements: "notify", design: "notify" },
+        overrides: { requirements: "notify" },
       },
     );
-    // The Notify dials admitted the requirements and design gates without a
-    // human ever acting; neither admission is a human review act.
+    // The Notify dial admitted requirements without a human act.
     expect(
       reviewRepo
         .findGateAdmissionsByRevision(revisionId)
         .map(({ gate, basis }) => ({ gate, basis })),
-    ).toEqual([
-      { gate: "requirements", basis: "notify_policy" },
-      { gate: "design", basis: "notify_policy" },
-    ]);
+    ).toEqual([{ gate: "requirements", basis: "notify_policy" }]);
     const requested = await reviewing.requestApproval({
       specId,
       revisionId,
-      gate: "plan",
+      gate: "design",
       actor: PROPOSER,
     });
     expect(requested.ok).toBe(true);
@@ -575,7 +556,7 @@ describe("withdrawProposal", () => {
       id: "revision-capture-draft",
       specId,
       baseRevisionId: revisionId,
-      authoringStage: "plan",
+      authoringStage: "design",
       createdAt: "2026-08-02T10:30:00.000Z",
     });
 
@@ -641,7 +622,7 @@ describe("withdrawAndOpenDraft is shared with the human exits", () => {
       id: "revision-conflicting-draft",
       specId,
       baseRevisionId: revisionId,
-      authoringStage: "plan",
+      authoringStage: "design",
       createdAt: "2026-08-02T10:30:00.000Z",
     });
 

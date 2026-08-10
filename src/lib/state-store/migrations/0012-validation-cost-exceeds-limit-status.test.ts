@@ -299,7 +299,7 @@ describe("0012-validation-cost-exceeds-limit-status", () => {
   it("refuses under the write lock when the ledger records a newer version, leaving the barrier published and the table untouched", async () => {
     const { db, dir } = legacyFileBackedDb();
     db.prepare(
-      "INSERT INTO schema_migrations (version, description) VALUES (5, 'future build')",
+      "INSERT INTO schema_migrations (version, description) VALUES (6, 'future build')",
     ).run();
 
     await expect(
@@ -318,7 +318,7 @@ describe("0012-validation-cost-exceeds-limit-status", () => {
 
   it("refuses when the config directory already carries a newer external barrier", async () => {
     const { db, dir } = legacyFileBackedDb();
-    await publishSchemaCompatibilityBarrier(dir, 5);
+    await publishSchemaCompatibilityBarrier(dir, 6);
 
     await expect(
       validationCostExceedsLimitStatus.up({

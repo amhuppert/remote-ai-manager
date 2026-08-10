@@ -17,6 +17,7 @@ const meta = {
   args: {
     detail: specElementReaderDetailFixture(),
     kind: "requirements",
+    projectName: "command-center",
   },
 } satisfies Meta<typeof SpecElementReader>;
 
@@ -24,6 +25,34 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Requirements: Story = {};
+
+/**
+ * The only state that offers removal: an open draft. Every other revision
+ * state renders the same document without the action.
+ */
+export const DraftRemovable: Story = {
+  args: {
+    detail: (() => {
+      const detail = specElementReaderDetailFixture();
+      const snapshot = detail.currentRevision;
+      if (snapshot === null) return detail;
+      detail.currentRevision = {
+        revision: {
+          ...snapshot.revision,
+          id: "revision-2",
+          number: 2,
+          state: "draft",
+          basedOnRevisionId: snapshot.revision.id,
+          proposedAt: null,
+          approvedAt: null,
+        },
+        elements: snapshot.elements,
+      };
+      return detail;
+    })(),
+    kind: "requirements",
+  },
+};
 
 export const Decisions: Story = {
   args: { kind: "decisions" },

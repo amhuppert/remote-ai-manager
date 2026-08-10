@@ -439,6 +439,28 @@ function buildMaximalEvent(): GraphWorkflowExecutionEvent {
   });
 }
 
+function buildMaximalAmendmentEvent(): GraphWorkflowExecutionEvent {
+  return graphWorkflowExecutionEventSchema.parse({
+    occurredAt: "2026-02-15T08:09:10Z",
+    event: {
+      type: "graph-workflow-execution-amended",
+      projectName: "p1",
+      sessionName: SESSION_NAME,
+      executionId: EXECUTION_ID,
+      liveRevision: 7,
+      reason: "Add the migration verification branch.",
+      actor: "agent:conversation-7 (codex)",
+      policyBasis: "pinned_allow_agent_task_add",
+      previousWorkingDefinitionHash: "sha256:before",
+      workingDefinitionHash: "sha256:after",
+      addedContextIds: ["verify-migration"],
+      addedTaskIds: ["prove-round-trip"],
+      addedEdgeIds: ["deliver-to-verify"],
+    },
+    preReset: true,
+  });
+}
+
 describe("graph-workflow-events-repo output-schema rejection durability", () => {
   it("round-trips the refused payload, per-issue paths and gate-repair spend", () => {
     const rejection = graphWorkflowExecutionEventSchema.parse({
@@ -544,6 +566,25 @@ describe("graph-workflow-events-repo durability contract", () => {
         const rows = repo.findByExecution(EXECUTION_ID);
         return rows[0] ?? null;
       },
+    });
+  });
+
+  it("round-trips every execution-amendment audit field through the real repo", async () => {
+    await assertRoundTripDurability({
+      label: "graph-workflow-execution-amendment-event",
+      schema: graphWorkflowExecutionEventSchema,
+      buildMaximalFixture: buildMaximalAmendmentEvent,
+      persist: (fixture) => {
+        repo.appendMany(
+          PROJECT_PATH,
+          SESSION_NAME,
+          EXECUTION_ID,
+          fixture.occurredAt,
+          [fixture],
+        );
+        return fixture;
+      },
+      reload: () => repo.findByExecution(EXECUTION_ID)[0] ?? null,
     });
   });
 

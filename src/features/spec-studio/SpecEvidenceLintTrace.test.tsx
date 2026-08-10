@@ -368,6 +368,56 @@ describe("SpecLintPanel", () => {
       "/specs/command-center/native-sdd?el=T1",
     );
   });
+
+  it("groups findings by severity and counts what would block propose", () => {
+    render(
+      <SpecLintPanel
+        projectName="command-center"
+        slug="native-sdd"
+        revisionId="revision-1"
+        findings={[
+          {
+            ruleId: "9.12.serialized-plan",
+            severity: "advisory" as const,
+            elementHandle: "T2",
+            message: "The plan serialises every task.",
+          },
+          {
+            ruleId: "9.3.uncovered-criterion",
+            severity: "blocks_propose" as const,
+            elementHandle: "R1.2",
+            message: "R1.2 has no covering task.",
+          },
+          {
+            ruleId: "9.9.open-question",
+            severity: "blocks_signoff" as const,
+            elementHandle: "Q1",
+            message: "Q1 is unanswered.",
+          },
+        ]}
+        isPending={false}
+        error={null}
+      />,
+    );
+
+    // Same severity ranking the CLI panel and the status tier use, so the
+    // reader who moves between them meets the findings in one order.
+    expect(
+      screen
+        .getAllByRole("group")
+        .map((group) => group.getAttribute("aria-label")),
+    ).toEqual(["Blocks propose (1)", "Blocks sign-off (1)", "Advisory (1)"]);
+    expect(
+      screen
+        .getAllByTestId("lint-finding-message")
+        .map((message) => message.textContent),
+    ).toEqual([
+      "R1.2 has no covering task.",
+      "Q1 is unanswered.",
+      "The plan serialises every task.",
+    ]);
+    expect(screen.getByText("1 of 3 would block propose")).toBeInTheDocument();
+  });
 });
 
 describe("TraceabilityGraph", () => {

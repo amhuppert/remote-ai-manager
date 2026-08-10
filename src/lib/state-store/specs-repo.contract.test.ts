@@ -15,6 +15,7 @@ import {
   specElementSchema,
   specElementVersionSchema,
   specRevisionSchema,
+  specRevisionSupersessionSchema,
   specSchema,
   type CriterionElementPayload,
   type RequirementElementPayload,
@@ -366,6 +367,60 @@ describe("maximal persistence contracts", () => {
       },
       reload: (expected) => repo.findRevision(expected.id),
       fieldPolicies: { contentHash: "derived-on-write" },
+    });
+  });
+
+  it("round-trips every persisted supersession-marker field through a dismissal", async () => {
+    // The marker cannot ride the revision fixture above: a revision is either
+    // approved or dismissed-as-superseded, never both, so its own maximal
+    // round trip is the only way every marker field stays contract-backed.
+    const created = await createSpec({ id: "spec-supersession-maximal" });
+    await addRequirement(created.spec.id, created.revision.id);
+    await repo.proposeRevision({
+      revisionId: created.revision.id,
+      proposedAt: PROPOSED_AT,
+    });
+    await repo.approveRevision({
+      revisionId: created.revision.id,
+      approvedAt: APPROVED_AT,
+    });
+
+    await assertRoundTripDurability({
+      label: "spec-revision-supersessions",
+      schema: specRevisionSupersessionSchema,
+      buildMaximalFixture: () =>
+        specRevisionSupersessionSchema.parse({
+          revisionId: "revision-superseded-maximal",
+          specId: created.spec.id,
+          supersededByRevisionId: created.revision.id,
+          reason: "Revision 2 forked past this proposal and was approved.",
+          actor: { kind: "agent", conversationId: "conversation-dismiss" },
+          dismissedAt: UPDATED_AT,
+        }),
+      persist: async (maximal) => {
+        await repo.createDraftFromBase({
+          id: maximal.revisionId,
+          specId: maximal.specId,
+          baseRevisionId: maximal.supersededByRevisionId,
+          authoringStage: "design",
+          createdAt: CREATED_AT,
+        });
+        await repo.proposeRevision({
+          revisionId: maximal.revisionId,
+          proposedAt: PROPOSED_AT,
+        });
+        const result = await repo.supersedeRevision({
+          revisionId: maximal.revisionId,
+          supersededByRevisionId: maximal.supersededByRevisionId,
+          reason: maximal.reason,
+          actor: maximal.actor,
+          dismissedAt: maximal.dismissedAt,
+        });
+        expect(result.revision.state).toBe("withdrawn");
+        return result.supersession;
+      },
+      reload: (expected) => repo.findSupersession(expected.revisionId),
+      fieldPolicies: {},
     });
   });
 

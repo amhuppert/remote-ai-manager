@@ -13,6 +13,7 @@ import {
   type LandingEvidenceProber,
 } from "@/lib/workflow-graph/landing-evidence";
 import { StaleLoopFenceError } from "@/lib/workflow-graph/loop-fence";
+import { replacementPolicy } from "@/lib/workflow-graph/lifecycle-classifier";
 import { releaseLoopPassSlotsForContexts } from "@/lib/workflow-graph/loop-budgets";
 import {
   classifyContextSchedulability,
@@ -40,6 +41,7 @@ import {
   type ParallelWorktrees,
   type ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
+import type { GraphWorkflowArchiveOutcome } from "@/lib/state-store/setters";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
@@ -101,6 +103,10 @@ interface GraphWorkflowExecutionSeed {
   // The tier the template was launched from. Rides the definition tier onto the
   // execution as an additive audit annotation, parallel to `inputs`/boundInputs.
   launchedTier: TemplateTier;
+  // The conversation the start seam captured server-side, or null for a launch
+  // with no conversation identity. Required rather than optional so a new start
+  // path has to decide rather than silently drop the owner.
+  ownerConversationId: string | null;
 }
 
 interface GraphWorkflowExecutionRepository {
@@ -113,7 +119,12 @@ interface GraphWorkflowExecutionRepository {
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution>;
-  archiveActive(projectPath: string, sessionName: string): Promise<void>;
+  archiveActive(
+    projectPath: string,
+    sessionName: string,
+    audit?: { reason: string; actor: string | null },
+    guard?: (execution: GraphWorkflowExecution) => boolean,
+  ): Promise<GraphWorkflowArchiveOutcome>;
   mutateActive(
     projectPath: string,
     sessionName: string,
@@ -145,6 +156,14 @@ export interface GraphWorkflowStartInput {
    * behavior-neutral zero-input launch.
    */
   parameters?: Record<string, unknown>;
+  /**
+   * The launching conversation, already resolved SERVER-SIDE by the calling
+   * start seam (HTTP start verifies the token-gated caller header against the
+   * session's conversations; in-process seams pass an id they own). This path
+   * never derives it from a request body, so a client-supplied claim cannot
+   * reach the seed. Omitted/null is an unowned launch.
+   */
+  ownerConversationId?: string | null;
 }
 
 /**
@@ -837,12 +856,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       input.sessionName,
     );
     if (existing) {
-      const terminalStatuses: GraphWorkflowStatus[] = [
-        "completed",
-        "halted",
-        "aborted",
-      ];
-      if (terminalStatuses.includes(existing.status)) {
+      // Replaceability is the lifecycle contract's call, not a list restated
+      // here — and the only replacement it permits is the audited archive, so
+      // there is no branch in which the incumbent is silently dropped.
+      if (replacementPolicy(existing.status) === "audited-archive") {
         await deps.executionRepository.archiveActive(
           input.projectPath,
           input.sessionName,
@@ -986,6 +1003,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         startedAt: getNow(deps),
         inputs: boundInputs,
         launchedTier: tier,
+        ownerConversationId: input.ownerConversationId ?? null,
       },
     );
 

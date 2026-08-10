@@ -146,3 +146,8 @@ export function pendingBlockLines(block: AuthoringPendingBlockView): string[] {
         ]),
   ];
 }
+
+/** `2 elements`, `1 element` — pluralised where a count is read as prose. */
+export function countOf(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}

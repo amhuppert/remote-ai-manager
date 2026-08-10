@@ -11,6 +11,10 @@ vi.mock("@/lib/logging", () => ({
 
 import type Database from "better-sqlite3";
 import {
+  proposalNotes,
+  proposeEventPayloadSchema,
+} from "@/lib/specs/proposal-notes";
+import {
   specEventRowSchema,
   type SpecEventRow,
   type SpecEventType,
@@ -179,6 +183,67 @@ describe("spec-events-repo durability contract", () => {
       kind: "transition-refused",
       code: "revision_not_approved",
     });
+  });
+
+  /**
+   * The proposal's disposition document is persisted as an optional key on the
+   * propose event's payload rather than in a column of its own, so this is
+   * where its durability is proven: a markdown document survives the write
+   * byte for byte, and a propose event stored before the key existed still
+   * parses as one that carries no notes.
+   */
+  it("round-trips a notes-bearing propose payload and still parses a legacy one", () => {
+    const notes = [
+      "## Disposition",
+      "",
+      "- Closed F3 by rebinding the loop exit",
+      '- Left F7 open: the "stale handle" case needs the compiler change first',
+      "",
+      "```json",
+      '{"unicode":"→ ✓","quote":"\\"nested\\""}',
+      "```",
+    ].join("\n");
+    const withNotes = repo.append({
+      spec_id: SPEC_ID,
+      occurred_at: "2026-08-07T13:05:00.000Z",
+      event_type: "spec-revision-changed",
+      actor_json: stableStringify({ kind: "agent", conversationId: "conv-1" }),
+      payload_json: stableStringify({
+        kind: "proposed",
+        revisionId: "revision-notes",
+        notes,
+      }),
+    });
+    const legacy = repo.append({
+      spec_id: SPEC_ID,
+      occurred_at: "2026-08-07T13:06:00.000Z",
+      event_type: "spec-revision-changed",
+      actor_json: stableStringify({ kind: "agent", conversationId: "conv-1" }),
+      payload_json: stableStringify({
+        kind: "proposed",
+        revisionId: "revision-legacy",
+      }),
+    });
+
+    const reloaded = repo.findBySpecId(SPEC_ID);
+    expect(
+      proposeEventPayloadSchema.parse(
+        JSON.parse(
+          reloaded.find((row) => row.id === withNotes.id)?.payload_json ?? "{}",
+        ),
+      ),
+    ).toEqual({ kind: "proposed", revisionId: "revision-notes", notes });
+    expect(
+      proposeEventPayloadSchema.parse(
+        JSON.parse(
+          reloaded.find((row) => row.id === legacy.id)?.payload_json ?? "{}",
+        ),
+      ),
+    ).toEqual({ kind: "proposed", revisionId: "revision-legacy" });
+    // The projection every surface reads answers from the reloaded rows, not
+    // from the objects that were written.
+    expect(proposalNotes(reloaded, "revision-notes")).toBe(notes);
+    expect(proposalNotes(reloaded, "revision-legacy")).toBeNull();
   });
 
   it("reads by AUTOINCREMENT id in insertion order, not timestamp order", () => {

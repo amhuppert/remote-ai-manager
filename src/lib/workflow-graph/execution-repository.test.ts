@@ -1,8 +1,12 @@
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig, PerRepoConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 import { computeCharterHash } from "./charter/render";
 import { createWorkflowCharterService } from "./charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
@@ -104,7 +108,11 @@ function createInMemoryRepo(
     },
     async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
       const session = getOrCreateSession(projectPath, sessionName);
+      const archived = session.graphWorkflowExecution ?? null;
       session.graphWorkflowExecution = null;
+      return archived === null
+        ? { archived: false as const, reason: "no_active" as const }
+        : { archived: true as const, execution: archived };
     },
     async markGraphWorkflowContextEventsPreReset() {
       return 0;
@@ -148,6 +156,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
   });
@@ -181,6 +190,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
   });
@@ -213,6 +223,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
       name: "GraphWorkflowValidationError",
@@ -239,6 +250,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.id).toBe("exec-1");
@@ -260,6 +272,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project" as const,
+      ownerConversationId: null,
     };
     const first = await repo.create("/repo", "session-1", seed);
 
@@ -310,6 +323,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       });
 
       expect(created.id, `status=${status}`).toBe("exec-new");
@@ -330,6 +344,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.lanePlan.continuationMap).toEqual({
@@ -353,6 +368,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.activeContextIds).toEqual([]);
@@ -427,6 +443,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     for (const context of execution.workingDefinition.executionContexts) {
@@ -471,6 +488,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const byId = Object.fromEntries(
@@ -530,6 +548,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const byId = Object.fromEntries(
@@ -625,6 +644,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const templateContexts = Object.fromEntries(
@@ -689,6 +709,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
       name: "GraphWorkflowValidationError",
@@ -746,6 +767,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
       name: "GraphWorkflowValidationError",
@@ -794,6 +816,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.workingDefinition.laneMergeValidation).toEqual({
@@ -812,6 +835,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.workingDefinition.laneMergeValidation).toEqual({
@@ -855,6 +879,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toMatchObject({
       name: "GraphWorkflowValidationError",
@@ -898,6 +923,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
   });
@@ -916,6 +942,7 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
@@ -941,6 +968,7 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(writes).toHaveLength(1);
@@ -961,6 +989,7 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const charterBroadcast = broadcasts.find(
@@ -996,6 +1025,7 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: {},
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toThrow(/worktree/);
   });
@@ -1044,6 +1074,7 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs,
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.charter.mission).toBe("Deliver the payments flow");
@@ -1094,6 +1125,7 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
         startedAt: "2026-04-04T00:00:00.000Z",
         inputs: { ac: "   " },
         launchedTier: "project",
+        ownerConversationId: null,
       }),
     ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
 
@@ -1132,6 +1164,7 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: { ci: literal },
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     const planContext = execution.workingDefinition.executionContexts.find(
@@ -1153,6 +1186,7 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "project",
+      ownerConversationId: null,
     });
 
     expect(execution.boundInputs).toEqual({});
@@ -1170,6 +1204,7 @@ describe("createGraphWorkflowExecutionRepository.create parameter substitution",
       startedAt: "2026-04-04T00:00:00.000Z",
       inputs: {},
       launchedTier: "global",
+      ownerConversationId: null,
     });
 
     expect(execution.launchedTier).toBe("global");
@@ -1311,6 +1346,156 @@ describe("createGraphWorkflowExecutionRepository loop-fence enforcement", () => 
     );
 
     expect(next.activeContextIds).toEqual(["context-route-write"]);
+  });
+});
+
+describe("createGraphWorkflowExecutionRepository.create replacement audit", () => {
+  const PROJECT_PATH = "/repo";
+  const SESSION_NAME = "session-1";
+
+  let fixture: PersistenceFixture;
+
+  beforeEach(() => {
+    fixture = createPersistenceFixture();
+    fixture.seedProject(PROJECT_PATH);
+    fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+  });
+
+  afterEach(() => {
+    fixture.close();
+  });
+
+  /**
+   * Real store, because the audit this proves IS a durable row: the archive
+   * writes `graph_workflow_archived_executions` in the same transaction that
+   * clears the active slot. A JS-object fake could report "archive was called"
+   * while persisting nothing.
+   */
+  function buildRepository() {
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast: () => {},
+      dispatchPush: () => {},
+    });
+    return createGraphWorkflowExecutionRepository({
+      getSession: fixture.store.getSession,
+      getActiveGraphWorkflowExecution:
+        fixture.store.getActiveGraphWorkflowExecution,
+      mutateActiveGraphWorkflowExecution:
+        fixture.store.mutateActiveGraphWorkflowExecution,
+      archiveActiveGraphWorkflowExecution:
+        fixture.store.archiveActiveGraphWorkflowExecution,
+      markGraphWorkflowContextEventsPreReset:
+        fixture.store.markGraphWorkflowContextEventsPreReset,
+      eventPublisher,
+      charterService: createWorkflowCharterService({
+        writeFile: async () => {},
+        ensureDir: async () => {},
+        // The real publisher method: its delivery is combined into the events
+        // the create writes, so a stub returning nothing would put an undefined
+        // event into the append.
+        publishCharterRegistered: eventPublisher.publishCharterRegistered,
+      }),
+      readConfig: async () => ({}) as GlobalConfig,
+    });
+  }
+
+  async function seedActive(execution: GraphWorkflowExecution): Promise<void> {
+    await fixture.store.mutateActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.seedActive",
+      () => ({ execution, events: [] }),
+    );
+  }
+
+  function seed(executionId: string) {
+    return {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId,
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project" as const,
+      ownerConversationId: null,
+    };
+  }
+
+  it("archives a halted incumbent durably before the replacement takes the slot", async () => {
+    const repo = buildRepository();
+    await seedActive(
+      createWorkflowExecution({
+        id: "exec-halted",
+        status: "halted",
+        haltReason: { type: "recovery_error", message: "old halt" },
+      }),
+    );
+
+    const created = await repo.create(PROJECT_PATH, SESSION_NAME, {
+      ...seed("exec-replacement"),
+    });
+
+    expect(created.id).toBe("exec-replacement");
+    const active = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(active?.id).toBe("exec-replacement");
+    // Silent replacement is what this forbids: the displaced run survives as a
+    // durable archive row, not as a gap in the record.
+    const archived = await fixture.store.listArchivedGraphWorkflowExecutions(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(
+      archived.map((entry) => ({ id: entry.id, status: entry.status })),
+    ).toEqual([{ id: "exec-halted", status: "halted" }]);
+  });
+
+  it("refuses to replace a running incumbent and archives nothing", async () => {
+    const repo = buildRepository();
+    await seedActive(
+      createWorkflowExecution({ id: "exec-running", status: "running" }),
+    );
+
+    await expect(
+      repo.create(PROJECT_PATH, SESSION_NAME, seed("exec-replacement")),
+    ).rejects.toMatchObject({
+      name: "WorkflowStartGuardError",
+      guard: "active_execution",
+    });
+
+    const active = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(active?.id).toBe("exec-running");
+    await expect(
+      fixture.store.listArchivedGraphWorkflowExecutions(
+        PROJECT_PATH,
+        SESSION_NAME,
+      ),
+    ).resolves.toEqual([]);
+  });
+
+  it("refuses to replace a paused incumbent, which is resumable rather than terminal", async () => {
+    const repo = buildRepository();
+    await seedActive(
+      createWorkflowExecution({ id: "exec-paused", status: "paused" }),
+    );
+
+    await expect(
+      repo.create(PROJECT_PATH, SESSION_NAME, seed("exec-replacement")),
+    ).rejects.toMatchObject({
+      name: "WorkflowStartGuardError",
+      guard: "active_execution",
+    });
+
+    const active = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(active?.id).toBe("exec-paused");
   });
 });
 

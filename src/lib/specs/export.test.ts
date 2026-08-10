@@ -10,6 +10,10 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import {
+  createSpecDeliveryRepo,
+  type SpecDeliveryRepo,
+} from "@/lib/state-store/spec-delivery-repo";
+import {
   createSpecReviewRepo,
   type SpecReviewRepo,
 } from "@/lib/state-store/spec-review-repo";
@@ -30,6 +34,8 @@ const CREATED_AT = "2026-07-18T16:00:00.000Z";
 let db: Db;
 let specs: SpecsRepo;
 let review: SpecReviewRepo;
+let delivery: SpecDeliveryRepo;
+let exportDeps: Parameters<typeof loadSpecExportState>[0];
 let specId: string;
 let revisionId: string;
 
@@ -38,6 +44,15 @@ beforeEach(async () => {
   db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
   specs = createSpecsRepo(db, createWriteQueue());
   review = createSpecReviewRepo(db);
+  delivery = createSpecDeliveryRepo(db);
+  exportDeps = {
+    specs,
+    review,
+    delivery,
+    async observeLinkedWorkflow() {
+      return { kind: "missing" as const };
+    },
+  };
   specId = "spec-export";
   revisionId = "revision-export-1";
   await specs.create({
@@ -164,7 +179,7 @@ afterEach(() => db.close());
 
 describe("canonical spec export and verification", () => {
   it("renders the same canonical bundle for identical durable state", async () => {
-    const state = await loadSpecExportState({ specs, review }, specId);
+    const state = await loadSpecExportState(exportDeps, specId);
     const first = renderCanonicalBundle(state);
     const second = renderCanonicalBundle(state);
 
@@ -218,7 +233,7 @@ describe("canonical spec export and verification", () => {
   });
 
   it("carries questions and assumptions in the canonical manifest (portable representation)", async () => {
-    const state = await loadSpecExportState({ specs, review }, specId);
+    const state = await loadSpecExportState(exportDeps, specId);
     const manifest = JSON.parse(renderCanonicalBundle(state).manifest) as {
       questions?: Array<{ id: string; number: number; answer: string | null }>;
       assumptions?: Array<{ id: string; disposition: string }>;
@@ -242,11 +257,12 @@ describe("canonical spec export and verification", () => {
   });
 
   it("passes verification for intact frozen state", async () => {
-    const state = await loadSpecExportState({ specs, review }, specId);
+    const state = await loadSpecExportState(exportDeps, specId);
     expect(verifyExportState(state)).toEqual({
       ok: true,
       checkedRevisionIds: [revisionId],
       mismatches: [],
+      consistencyFindings: [],
     });
   });
 
@@ -271,7 +287,7 @@ describe("canonical spec export and verification", () => {
       "task-1",
     );
 
-    const state = await loadSpecExportState({ specs, review }, specId);
+    const state = await loadSpecExportState(exportDeps, specId);
     expect(verifyExportState(state)).toMatchObject({
       ok: false,
       checkedRevisionIds: [revisionId],
@@ -284,7 +300,7 @@ describe("canonical spec export and verification", () => {
       "UPDATE spec_revisions SET authoring_stage = 'design' WHERE id = ?",
     ).run(revisionId);
 
-    const state = await loadSpecExportState({ specs, review }, specId);
+    const state = await loadSpecExportState(exportDeps, specId);
     expect(verifyExportState(state)).toMatchObject({
       ok: false,
       checkedRevisionIds: [revisionId],
@@ -308,7 +324,7 @@ describe("canonical spec export and verification", () => {
       "section-1",
     );
 
-    const state = await loadSpecExportState({ specs, review }, specId);
+    const state = await loadSpecExportState(exportDeps, specId);
     const report = verifyExportState(state);
     expect(report.ok).toBe(false);
     expect(report.checkedRevisionIds).toEqual([revisionId]);

@@ -39,14 +39,14 @@ export interface ExecutionScope {
 }
 
 /**
- * Parsing canonicalizes duplicate ids to their first occurrence. Every path
- * that touches a scope — the start route's request body, the CLI file check,
- * and every read of a persisted `scope_json` — parses through this schema, so
- * a duplicated id can neither persist anew nor reach a projection: without
- * this, a persisted `["criterion-1","criterion-1"]` scope renders impossible
- * counters like "2/1 proof recorded" (the projection iterates the raw list
- * while Studio derives its denominator from a Set). Duplicate exclusion
- * dispositions collapse to the first entry for the same reason.
+ * Parsing canonicalizes duplicate ids to their first occurrence. Legacy plan
+ * import/preview and every read of a persisted `scope_json` parse through this
+ * schema, so a duplicated id can neither enter an imported attempt nor reach a
+ * projection: without this, a persisted `["criterion-1","criterion-1"]` scope
+ * renders impossible counters like "2/1 proof recorded" (the projection
+ * iterates the raw list while Studio derives its denominator from a Set).
+ * Duplicate exclusion dispositions collapse to the first entry for the same
+ * reason.
  */
 export const executionScopeSchema: z.ZodType<ExecutionScope> = z
   .object({

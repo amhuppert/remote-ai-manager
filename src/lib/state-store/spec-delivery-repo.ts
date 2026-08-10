@@ -8,6 +8,7 @@ import {
   specWaiverRowSchema,
   type SpecCriterionDispositionRow,
   type SpecEvidenceRow,
+  type SpecExecutionCleanupPhase,
   type SpecExecutionRow,
   type SpecProofVerdictRow,
   type SpecTaskClaimRow,
@@ -113,6 +114,24 @@ export interface SpecDeliveryRepo {
     state: SpecExecutionRow["state"];
     deliveredAt: string | null;
     abandonedReason: string | null;
+    updatedAt: string;
+  }): SpecExecutionRow;
+  /**
+   * The abandon coordinator's single durable write (design §10). One statement
+   * for every transition it makes — entering `abandoning`, recording a phase
+   * that succeeded, recording why an attempt stopped, and finalizing
+   * `abandoned` — because a phase advance that is not atomic with its state is
+   * the orphan class this coordinator replaces. The caller runs it inside the
+   * transaction that also appends the phase's audit event.
+   */
+  saveExecutionCleanupState(input: {
+    executionId: string;
+    state: Extract<SpecExecutionRow["state"], "abandoning" | "abandoned">;
+    cleanupPhase: SpecExecutionCleanupPhase | null;
+    linkedWorkflowExecutionId: string | null;
+    cleanupLastError: string | null;
+    cleanupLastErrorAt: string | null;
+    abandonedReason: string;
     updatedAt: string;
   }): SpecExecutionRow;
 }
@@ -283,12 +302,15 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
        id, spec_id, revision_id, scope_json, state, execution_start_dial,
        workflow_definition_id, workflow_definition_revision,
        workflow_execution_id, session_name, delivered_at, abandoned_reason,
-       created_at, updated_at
+       cleanup_phase, linked_workflow_execution_id, cleanup_last_error,
+       cleanup_last_error_at, created_at, updated_at
      ) VALUES (
        @id, @spec_id, @revision_id, @scope_json, @state,
        @execution_start_dial, @workflow_definition_id,
        @workflow_definition_revision, @workflow_execution_id, @session_name,
-       @delivered_at, @abandoned_reason, @created_at, @updated_at
+       @delivered_at, @abandoned_reason, @cleanup_phase,
+       @linked_workflow_execution_id, @cleanup_last_error,
+       @cleanup_last_error_at, @created_at, @updated_at
      )`,
   );
   const findExecutionStmt = db.prepare(
@@ -353,6 +375,17 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
     `UPDATE spec_executions
      SET state = @state,
          delivered_at = @delivered_at,
+         abandoned_reason = @abandoned_reason,
+         updated_at = @updated_at
+     WHERE id = @execution_id`,
+  );
+  const saveExecutionCleanupStateStmt = db.prepare(
+    `UPDATE spec_executions
+     SET state = @state,
+         cleanup_phase = @cleanup_phase,
+         linked_workflow_execution_id = @linked_workflow_execution_id,
+         cleanup_last_error = @cleanup_last_error,
+         cleanup_last_error_at = @cleanup_last_error_at,
          abandoned_reason = @abandoned_reason,
          updated_at = @updated_at
      WHERE id = @execution_id`,
@@ -767,6 +800,37 @@ export function createSpecDeliveryRepo(db: Db): SpecDeliveryRepo {
             execution_id: input.executionId,
             state: input.state,
             delivered_at: input.deliveredAt,
+            abandoned_reason: input.abandonedReason,
+            updated_at: input.updatedAt,
+          });
+          const execution = readOne(
+            specExecutionRowSchema,
+            "spec_execution",
+            input.executionId,
+            () => findExecutionStmt.get(input.executionId),
+          );
+          if (execution === null) {
+            throw new Error(
+              `Spec execution ${input.executionId} was not found.`,
+            );
+          }
+          return execution;
+        },
+      );
+    },
+    saveExecutionCleanupState(input) {
+      return timed(
+        "save_cleanup_state",
+        "spec_execution",
+        input.executionId,
+        () => {
+          saveExecutionCleanupStateStmt.run({
+            execution_id: input.executionId,
+            state: input.state,
+            cleanup_phase: input.cleanupPhase,
+            linked_workflow_execution_id: input.linkedWorkflowExecutionId,
+            cleanup_last_error: input.cleanupLastError,
+            cleanup_last_error_at: input.cleanupLastErrorAt,
             abandoned_reason: input.abandonedReason,
             updated_at: input.updatedAt,
           });

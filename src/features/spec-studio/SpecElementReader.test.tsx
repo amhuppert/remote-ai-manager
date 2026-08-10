@@ -1,11 +1,68 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { renderWithQuery } from "@/test/component-mocks";
+import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
+import type { SpecDetailView } from "@/lib/specs/queries";
 
 import { specElementReaderDetailFixture } from "./SpecElementReader.fixtures";
 import { SpecElementReader } from "./SpecElementReader";
 
-afterEach(cleanup);
+const PROJECT = "command-center";
+const REMOVE_PATH = "/api/specs/command-center/native-sdd/actions/draft-remove";
+
+/**
+ * The reader with the query provider its draft-removal mutation needs. Every
+ * render goes through it so the surface under test is the wired one.
+ */
+function renderReader(
+  detail: SpecDetailView,
+  kind: "requirements" | "decisions" | "tasks",
+) {
+  return renderWithQuery(
+    <SpecElementReader detail={detail} kind={kind} projectName={PROJECT} />,
+  );
+}
+
+/**
+ * The fixture's current revision reopened as an editable draft — the only
+ * state in which an element may be taken out, since approved content is
+ * immutable.
+ */
+function draftDetailFixture(): SpecDetailView {
+  const detail = specElementReaderDetailFixture();
+  const snapshot = detail.currentRevision;
+  if (snapshot === null) throw new Error("Reader fixture requires a revision");
+  detail.currentRevision = {
+    revision: {
+      ...snapshot.revision,
+      id: "revision-2",
+      number: 2,
+      state: "draft",
+      basedOnRevisionId: snapshot.revision.id,
+      proposedAt: null,
+      approvedAt: null,
+    },
+    elements: snapshot.elements.map((entry) => ({
+      ...entry,
+      version: { ...entry.version, revisionId: "revision-2" },
+    })),
+  };
+  return detail;
+}
+
+let api: FetchFixture;
+
+beforeEach(() => {
+  api = installFetchFixture();
+});
+
+afterEach(() => {
+  api.restore();
+  cleanup();
+});
 
 describe("SpecElementReader", () => {
   it("renders authored prose as markdown across requirement, decision, and task readers", async () => {
@@ -30,13 +87,9 @@ describe("SpecElementReader", () => {
       }
     }
 
-    const requirementView = render(
-      <SpecElementReader detail={detail} kind="requirements" />,
-    );
-    const decisionView = render(
-      <SpecElementReader detail={detail} kind="decisions" />,
-    );
-    const taskView = render(<SpecElementReader detail={detail} kind="tasks" />);
+    const requirementView = renderReader(detail, "requirements");
+    const decisionView = renderReader(detail, "decisions");
+    const taskView = renderReader(detail, "tasks");
 
     expect(
       await within(requirementView.container).findByText("execution", {
@@ -106,7 +159,7 @@ describe("SpecElementReader", () => {
       })),
     };
 
-    render(<SpecElementReader detail={detail} kind="requirements" />);
+    renderReader(detail, "requirements");
 
     expect(
       screen.getByRole("heading", { name: "Requirements" }),
@@ -137,12 +190,7 @@ describe("SpecElementReader", () => {
   });
 
   it("renders decision approach, rationale, and rejected alternatives", () => {
-    render(
-      <SpecElementReader
-        detail={specElementReaderDetailFixture()}
-        kind="decisions"
-      />,
-    );
+    renderReader(specElementReaderDetailFixture(), "decisions");
 
     const decision = screen.getByRole("article", {
       name: /D1 Pin the complete execution scope/i,
@@ -182,7 +230,7 @@ describe("SpecElementReader", () => {
     const detail = specElementReaderDetailFixture();
     detail.currentRevision = null;
 
-    render(<SpecElementReader detail={detail} kind="tasks" />);
+    renderReader(detail, "tasks");
 
     const task = screen.getByRole("article", {
       name: /T2 Validate immutable scope/i,
@@ -204,7 +252,7 @@ describe("SpecElementReader", () => {
     detail.currentRevision = null;
     detail.currentApprovedRevision = null;
 
-    render(<SpecElementReader detail={detail} kind="tasks" />);
+    renderReader(detail, "tasks");
 
     expect(screen.getByText("No revision available")).toBeInTheDocument();
     expect(
@@ -212,5 +260,131 @@ describe("SpecElementReader", () => {
         "A current or approved revision is required to read tasks.",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SpecElementReader draft removal", () => {
+  it("offers no removal on an immutable revision", () => {
+    const detail = specElementReaderDetailFixture();
+    detail.currentRevision = null;
+
+    renderReader(detail, "tasks");
+
+    // Approved content is immutable, so the action must not render at all —
+    // an enabled control that always refuses is worse than no control.
+    expect(
+      screen.queryByRole("button", { name: /remove/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("removes a draft element through the production draft-remove action and then names the reintroduction recovery", async () => {
+    const user = userEvent.setup();
+    api.json("POST", REMOVE_PATH, { ok: true });
+    renderReader(draftDetailFixture(), "requirements");
+
+    const requirement = screen.getByRole("article", { name: "R1 requirement" });
+    await user.click(
+      within(requirement).getByRole("button", { name: "Remove R1" }),
+    );
+    await user.click(
+      within(requirement).getByRole("button", { name: "Confirm remove R1" }),
+    );
+
+    await waitFor(() =>
+      expect(api.requestsTo("POST", REMOVE_PATH)).toHaveLength(1),
+    );
+    // The same compare-and-swap the CLI sends: the revision, the element, and
+    // the version the removal takes out.
+    expect(api.requestsTo("POST", REMOVE_PATH)[0]?.jsonBody).toEqual({
+      revisionId: "revision-2",
+      elementId: "requirement-1",
+      baseElementVersion: 1,
+    });
+
+    // The element is gone from the document, so the undo has to be named
+    // somewhere the reader can still see it.
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent("R1");
+    expect(notice).toHaveTextContent("reintroduceHistorical");
+  });
+
+  it("surfaces the atomic dangling-reference refusal and names the dangling handle", async () => {
+    const user = userEvent.setup();
+    api.reply("POST", REMOVE_PATH, {
+      status: 409,
+      json: {
+        code: "dangling_reference",
+        unmetConditions: [
+          "task-1.coveredCriterionElementIds[0] covers criterion criterion-1, which is not in this revision.",
+        ],
+        instruction:
+          "Nothing was written. Rewrite or remove task-1 in the same write: drop the entry, repoint it at an element this revision carries, or remove the source alongside its target.",
+        details: {
+          references: [
+            {
+              code: "missing_target",
+              sourceElementId: "task-1",
+              field: "coveredCriterionElementIds",
+              index: 0,
+              targetId: "criterion-1",
+              expectedKind: "criterion",
+              actualKind: null,
+              relation: "covers",
+            },
+          ],
+        },
+      },
+    });
+    renderReader(draftDetailFixture(), "requirements");
+
+    const criterion = screen.getByRole("listitem", { name: "R1.1 criterion" });
+    await user.click(
+      within(criterion).getByRole("button", { name: "Remove R1.1" }),
+    );
+    await user.click(
+      within(criterion).getByRole("button", { name: "Confirm remove R1.1" }),
+    );
+
+    const refusal = await screen.findByRole("alert");
+    // Ids address storage; the reviewer reads handles, so both ends of the
+    // dangling reference are named the way the document names them.
+    expect(refusal).toHaveTextContent("T1 covers R1.1");
+    expect(refusal).toHaveTextContent(/nothing was removed/i);
+    // Still there: the refusal is whole-or-nothing.
+    expect(
+      screen.getByRole("listitem", { name: "R1.1 criterion" }),
+    ).toBeInTheDocument();
+  });
+
+  it("passes a non-dangling refusal through in the server's own words", async () => {
+    const user = userEvent.setup();
+    api.reply("POST", REMOVE_PATH, {
+      status: 409,
+      json: {
+        code: "stale_element",
+        unmetConditions: ["R1 is at version 4; the removal named version 1."],
+        instruction:
+          "Nothing was written. Re-read the element and remove it at the version it is now at.",
+      },
+    });
+    renderReader(draftDetailFixture(), "requirements");
+
+    const requirement = screen.getByRole("article", { name: "R1 requirement" });
+    await user.click(
+      within(requirement).getByRole("button", { name: "Remove R1" }),
+    );
+    await user.click(
+      within(requirement).getByRole("button", { name: "Confirm remove R1" }),
+    );
+
+    const refusal = await screen.findByRole("alert");
+    // A stale-version refusal is not a reference problem: diagnosing it as one
+    // would print a false cause and a remedy that cannot resolve it.
+    expect(refusal).not.toHaveTextContent(/still referenced/i);
+    expect(refusal).not.toHaveTextContent(/Rewrite the referring element/i);
+    // The server authored the recovery that actually applies; it survives.
+    expect(refusal).toHaveTextContent(
+      "Re-read the element and remove it at the version it is now at.",
+    );
   });
 });

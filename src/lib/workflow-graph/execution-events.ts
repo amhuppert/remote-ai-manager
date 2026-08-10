@@ -14,6 +14,7 @@ import type {
   GraphWorkflowCharterRegisteredEvent,
   GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
+  GraphWorkflowExecutionAmendedEvent,
   GraphWorkflowContextSkippedEvent,
   GraphWorkflowRouteResolvedEvent,
   GraphWorkflowExecutionEvent,
@@ -219,6 +220,21 @@ export interface PublishLiveEditAppliedInput {
   operationCount: number;
   affectedContextIds: string[];
   source: GraphWorkflowLiveEditAppliedEvent["source"];
+}
+
+export interface PublishExecutionAmendedInput {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+  liveRevision: number;
+  reason: string;
+  actor: string;
+  policyBasis: GraphWorkflowExecutionAmendedEvent["policyBasis"];
+  previousWorkingDefinitionHash: string;
+  workingDefinitionHash: string;
+  addedContextIds: string[];
+  addedTaskIds: string[];
+  addedEdgeIds: string[];
 }
 
 export interface PublishGraphExpansionInput {
@@ -1402,6 +1418,37 @@ export function createGraphWorkflowExecutionEventPublisher(
   }
 
   /**
+   * The audited amendment of a launched delivery-plan execution (design §11).
+   * Appended in the SAME mutation as the working-definition change, so a
+   * definition that no longer hashes to its approved candidate can never exist
+   * without the row that explains it (`audited-transitions`).
+   */
+  function publishExecutionAmended(
+    input: PublishExecutionAmendedInput,
+  ): GraphWorkflowEventDelivery {
+    const event: GraphWorkflowExecutionAmendedEvent = {
+      type: "graph-workflow-execution-amended",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.executionId,
+      liveRevision: input.liveRevision,
+      reason: input.reason,
+      actor: input.actor,
+      policyBasis: input.policyBasis,
+      previousWorkingDefinitionHash: input.previousWorkingDefinitionHash,
+      workingDefinitionHash: input.workingDefinitionHash,
+      addedContextIds: input.addedContextIds,
+      addedTaskIds: input.addedTaskIds,
+      addedEdgeIds: input.addedEdgeIds,
+    };
+
+    return {
+      events: buildEvents(getNow(deps), [event]),
+      pushes: [],
+    };
+  }
+
+  /**
    * One runtime graph-expansion attempt (D4 R6). Pure derivation like every
    * other publisher here: an ACCEPTED expansion returns rows the accepting
    * mutation commits alongside the graph change, so the receipt and the change
@@ -1501,6 +1548,7 @@ export function createGraphWorkflowExecutionEventPublisher(
     publishCharterRegistered,
     publishCharterUpdated,
     publishLiveEditApplied,
+    publishExecutionAmended,
     publishGraphExpansion,
     publishPlanRepairRound,
     deliver,

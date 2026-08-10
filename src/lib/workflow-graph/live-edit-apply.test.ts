@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AgentProfileNotResolvableError } from "@/lib/agent-profiles/library-service";
 import {
+  createResolvedWorkflowDefinition,
   createWorkflowExecution,
   makeProfileSnapshot,
   makeValidatorAssignment,
@@ -85,6 +86,7 @@ interface Harness {
   beforeMutation: (() => void) | null;
   /** Simulate a concurrent edit committing against the stored execution. */
   bumpLiveRevision(): void;
+  setStatus(status: GraphWorkflowExecution["status"]): void;
 }
 
 function makeHarness(initial: GraphWorkflowExecution): Harness {
@@ -107,6 +109,9 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
     beforeMutation: null,
     bumpLiveRevision: () => {
       execution = { ...execution, liveRevision: execution.liveRevision + 1 };
+    },
+    setStatus: (status) => {
+      execution = { ...execution, status };
     },
     deps: {
       getActiveExecution: () => Promise.resolve(execution),
@@ -145,6 +150,7 @@ function makeHarness(initial: GraphWorkflowExecution): Harness {
         charterUpdated.push(input);
         return { events: [], pushes: [] };
       },
+      publishExecutionAmended: () => ({ events: [], pushes: [] }),
       getSession: () =>
         Promise.resolve({
           worktreePath: "/wt/session",
@@ -427,6 +433,126 @@ describe("applyLiveEditsToActiveExecution", () => {
     expect(
       cohort?.assignments[0]?.profileSnapshot.resolvedInstructionHash,
     ).toBe(SECURITY_V2);
+  });
+
+  it("rechecks a running-only amendment inside the mutation", async () => {
+    const harness = makeHarness(
+      createWorkflowExecution({
+        status: "running",
+        workingDefinition: createResolvedWorkflowDefinition({
+          origin: { sourceUri: "spec-plan://spec-spine/attempt-1" },
+        }),
+      }),
+    );
+    harness.beforeMutation = () => {
+      harness.setStatus("paused");
+    };
+
+    const outcome = await applyLiveEditsToActiveExecution(
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        request: makeRequest({
+          source: "cli",
+          operations: [
+            {
+              type: "add-context",
+              id: "context-amended",
+              title: "Amended context",
+              acceptanceCriteria: "The amendment is verified.",
+            },
+          ],
+          amendment: {
+            reason: "The running plan needs a verification context.",
+            actor: "agent:conversation-7 (codex)",
+            policyActor: {
+              kind: "agent",
+              conversationId: "conversation-7",
+              backend: "codex",
+            },
+            operations: [
+              {
+                type: "add-context",
+                id: "context-amended",
+                title: "Amended context",
+                acceptanceCriteria: "The amendment is verified.",
+              },
+            ],
+            addedContextIds: ["context-amended"],
+            addedTaskIds: [],
+            addedEdgeIds: [],
+            hashDefinition: () => hash("c"),
+          },
+        }),
+      },
+      harness.deps,
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || outcome.kind !== "rejected") return;
+    expect(outcome.failure).toMatchObject({ status: 409, code: "not_running" });
+    expect(harness.current().status).toBe("paused");
+    expect(harness.current().liveRevision).toBe(1);
+    expect(harness.liveEditApplied).toHaveLength(0);
+  });
+
+  it("keeps a running context's task list behind its mutability gate", async () => {
+    const initial = createWorkflowExecution({
+      status: "running",
+      workingDefinition: createResolvedWorkflowDefinition({
+        origin: { sourceUri: "spec-plan://spec-spine/attempt-1" },
+      }),
+    });
+    initial.contextStates["context-implement"] = {
+      ...initial.contextStates["context-implement"]!,
+      status: "running",
+    };
+    const harness = makeHarness(initial);
+
+    const outcome = await applyLiveEditsToActiveExecution(
+      {
+        projectPath: "/p",
+        sessionName: "s",
+        request: makeRequest({
+          source: "cli",
+          operations: [
+            {
+              type: "add-task",
+              id: "task-amended",
+              contextId: "context-implement",
+              title: "Amended task",
+              instructions: "Do work the running context did not start with.",
+            },
+          ],
+          amendment: {
+            reason: "The running plan needs another implementation task.",
+            actor: "human",
+            policyActor: { kind: "human" },
+            operations: [
+              {
+                type: "add-task",
+                id: "task-amended",
+                contextId: "context-implement",
+                title: "Amended task",
+                instructions: "Do work the running context did not start with.",
+              },
+            ],
+            addedContextIds: [],
+            addedTaskIds: ["task-amended"],
+            addedEdgeIds: [],
+            hashDefinition: () => hash("d"),
+          },
+        }),
+      },
+      harness.deps,
+    );
+
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || outcome.kind !== "rejected") return;
+    expect(outcome.failure.code).toBe("requires_pause");
+    expect(harness.current().workingDefinition.tasks).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "task-amended" })]),
+    );
   });
 
   it("reports a missing active execution distinctly", async () => {

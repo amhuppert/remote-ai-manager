@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { SpecDetailView } from "@/lib/specs/queries";
+import type { DeliveryPlanReviewView } from "@/lib/specs/delivery-plan-review";
 import type {
   SpecAuthoringStage,
   SpecRevision,
@@ -12,10 +13,12 @@ import type {
 import {
   SPEC_CONTROLS_FIXTURE_NOW,
   specControlsDetailFixture,
+  strandedProposalDetailFixture,
 } from "./SpecControls.fixtures";
 import SpecPhaseStepper from "./SpecPhaseStepper";
+import { reviewView } from "./delivery-plan-review.fixtures";
 
-const STAGES = ["requirements", "design", "plan"] as const;
+const STAGES = ["requirements", "design"] as const;
 
 function revisionFor(
   base: SpecRevision,
@@ -36,7 +39,7 @@ function revisionFor(
 }
 
 function authoringDetail(
-  stage: SpecAuthoringStage,
+  stage: (typeof STAGES)[number],
   state: "draft" | "proposed",
 ): SpecDetailView {
   const base = specControlsDetailFixture();
@@ -98,6 +101,41 @@ function initializedDetail(): SpecDetailView {
   };
 }
 
+function approvedDesignDetail(): SpecDetailView {
+  const base = specControlsDetailFixture();
+  const template = base.revisions[0];
+  const elements = base.currentRevision?.elements;
+  if (template === undefined || elements === undefined) {
+    throw new Error("Spec phase fixture is missing its revision snapshot");
+  }
+  const approved = revisionFor(template, 1, "design", "approved");
+  return {
+    ...base,
+    revisions: [approved],
+    baseRevision: null,
+    currentRevision: { revision: approved, elements },
+    currentApprovedRevision: { revision: approved, elements },
+    executionRevisionSnapshots: [],
+    status: { ...base.status, phase: { primary: "approved" } },
+  };
+}
+
+function approvedPlanReview(
+  status: "approved" | "parked" | "launched" = "approved",
+): DeliveryPlanReviewView {
+  return reviewView({
+    attempt: { status },
+    approval: {
+      snapshotId: "snapshot-2",
+      candidateId: "candidate-2",
+      planHash: "sha256:plan-2",
+      compiledDefinitionHash: "sha256:compiled-2",
+      approvedAt: SPEC_CONTROLS_FIXTURE_NOW,
+      approvedBy: { kind: "human" },
+    },
+  });
+}
+
 function runningDetail(): SpecDetailView {
   const detail = specControlsDetailFixture("running");
   const execution = detail.executions[0];
@@ -142,7 +180,9 @@ function step(name: string): HTMLElement {
 
 describe("SpecPhaseStepper", () => {
   it("presents initialized specs as an ordered, horizontally scrollable lifecycle", () => {
-    render(<SpecPhaseStepper detail={initializedDetail()} />);
+    render(
+      <SpecPhaseStepper detail={initializedDetail()} deliveryPlan={null} />,
+    );
 
     const region = screen.getByRole("region", {
       name: "Spec lifecycle progress",
@@ -157,9 +197,15 @@ describe("SpecPhaseStepper", () => {
     expect(step("Requirements")).toHaveAttribute("data-state", "draft");
     expect(step("Requirements")).toHaveTextContent("agent drafting");
     expect(step("Design")).toHaveTextContent("starts after requirements");
-    expect(step("Execute")).toHaveTextContent("locked until plan approved");
+    expect(step("Delivery plan")).toHaveTextContent("starts after design");
+    expect(step("Execute")).toHaveTextContent(
+      "locked until delivery plan approved",
+    );
     expect(screen.getByText(/Spec initialized/)).toHaveTextContent(
       "The agent drafts the requirements contract first",
+    );
+    expect(screen.getByText(/Spec initialized/)).toHaveTextContent(
+      "design and delivery planning stay locked",
     );
   });
 
@@ -168,13 +214,14 @@ describe("SpecPhaseStepper", () => {
     ["requirements", "proposed", "Requirements", "review", "rev 1 in review"],
     ["design", "draft", "Design", "draft", "rev 2 drafting"],
     ["design", "proposed", "Design", "review", "rev 2 in review"],
-    ["plan", "draft", "Plan", "draft", "rev 3 drafting"],
-    ["plan", "proposed", "Plan", "review", "rev 3 in review"],
   ] as const)(
     "derives %s %s progress from the revision history",
     (stage, revisionState, currentLabel, visualState, statusText) => {
       render(
-        <SpecPhaseStepper detail={authoringDetail(stage, revisionState)} />,
+        <SpecPhaseStepper
+          detail={authoringDetail(stage, revisionState)}
+          deliveryPlan={null}
+        />,
       );
 
       const currentStep = step(currentLabel);
@@ -185,24 +232,65 @@ describe("SpecPhaseStepper", () => {
       if (stage !== "requirements") {
         expect(step("Requirements")).toHaveAttribute("data-state", "done");
       }
-      if (stage === "plan") {
-        expect(step("Design")).toHaveAttribute("data-state", "done");
-      }
     },
   );
 
-  it("makes an approved plan ready for scoped execution", () => {
-    render(<SpecPhaseStepper detail={specControlsDetailFixture()} />);
+  it("keeps an approved legacy Plan revision in history without unlocking execution", () => {
+    render(
+      <SpecPhaseStepper
+        detail={specControlsDetailFixture()}
+        deliveryPlan={null}
+      />,
+    );
 
     expect(step("Requirements")).toHaveAttribute("data-state", "done");
     expect(step("Design")).toHaveAttribute("data-state", "done");
-    expect(step("Plan")).toHaveTextContent("approved rev 1 · 1 task");
+    expect(step("Delivery plan")).toHaveTextContent("open an attempt");
+    expect(step("Execute")).toHaveAttribute("data-state", "locked");
+    expect(step("Execute")).toHaveTextContent(
+      "locked until delivery plan approved",
+    );
+    expect(screen.getByText(/Delivery planning is next/)).toBeVisible();
+  });
+
+  it.each([
+    ["draft", "draft", "3 tasks · drafting"],
+    ["proposed", "review", "3 tasks · candidate in review"],
+  ] as const)(
+    "shows a %s DeliveryPlanAttempt in the delivery-plan slot",
+    (status, state, sublabel) => {
+      render(
+        <SpecPhaseStepper
+          detail={approvedDesignDetail()}
+          deliveryPlan={reviewView({ attempt: { status } })}
+        />,
+      );
+
+      expect(step("Delivery plan")).toHaveAttribute("data-state", state);
+      expect(step("Delivery plan")).toHaveAttribute("aria-current", "step");
+      expect(step("Delivery plan")).toHaveTextContent(sublabel);
+      expect(step("Execute")).toHaveAttribute("data-state", "locked");
+    },
+  );
+
+  it("unlocks execution only for the approved delivery-plan candidate", () => {
+    render(
+      <SpecPhaseStepper
+        detail={approvedDesignDetail()}
+        deliveryPlan={approvedPlanReview()}
+      />,
+    );
+
+    expect(step("Delivery plan")).toHaveAttribute("data-state", "done");
+    expect(step("Delivery plan")).toHaveTextContent(
+      "candidate approved · 3 tasks",
+    );
     expect(step("Execute")).toHaveAttribute("data-state", "ready");
     expect(step("Execute")).toHaveAttribute("aria-current", "step");
-    expect(step("Execute")).toHaveTextContent("ready — scope selection");
+    expect(step("Execute")).toHaveTextContent("ready — launch candidate");
     expect(
-      screen.getByText(/All authoring stages are approved/),
-    ).toHaveTextContent("revision 1");
+      screen.getByText(/Delivery plan candidate is approved/),
+    ).toBeVisible();
   });
 
   it("distinguishes execution definition review from a running workflow", () => {
@@ -225,6 +313,26 @@ describe("SpecPhaseStepper", () => {
     expect(screen.getByText(/Execution is running/)).toHaveTextContent(
       "pinned revision 1",
     );
+  });
+
+  it("keeps a newer delivery-plan draft distinct from the active execution's launched attempt", () => {
+    render(
+      <SpecPhaseStepper
+        detail={runningDetail()}
+        deliveryPlan={reviewView({
+          attempt: {
+            id: "attempt-2",
+            status: "draft",
+            launchedExecutionId: null,
+          },
+        })}
+      />,
+    );
+
+    expect(step("Delivery plan")).toHaveAttribute("data-state", "draft");
+    expect(step("Delivery plan")).toHaveTextContent("3 tasks · drafting");
+    expect(step("Execute")).toHaveTextContent("running · rev 1");
+    expect(step("Execute")).not.toHaveTextContent("3 tasks");
   });
 
   it("moves a completed workflow to the delivery step while its session awaits merge", () => {
@@ -382,11 +490,23 @@ describe("SpecPhaseStepper", () => {
       />,
     );
 
-    expect(step("Execute")).toHaveAttribute("data-state", "abandoned");
-    expect(step("Execute")).toHaveAttribute("aria-current", "step");
+    expect(step("Delivery plan")).toHaveAttribute("data-state", "abandoned");
+    expect(step("Delivery plan")).toHaveAttribute("aria-current", "step");
+    expect(step("Execute")).toHaveAttribute("data-state", "locked");
     expect(step("Deliver")).toHaveAttribute("data-state", "locked");
     expect(screen.getByText(/Abandoned:/)).toHaveTextContent(
       "Superseded by the platform contract.",
     );
+  });
+
+  it("names a stranded proposal instead of describing it as awaiting sign-off", () => {
+    render(<SpecPhaseStepper detail={strandedProposalDetailFixture()} />);
+
+    const context = screen.getByText(/revision 2/i);
+    expect(context).toHaveTextContent("revision 3");
+    expect(context).toHaveTextContent(/dismiss/i);
+    // The strip must not promise a sign-off that can never happen, nor claim
+    // the next stage is locked when the approved revision 3 already unlocked it.
+    expect(context).not.toHaveTextContent("awaits review");
   });
 });

@@ -105,8 +105,7 @@ function task(
   };
 }
 
-/** Fast-path collapses the authoring gates, so a draft opens at the plan stage
- * and every element kind — tasks included — is admissible from the first save. */
+/** Fast-path collapses active evergreen authoring into the design stage. */
 function createSpec(
   initialElement: Parameters<
     AuthoringService["createSpec"]
@@ -121,6 +120,12 @@ function createSpec(
     initialElement,
     actor: ACTOR,
   });
+}
+
+function markLegacyPlanDraft(revisionId: string) {
+  db.prepare(
+    "UPDATE spec_revisions SET authoring_stage = 'plan' WHERE id = ?",
+  ).run(revisionId);
 }
 
 async function refusalOf(act: Promise<unknown>) {
@@ -141,6 +146,7 @@ async function seedPlanDraft() {
     position: 0,
     payload: requirement("Discovered work stays traceable."),
   });
+  markLegacyPlanDraft(created.draft.id);
   const batch = await service.upsertDraftElements({
     specId: created.spec.id,
     revisionId: created.draft.id,
@@ -170,16 +176,14 @@ async function seedPlanDraft() {
 }
 
 describe("createSpec reference guard", () => {
-  it("refuses a first save whose task covers a criterion the revision does not carry, and creates no spec", async () => {
+  it("refuses a first save whose criterion parent is missing, and creates no spec", async () => {
     const refusal = await refusalOf(
       createSpec({
-        elementId: "task-1",
-        kind: "task",
-        parentElementId: null,
+        elementId: "criterion-1",
+        kind: "criterion",
+        parentElementId: "requirement-typo",
         position: 0,
-        payload: task("Cover the missing criterion", {
-          coveredCriterionElementIds: ["criterion-typo"],
-        }),
+        payload: criterion("The missing requirement is refused."),
       }),
     );
 
@@ -187,13 +191,13 @@ describe("createSpec reference guard", () => {
     expect(refusal.details?.references).toEqual([
       {
         code: "missing_target",
-        sourceElementId: "task-1",
-        field: "coveredCriterionElementIds",
+        sourceElementId: "criterion-1",
+        field: "parentElementId",
         index: 0,
-        targetId: "criterion-typo",
-        expectedKind: "criterion",
+        targetId: "requirement-typo",
+        expectedKind: "requirement",
         actualKind: null,
-        relation: "covers",
+        relation: "is contained by",
       },
     ]);
     await expect(
@@ -206,14 +210,21 @@ describe("createSpec reference guard", () => {
 
   it("keeps empty id arrays legal on the first save", async () => {
     const created = await createSpec({
-      elementId: "task-1",
-      kind: "task",
+      elementId: "decision-1",
+      kind: "decision",
       parentElementId: null,
       position: 0,
-      payload: task("Capture discovered work"),
+      payload: {
+        kind: "decision",
+        title: "Capture discovered work",
+        chosenApproach: "Keep the decision independent.",
+        rejectedAlternatives: [],
+        reason: "No requirement trace is needed.",
+        tracedRequirementElementIds: [],
+      },
     });
 
-    expect(created.element.id).toBe("task-1");
+    expect(created.element.id).toBe("decision-1");
   });
 });
 
@@ -411,6 +422,7 @@ describe("upsertDraftElements reference guard", () => {
         },
         slug,
       );
+      markLegacyPlanDraft(created.draft.id);
       const elements = [
         {
           elementId: `${slug}-task`,
@@ -498,6 +510,40 @@ describe("upsertDraftElements reference guard", () => {
       "criterion-1",
       "task-1",
     ]);
+  });
+
+  it("names the dangling reference by handle when a batch removal would strand it", async () => {
+    const created = await seedPlanDraft();
+
+    const result = await service.upsertDraftElements({
+      specId: created.spec.id,
+      revisionId: created.draft.id,
+      elements: [],
+      removals: [{ elementId: "criterion-1", baseElementVersion: 1 }],
+      actor: ACTOR,
+    });
+
+    // Ids address storage; handles address the document the author wrote, so a
+    // refusal that only quoted ids would make the author re-read the spec to
+    // learn which handle it is talking about.
+    expect(result).toMatchObject({
+      ok: false,
+      refusals: [
+        {
+          input: "removal",
+          index: 0,
+          code: "dangling_reference",
+          danglingReferences: [
+            {
+              sourceElementId: "task-1",
+              sourceHandle: "T1",
+              targetId: "criterion-1",
+              targetHandle: "R1.1",
+            },
+          ],
+        },
+      ],
+    });
   });
 
   it("removes a source and the referent it depends on together in one batch", async () => {

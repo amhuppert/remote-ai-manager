@@ -327,7 +327,10 @@ function projectPendingApprovals(
   // R11.5: under the combined dial the sign-off act is itself the approval of
   // every item, and `approvalUnmetConditions` asks for no element approval. A
   // subject listed here would send the caller at an act the policy collapsed.
-  const collapsed = authoringApprovalsCollapseIntoSignOff(input.policy);
+  const collapsed = authoringApprovalsCollapseIntoSignOff(
+    input.policy,
+    snapshot.revision.authoringStage,
+  );
   const subjectPending = (gate: SpecGate) => !collapsed && gatePending(gate);
   const handles = new Map(
     snapshot.elements.map((row) => [
@@ -509,7 +512,10 @@ function projectPendingBlock(
   // R11.5: with the approvals collapsed, no subject was ever approved
   // individually, so saying they all were would describe acts that never
   // happened.
-  const collapsed = authoringApprovalsCollapseIntoSignOff(input.policy);
+  const collapsed = authoringApprovalsCollapseIntoSignOff(
+    input.policy,
+    input.snapshot?.revision.authoringStage,
+  );
   const display = draft
     ? `${revisionLabel} is an open draft; proposing it opens the review its consulted gates ask for`
     : first === undefined

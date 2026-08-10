@@ -6,9 +6,13 @@ import { renderWithQuery } from "@/test/component-mocks";
 import { installFetchFixture, type FetchFixture } from "@/test/fetch-fixture";
 import type { SpecDetailView } from "@/lib/specs/queries";
 
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
+import {
+  specControlsDetailFixture,
+  strandedProposalDetailFixture,
+} from "./SpecControls.fixtures";
 import SpecDetailPage, {
   detailStatePresentation,
+  SpecDetailContent,
   SpecRevisionBanner,
 } from "./SpecDetailPage";
 
@@ -103,6 +107,66 @@ describe("SpecRevisionBanner approvals summary", () => {
   });
 });
 
+describe("stranded proposal reachability", () => {
+  let api: FetchFixture;
+
+  beforeEach(() => {
+    api = installFetchFixture();
+    api.json("GET", "/api/specs/command-center/native-sdd/lint", {
+      revisionId: "revision-1",
+      findings: [],
+    });
+    api.reply("GET", "/api/specs/command-center/native-sdd/plan/review", {
+      status: 404,
+      json: {
+        error:
+          "This spec has no delivery plan attempt. Open one with cctl spec plan open native-sdd.",
+      },
+    });
+  });
+
+  afterEach(() => api.restore());
+
+  it("routes an approved legacy head without an attempt to Delivery plan", async () => {
+    renderWithQuery(
+      <SpecDetailContent
+        detail={specControlsDetailFixture()}
+        projectName="command-center"
+        requestedSlug="native-sdd"
+        view="overview"
+        onViewChange={() => {}}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("link", { name: "Open delivery plan" }),
+    ).toHaveAttribute("href", `${DETAIL_HREF}?view=plan`);
+  });
+
+  it("routes the Overview primary action to the surface that can act on it", () => {
+    renderWithQuery(
+      <SpecDetailContent
+        detail={strandedProposalDetailFixture()}
+        projectName="command-center"
+        requestedSlug="native-sdd"
+        view="overview"
+        onViewChange={() => {}}
+      />,
+    );
+
+    // The approved head's lifecycle CTA addresses delivery planning, which
+    // leaves stranded revision 2 without a reachable act unless it takes
+    // precedence here (#50).
+    const action = screen.getByRole("link", {
+      name: /Dismiss stranded revision 2/i,
+    });
+    expect(action).toHaveAttribute(
+      "href",
+      `${DETAIL_HREF}?view=review&revision=revision-2`,
+    );
+  });
+});
+
 describe("delivery deep-link cold load", () => {
   let api: FetchFixture;
   const scrollIntoView = vi.fn();
@@ -139,6 +203,7 @@ describe("delivery deep-link cold load", () => {
       ok: true,
       checkedRevisionIds: [],
       mismatches: [],
+      consistencyFindings: [],
     });
 
     renderWithQuery(<SpecDetailPage />);

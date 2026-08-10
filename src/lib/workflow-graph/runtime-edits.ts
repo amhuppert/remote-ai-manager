@@ -409,8 +409,23 @@ export type ApplyLiveExecutionEditsResult =
  * the context is running, active, and `mutability.allowAgentTaskAdd`. Absent for
  * the operator (CLI/UI) entry points, which honor the full quiescence policy.
  */
+/** The ops the audited amendment may carry — additive, and nothing else. */
+const ADDITIVE_AMENDMENT_OP_TYPES: ReadonlySet<
+  WorkflowLiveEditOperation["type"]
+> = new Set(["add-context", "add-task", "add-edge"]);
+
 export interface LiveEditOptions {
   laneAgentContextId?: string;
+  /**
+   * The audited amendment entry point (`cctl workflow live amend`), which
+   * carries add-context/add-task/add-edge and nothing else. Structural additions
+   * may extend the future graph while the run is active. Task additions still
+   * honor the target context's own mutability gate, and the frozen-past and
+   * frontier checks remain unchanged.
+   */
+  additiveAmendment?: boolean;
+  /** Launch-snapshotted DPA config used instead of mutable global defaults. */
+  amendmentContextSeed?: ResolvedContextConfig;
   /**
    * The narrow running-time structural exception (D4 R6.5). Structural edits
    * are pause-only for operators, and stay that way: exactly two SERVER-DERIVED
@@ -475,6 +490,8 @@ interface LiveEditRejection {
 
 interface LiveEditOpContext {
   quiescent: boolean;
+  additiveAmendment: boolean;
+  amendmentContextSeed: ResolvedContextConfig | undefined;
   deps: LiveEditDeps;
   affectedContextIds: Set<string>;
   validationTouchedContextIds: Set<string>;
@@ -617,11 +634,12 @@ function liveEditTouchedPaths(
       return [
         [
           "edges",
-          mintLiveEdgeId(
-            execution.workingDefinition.edges,
-            operation.sourceContextId,
-            operation.targetContextId,
-          ),
+          operation.id ??
+            mintLiveEdgeId(
+              execution.workingDefinition.edges,
+              operation.sourceContextId,
+              operation.targetContextId,
+            ),
         ],
       ];
     case "update-edge":
@@ -715,6 +733,14 @@ function runLiveEditOps(
   options: LiveEditOptions,
 ): LiveEditOpsResult {
   const editability = classifyExecutionEditability(execution);
+  // Fail-safe: the amendment bypass is only sound because the operand schema
+  // admits nothing but additions. A non-additive op arriving under the flag
+  // would be a wiring bug, so refuse rather than widen the bypass silently.
+  const additiveAmendment =
+    options.additiveAmendment === true &&
+    request.operations.every((operation) =>
+      ADDITIVE_AMENDMENT_OP_TYPES.has(operation.type),
+    );
   const quiescent = editability.kind === "editable" && editability.quiescent;
 
   // R11.1 — loop composition beats every other verdict on an agent-initiated
@@ -741,6 +767,8 @@ function runLiveEditOps(
 
   const opContext: LiveEditOpContext = {
     quiescent,
+    additiveAmendment,
+    amendmentContextSeed: options.amendmentContextSeed,
     deps,
     affectedContextIds,
     validationTouchedContextIds,
@@ -754,10 +782,12 @@ function runLiveEditOps(
 
   for (let index = 0; index < request.operations.length; index += 1) {
     const operation = request.operations[index]!;
-    const locked = findLockedRegionTouch(
-      next.workingDefinition,
-      liveEditTouchedPaths(next, operation),
-    );
+    const locked = additiveAmendment
+      ? null
+      : findLockedRegionTouch(
+          next.workingDefinition,
+          liveEditTouchedPaths(next, operation),
+        );
     if (locked) {
       return {
         ok: false,
@@ -767,7 +797,7 @@ function runLiveEditOps(
             field: locked.lockedPath,
           }),
         ],
-        instruction: regionLockedInstruction(locked.sourceUri),
+        instruction: `${regionLockedInstruction(locked)} This refusal applies to active execution "${next.id}".`,
       };
     }
     const contractDecision = deps.executionContract?.validateLiveEdit(
@@ -2340,7 +2370,7 @@ function requireQuiescent(
   ctx: LiveEditOpContext,
   index: number,
 ): LiveEditRejection | null {
-  if (ctx.quiescent) return null;
+  if (ctx.quiescent || ctx.additiveAmendment) return null;
   return rejectLiveEdit(
     "requires_pause",
     liveEditIssue(
@@ -2428,7 +2458,10 @@ function applyAddContext(
     }
     base = resolvedConfigFromContext(source, ctx.deps);
   } else {
-    base = ctx.deps.resolvedGlobalDefaults();
+    base =
+      ctx.amendmentContextSeed === undefined
+        ? ctx.deps.resolvedGlobalDefaults()
+        : structuredClone(ctx.amendmentContextSeed);
   }
 
   // Explicit op fields override the seeded base. The charter is workflow-global
@@ -3191,12 +3224,29 @@ function applyAddEdge(
     );
   }
 
+  if (
+    op.id !== undefined &&
+    next.workingDefinition.edges.some((edge) => edge.id === op.id)
+  ) {
+    return rejectLiveEdit(
+      "invalid_edit",
+      liveEditIssue(
+        "edge-id-already-exists",
+        `Edge id "${op.id}" already exists`,
+        index,
+        { contextId: op.targetContextId },
+      ),
+    );
+  }
+
   next.workingDefinition.edges.push({
-    id: mintLiveEdgeId(
-      next.workingDefinition.edges,
-      op.sourceContextId,
-      op.targetContextId,
-    ),
+    id:
+      op.id ??
+      mintLiveEdgeId(
+        next.workingDefinition.edges,
+        op.sourceContextId,
+        op.targetContextId,
+      ),
     sourceContextId: op.sourceContextId,
     targetContextId: op.targetContextId,
     // Guard legality (source outputSchema present, subset-valid document,

@@ -41,7 +41,6 @@ import type {
   CriterionElementPayload,
   RequirementElementPayload,
   SpecEventRow,
-  TaskElementPayload,
 } from "./schemas";
 
 const PROJECT_PATH = "/repos/native-sdd-reintroduction";
@@ -104,18 +103,6 @@ function criterion(text: string): CriterionElementPayload {
     kind: "criterion",
     text,
     validationStrategy: { kinds: ["test_run"] },
-  };
-}
-
-function task(title: string): TaskElementPayload {
-  return {
-    kind: "task",
-    title,
-    instructions: "Implement the work.",
-    tracedRequirementElementIds: [],
-    tracedDecisionElementIds: [],
-    coveredCriterionElementIds: [],
-    dependsOnTaskElementIds: [],
   };
 }
 
@@ -356,9 +343,16 @@ describe("historical element reintroduction (ticket #42)", () => {
         specId: world.specId,
         revisionId: world.followUp.id,
         elementId: ORPHAN_ID,
-        kind: "task",
+        kind: "decision",
         parentElementId: null,
-        payload: task("Returning as something else entirely."),
+        payload: {
+          kind: "decision",
+          title: "Returning as something else entirely",
+          chosenApproach: "Reuse the historical identity.",
+          rejectedAlternatives: [],
+          reason: "Exercise the kind-change guard.",
+          tracedRequirementElementIds: [],
+        },
         baseElementVersion: null,
         reintroduceHistorical: true,
         actor: ACTOR,
@@ -369,7 +363,7 @@ describe("historical element reintroduction (ticket #42)", () => {
       code: "historical_element_id",
       reason: "kind_changed",
       kind: "requirement",
-      attemptedKind: "task",
+      attemptedKind: "decision",
     });
     expect(
       historicalElementRefusal(error as SpecHistoricalElementError).instruction,

@@ -434,7 +434,18 @@ export function buildSpecHistory(
         label: `${revisionLabel} proposed`,
         detail: "The revision entered semantic review.",
         occurredAt: revision.proposedAt,
-        href: null,
+        // History is where a reader meets a proposal they cannot see anywhere
+        // else, so the row is the way back to the surface that can act on it
+        // (#50) — not a dead line of text. Only while it is still live: Review
+        // selects out of the live-proposals projection, so a row linked after
+        // the proposal was dismissed or sent back would land on a different
+        // proposal or on an empty tab. A link that lies is the #50 shape
+        // again, so an ended proposal keeps its row and loses its link.
+        href: detail.liveProposals.some(
+          (entry) => entry.revision.id === revision.id,
+        )
+          ? reviewHref(projectName, detail.spec.slug, revision.id)
+          : null,
         priority: 20,
       });
       continue;
@@ -656,6 +667,10 @@ function executionHistoryPresentation(
       return { label: "Execution delivered", tone: "green" };
     case "abandoned":
       return { label: "Execution abandoned", tone: "red" };
+    case "abandoning":
+      // Amber, not red: cleanup is in flight and may still be waiting on the
+      // linked workflow, so this is an attention state rather than a settled one.
+      return { label: "Execution abandonment in progress", tone: "amber" };
   }
 }
 
@@ -706,6 +721,15 @@ function admissionBasisLabel(
 
 function projectNameFor(detail: SpecDetailView): string {
   return detail.spec.projectPath.split("/").filter(Boolean).at(-1) ?? "project";
+}
+
+/** The Review entry for one revision — the surface that can act on it. */
+function reviewHref(
+  projectName: string,
+  slug: string,
+  revisionId: string,
+): string {
+  return `/specs/${encodeURIComponent(projectName)}/${encodeURIComponent(slug)}?view=review&revision=${encodeURIComponent(revisionId)}`;
 }
 
 function elementHref(

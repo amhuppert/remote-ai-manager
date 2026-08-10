@@ -1,9 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fn, userEvent, within } from "storybook/test";
 
-import type { SpecDetailView } from "@/lib/specs/queries";
+import { specQueries, type SpecDetailView } from "@/lib/specs/queries";
 
-import { specControlsDetailFixture } from "./SpecControls.fixtures";
+import {
+  liveProposalsFixture,
+  specControlsDetailFixture,
+  specPlanPreviewFixture,
+} from "./SpecControls.fixtures";
 import SpecReviewMode from "./SpecReviewMode";
 
 const NOW = "2026-07-18T12:00:00.000Z";
@@ -84,11 +89,20 @@ function reviewDetailFixture(blocked = false): SpecDetailView {
     },
   });
 
+  const currentSnapshot = {
+    revision: currentRevision,
+    elements: currentElements,
+  };
+
   return {
     ...detail,
     revisions: [baseSnapshot.revision, currentRevision],
+    liveProposals: liveProposalsFixture(
+      [baseSnapshot.revision, currentRevision],
+      [baseSnapshot, currentSnapshot],
+    ),
     baseRevision: baseSnapshot,
-    currentRevision: { revision: currentRevision, elements: currentElements },
+    currentRevision: currentSnapshot,
     currentApprovedRevision: baseSnapshot,
     approvals: blocked
       ? [
@@ -232,35 +246,76 @@ function fastPathReviewDetailFixture(): SpecDetailView {
 
 function deletionReviewDetailFixture(): SpecDetailView {
   const detail = reviewDetailFixture();
-  if (detail.currentRevision === null) return detail;
+  if (detail.currentRevision === null || detail.baseRevision === null) {
+    return detail;
+  }
+  const shortened = {
+    ...detail.currentRevision,
+    elements: detail.currentRevision.elements.map((entry) =>
+      entry.element.id === "requirement-1" &&
+      entry.version.payload.kind === "requirement"
+        ? {
+            ...entry,
+            version: {
+              ...entry.version,
+              payload: {
+                ...entry.version.payload,
+                statement: "Every execution.",
+              },
+              payloadHash: "requirement-deletion-hash",
+            },
+          }
+        : entry,
+    ),
+  };
   return {
     ...detail,
-    currentRevision: {
-      ...detail.currentRevision,
-      elements: detail.currentRevision.elements.map((entry) =>
-        entry.element.id === "requirement-1" &&
-        entry.version.payload.kind === "requirement"
-          ? {
-              ...entry,
-              version: {
-                ...entry.version,
-                payload: {
-                  ...entry.version.payload,
-                  statement: "Every execution.",
-                },
-                payloadHash: "requirement-deletion-hash",
-              },
-            }
-          : entry,
-      ),
-    },
+    // The projection carries the snapshot the review renders, so a story that
+    // edits the revision has to hand the edited snapshot to both.
+    liveProposals: liveProposalsFixture(detail.revisions, [
+      detail.baseRevision,
+      shortened,
+    ]),
+    currentRevision: shortened,
   };
 }
+
+const PROJECT_NAME = "command-center";
+
+/**
+ * Review compiles a plan preview for the proposal it shows, and Storybook has
+ * no server to compile it. Seeding the cache with the payload the route
+ * returns is what keeps these stories showing the surface rather than a
+ * preview failure — every story here reviews the same revision 2.
+ */
+function storyQueryClient(): QueryClient {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        staleTime: Number.POSITIVE_INFINITY,
+        refetchOnWindowFocus: false,
+      },
+      mutations: { retry: false },
+    },
+  });
+  const revision = reviewDetailFixture().currentRevision?.revision;
+  if (revision !== undefined) {
+    client.setQueryData(
+      specQueries.planPreview(PROJECT_NAME, "native-sdd", revision.id).queryKey,
+      specPlanPreviewFixture(revision),
+    );
+  }
+  return client;
+}
+
+const previewSeededClient = storyQueryClient();
 
 const meta = {
   title: "Specs/Studio/ReviewMode",
   component: SpecReviewMode,
   parameters: { a11y: { test: "error" }, layout: "fullscreen" },
+  // The layout decorator stays first (innermost); the query provider wraps it.
   decorators: [
     (Story) => (
       <main className="h-screen overflow-y-auto bg-bg-void text-text-primary">
@@ -270,10 +325,15 @@ const meta = {
         </div>
       </main>
     ),
+    (Story) => (
+      <QueryClientProvider client={previewSeededClient}>
+        <Story />
+      </QueryClientProvider>
+    ),
   ],
   args: {
     detail: reviewDetailFixture(),
-    projectName: "command-center",
+    projectName: PROJECT_NAME,
     highlightedChangeId: null,
     onComplete: fn(),
   },
@@ -292,6 +352,16 @@ export const SemanticDeletion: Story = {
 
 export const FastPathCombined: Story = {
   args: { detail: fastPathReviewDetailFixture() },
+};
+
+/**
+ * The compiled plan the reviewed revision would launch, on the same surface as
+ * the change set that decides it.
+ */
+export const CompiledPlanPreview: Story = {
+  play: async ({ canvasElement }) => {
+    within(canvasElement).getByTestId("plan-preview-panel").scrollIntoView();
+  },
 };
 
 export const RawDiff: Story = {

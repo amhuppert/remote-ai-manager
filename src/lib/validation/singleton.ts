@@ -13,6 +13,7 @@ import {
   type GraphWorkflowCommandSelector,
 } from "@/lib/workflow-graph/config-schemas";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
+import { autoReleasesSlot } from "@/lib/workflow-graph/lifecycle-classifier";
 import { expandCommandSelector } from "@/lib/workflow-graph/resolve-config";
 import type {
   GraphWorkflowAgentSessionState,
@@ -71,6 +72,20 @@ function findLaneForConversation(
   if (matches.length === 0) return { kind: "none" };
   if (matches.length > 1) return { kind: "ambiguous" };
   return { kind: "unique", lane: matches[0]! };
+}
+
+/**
+ * Whether the execution has spawned no lane conversation at all — a run parked
+ * before its first iteration (awaiting definition approval, prelaunch) or a
+ * legacy non-spec run. Lane classification has nothing to classify in that
+ * state, which is what makes the owner bypass necessary rather than a loophole:
+ * as soon as ONE lane exists, the ordinary fail-closed rules apply again.
+ */
+function hasNoLaneConversations(execution: GraphWorkflowExecution): boolean {
+  for (const perContext of Object.values(execution.laneStates)) {
+    if (Object.keys(perContext).length > 0) return false;
+  }
+  return true;
 }
 
 /**
@@ -156,6 +171,27 @@ export function createProductionValidationCallerResolver(
         };
       }
 
+      // Lifecycle contract (design §10): a status that auto-releases the slot
+      // has also released validation ownership. Such a row is normally already
+      // archived — this is the legacy/pre-archive case — and gating callers on
+      // it would keep a finished run blocking the session forever. A resumable
+      // `halted`/`paused` run RETAINS ownership and falls through to the
+      // fail-closed lane rules below, because it can still resume.
+      if (autoReleasesSlot(execution.status)) {
+        if (ref.claimedWorkflow) {
+          return ambiguous(
+            "claimed workflow identity does not match an active execution",
+          );
+        }
+        return {
+          kind: "session",
+          worktreePath: session.worktreePath,
+          sessionName,
+          branchName: session.branchName,
+          targetBranch: session.targetBranch,
+        };
+      }
+
       if (!conversationId) {
         return ambiguous(
           "an active execution requires a conversation id for lane policy resolution",
@@ -168,6 +204,26 @@ export function createProductionValidationCallerResolver(
         );
       }
       if (lookup.kind === "none") {
+        // Zero-lane bypass. An execution that has spawned no lane cannot
+        // classify anyone, yet it holds the slot — the state that stranded
+        // planners before. Exactly ONE identity is admitted: the
+        // ownerConversationId captured server-side at the start seam. Everyone
+        // else, and every legacy execution whose owner is null, stays refused,
+        // so the bypass can never widen into "unowned means open".
+        if (
+          hasNoLaneConversations(execution) &&
+          !ref.claimedWorkflow &&
+          execution.ownerConversationId !== null &&
+          execution.ownerConversationId === conversationId
+        ) {
+          return {
+            kind: "session",
+            worktreePath: session.worktreePath,
+            sessionName,
+            branchName: session.branchName,
+            targetBranch: session.targetBranch,
+          };
+        }
         return ambiguous(
           `conversation "${conversationId}" does not map to a lane in the active execution`,
         );

@@ -10,6 +10,7 @@
 import type {
   CommandHelpEntry,
   FlagSpec,
+  GeneratedReferenceSection,
   HelpExample,
   RelatedRef,
   SkillRef,
@@ -68,6 +69,17 @@ function examplesBlock(examples: HelpExample[]): string | null {
   return `examples:\n${lines.join("\n")}`;
 }
 
+function generatedReferenceBlock(
+  sections: readonly GeneratedReferenceSection[] | undefined,
+): string | null {
+  if (sections === undefined || sections.length === 0) return null;
+  const lines = sections.flatMap((section) => [
+    `  ${section.title}`,
+    ...section.lines.map((line) => `    ${line}`),
+  ]);
+  return `reference:\n${lines.join("\n")}`;
+}
+
 function contextBlock(
   entry: CommandHelpEntry,
   extraBlocks: HelpContextBlock[],
@@ -123,6 +135,7 @@ export function renderLeafHelpText(
     usage,
     flagsBlock(entry.flags),
     examplesBlock(entry.examples),
+    generatedReferenceBlock(entry.generatedReference),
     contextBlock(entry, extraContextBlocks),
     relatedBlock(entry.related),
     skillsBlock(entry.skills),
@@ -191,6 +204,7 @@ interface HelpJsonBody {
   domainContext?: string;
   related: RelatedRef[];
   skills?: SkillRef[];
+  generatedReference?: readonly GeneratedReferenceSection[];
   context?: { blocks: HelpContextBlock[] };
 }
 
@@ -220,6 +234,9 @@ export function buildHelpJson(
       : {}),
     related: entry.related,
     ...(entry.skills !== undefined ? { skills: entry.skills } : {}),
+    ...(entry.generatedReference !== undefined
+      ? { generatedReference: entry.generatedReference }
+      : {}),
     ...(contextBlocks.length > 0 ? { context: { blocks: contextBlocks } } : {}),
   };
   return { ok: true, help };

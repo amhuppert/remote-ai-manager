@@ -225,10 +225,18 @@ describe("spawnValidation", () => {
     if (result.kind !== "spawned") return;
     result.handle.confirmStart();
 
+    // The redirection creates child.pid before the echo writes it, so a poll
+    // that only required the file to be readable could return an empty string.
+    // That parses to 0, and signal 0 to pid 0 targets the test's OWN process
+    // group — the liveness check below would report "alive" for a child that
+    // was never recorded. Wait for the pid itself.
     await eventually(() => {
       try {
-        readFileSync(path.join(worktreeDir, "child.pid"), "utf-8");
-        return true;
+        return (
+          Number(
+            readFileSync(path.join(worktreeDir, "child.pid"), "utf-8").trim(),
+          ) > 0
+        );
       } catch {
         return false;
       }
@@ -240,6 +248,7 @@ describe("spawnValidation", () => {
     const childPid = Number(
       readFileSync(path.join(worktreeDir, "child.pid"), "utf-8").trim(),
     );
+    expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
     expect(pidAlive(childPid)).toBe(false);
 
     // wait() observes the same settled outcome.
