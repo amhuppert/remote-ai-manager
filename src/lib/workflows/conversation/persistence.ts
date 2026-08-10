@@ -26,7 +26,10 @@ import {
   normalizeSessionRefsDeepInPlace,
 } from "@/lib/shared/session-ref-codec";
 import { getErrorMessage } from "@/lib/shared/errors";
-import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
+import {
+  restorePersistedSnapshotEnvelope,
+  toPersistedConversationSnapshot,
+} from "./persisted-snapshot-codec";
 const logger = createLogger("conversation-persistence");
 
 /**
@@ -344,6 +347,10 @@ export function validateRestoredSnapshot(
   coerceLegacyActiveTurn(snapshot);
   normalizeSnapshotRefs(conversationId, snapshot);
   normalizeSnapshotDebugGeneration(conversationId, snapshot);
+  // Undo the write-side `children` projection. Without it XState restores an
+  // actor that holds the raw token instead of a machine snapshot, and the
+  // failure is silent until a caller reaches for `can()` or `context`.
+  restorePersistedSnapshotEnvelope(snapshot);
 
   logger.info("conversation-persistence.snapshot_restored", {
     conversationId,

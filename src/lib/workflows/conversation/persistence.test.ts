@@ -12,6 +12,7 @@ import {
   _resetForTesting,
 } from "./persistence";
 import { conversationMachine } from "./machine";
+import { toPersistedConversationSnapshot } from "./persisted-snapshot-codec";
 import type {
   ConversationInput,
   ExecutePromptInput,
@@ -517,7 +518,9 @@ describe("conversation persistence", () => {
         CONVERSATION_ID,
         1,
       );
-      expect(result).toEqual(snapshot);
+      // The stored fields come back verbatim, plus the `children` subtree the
+      // write side projects away — XState reads it unconditionally on restore.
+      expect(result).toEqual({ ...snapshot, children: {} });
     });
 
     it("returns null when schema version mismatches", async () => {
@@ -616,6 +619,61 @@ describe("conversation persistence", () => {
     it("returns null when snapshot is null", () => {
       const result = validateRestoredSnapshot(null, CONVERSATION_ID, 1);
       expect(result).toBeNull();
+    });
+
+    it("returns a snapshot XState can actually restore an actor from", async () => {
+      // The stored form is whatever `toPersistedConversationSnapshot` writes —
+      // notably WITHOUT the `children` subtree it projects away. XState's
+      // `restoreSnapshot` reads `snapshot.children` unconditionally, and it
+      // reports that failure through an async unhandled-error hop rather than
+      // throwing out of `createActor` — so a restore that drops it yields an
+      // actor holding the raw stored JSON, with no `.can` and no `.context`.
+      // Rehydration registers that actor as live, and every later caller either
+      // crashes on `getSnapshot().can(...)` or on `getSnapshot().context`.
+      const machine = conversationMachine.provide({
+        actors: {
+          prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
+            async () => ({ transcriptPath: "/tmp/transcript.jsonl" }),
+          ),
+        },
+      });
+      const input: ConversationInput = {
+        projectPath: PROJECT_PATH,
+        projectName: "my-project",
+        sessionName: SESSION_NAME,
+        worktreePath: "/repo/.worktrees/sess-1",
+        conversationId: CONVERSATION_ID,
+        createdAt: "2024-01-01T00:00:00Z",
+        forkedFrom: null,
+        role: null,
+        transcriptPath: null,
+        agentBackend: "claude",
+        backendRef: null,
+        promptCount: 1,
+        persistence: "ephemeral",
+      };
+      const live = createActor(machine, { input });
+      live.start();
+      const stored: unknown = JSON.parse(
+        JSON.stringify(
+          toPersistedConversationSnapshot(live.getPersistedSnapshot()),
+        ),
+      );
+      live.stop();
+      expect(stored).not.toHaveProperty("children");
+
+      const restored = validateRestoredSnapshot(stored, CONVERSATION_ID, 1);
+      expect(restored).not.toBeNull();
+
+      const revived = createActor(machine, {
+        input,
+        snapshot: restored as never,
+      });
+      const snapshot = revived.getSnapshot();
+
+      expect(typeof (snapshot as { can?: unknown }).can).toBe("function");
+      expect(snapshot.context.conversationId).toBe(CONVERSATION_ID);
+      revived.stop();
     });
 
     it("normalizes a legacy context.backendRef to the canonical ref shape", () => {

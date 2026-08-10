@@ -291,3 +291,31 @@ export function toPersistedConversationSnapshot(
   }
   return out as PersistedConversationSnapshot;
 }
+
+/**
+ * Restore the XState envelope a persisted resume token has to present before
+ * `createActor({ snapshot })` will accept it.
+ *
+ * The write side drops `children` on purpose (2.2MB on the worst row), but
+ * XState's `StateMachine.restoreSnapshot` reads it unconditionally —
+ * `Object.keys(snapshot.children)` — so a token without the key throws inside
+ * the restore. `createActor` surfaces that through an asynchronous
+ * unhandled-error hop instead of throwing to its caller, so nothing fails
+ * loudly: the actor is created holding the RAW token, and every later
+ * `getSnapshot()` answers with an object that has no `can()` and no `context`.
+ * Rehydration then registers that actor as live, and callers crash far from
+ * here — `getSnapshot().can(...)` in the event sender, `getSnapshot().context`
+ * in the actor-ensure path.
+ *
+ * The empty subtree is the faithful inverse, not a patch over one: dropping
+ * `children` encodes "child actors are re-created lazily", so the token means
+ * "no live children", and `{}` is exactly that.
+ */
+export function restorePersistedSnapshotEnvelope<T>(snapshot: T): T {
+  if (typeof snapshot !== "object" || snapshot === null) return snapshot;
+  const record = snapshot as Record<string, unknown>;
+  const children = record["children"];
+  if (typeof children === "object" && children !== null) return snapshot;
+  record["children"] = {};
+  return snapshot;
+}
